@@ -17,7 +17,10 @@ export class CreateEpisodeDto {
   @IsString()
   videoUrl?: string;
 
-  @ApiProperty({ required: false, description: 'URL de embed externo (iframe)' })
+  @ApiProperty({
+    required: false,
+    description: 'URL de embed externo (iframe)',
+  })
   @IsOptional()
   @IsString()
   embedUrl?: string;

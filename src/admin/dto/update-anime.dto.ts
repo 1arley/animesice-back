@@ -37,7 +37,11 @@ export class CreateAnimeDto {
   @IsString()
   status?: string;
 
-  @ApiProperty({ required: false, enum: AudioType, default: AudioType.LEGENDADO })
+  @ApiProperty({
+    required: false,
+    enum: AudioType,
+    default: AudioType.LEGENDADO,
+  })
   @IsOptional()
   audio?: AudioType;
 

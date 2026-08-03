@@ -13,7 +13,8 @@ export class ImportAnimeDto {
 
   @ApiProperty({
     required: false,
-    description: 'Termo de busca por título no AniList (mutuamente exclusivo com anilistId)',
+    description:
+      'Termo de busca por título no AniList (mutuamente exclusivo com anilistId)',
   })
   @IsOptional()
   @IsString()

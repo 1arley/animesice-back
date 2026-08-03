@@ -104,7 +104,9 @@ export class AdminController {
   }
 
   @Post('episode/:slug/:number/upload')
-  @ApiOperation({ summary: 'Upload de vídeo (.mp4/.m3u8/.ts) p/ Supabase Storage' })
+  @ApiOperation({
+    summary: 'Upload de vídeo (.mp4/.m3u8/.ts) p/ Supabase Storage',
+  })
   @ApiConsumes('multipart/form-data')
   @ApiBody({
     schema: {

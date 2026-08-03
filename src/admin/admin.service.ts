@@ -42,7 +42,10 @@ export class AdminService {
     let slug = base;
     let n = 2;
     while (
-      await this.prisma.anime.findUnique({ where: { slug }, select: { id: true } })
+      await this.prisma.anime.findUnique({
+        where: { slug },
+        select: { id: true },
+      })
     ) {
       slug = `${base}-${n}`;
       n += 1;
@@ -163,9 +166,10 @@ export class AdminService {
       throw new NotFoundException('Informe anilistId ou search.');
     }
 
-    const media: AniListMedia = dto.anilistId != null
-      ? await this.anilistService.fetchMedia(dto.anilistId)
-      : await this.anilistService.searchMedia(dto.search as string);
+    const media: AniListMedia =
+      dto.anilistId != null
+        ? await this.anilistService.fetchMedia(dto.anilistId)
+        : await this.anilistService.searchMedia(dto.search as string);
 
     const title =
       media.title?.romaji || media.title?.english || media.title?.native || '';
@@ -173,12 +177,12 @@ export class AdminService {
       throw new NotFoundException('AniList retornou mídia sem título.');
     }
 
-    const baseSlug = this.slugify(media.title?.romaji || media.title?.native || title);
+    const baseSlug = this.slugify(
+      media.title?.romaji || media.title?.native || title,
+    );
     const slug = await this.uniqueSlug(baseSlug);
 
-    const genreNames = (media.genres ?? []).filter(
-      (g): g is string => !!g,
-    );
+    const genreNames = (media.genres ?? []).filter((g): g is string => !!g);
     const genreSlugs = genreNames.map((g) => this.slugify(g));
 
     // Cria gêneros faltantes antes do connect --------------------------
@@ -198,9 +202,11 @@ export class AdminService {
       slug,
       title,
       synopsis: media.description ?? undefined,
-      coverImage: media.coverImage?.large ?? media.coverImage?.extraLarge ?? undefined,
+      coverImage:
+        media.coverImage?.large ?? media.coverImage?.extraLarge ?? undefined,
       bannerImage: media.bannerImage ?? undefined,
-      rating: typeof media.averageScore === 'number' ? media.averageScore : undefined,
+      rating:
+        typeof media.averageScore === 'number' ? media.averageScore : undefined,
       status: 'LANCAMENTO',
       audio: dto.audio ?? AudioType.LEGENDADO,
       ageRating: media.isAdult ? 'A18' : 'A14',

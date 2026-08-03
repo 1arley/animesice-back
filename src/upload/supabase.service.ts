@@ -1,9 +1,6 @@
 import { Injectable, ForbiddenException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import {
-  createClient,
-  SupabaseClient,
-} from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { randomUUID } from 'crypto';
 import { extname } from 'path';
 
@@ -14,9 +11,7 @@ export class SupabaseService {
 
   constructor(private readonly config: ConfigService) {
     const url = this.config.get<string>('SUPABASE_URL');
-    const serviceRoleKey = this.config.get<string>(
-      'SUPABASE_SERVICE_ROLE_KEY',
-    );
+    const serviceRoleKey = this.config.get<string>('SUPABASE_SERVICE_ROLE_KEY');
     const bucket = this.config.get<string>('SUPABASE_BUCKET');
 
     if (!url || !serviceRoleKey || !bucket) {
