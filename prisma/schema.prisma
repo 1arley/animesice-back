@@ -1,0 +1,123 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  USER
+  ADMIN
+  SUPERADMIN
+}
+
+enum AudioType {
+  LEGENDADO
+  DUBLADO
+}
+
+model User {
+  id            String        @id @default(uuid())
+  email         String        @unique
+  password      String
+  name          String?
+  role          String        @default("USER")
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  refreshTokens RefreshToken[]
+  comments      Comment[]
+}
+
+model RefreshToken {
+  id           String   @id @default(cuid())
+  token        String   @unique
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model Anime {
+  id          String      @id @default(uuid())
+  slug        String      @unique
+  title       String
+  synopsis    String?
+  coverImage  String?
+  bannerImage String?
+  rating      Float?      @default(0)
+  ageRating   String?     @default("A14")
+  status      String      @default("LANCAMENTO")
+  audio       AudioType   @default(LEGENDADO)
+  episodes    Episode[]
+  genres      Genre[]
+  comments    Comment[]
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@index([slug])
+}
+
+model Episode {
+  id             String      @id @default(uuid())
+  number         Int
+  title          String?
+  thumbnailUrl   String?
+  videoUrl       String?
+  embedUrl      String?
+  duration       String?
+  dateModified   DateTime?
+  anime          Anime       @relation(fields: [animeId], references: [id], onDelete: Cascade)
+  animeId        String
+  comments       Comment[]
+  streamingTokens StreamingToken[]
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  @@unique([animeId, number])
+  @@index([animeId])
+}
+
+model Genre {
+  id      String   @id @default(uuid())
+  slug    String   @unique
+  name    String   @unique
+  animes  Anime[]
+}
+
+model Comment {
+  id        String    @id @default(uuid())
+  content   String
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  animeId   String?
+  anime     Anime?   @relation(fields: [animeId], references: [id], onDelete: Cascade)
+  episodeId String?
+  episode   Episode? @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  parentId  String?
+  parent    Comment?  @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies   Comment[] @relation("CommentReplies")
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([animeId])
+  @@index([episodeId])
+  @@index([userId])
+  @@index([parentId])
+}
+
+model StreamingToken {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  ip        String
+  expiresAt DateTime
+  episodeId String
+  episode   Episode  @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@index([episodeId])
+  @@index([token])
+}

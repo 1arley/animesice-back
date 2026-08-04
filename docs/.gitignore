@@ -1,0 +1,3 @@
+# Ignorar arquivos temporários de documentação
+*.tmp
+*.log

@@ -1,0 +1,20 @@
+# Normalizar final de linha
+* text=auto
+
+# Arquivos TypeScript
+*.ts text
+
+# Arquivos JSON
+*.json text
+
+# Markdown
+*.md text
+
+# Shell scripts
+*.sh text eol=lf
+
+# Windows scripts
+*.bat text eol=crlf
+
+# Optional
+# *.ts linguist-language=TypeScript
