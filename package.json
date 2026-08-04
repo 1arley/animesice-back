@@ -33,6 +33,8 @@
     "migrate:dev": "npx prisma migrate dev --name ${CURRENT_NAME}",
     "generate": "npx prisma generate",
     "seed": "ts-node prisma/seed.ts",
+    "seed:animefire": "ts-node scripts/seed-animefire.ts",
+    "seed:animefire:dry": "ts-node scripts/seed-animefire.ts --limit 5",
     "docker:build": "docker compose build",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",

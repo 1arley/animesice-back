@@ -256,7 +256,7 @@ const FALLBACK_ANIMES: JikanAnime[] = [
     genres: [{ name: 'Action' }, { name: 'School' }, { name: 'Shounen' }],
   },
   {
-    mal_id: 21,
+    mal_id: 20,
     title: 'Naruto',
     synopsis:
       'Naruto Uzumaki, jovem ninja com a Kyuubi selada, almeja tornar-se Hokage e ser reconhecido por sua vila.',
@@ -342,6 +342,8 @@ async function upsertGenreByMalName(
 }
 
 const EPISODE_PLACEHOLDER_COUNT = 12;
+const ANIMEFIRE_BASE = 'https://animefire.io';
+const UA_DESKTOP = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
 async function main() {
   console.log('Buscando catálogo da Jikan (MyAnimeList)...');
@@ -449,6 +451,20 @@ async function main() {
       where: { id: animeRecord.id },
       data: { genres: { connect: genreIds.map((id) => ({ id })) } },
     });
+
+    // Tenta vincular embedUrl do animefire para cada episódio (lazy extract no runtime)
+    const afSlug = slug;
+    for (let n = 1; n <= epCount; n++) {
+      const embedUrl = `${ANIMEFIRE_BASE}/animes/${afSlug}/${n}`;
+      try {
+        await prisma.episode.update({
+          where: { animeId_number: { animeId: animeRecord.id, number: n } },
+          data: { embedUrl },
+        });
+      } catch {
+        // ignore non-existent episodes
+      }
+    }
 
     console.log(`  ✓ ${ja.title} (${slug}) — ${epCount} eps`);
     await sleep(120); // light spacing within loop
