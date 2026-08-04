@@ -4,6 +4,7 @@ import {
   NotFoundException,
   BadGatewayException,
 } from '@nestjs/common';
+import { Readable } from 'stream';
 
 /** Headers de frame que devem removidos do upstream. */
 const STRIPPED_HEADER_PREFIXES: ReadonlyArray<string> = [
@@ -16,6 +17,10 @@ const STRIPPED_HEADER_PREFIXES: ReadonlyArray<string> = [
 /** Regex p/ validar scheme: somente http/https. */
 const VALID_SCHEME = /^https?:\/\//i;
 
+/** UA desktop real para passar anti-hotlinking das CDNs piratas. */
+const UA_MEDIA =
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
 /** Tags/atributos cujo href/src devem ser reescritos p/ URL absoluta. */
 const RESOURCE_ATTRS: ReadonlyArray<{ tag: string; attr: string }> = [
   { tag: 'a', attr: 'href' },
@@ -26,6 +31,34 @@ const RESOURCE_ATTRS: ReadonlyArray<{ tag: string; attr: string }> = [
   { tag: 'iframe', attr: 'src' },
 ];
 
+/** Headers de resposta que o proxy de midia repassa do upstream. */
+const MEDIA_PASSTHROUGH_HEADERS: ReadonlySet<string> = new Set([
+  'content-type',
+  'content-length',
+  'accept-ranges',
+  'content-range',
+  'content-disposition',
+  'etag',
+  'last-modified',
+  'cache-control',
+  'age',
+  'date',
+]);
+
+/** Headers de request hop-by-hop/seguranca que nunca repassamos ao upstream. */
+const REQUEST_DROP_HEADERS: ReadonlySet<string> = new Set([
+  'host',
+  'connection',
+  'referer',
+  'origin',
+  'cookie',
+  'authorization',
+  'accept-encoding', // evita br (stream raw p/ Range confiavel)
+  'x-forwarded-for',
+  'x-forwarded-host',
+  'x-forwarded-proto',
+]);
+
 /** Resultado do proxy HTML. */
 export interface ProxyHtmlResult {
   status: number;
@@ -33,10 +66,20 @@ export interface ProxyHtmlResult {
   body: string;
 }
 
+/** Resultado do proxy de midia (streaming binario). */
+export interface ProxyMediaResult {
+  status: number;
+  headers: Record<string, string>;
+  body: Readable;
+}
+
 @Injectable()
 export class EmbedService {
   /** Timeout do fetch upstream (anti-abuso). */
   private readonly FETCH_TIMEOUT_MS = 30_000;
+
+  /** Timeout do fetch de mídia (streams grandes, mas evita travar indefinidamente). */
+  private readonly MEDIA_FETCH_TIMEOUT_MS = 30_000;
 
   /**
    * Baixa HTML de targetUrl, remove headers de frame,
@@ -48,17 +91,13 @@ export class EmbedService {
     let response: Response;
     try {
       const controller = new AbortController();
-      const timer = setTimeout(
-        () => controller.abort(),
-        this.FETCH_TIMEOUT_MS,
-      );
+      const timer = setTimeout(() => controller.abort(), this.FETCH_TIMEOUT_MS);
       try {
         response = await fetch(validated, {
           signal: controller.signal,
           redirect: 'follow',
           headers: {
-            'user-agent':
-              'Mozilla/5.0 (compatible; AnimesIceEmbedProxy/1.0)',
+            'user-agent': UA_MEDIA,
           },
         });
       } finally {
@@ -108,10 +147,143 @@ export class EmbedService {
   }
 
   /**
+   * Proxy de mídia (.mp4/.m3u8/segmentos): busca o binário da CDN externa
+   * injetando Referer/Origin/UA do site de origem (anti-hotlinking) e faz
+   * streaming com suporte a Range (seek). O IP de saida é o do backend —
+   * mesmo IP que fez o scrape — resolvendo tambem o IP-vinculo dos tokens.
+   *
+   * @param raw URL absoluta da midia (.mp4/.m3u8/segmento .ts).
+   * @param reqHeaders headers do request do cliente (repassa Range).
+   * @param sourceOrigin origem do site fonte (ex: https://animefire.io).
+   *        Se informada, Referer/Origin apontam p/ ela (anti-hotlinking).
+   *        Senao, fallback p/ a origem da propria midia.
+   */
+  async proxyMedia(
+    raw: string,
+    reqHeaders?: Record<string, string | string[] | undefined>,
+    sourceOrigin?: string,
+  ): Promise<ProxyMediaResult> {
+    const validated = this.normalizeUrl(raw);
+    // Preferencia: origem do site fonte (Referer valido p/ anti-hotlinking);
+    // fallback p/ origem da midia (caso de mp4 publica sem anti-hotlinking).
+    const refOrigin = sourceOrigin
+      ? this.normalizeUrl(sourceOrigin).replace(/\/$/, '')
+      : this.originOf(validated);
+
+    const upstreamHeaders: Record<string, string> = {
+      'user-agent': UA_MEDIA,
+      // Anti-hotlinking: CDNs pirate (lightspeedst.net etc.) validam Referer
+      // contra o site fonte (animefire.io), nao contra o host da CDN.
+      referer: refOrigin + '/',
+      origin: refOrigin,
+      accept: '*/*',
+      'accept-language': 'pt-BR,pt;q=0.9,en;q=0.5',
+    };
+
+    // Repassa Range do cliente p/ suporte a seek, descartando hop-by-hop.
+    if (reqHeaders) {
+      for (const [k, v] of Object.entries(reqHeaders)) {
+        if (v == null) continue;
+        const lower = k.toLowerCase();
+        if (REQUEST_DROP_HEADERS.has(lower)) continue;
+        if (lower === 'range') {
+          const rangeVal = Array.isArray(v) ? v[0] : v;
+          if (rangeVal) upstreamHeaders.range = rangeVal;
+        }
+      }
+    }
+
+    let response: Response;
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(
+        () => controller.abort(),
+        this.MEDIA_FETCH_TIMEOUT_MS,
+      );
+      try {
+        response = await fetch(validated, {
+          signal: controller.signal,
+          redirect: 'follow',
+          headers: upstreamHeaders,
+        });
+      } finally {
+        clearTimeout(timer);
+      }
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        throw new BadGatewayException(
+          'Tempo limite excedido ao buscar a mídia.',
+        );
+      }
+      throw new BadGatewayException(
+        'Falha ao buscar a mídia: ' +
+          (err instanceof Error ? err.message : String(err)),
+      );
+    }
+
+    // Erro upstream (4xx/5xx): repassa o status ao cliente em vez de mascarar.
+    // 403 = anti-hotlinking real; 404 = token/segmento expirado; 5xx = CDN fora.
+    if (!response.ok) {
+      const errorBody = await response.text().catch(() => '');
+      return {
+        status: response.status,
+        headers: {
+          'content-type':
+            response.headers.get('content-type') ?? 'text/plain; charset=utf-8',
+          'x-proxy-error': 'upstream-' + response.status,
+        },
+        body: this.readableFrom(errorBody || `CDN retornou ${response.status}`),
+      };
+    }
+
+    // Stream raw — nao usar .text()/.arrayBuffer() (midia grande).
+    if (!response.body) {
+      throw new BadGatewayException('Resposta da CDN sem corpo.');
+    }
+
+    const cleanHeaders: Record<string, string> = {};
+    for (const [key, value] of response.headers.entries()) {
+      if (MEDIA_PASSTHROUGH_HEADERS.has(key.toLowerCase())) {
+        cleanHeaders[key] = value;
+      }
+    }
+    // Garante content-type mesmo se upstream omitiu.
+    if (!cleanHeaders['content-type'] && !cleanHeaders['Content-Type']) {
+      cleanHeaders['content-type'] = this.guessContentType(validated);
+    }
+
+    return {
+      status: response.status,
+      headers: cleanHeaders,
+      body: response.body as unknown as Readable,
+    };
+  }
+
+  /** Cria um Readable a partir de string (mensagens de erro upstream). */
+  private readableFrom(text: string): Readable {
+    return Readable.from(text);
+  }
+
+  /** Guess simples de content-type pela extensao. */
+  private guessContentType(url: string): string {
+    const path = (url.split('?')[0] ?? url).toLowerCase();
+    if (path.endsWith('.m3u8')) return 'application/vnd.apple.mpegurl';
+    if (path.endsWith('.mp4')) return 'video/mp4';
+    if (path.endsWith('.ts')) return 'video/mp2t';
+    if (path.endsWith('.webm')) return 'video/webm';
+    return 'application/octet-stream';
+  }
+
+  /**
    * Valida scheme (http/https), rejeita javascript:, e bloqueia
    * destinos que apontem p/ loopback/link-local/metadata (SSRF).
    */
   private validateAndNormalizeUrl(raw: string): string {
+    return this.normalizeUrl(raw);
+  }
+
+  /** Normaliza/valida URL — exposto p/ controller reusar no proxy de midia. */
+  normalizeUrl(raw: string): string {
     if (!raw || typeof raw !== 'string') {
       throw new BadRequestException('URL ausente ou inválida.');
     }

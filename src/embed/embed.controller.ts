@@ -3,6 +3,7 @@ import {
   Get,
   Query,
   Res,
+  Headers,
   UseGuards,
   ValidationPipe,
   BadRequestException,
@@ -10,7 +11,7 @@ import {
 import { ApiTags, ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
 import express from 'express';
 import { EmbedService } from '@/embed/embed.service';
-import { AnimefireScrapeService } from '@/embed/animefire-scrape.service';
+import { ScrapeService } from '@/embed/scrape/scrape.service';
 import { EmbedProxyDto } from '@/embed/dto/embed-proxy.dto';
 import { JwtAuthGuard } from '@/auth/jwt-auth.guard';
 
@@ -25,13 +26,15 @@ const FORBIDDEN_RESPONSE_HEADERS: ReadonlySet<string> = new Set([
   'transfer-encoding',
 ]);
 
+/** Base do backend para envolver URLs externas em proxy de mídia. */
+const MEDIA_PROXY_BASE = '/embed/media?url=';
+
 @ApiTags('embed')
 @Controller('embed')
-@UseGuards(JwtAuthGuard)
 export class EmbedController {
   constructor(
     private readonly embedService: EmbedService,
-    private readonly scrapeService: AnimefireScrapeService,
+    private readonly scrapeService: ScrapeService,
   ) {}
 
   @Get('proxy')
@@ -50,8 +53,10 @@ export class EmbedController {
     description: 'HTML com headers de frame removidos.',
     content: { 'text/html': {} },
   })
-  @ApiResponse({ status: 400, description: 'URL inválida ou scheme bloqueado.' })
-  @ApiResponse({ status: 401, description: 'Token JWT ausente/inválido.' })
+  @ApiResponse({
+    status: 400,
+    description: 'URL inválida ou scheme bloqueado.',
+  })
   @ApiResponse({ status: 502, description: 'Falha ao buscar destino.' })
   async proxy(
     @Query(new ValidationPipe({ transform: true, whitelist: true }))
@@ -77,27 +82,95 @@ export class EmbedController {
       res.removeHeader(forbidden);
     }
 
-    res.setHeader('Content-Type', result.headers['content-type'] ?? 'text/html; charset=utf-8');
+    res.setHeader(
+      'Content-Type',
+      result.headers['content-type'] ?? 'text/html; charset=utf-8',
+    );
 
     res.send(result.body);
   }
 
-  @Get('scrape')
+  @Get('media')
   @ApiOperation({
     summary:
-      'Extrai URL .mp4/.m3u8 de episodio do animefire via Playwright (modo alternativo ao iframe).',
+      'Proxy de mídia (.mp4/.m3u8/.ts): injeta Referer/Origin/UA anti-hotlinking e faz streaming com Range.',
   })
   @ApiQuery({
     name: 'url',
     type: String,
     required: true,
-    description: 'URL do episódio em animefire.io.',
+    description: 'URL http/https da mídia (.mp4, .m3u8 ou segmento .ts).',
+  })
+  @ApiResponse({ status: 200, description: 'Stream binário da mídia.' })
+  @ApiResponse({
+    status: 400,
+    description: 'URL inválida ou scheme bloqueado.',
+  })
+  @ApiResponse({ status: 502, description: 'Falha ao buscar a mídia.' })
+  @ApiResponse({
+    status: 503,
+    description: 'CDN recusou (anti-hotlinking/token expirado).',
+  })
+  async media(
+    @Query(new ValidationPipe({ transform: true, whitelist: true }))
+    dto: EmbedProxyDto,
+    @Headers() headers: Record<string, string | string[] | undefined>,
+    @Res() res: express.Response,
+  ): Promise<void> {
+    if (!dto?.url) {
+      throw new BadRequestException('Parâmetro "url" é obrigatório.');
+    }
+
+    const result = await this.embedService.proxyMedia(
+      dto.url,
+      headers,
+      dto.referer,
+    );
+
+    res.status(result.status);
+    for (const [key, value] of Object.entries(result.headers)) {
+      if (value === '' || value == null) continue;
+      res.setHeader(key, value);
+    }
+
+    // Streaming: pipe do body (Readable) p/ a resposta Express.
+    const { pipeline } = await import('stream/promises');
+    res.setHeader('Accept-Ranges', 'bytes');
+
+    // Em erro de stream (cliente desconecta), apenas finaliza sem crashar.
+    pipeline(result.body, res).catch(() => {
+      if (!res.headersSent) res.destroy();
+    });
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('scrape')
+  @ApiOperation({
+    summary:
+      'Extrai URL .mp4/.m3u8 + iframes de episódio (multi-fonte) via Playwright.',
+  })
+  @ApiQuery({
+    name: 'url',
+    type: String,
+    required: true,
+    description:
+      'URL do episódio (animefire.io, animesonlinecc.to, meusanimes.blog, ...).',
+  })
+  @ApiQuery({
+    name: 'source',
+    type: String,
+    required: false,
+    enum: ['animefire', 'animesonlinecc', 'meusanimes'],
+    description: 'Força um adapter. Omitir = auto-detectar pelo host.',
   })
   @ApiResponse({
     status: 200,
     description: 'URLs de vídeo e iframes extraídos.',
   })
-  @ApiResponse({ status: 400, description: 'URL inválida.' })
+  @ApiResponse({
+    status: 400,
+    description: 'URL inválida ou fonte desconhecida.',
+  })
   @ApiResponse({
     status: 503,
     description: 'Cloudflare bloqueou a página.',
@@ -109,6 +182,6 @@ export class EmbedController {
     if (!dto?.url) {
       throw new BadRequestException('Parâmetro "url" é obrigatório.');
     }
-    return this.scrapeService.scrapeEpisodeVideo(dto.url);
+    return this.scrapeService.scrapeEpisodeVideo(dto.url, dto.source);
   }
 }
