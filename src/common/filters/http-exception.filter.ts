@@ -23,9 +23,11 @@ export class HttpExceptionFilter implements ExceptionFilter {
         : HttpStatus.INTERNAL_SERVER_ERROR;
 
     // Diagnóstico: loga stack de erros não-HttpException (500 engolidos).
+    // Path sem query string — tokens em ?token= não vazam para logs.
+    const safePath = (request.originalUrl ?? request.url).split('?')[0];
     if (!(exception instanceof HttpException)) {
       this.logger.error(
-        `UNCAUGHT on ${request.method} ${request.url}: ${
+        `UNCAUGHT on ${request.method} ${safePath}: ${
           exception instanceof Error ? exception.stack : String(exception)
         }`,
       );
@@ -46,7 +48,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
     response.status(status).json({
       statusCode: status,
       timestamp: new Date().toISOString(),
-      path: request.url,
+      path: safePath,
       message,
     });
   }
