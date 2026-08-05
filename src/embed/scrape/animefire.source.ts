@@ -20,6 +20,52 @@ const ANIMEFIRE_ORIGIN = 'https://animefire.io';
 /** Regex p/ extrair o atributo data-video-src (URL interna /video/...). */
 const DATA_VIDEO_SRC_RE = /data-video-src=["']([^"']+)["']/i;
 
+/** Timeout de cada fetch HTTP puro (anti-travar em host lento). */
+const FETCH_TIMEOUT_MS = 15_000;
+
+/** Teto de bytes lidos de uma resposta (anti-memória). */
+const MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
+
+async function fetchBounded(url: string, init: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function readBounded(res: Response, maxBytes: number): Promise<string> {
+  const declared = Number(res.headers.get('content-length') || 0);
+  if (declared > maxBytes) {
+    throw new Error('Resposta maior que o limite permitido.');
+  }
+
+  if (!res.body) return await res.text();
+
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const result = (await reader.read()) as {
+      done: boolean;
+      value?: Uint8Array;
+    };
+    const { done, value } = result;
+    if (done) break;
+    if (value) {
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new Error('Resposta maior que o limite permitido.');
+      }
+      chunks.push(value);
+    }
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
 /**
  * Adapter animefire.io.
  *
@@ -49,7 +95,7 @@ export class AnimefireScrapeSource implements ScrapeSource {
    */
   async extractHttp(ctx: HttpExtractContext): Promise<ScrapeEpisodeResult> {
     // Step 1: página do episódio -> data-video-src.
-    const pageRes = await fetch(ctx.episodeUrl, {
+    const pageRes = await fetchBounded(ctx.episodeUrl, {
       headers: {
         'user-agent': ctx.ua,
         'accept-language': 'pt-BR,pt;q=0.9',
@@ -66,7 +112,7 @@ export class AnimefireScrapeSource implements ScrapeSource {
         `animefire: página do episódio retornou ${pageRes.status} para url='${ctx.episodeUrl}' final='${pageRes.url}'`,
       );
     }
-    const html = await pageRes.text();
+    const html = await readBounded(pageRes, MAX_RESPONSE_BYTES);
 
     const m = html.match(DATA_VIDEO_SRC_RE);
     if (!m || !m[1]) {
@@ -75,7 +121,7 @@ export class AnimefireScrapeSource implements ScrapeSource {
     const videoPageUrl = m[1];
 
     // Step 2: página interna /video -> JSON de fontes.
-    const videoRes = await fetch(videoPageUrl, {
+    const videoRes = await fetchBounded(videoPageUrl, {
       headers: {
         'user-agent': ctx.ua,
         referer: `${ANIMEFIRE_ORIGIN}/`,
@@ -88,7 +134,9 @@ export class AnimefireScrapeSource implements ScrapeSource {
     if (!videoRes.ok) {
       throw new Error(`animefire: /video retornou ${videoRes.status}`);
     }
-    const json = (await videoRes.json()) as {
+    const json = JSON.parse(
+      await readBounded(videoRes, MAX_RESPONSE_BYTES),
+    ) as {
       data?: Array<{ src?: string; label?: string }>;
     };
 

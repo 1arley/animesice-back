@@ -5,17 +5,18 @@ import {
   BadGatewayException,
 } from '@nestjs/common';
 import { Readable } from 'stream';
-
-/** Headers de frame que devem removidos do upstream. */
-const STRIPPED_HEADER_PREFIXES: ReadonlyArray<string> = [
-  'x-frame-options',
-  'content-security-policy',
-  'content-security-policy-report-only',
-  'frame-options',
-];
+import { lookup } from 'dns/promises';
+import net from 'net';
 
 /** Regex p/ validar scheme: somente http/https. */
 const VALID_SCHEME = /^https?:\/\//i;
+
+/** Máximo de redirecionamentos seguidos no fetch (anti-SSRF/anti-loops). */
+const MAX_REDIRECTS = 5;
+
+/** Mensagem de erro p/ destinos de rede interna. */
+const BLOCKED_MESSAGE =
+  'Destino bloqueado: não é permitido proxy para redes internas/metadata.';
 
 /** UA desktop real para passar anti-hotlinking das CDNs piratas. */
 const UA_MEDIA =
@@ -90,19 +91,15 @@ export class EmbedService {
 
     let response: Response;
     try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), this.FETCH_TIMEOUT_MS);
-      try {
-        response = await fetch(validated, {
-          signal: controller.signal,
-          redirect: 'follow',
+      response = await this.fetchSafe(
+        validated,
+        {
           headers: {
             'user-agent': UA_MEDIA,
           },
-        });
-      } finally {
-        clearTimeout(timer);
-      }
+        },
+        this.FETCH_TIMEOUT_MS,
+      );
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
         throw new BadGatewayException(
@@ -195,20 +192,11 @@ export class EmbedService {
 
     let response: Response;
     try {
-      const controller = new AbortController();
-      const timer = setTimeout(
-        () => controller.abort(),
+      response = await this.fetchSafe(
+        validated,
+        { headers: upstreamHeaders },
         this.MEDIA_FETCH_TIMEOUT_MS,
       );
-      try {
-        response = await fetch(validated, {
-          signal: controller.signal,
-          redirect: 'follow',
-          headers: upstreamHeaders,
-        });
-      } finally {
-        clearTimeout(timer);
-      }
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
         throw new BadGatewayException(
@@ -275,6 +263,50 @@ export class EmbedService {
   }
 
   /**
+   * Fetch com (1) timeout e (2) revalidação de SSRF a cada redirecionamento.
+   * `redirect: 'manual'` + loop: cada hop é re-normalizado e o DNS re-resolvido
+   * contra a blocklist, impedindo 302 para IPs internos/metadata.
+   */
+  private async fetchSafe(
+    url: string,
+    init: RequestInit,
+    timeoutMs: number,
+  ): Promise<Response> {
+    let current = url;
+
+    for (let i = 0; i <= MAX_REDIRECTS; i++) {
+      const normalized = this.normalizeUrl(current);
+      await this.assertHostResolvesSafely(normalized);
+
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      let response: Response;
+      try {
+        response = await fetch(normalized, {
+          ...init,
+          signal: controller.signal,
+          redirect: 'manual',
+        });
+      } finally {
+        clearTimeout(timer);
+      }
+
+      const location = response.headers.get('location');
+      const isRedirect =
+        response.status >= 300 && response.status < 400 && !!location;
+      if (!isRedirect) return response;
+
+      try {
+        current = new URL(location, normalized).toString();
+      } catch {
+        return response;
+      }
+    }
+
+    throw new BadGatewayException('Limite de redirecionamentos excedido.');
+  }
+
+  /**
    * Valida scheme (http/https), rejeita javascript:, e bloqueia
    * destinos que apontem p/ loopback/link-local/metadata (SSRF).
    */
@@ -311,37 +343,203 @@ export class EmbedService {
 
     const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
 
-    if (this.isBlockedHost(host)) {
-      throw new BadRequestException(
-        'Destino bloqueado: não é permitido proxy para redes internas/metadata.',
-      );
+    if (this.isBlockedHostname(host)) {
+      throw new BadRequestException(BLOCKED_MESSAGE);
     }
 
     return parsed.toString();
   }
 
-  /** Bloqueia loopback, link-local e metadata endpoints. */
-  private isBlockedHost(host: string): boolean {
+  /**
+   * Bloqueia loopback, link-local, metadata, RFC1918, CGNAT, IPv6-mapped e
+   * hex/octal. Para hostnames com ponto o DNS é resolvido em
+   * `assertHostResolvesSafely` (aqui não há como saber o IP).
+   */
+  private isBlockedHostname(host: string): boolean {
     if (host === 'localhost') return true;
-    if (host === '::1' || host === '0:0:0:0:0:0:0:1') return true;
-    if (host.startsWith('127.')) return true;
-    if (host.startsWith('169.254.')) return true;
-    if (host === '0.0.0.0' || host === '0.0.0.0/0') return true;
     if (host === 'metadata.google.internal') return true;
 
-    // 10.x, 172.16-31.x, 192.168.x (RFC1918) — bloqueio defensivo.
+    const family = net.isIP(host);
+    if (family === 4) return this.isBlockedIp(host);
+    if (family === 6) return this.isBlockedIp(host);
+
+    // IPv4 numérico em notação hex/octal não reconhecido por net.isIP.
+    if (/^(0x[0-9a-f]+|[0-7]+)(\.(0x[0-9a-f]+|[0-7]+)){3}$/i.test(host)) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Resolve o host via DNS e bloqueia se QUALQUER endereço resolvido for
+   * privado/link-local/metadata. Impede DNS rebinding p/ rede interna.
+   */
+  private async assertHostResolvesSafely(urlStr: string): Promise<void> {
+    const host = new URL(urlStr).hostname;
+
+    if (net.isIP(host) || host === 'localhost') return;
+
+    let addresses: readonly { address: string }[];
+    try {
+      addresses = await lookup(host, { all: true, verbatim: true });
+    } catch {
+      throw new BadRequestException(
+        'Destino bloqueado: o host não pôde ser resolvido.',
+      );
+    }
+
+    if (addresses.length === 0) {
+      throw new BadRequestException(
+        'Destino bloqueado: o host não resolveu para nenhum endereço.',
+      );
+    }
+
+    for (const addr of addresses) {
+      if (this.isBlockedIp(addr.address)) {
+        throw new BadRequestException(BLOCKED_MESSAGE);
+      }
+    }
+  }
+
+  /** Bloqueia qualquer IP que aponte p/ infra interna ou não-roteável. */
+  private isBlockedIp(ip: string): boolean {
+    const family = net.isIP(ip);
+    if (family === 4) return this.isBlockedIPv4(ip);
+    if (family === 6) return this.isBlockedIPv6(ip);
+    return true;
+  }
+
+  private isBlockedIPv4(ip: string): boolean {
+    const o = ip.split('.').map((p) => parseInt(p, 10));
+
+    if (o.length !== 4) return true;
+    const [a, b, c, d] = o;
     if (
-      host.startsWith('10.') ||
-      host.startsWith('192.168.') ||
-      /^172\.(1[6-9]|2\d|3[01])\./.test(host)
+      a === undefined ||
+      b === undefined ||
+      c === undefined ||
+      d === undefined
     ) {
       return true;
     }
 
-    // IPv4 numérico puro ainda válido foi coberto acima; fallback hex/octal.
-    if (/^0x[0-9a-f]+\.?/i.test(host)) return true;
+    // 0.0.0.0/8 — "this network" (aponta p/ si mesmo).
+    if (a === 0) return true;
+    // 10.0.0.0/8 — RFC1918.
+    if (a === 10) return true;
+    // 100.64.0.0/10 — CGNAT.
+    if (a === 100 && b >= 64 && b <= 127) return true;
+    // 127.0.0.0/8 — loopback.
+    if (a === 127) return true;
+    // 169.254.0.0/16 — link-local.
+    if (a === 169 && b === 254) return true;
+    // 172.16.0.0/12 — RFC1918.
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    // 192.0.0.0/24 — IETF protocol assignments.
+    if (a === 192 && b === 0 && c === 0) return true;
+    // 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24 — TEST-NET.
+    if (a === 192 && b === 0 && c === 2) return true;
+    if (a === 198 && b === 51 && c === 100) return true;
+    if (a === 203 && b === 0 && c === 113) return true;
+    // 192.168.0.0/16 — RFC1918.
+    if (a === 192 && b === 168) return true;
+    // 198.18.0.0/15 — benchmarking.
+    if (a === 198 && (b === 18 || b === 19)) return true;
+    // 224.0.0.0/4 — multicast.
+    if (a >= 224 && a <= 239) return true;
+    // 240.0.0.0/4 — reservado (incl. broadcast).
+    if (a >= 240) return true;
 
     return false;
+  }
+
+  private isBlockedIPv6(ip: string): boolean {
+    const lower = ip.toLowerCase();
+
+    // IPv4-mapped (::ffff:a.b.c.d) e IPv4-compat (::a.b.c.d): avalia o IPv4 embutido.
+    const mapped =
+      lower.match(/^::ffff:(?:0:)?(\d+\.\d+\.\d+\.\d+)$/) ??
+      lower.match(/^::(\d+\.\d+\.\d+\.\d+)$/);
+    if (mapped) {
+      return this.isBlockedIp(mapped[1]!);
+    }
+
+    const bytes = this.parseIPv6(lower);
+    if (!bytes) return true;
+
+    const allZero = bytes.every((b) => b === 0);
+    if (allZero) return true; // ::
+    if (bytes.slice(0, 15).every((b) => b === 0) && bytes[15] === 1) {
+      return true; // ::1 loopback
+    }
+    const b0 = bytes[0]!;
+    const b1 = bytes[1]!;
+
+    // fc00::/7 — ULA.
+    if (b0 === 0xfc || b0 === 0xfd) return true;
+    // fe80::/10 — link-local.
+    if (b0 === 0xfe && (b1 & 0xc0) === 0x80) return true;
+    // ff00::/8 — multicast.
+    if (b0 === 0xff) return true;
+    // 2001:db8::/32 — documentação.
+    if (b0 === 0x20 && b1 === 0x01 && bytes[2] === 0x0d && bytes[3] === 0xb8)
+      return true;
+    // 64:ff9b::/96 — NAT64 well-known.
+    if (
+      b0 === 0x00 &&
+      b1 === 0x64 &&
+      bytes[2] === 0xff &&
+      bytes[3] === 0x9b &&
+      bytes.slice(4, 12).every((b) => b === 0)
+    ) {
+      return true;
+    }
+    // 100::/64 — discard-only.
+    if (b0 === 0x01 && b1 === 0x00 && bytes.slice(2, 8).every((b) => b === 0)) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /** Converte IPv6 (formato textual) em 16 bytes. null se inválido. */
+  private parseIPv6(ip: string): number[] | null {
+    const doubleColon = ip.indexOf('::');
+    if (doubleColon !== -1 && ip.indexOf('::', doubleColon + 1) !== -1) {
+      return null;
+    }
+
+    const half = (part: string): number[] | null => {
+      if (!part) return [];
+      const groups = part.split(':');
+      if (groups.length > 4) return null;
+      const bytes: number[] = [];
+      for (const g of groups) {
+        const n = parseInt(g, 16);
+        if (Number.isNaN(n) || g.length === 0 || g.length > 4) return null;
+        bytes.push((n >> 8) & 0xff, n & 0xff);
+      }
+      return bytes;
+    };
+
+    let head: number[];
+    let tail: number[];
+    if (doubleColon === -1) {
+      head = half(ip)!;
+      tail = [];
+    } else {
+      head = half(ip.slice(0, doubleColon))!;
+      tail = half(ip.slice(doubleColon + 2))!;
+    }
+
+    if (!head || !tail) return null;
+
+    const total = head.length + tail.length;
+    if (total > 16) return null;
+
+    const zeros = 16 - total;
+    return [...head, ...new Array<number>(zeros).fill(0), ...tail];
   }
 
   private originOf(url: string): string {
@@ -388,7 +586,7 @@ export class EmbedService {
     for (const { tag, attr } of RESOURCE_ATTRS) {
       const re = new RegExp(
         `<${tag}\\b([^>]*?)\\s${attr}\\s*=\\s*` +
-          `(["\']?)\\s*([^"\'\\s>]+)\\s*\\2`,
+          `(["']?)\\s*([^"'\\s>]+)\\s*\\2`,
         'gi',
       );
       out = out.replace(re, (match, pre: string, _q: string, val: string) => {

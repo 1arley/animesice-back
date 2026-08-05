@@ -8,7 +8,13 @@ import {
   ValidationPipe,
   BadRequestException,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiQuery,
+  ApiBearerAuth,
+} from '@nestjs/swagger';
 import express from 'express';
 import { EmbedService } from '@/embed/embed.service';
 import { ScrapeService } from '@/embed/scrape/scrape.service';
@@ -26,8 +32,13 @@ const FORBIDDEN_RESPONSE_HEADERS: ReadonlySet<string> = new Set([
   'transfer-encoding',
 ]);
 
-/** Base do backend para envolver URLs externas em proxy de mídia. */
-const MEDIA_PROXY_BASE = '/embed/media?url=';
+/**
+ * CSP p/ HTML proxyado: sandbox sem allow-same-origin => origem opaca no
+ * navegador, sem acesso a cookies/localStorage da API nem a fetch() same-origin.
+ * allow-scripts preserva o player (video.js) funcionando.
+ */
+const PROXY_CSP_SANDBOX =
+  'sandbox allow-scripts allow-forms allow-popups allow-modals';
 
 @ApiTags('embed')
 @Controller('embed')
@@ -38,6 +49,8 @@ export class EmbedController {
   ) {}
 
   @Get('proxy')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
   @ApiOperation({
     summary:
       'Proxy de HTML removendo X-Frame-Options/CSP para iframe embed (ex: animefire.io)',
@@ -82,6 +95,11 @@ export class EmbedController {
       res.removeHeader(forbidden);
     }
 
+    // Proteção de XSS no domínio da API: HTML de terceiros roda em sandbox
+    // (origem opaca) e o tipo de conteúdo não pode ser reinterpretado.
+    res.setHeader('Content-Security-Policy', PROXY_CSP_SANDBOX);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+
     res.setHeader(
       'Content-Type',
       result.headers['content-type'] ?? 'text/html; charset=utf-8',
@@ -91,6 +109,8 @@ export class EmbedController {
   }
 
   @Get('media')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
   @ApiOperation({
     summary:
       'Proxy de mídia (.mp4/.m3u8/.ts): injeta Referer/Origin/UA anti-hotlinking e faz streaming com Range.',
@@ -136,6 +156,7 @@ export class EmbedController {
     // Streaming: pipe do body (Readable) p/ a resposta Express.
     const { pipeline } = await import('stream/promises');
     res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
 
     // Em erro de stream (cliente desconecta), apenas finaliza sem crashar.
     pipeline(result.body, res).catch(() => {

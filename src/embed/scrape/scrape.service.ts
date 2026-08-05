@@ -1,12 +1,21 @@
 // src/embed/scrape/scrape.service.ts
 import { Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { chromium } from 'playwright';
-import type { Page, BrowserContext } from 'playwright';
+import type { Page, BrowserContext, Browser } from 'playwright';
 import { ScrapeSource, ScrapeEpisodeResult } from './scrape-source.interface';
 import { AnimefireScrapeSource } from './animefire.source';
 import { AnimesonlineccScrapeSource } from './animesonlinecc.source';
 import { MeusanimesScrapeSource } from './meusanimes.source';
 import { PrismaService } from '@/prisma/prisma.service';
+
+/** Subconjunto do DOM usado no diagnostico do scraping. */
+interface EmbedDocument {
+  querySelectorAll(selector: string): Iterable<{
+    src?: string;
+    tagName?: string;
+    className?: string;
+  }>;
+}
 
 /**
  * Envolve URLs de midia externas (.mp4/.m3u8/videoplayback) em proxy de midia
@@ -37,7 +46,8 @@ function wrapMediaUrl(raw: string, episodeUrl: string): string {
   if (!/^https?:\/\//i.test(trimmed)) return trimmed;
   const ref = originOf(episodeUrl);
   const refererParam = ref ? `&referer=${encodeURIComponent(ref)}` : '';
-  return `/embed/media?url=${encodeURIComponent(trimmed)}${refererParam}`;
+  const apiPrefix = process.env.API_PREFIX || 'api';
+  return `/${apiPrefix}/embed/media?url=${encodeURIComponent(trimmed)}${refererParam}`;
 }
 
 /**
@@ -82,6 +92,8 @@ const PLAYER_SELECTORS = [
 @Injectable()
 export class ScrapeService {
   private readonly sources: ScrapeSource[];
+  private activeScrapes = 0;
+  private readonly MAX_CONCURRENT_SCRAPES = 2;
 
   constructor(
     animefire: AnimefireScrapeSource,
@@ -104,18 +116,36 @@ export class ScrapeService {
   ): Promise<ScrapeEpisodeResult> {
     const source = this.resolveSource(episodeUrl, sourceId);
 
+    // Limita a concorrência de chromium headless (memória/CPU do host).
+    if (this.activeScrapes >= this.MAX_CONCURRENT_SCRAPES) {
+      throw new ServiceUnavailableException(
+        'Muitas extrações simultâneas. Tente novamente em instantes.',
+      );
+    }
+    this.activeScrapes += 1;
+
     // Caminho HTTP puro: se o adapter implementa extractHttp, pula o Playwright.
     // Relevante p/ animefire (extraível por fetch, sem Cloudflare/browser em prod).
     if (typeof source.extractHttp === 'function') {
-      const raw = await source.extractHttp({ episodeUrl, ua: UA_DESKTOP });
-      return {
-        videos: raw.videos.map((v) => wrapMediaUrl(v, episodeUrl)),
-        iframes: [],
-        cloudflare: false,
-      };
+      try {
+        const raw = await source.extractHttp({ episodeUrl, ua: UA_DESKTOP });
+        return {
+          videos: raw.videos.map((v) => wrapMediaUrl(v, episodeUrl)),
+          iframes: [],
+          cloudflare: false,
+        };
+      } finally {
+        this.activeScrapes -= 1;
+      }
     }
 
-    const browser = await chromium.launch({ headless: true });
+    let browser: Browser;
+    try {
+      browser = await chromium.launch({ headless: true });
+    } catch (err) {
+      this.activeScrapes -= 1;
+      throw err;
+    }
     const context = await browser.newContext({
       userAgent: UA_DESKTOP,
       locale: 'pt-BR',
@@ -175,22 +205,26 @@ export class ScrapeService {
 
       // Diagnostico: dump dos iframes e botoes de play candidatos.
       const diagIframes = await page
-        .evaluate(() =>
-          Array.from(
-            (globalThis as any).document.querySelectorAll('iframe[src]'),
-          ).map((e: any) => e.src),
-        )
+        .evaluate(() => {
+          const d = (globalThis as unknown as { document: EmbedDocument })
+            .document;
+          return Array.from(d.querySelectorAll('iframe[src]')).map(
+            (e) => e.src,
+          );
+        })
         .catch(() => []);
       const diagButtons = await page
         .evaluate(() => {
+          const d = (globalThis as unknown as { document: EmbedDocument })
+            .document;
           const all = Array.from(
-            (globalThis as any).document.querySelectorAll(
+            d.querySelectorAll(
               '[class*="play" i],[aria-label*="play" i],[aria-label*="reproduzir" i],.ytp-cued-thumbnail-overlay,.ytp-large-play-button',
             ),
           );
           return all
             .slice(0, 10)
-            .map((e: any) => ({ tag: e.tagName, cls: String(e.className) }));
+            .map((e) => ({ tag: e.tagName, cls: String(e.className) }));
         })
         .catch(() => []);
 
@@ -254,6 +288,7 @@ export class ScrapeService {
     } finally {
       await context.close().catch(() => undefined);
       await browser.close().catch(() => undefined);
+      this.activeScrapes -= 1;
     }
   }
 
