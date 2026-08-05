@@ -17,18 +17,6 @@ export class AnimeController {
     return this.animeService.findAll(page, limit);
   }
 
-  @Get('latest-episodes')
-  @ApiOperation({ summary: 'Últimos episódios adicionados' })
-  @ApiResponse({
-    status: 200,
-    description: 'Últimos episódios retornados com sucesso',
-  })
-  findLatestEpisodes(@Query('limit') limit: string) {
-    return this.animeService.findLatestEpisodes(
-      parseInt(limit ?? '12', 10) || 12,
-    );
-  }
-
   @Get(':slug')
   @ApiOperation({ summary: 'Buscar anime por slug' })
   @ApiResponse({ status: 200, description: 'Anime encontrado' })

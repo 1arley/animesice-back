@@ -14,10 +14,7 @@ export class AnimeService {
     const pageNumber = parsePageParam(page, DEFAULT_PAGE);
     const limitNumber = parsePageParam(limit, DEFAULT_PAGE_SIZE);
     const skip = (pageNumber - 1) * limitNumber;
-    const orderBy =
-      page === undefined
-        ? { rating: 'desc' as const }
-        : { createdAt: 'desc' as const };
+    const orderBy = { rating: 'desc' as const };
 
     const [animes, total] = await this.prisma.$transaction([
       this.prisma.anime.findMany({
@@ -71,15 +68,5 @@ export class AnimeService {
     }
 
     return anime.episodes;
-  }
-
-  async findLatestEpisodes(limit: number = 12) {
-    const episodes = await this.prisma.episode.findMany({
-      take: limit,
-      orderBy: { dateModified: 'desc' },
-      include: { anime: true },
-    });
-
-    return episodes;
   }
 }

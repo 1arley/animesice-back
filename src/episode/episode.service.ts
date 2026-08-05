@@ -51,6 +51,7 @@ export class EpisodeService {
   async findLatest(limit: number = 12) {
     return this.prisma.episode.findMany({
       take: limit,
+      where: { dateModified: { not: null } },
       orderBy: { dateModified: 'desc' },
       include: { anime: true },
     });

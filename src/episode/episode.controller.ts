@@ -1,6 +1,7 @@
-import { Controller, Get, Param, Query } from '@nestjs/common';
+import { Controller, Get, Param, ParseIntPipe, Query } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { EpisodeService } from '@/episode/episode.service';
+import { MAX_PAGE_SIZE } from '@/common/constants';
 
 @ApiTags('episode')
 @Controller('episode')
@@ -11,7 +12,9 @@ export class EpisodeController {
   @ApiOperation({ summary: 'Últimos episódios adicionados' })
   @ApiResponse({ status: 200, description: 'Últimos episódios' })
   findLatest(@Query('limit') limit: string) {
-    return this.episodeService.findLatest(parseInt(limit ?? '12', 10) || 12);
+    const parsed = parseInt(limit ?? '12', 10);
+    const clamped = Number.isNaN(parsed) || parsed < 1 ? 12 : parsed;
+    return this.episodeService.findLatest(Math.min(clamped, MAX_PAGE_SIZE));
   }
 
   @Get(':slug')
@@ -28,11 +31,8 @@ export class EpisodeController {
   @ApiResponse({ status: 404, description: 'Anime ou episódio não encontrado' })
   findByAnimeSlugAndNumber(
     @Param('slug') slug: string,
-    @Param('number') number: string,
+    @Param('number', ParseIntPipe) number: number,
   ) {
-    return this.episodeService.findByAnimeSlugAndNumber(
-      slug,
-      parseInt(number, 10),
-    );
+    return this.episodeService.findByAnimeSlugAndNumber(slug, number);
   }
 }
