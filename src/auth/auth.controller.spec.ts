@@ -92,7 +92,7 @@ describe('AuthController', () => {
       password: 'Password123!',
     };
 
-    it('should login successfully and return tokens', async () => {
+    it('should login successfully and set auth cookies', async () => {
       const mockResponse = {
         user: {
           id: '1',
@@ -110,8 +110,14 @@ describe('AuthController', () => {
 
       const result = await controller.login(loginDto, mockRes);
 
-      expect(result).toEqual(mockResponse);
+      expect(result).toEqual({ user: mockResponse.user });
       expect(authService.login).toHaveBeenCalledWith(loginDto);
+      expect(authService.setAuthCookies).toHaveBeenCalledWith(
+        mockRes,
+        'fake-access-token',
+        'fake-refresh-token',
+        'USER',
+      );
     });
 
     it('should propagate UnauthorizedException when credentials are invalid', async () => {
@@ -138,7 +144,7 @@ describe('AuthController', () => {
   });
 
   describe('refreshTokens', () => {
-    it('should refresh tokens successfully', async () => {
+    it('should refresh tokens successfully and set auth cookies', async () => {
       const mockRequest = {
         user: {
           id: '1',
@@ -150,6 +156,14 @@ describe('AuthController', () => {
       const mockResponse = {
         access_token: 'new-access-token',
         refresh_token: 'new-refresh-token',
+        user: {
+          id: '1',
+          name: 'Test User',
+          email: 'test@example.com',
+          role: 'USER',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
       };
 
       mockAuthService.refreshTokens.mockResolvedValue(mockResponse);
@@ -159,8 +173,14 @@ describe('AuthController', () => {
         mockRes,
       );
 
-      expect(result).toEqual(mockResponse);
+      expect(result).toEqual({ user: mockResponse.user });
       expect(authService.refreshTokens).toHaveBeenCalledWith('1');
+      expect(authService.setAuthCookies).toHaveBeenCalledWith(
+        mockRes,
+        'new-access-token',
+        'new-refresh-token',
+        'USER',
+      );
     });
 
     it('should handle missing user data in request', async () => {

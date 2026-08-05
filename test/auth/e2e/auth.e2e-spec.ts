@@ -1,6 +1,7 @@
 import request from 'supertest';
+import type { IncomingHttpHeaders } from 'node:http';
 import {
-  getApp,
+  getHttpServer,
   getPrismaService,
   createTestUser,
 } from '@test/setup/e2e.setup';
@@ -21,21 +22,33 @@ interface RegisterResponse {
   user: UserResponse;
 }
 
+// Tokens sao entregues em cookies httpOnly; o body so expoe o user.
 interface LoginResponse {
-  access_token: string;
-  refresh_token: string;
   user: UserResponse;
-}
-
-interface RefreshResponse {
-  access_token: string;
-  refresh_token: string;
 }
 
 interface ErrorResponse {
   message: string | string[];
   error: string;
   statusCode: number;
+}
+
+/** Extrai um cookie de um header `set-cookie` (ex: refresh_token do login). */
+function getSetCookie(
+  headers: IncomingHttpHeaders,
+  name: string,
+): string | undefined {
+  const setCookie = headers['set-cookie'];
+  if (!setCookie) return undefined;
+  const cookies = Array.isArray(setCookie) ? setCookie : [setCookie];
+  for (const cookie of cookies) {
+    const pair = cookie.split(';')[0];
+    if (!pair) continue;
+    const eq = pair.indexOf('=');
+    if (eq === -1) continue;
+    if (pair.slice(0, eq).trim() === name) return pair.slice(eq + 1);
+  }
+  return undefined;
 }
 
 describe('AuthController (e2e)', () => {
@@ -47,7 +60,6 @@ describe('AuthController (e2e)', () => {
 
   describe('POST /auth/register', () => {
     it('should register a new user successfully', async () => {
-      const app = getApp();
       const prisma = getPrismaService();
 
       const registerDto = {
@@ -56,7 +68,7 @@ describe('AuthController (e2e)', () => {
         password: 'Password123!',
       };
 
-      const response = await request(app.getHttpServer())
+      const response = await request(getHttpServer())
         .post('/auth/register')
         .send(registerDto)
         .expect(201);
@@ -79,7 +91,6 @@ describe('AuthController (e2e)', () => {
     });
 
     it('should return 409 Conflict when email already exists', async () => {
-      const app = getApp();
       await createTestUser('existing@example.com');
 
       const registerDto = {
@@ -88,7 +99,7 @@ describe('AuthController (e2e)', () => {
         password: 'Password123!',
       };
 
-      const response = await request(app.getHttpServer())
+      const response = await request(getHttpServer())
         .post('/auth/register')
         .send(registerDto)
         .expect(409);
@@ -100,14 +111,12 @@ describe('AuthController (e2e)', () => {
     });
 
     it('should return 400 when name is missing', async () => {
-      const app = getApp();
-
       const registerDto = {
         email: 'test@example.com',
         password: 'Password123!',
       };
 
-      const response = await request(app.getHttpServer())
+      const response = await request(getHttpServer())
         .post('/auth/register')
         .send(registerDto)
         .expect(400);
@@ -117,15 +126,13 @@ describe('AuthController (e2e)', () => {
     });
 
     it('should validate email format', async () => {
-      const app = getApp();
-
       const invalidDto = {
         name: 'Test User',
         email: 'invalid-email',
         password: 'Password123!',
       };
 
-      const response = await request(app.getHttpServer())
+      const response = await request(getHttpServer())
         .post('/auth/register')
         .send(invalidDto)
         .expect(400);
@@ -135,15 +142,13 @@ describe('AuthController (e2e)', () => {
     });
 
     it('should validate password strength', async () => {
-      const app = getApp();
-
       const weakPasswordDto = {
         name: 'Test User',
         email: 'test@example.com',
         password: 'weak',
       };
 
-      const response = await request(app.getHttpServer())
+      const response = await request(getHttpServer())
         .post('/auth/register')
         .send(weakPasswordDto)
         .expect(400);
@@ -153,13 +158,11 @@ describe('AuthController (e2e)', () => {
     });
 
     it('should handle missing required fields', async () => {
-      const app = getApp();
-
       const incompleteDto = {
         password: 'Password123!',
       };
 
-      const response = await request(app.getHttpServer())
+      const response = await request(getHttpServer())
         .post('/auth/register')
         .send(incompleteDto)
         .expect(400);
@@ -175,38 +178,33 @@ describe('AuthController (e2e)', () => {
     });
 
     it('should login successfully with valid credentials', async () => {
-      const app = getApp();
-
       const loginDto = {
         email: 'user@example.com',
         password: 'Password123!',
       };
 
-      const response = await request(app.getHttpServer())
+      const response = await request(getHttpServer())
         .post('/auth/login')
         .send(loginDto)
         .expect(200);
 
       const body = response.body as LoginResponse;
 
-      expect(body).toHaveProperty('access_token');
-      expect(body).toHaveProperty('refresh_token');
       expect(body.user).toBeDefined();
       expect(body.user.email).toBe(loginDto.email);
-      expect(body.user).not.toHaveProperty('password');
-      expect(typeof body.access_token).toBe('string');
-      expect(body.access_token.length).toBeGreaterThan(0);
+      expect(body).not.toHaveProperty('access_token');
+      expect(body).not.toHaveProperty('refresh_token');
+      expect(getSetCookie(response.headers, 'access_token')).toBeDefined();
+      expect(getSetCookie(response.headers, 'refresh_token')).toBeDefined();
     });
 
     it('should return 401 Unauthorized with wrong password', async () => {
-      const app = getApp();
-
       const loginDto = {
         email: 'user@example.com',
         password: 'WrongPassword123!',
       };
 
-      const response = await request(app.getHttpServer())
+      const response = await request(getHttpServer())
         .post('/auth/login')
         .send(loginDto)
         .expect(401);
@@ -216,14 +214,12 @@ describe('AuthController (e2e)', () => {
     });
 
     it('should return 401 Unauthorized for non-existent user', async () => {
-      const app = getApp();
-
       const loginDto = {
         email: 'nonexistent@example.com',
         password: 'Password123!',
       };
 
-      const response = await request(app.getHttpServer())
+      const response = await request(getHttpServer())
         .post('/auth/login')
         .send(loginDto)
         .expect(401);
@@ -233,17 +229,15 @@ describe('AuthController (e2e)', () => {
     });
 
     it('should prevent timing attacks (similar response time for user exists/not exists)', async () => {
-      const app = getApp();
-
       const start1 = Date.now();
-      await request(app.getHttpServer())
+      await request(getHttpServer())
         .post('/auth/login')
         .send({ email: 'user@example.com', password: 'WrongPassword123!' })
         .expect(401);
       const time1 = Date.now() - start1;
 
       const start2 = Date.now();
-      await request(app.getHttpServer())
+      await request(getHttpServer())
         .post('/auth/login')
         .send({ email: 'nonexistent@example.com', password: 'Password123!' })
         .expect(401);
@@ -254,9 +248,7 @@ describe('AuthController (e2e)', () => {
     });
 
     it('should handle empty credentials', async () => {
-      const app = getApp();
-
-      const response = await request(app.getHttpServer())
+      const response = await request(getHttpServer())
         .post('/auth/login')
         .send({ email: '', password: '' });
 
@@ -266,38 +258,35 @@ describe('AuthController (e2e)', () => {
   });
 
   describe('POST /auth/refresh', () => {
-    let refreshToken: string;
+    let refreshToken: string | undefined;
 
     beforeEach(async () => {
-      const app = getApp();
       await createTestUser('user@example.com', 'Password123!', 'Test User');
 
-      const loginResponse = await request(app.getHttpServer())
+      const loginResponse = await request(getHttpServer())
         .post('/auth/login')
         .send({ email: 'user@example.com', password: 'Password123!' })
         .expect(200);
 
-      refreshToken = (loginResponse.body as LoginResponse).refresh_token;
+      refreshToken = getSetCookie(loginResponse.headers, 'refresh_token');
     });
 
     it('should refresh tokens successfully with valid refresh token', async () => {
-      const app = getApp();
-
-      const response = await request(app.getHttpServer())
+      const response = await request(getHttpServer())
         .post('/auth/refresh')
         .set('Authorization', `Bearer ${refreshToken}`)
         .expect(201);
 
-      const body = response.body as RefreshResponse;
-      expect(body).toHaveProperty('access_token');
-      expect(body).toHaveProperty('refresh_token');
-      expect(body.access_token).not.toBe(refreshToken);
+      const body = response.body as LoginResponse;
+      expect(body.user).toBeDefined();
+
+      const newRefreshToken = getSetCookie(response.headers, 'refresh_token');
+      expect(newRefreshToken).toBeDefined();
+      expect(newRefreshToken).not.toBe(refreshToken);
     });
 
     it('should return 401 Unauthorized without refresh token', async () => {
-      const app = getApp();
-
-      const response = await request(app.getHttpServer())
+      const response = await request(getHttpServer())
         .post('/auth/refresh')
         .expect(401);
 
@@ -307,9 +296,7 @@ describe('AuthController (e2e)', () => {
     });
 
     it('should return 401 Unauthorized with invalid refresh token', async () => {
-      const app = getApp();
-
-      const response = await request(app.getHttpServer())
+      const response = await request(getHttpServer())
         .post('/auth/refresh')
         .set('Authorization', 'Bearer invalid-token')
         .expect(401);
@@ -320,12 +307,10 @@ describe('AuthController (e2e)', () => {
     });
 
     it('should return 401 Unauthorized with expired refresh token', async () => {
-      const app = getApp();
-
       const expiredToken =
         'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c';
 
-      const response = await request(app.getHttpServer())
+      const response = await request(getHttpServer())
         .post('/auth/refresh')
         .set('Authorization', `Bearer ${expiredToken}`)
         .expect(401);
@@ -336,24 +321,21 @@ describe('AuthController (e2e)', () => {
     });
 
     it('should prevent refresh token reuse after rotation', async () => {
-      const app = getApp();
-
-      const response1 = await request(app.getHttpServer())
+      const response1 = await request(getHttpServer())
         .post('/auth/refresh')
         .set('Authorization', `Bearer ${refreshToken}`)
         .expect(201);
 
-      const newRefreshToken = (response1.body as RefreshResponse).refresh_token;
+      const newRefreshToken = getSetCookie(response1.headers, 'refresh_token');
       expect(newRefreshToken).toBeDefined();
+      expect(newRefreshToken).not.toBe(refreshToken);
 
-      await request(app.getHttpServer())
+      await request(getHttpServer())
         .post('/auth/refresh')
         .set('Authorization', `Bearer ${newRefreshToken}`)
         .expect(201);
 
-      expect(refreshToken).not.toBe(newRefreshToken);
-
-      const oldTokenResponse = await request(app.getHttpServer())
+      const oldTokenResponse = await request(getHttpServer())
         .post('/auth/refresh')
         .set('Authorization', `Bearer ${refreshToken}`)
         .expect(401);
@@ -366,9 +348,7 @@ describe('AuthController (e2e)', () => {
 
   describe('Security scenarios', () => {
     it('should not expose user existence through login error messages', async () => {
-      const app = getApp();
-
-      const loginResponse = await request(app.getHttpServer())
+      const loginResponse = await request(getHttpServer())
         .post('/auth/login')
         .send({ email: 'nonexistent@example.com', password: 'Password123!' })
         .expect(401);
@@ -379,13 +359,12 @@ describe('AuthController (e2e)', () => {
     });
 
     it('should have consistent responses under load', async () => {
-      const app = getApp();
       await createTestUser('test@example.com', 'Password123!', 'Test User');
 
       const requests = Array(5)
         .fill(null)
         .map(() =>
-          request(app.getHttpServer()).post('/auth/login').send({
+          request(getHttpServer()).post('/auth/login').send({
             email: 'test@example.com',
             password: 'Password123!',
           }),
@@ -402,11 +381,10 @@ describe('AuthController (e2e)', () => {
     });
 
     it('should store passwords securely (hashed)', async () => {
-      const app = getApp();
       const prisma = getPrismaService();
 
       const password = 'Password123!';
-      await request(app.getHttpServer())
+      await request(getHttpServer())
         .post('/auth/register')
         .send({
           name: 'Test User',
@@ -429,15 +407,13 @@ describe('AuthController (e2e)', () => {
 
   describe('Integration scenarios', () => {
     it('should allow full auth flow: register -> login -> refresh', async () => {
-      const app = getApp();
-
       const registerDto = {
         name: 'Integration User',
         email: 'integration@example.com',
         password: 'Password123!',
       };
 
-      const registerResponse = await request(app.getHttpServer())
+      const registerResponse = await request(getHttpServer())
         .post('/auth/register')
         .send(registerDto)
         .expect(201);
@@ -446,7 +422,7 @@ describe('AuthController (e2e)', () => {
         registerDto.email,
       );
 
-      const loginResponse = await request(app.getHttpServer())
+      const loginResponse = await request(getHttpServer())
         .post('/auth/login')
         .send({
           email: registerDto.email,
@@ -454,23 +430,24 @@ describe('AuthController (e2e)', () => {
         })
         .expect(200);
 
-      const { access_token, refresh_token } =
-        loginResponse.body as LoginResponse;
-      expect(access_token).toBeDefined();
-      expect(refresh_token).toBeDefined();
+      const loginBody = loginResponse.body as LoginResponse;
+      expect(loginBody.user).toBeDefined();
 
-      const refreshResponse = await request(app.getHttpServer())
+      const refreshToken = getSetCookie(loginResponse.headers, 'refresh_token');
+      expect(refreshToken).toBeDefined();
+
+      const refreshResponse = await request(getHttpServer())
         .post('/auth/refresh')
-        .set('Authorization', `Bearer ${refresh_token}`)
+        .set('Authorization', `Bearer ${refreshToken}`)
         .expect(201);
 
-      const newAccessToken = (refreshResponse.body as RefreshResponse)
-        .access_token;
-      expect(newAccessToken).toBeDefined();
+      expect((refreshResponse.body as LoginResponse).user).toBeDefined();
+      expect(
+        getSetCookie(refreshResponse.headers, 'access_token'),
+      ).toBeDefined();
     });
 
     it('should handle concurrent auth requests', async () => {
-      const app = getApp();
       const prisma = getPrismaService();
 
       const baseEmail = 'concurrent';
@@ -478,7 +455,7 @@ describe('AuthController (e2e)', () => {
         .fill(null)
         .map((_, index) => {
           const email = `${baseEmail}${index}@example.com`;
-          return request(app.getHttpServer())
+          return request(getHttpServer())
             .post('/auth/register')
             .send({
               name: `User ${index}`,

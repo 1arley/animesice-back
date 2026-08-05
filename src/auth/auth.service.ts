@@ -67,15 +67,24 @@ export class AuthService {
     return { ...opts, maxAge };
   }
 
-  setAuthCookies(res: Response, accessToken: string, refreshToken: string) {
+  setAuthCookies(
+    res: Response,
+    accessToken: string,
+    refreshToken: string,
+    role: string,
+  ) {
     res.cookie('access_token', accessToken, this.getCookieOptions());
     res.cookie('refresh_token', refreshToken, this.getRefreshCookieOptions());
+
+    const roleOpts = { ...this.getCookieOptions(), httpOnly: false };
+    res.cookie('role', role, roleOpts);
   }
 
   clearAuthCookies(res: Response) {
     const opts = this.getCookieOptions();
     res.clearCookie('access_token', opts);
     res.clearCookie('refresh_token', this.getRefreshCookieOptions());
+    res.clearCookie('role', { ...opts, httpOnly: false });
   }
 
   // ── Auth flows ──────────────────────────────────────────────────────
@@ -156,7 +165,12 @@ export class AuthService {
     await this.revokeAllUserRefreshTokens(userId);
     await this.createRefreshToken(userId, tokens.refresh_token);
 
-    return tokens;
+    const { password: _, ...userWithoutPassword } = user;
+
+    return {
+      ...tokens,
+      user: userWithoutPassword,
+    };
   }
 
   // ── Settings: change email ──────────────────────────────────────────
@@ -312,6 +326,77 @@ export class AuthService {
 
     const { password: _, ...userWithoutPassword } = user;
     return userWithoutPassword;
+  }
+
+  // ── Password reset (forgot/reset) ───────────────────────────────────
+
+  async forgotPassword(email: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { email },
+    });
+
+    if (!user) {
+      return {
+        message: 'Se o email existir, um link de redefinição foi enviado.',
+      };
+    }
+
+    await this.prisma.passwordResetToken.deleteMany({
+      where: { userId: user.id },
+    });
+
+    const token = crypto.randomBytes(32).toString('hex');
+    const tokenHash = this.hashToken(token);
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
+
+    await this.prisma.passwordResetToken.create({
+      data: {
+        token: tokenHash,
+        userId: user.id,
+        expiresAt,
+      },
+    });
+
+    const resetUrl = `${this.configService.get<string>('FRONTEND_URL') || 'http://localhost:3000'}/redefinir-senha?token=${token}`;
+
+    void resetUrl;
+
+    return {
+      message: 'Se o email existir, um link de redefinição foi enviado.',
+      token,
+    };
+  }
+
+  async resetPassword(token: string, newPassword: string) {
+    const tokenHash = this.hashToken(token);
+    const record = await this.prisma.passwordResetToken.findUnique({
+      where: { token: tokenHash },
+    });
+
+    if (!record) {
+      throw new BadRequestException('Token de redefinição inválido.');
+    }
+
+    if (record.expiresAt < new Date()) {
+      await this.prisma.passwordResetToken.delete({
+        where: { id: record.id },
+      });
+      throw new BadRequestException('Token de redefinição expirado.');
+    }
+
+    const hashed = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+    await this.prisma.user.update({
+      where: { id: record.userId },
+      data: { password: hashed },
+    });
+
+    await this.prisma.passwordResetToken.delete({
+      where: { id: record.id },
+    });
+
+    await this.revokeAllUserRefreshTokens(record.userId);
+
+    return { message: 'Senha redefinida com sucesso.' };
   }
 
   // ── Token internals ─────────────────────────────────────────────────

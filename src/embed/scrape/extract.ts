@@ -12,6 +12,33 @@ export function keepVideoUrls(urls: string[]): string[] {
 }
 
 /**
+ * Tipos minimos do DOM usados dentro do page.evaluate (contexto do browser).
+ * O tsconfig nao inclui a lib "DOM"; estas interfaces tipam apenas o que a
+ * extracao usa, sem recorrer a `any`.
+ */
+interface SourceElementLike {
+  getAttribute(name: string): string | null;
+}
+
+interface NodeListLike<T> {
+  forEach(callbackfn: (value: T) => void): void;
+}
+
+interface VideoElementLike extends SourceElementLike {
+  readonly currentSrc: string;
+  readonly src: string;
+  querySelectorAll(selectors: string): NodeListLike<SourceElementLike>;
+}
+
+interface ExtractDocument {
+  querySelectorAll(selectors: 'video'): NodeListLike<VideoElementLike>;
+  querySelectorAll(selectors: 'source[src]'): NodeListLike<SourceElementLike>;
+  querySelectorAll(selectors: 'iframe[src]'): NodeListLike<SourceElementLike>;
+}
+
+declare const document: ExtractDocument;
+
+/**
  * Extrai URLs de video do DOM: video.js seta currentSrc (nao atributo src).
  * Pega currentSrc, src e <source src>. Dedupe.
  */
@@ -20,22 +47,18 @@ export async function extractVideoElements(page: Page): Promise<string[]> {
   try {
     return await page.evaluate(() => {
       const videos: string[] = [];
-      (globalThis as any).document
-        .querySelectorAll('video')
-        .forEach((v: any) => {
-          const src = v.currentSrc || v.getAttribute('src') || v.src;
-          if (src) videos.push(src);
-          v.querySelectorAll('source[src]').forEach((s: any) => {
-            const ss = s.getAttribute('src');
-            if (ss) videos.push(ss);
-          });
-        });
-      (globalThis as any).document
-        .querySelectorAll('source[src]')
-        .forEach((s: any) => {
+      document.querySelectorAll('video').forEach((v) => {
+        const src = v.currentSrc || v.getAttribute('src') || v.src;
+        if (src) videos.push(src);
+        v.querySelectorAll('source[src]').forEach((s) => {
           const ss = s.getAttribute('src');
           if (ss) videos.push(ss);
         });
+      });
+      document.querySelectorAll('source[src]').forEach((s) => {
+        const ss = s.getAttribute('src');
+        if (ss) videos.push(ss);
+      });
       return [...new Set(videos)];
     });
   } catch {
@@ -49,12 +72,10 @@ export async function extractAllIframes(page: Page): Promise<string[]> {
   try {
     return await page.evaluate(() => {
       const out: string[] = [];
-      (globalThis as any).document
-        .querySelectorAll('iframe[src]')
-        .forEach((el: any) => {
-          const src = el.getAttribute('src');
-          if (src) out.push(src);
-        });
+      document.querySelectorAll('iframe[src]').forEach((el) => {
+        const src = el.getAttribute('src');
+        if (src) out.push(src);
+      });
       return [...new Set(out)];
     });
   } catch {

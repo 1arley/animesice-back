@@ -18,6 +18,8 @@ import { RegisterDto } from '@/auth/dto/register.dto';
 import { ChangeEmailDto } from '@/auth/dto/change-email.dto';
 import { ChangePasswordDto } from '@/auth/dto/change-password.dto';
 import { UpdateProfileDto } from '@/auth/dto/update-profile.dto';
+import { ForgotPasswordDto } from '@/auth/dto/forgot-password.dto';
+import { ResetPasswordDto } from '@/auth/dto/reset-password.dto';
 import { ApiRegisterUser } from '@/auth/swagger/auth.post.register.swagger';
 import { ApiLoginUser } from '@/auth/swagger/auth.post.login.swagger';
 import { ApiRefreshTokens } from '@/auth/swagger/auth.post.refresh.swagger';
@@ -52,8 +54,9 @@ export class AuthController {
       res,
       result.access_token,
       result.refresh_token,
+      result.user.role,
     );
-    return result;
+    return { user: result.user };
   }
 
   @Post('refresh')
@@ -69,8 +72,9 @@ export class AuthController {
       res,
       tokens.access_token,
       tokens.refresh_token,
+      tokens.user.role,
     );
-    return tokens;
+    return { user: tokens.user };
   }
 
   @Post('logout')
@@ -87,6 +91,21 @@ export class AuthController {
     }
     this.authService.clearAuthCookies(res);
     return { message: 'Logout realizado com sucesso.' };
+  }
+
+  // ── Password reset ─────────────────────────────────────────────────
+
+  @Post('forgot-password')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: AUTH_THROTTLE_LIMIT, ttl: 60_000 } })
+  async forgotPassword(@Body() dto: ForgotPasswordDto) {
+    return this.authService.forgotPassword(dto.email);
+  }
+
+  @Post('reset-password')
+  @HttpCode(HttpStatus.OK)
+  async resetPassword(@Body() dto: ResetPasswordDto) {
+    return this.authService.resetPassword(dto.token, dto.newPassword);
   }
 
   // ── Settings endpoints ──────────────────────────────────────────────

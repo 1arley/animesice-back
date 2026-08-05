@@ -27,6 +27,7 @@ model User {
   updatedAt     DateTime      @updatedAt
   refreshTokens RefreshToken[]
   emailChangeTokens EmailChangeToken[]
+  passwordResetTokens PasswordResetToken[]
   comments      Comment[]
 }
 
@@ -48,6 +49,18 @@ model EmailChangeToken {
   userId       String
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   newEmail     String
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model PasswordResetToken {
+  id           String   @id @default(uuid())
+  token        String   @unique
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   expiresAt    DateTime
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt

@@ -1,5 +1,6 @@
 import { Test } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
+import type { Server } from 'node:http';
 import * as bcrypt from 'bcrypt';
 import { AppModule } from '@/app.module';
 import { PrismaService } from '@/prisma/prisma.service';
@@ -48,6 +49,14 @@ afterAll(async () => {
 
 export function getApp(): INestApplication {
   return app;
+}
+
+/**
+ * HTTP server tipado para o supertest. INestApplication#getHttpServer()
+ * retorna `any` no @nestjs/common; o adapter Express expoe o http.Server.
+ */
+export function getHttpServer(): Server {
+  return app.getHttpServer() as Server;
 }
 
 export function getPrismaService(): PrismaService {

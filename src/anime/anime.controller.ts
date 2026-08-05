@@ -8,13 +8,17 @@ export class AnimeController {
   constructor(private readonly animeService: AnimeService) {}
 
   @Get()
-  @ApiOperation({ summary: 'Listar animes (paginado)' })
+  @ApiOperation({ summary: 'Listar animes (paginado, com busca opcional)' })
   @ApiResponse({
     status: 200,
     description: 'Lista de animes retornada com sucesso',
   })
-  findAll(@Query('page') page: string, @Query('limit') limit: string) {
-    return this.animeService.findAll(page, limit);
+  findAll(
+    @Query('page') page: string,
+    @Query('limit') limit: string,
+    @Query('search') search?: string,
+  ) {
+    return this.animeService.findAll(page, limit, search);
   }
 
   @Get(':slug')
