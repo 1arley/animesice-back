@@ -11,6 +11,8 @@ import { ApiTags, ApiBearerAuth, ApiResponse } from '@nestjs/swagger';
 import { UserService } from '@/user/user.service';
 import { ApiGetUserMe } from '@/user/swagger/user.get.me.swagger';
 import { JwtAuthGuard } from '@/auth/jwt-auth.guard';
+import { RolesGuard } from '@/auth/roles.guard';
+import { Roles } from '@/auth/roles.decorators';
 import { ApiFindAllUsers } from '@/user/swagger/user.get.findAll.swagger';
 import {
   DEFAULT_PAGE,
@@ -28,6 +30,8 @@ export class UserController {
 
   @Get()
   @ApiFindAllUsers()
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
   findAll(@Query('page') page: string, @Query('limit') limit: string) {
     const pageNumber = parsePageParam(page, DEFAULT_PAGE);
     const limitNumber = parsePageParam(limit, DEFAULT_PAGE_SIZE);

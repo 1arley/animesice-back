@@ -22,7 +22,7 @@ model User {
   email         String        @unique
   password      String
   name          String?
-  role          String        @default("USER")
+  role          Role          @default(USER)
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
   refreshTokens RefreshToken[]
@@ -73,6 +73,7 @@ model Anime {
   updatedAt   DateTime    @updatedAt
 
   @@index([slug])
+  @@index([rating])
 }
 
 model Episode {
@@ -93,6 +94,7 @@ model Episode {
 
   @@unique([animeId, number])
   @@index([animeId])
+  @@index([dateModified])
 }
 
 model Genre {

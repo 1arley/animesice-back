@@ -54,11 +54,13 @@ export function getPrismaService(): PrismaService {
   return prismaService;
 }
 
+import { Role } from '@prisma/client';
+
 export async function createTestUser(
   email: string = 'test@example.com',
   password: string = 'Test123!',
   name: string = 'Test User',
-  role: string = 'USER',
+  role: Role = Role.USER,
 ) {
   return prismaService.user.create({
     data: {

@@ -1,14 +1,11 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty } from '@nestjs/swagger';
 import {
   IsEmail,
   IsNotEmpty,
   IsString,
   MinLength,
-  IsEnum,
-  IsOptional,
   Matches,
 } from 'class-validator';
-import { Role } from '@prisma/client';
 
 export class CreateUserDto {
   @ApiProperty({
@@ -38,14 +35,4 @@ export class CreateUserDto {
     message: 'A senha deve conter letras e números.',
   })
   password!: string;
-
-  @ApiPropertyOptional({
-    example: 'USER',
-    enum: Role,
-    description: 'Role do usuário dentro do sistema',
-    default: Role.USER,
-  })
-  @IsOptional()
-  @IsEnum(Role, { message: 'Role inválida.' })
-  role?: Role;
 }

@@ -40,7 +40,6 @@ describe('UserService', () => {
       name: 'Test User',
       email: 'test@example.com',
       password: 'Password123!',
-      role: Role.USER,
     };
 
     it('should create a new user successfully', async () => {
@@ -50,7 +49,7 @@ describe('UserService', () => {
         name: createUserDto.name,
         email: createUserDto.email,
         password: hashedPassword,
-        role: createUserDto.role,
+        role: Role.USER,
         createdAt: new Date(),
         updatedAt: new Date(),
       };

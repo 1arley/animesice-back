@@ -6,7 +6,7 @@ import {
 import { PrismaService } from '@/prisma/prisma.service';
 import { CreateUserDto } from '@/dto/create-user.dto';
 import * as bcrypt from 'bcrypt';
-import { DEFAULT_PAGE_SIZE } from '@/common/constants';
+import { BCRYPT_ROUNDS, DEFAULT_PAGE_SIZE } from '@/common/constants';
 import { Role } from '@prisma/client';
 
 @Injectable()
@@ -14,7 +14,7 @@ export class UserService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(createUserDto: CreateUserDto) {
-    const { name, email, password, role } = createUserDto;
+    const { name, email, password } = createUserDto;
 
     const existingUser = await this.prisma.user.findUnique({
       where: { email },
@@ -24,14 +24,14 @@ export class UserService {
       throw new ConflictException('Email já cadastrado.');
     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
+    const hashedPassword = await bcrypt.hash(password, BCRYPT_ROUNDS);
 
     const user = await this.prisma.user.create({
       data: {
         name,
         email,
         password: hashedPassword,
-        role: role || Role.USER,
+        role: Role.USER,
       },
     });
 
