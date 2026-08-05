@@ -14,7 +14,12 @@ describe('AuthController', () => {
     register: jest.fn(),
     login: jest.fn(),
     refreshTokens: jest.fn(),
+    setAuthCookies: jest.fn(),
   };
+
+  const mockRes = {
+    cookie: jest.fn(),
+  } as unknown as import('express').Response;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -103,7 +108,7 @@ describe('AuthController', () => {
 
       mockAuthService.login.mockResolvedValue(mockResponse);
 
-      const result = await controller.login(loginDto);
+      const result = await controller.login(loginDto, mockRes);
 
       expect(result).toEqual(mockResponse);
       expect(authService.login).toHaveBeenCalledWith(loginDto);
@@ -114,7 +119,7 @@ describe('AuthController', () => {
         new UnauthorizedException('Credenciais inválidas.'),
       );
 
-      await expect(controller.login(loginDto)).rejects.toThrow(
+      await expect(controller.login(loginDto, mockRes)).rejects.toThrow(
         UnauthorizedException,
       );
       expect(authService.login).toHaveBeenCalledWith(loginDto);
@@ -126,7 +131,7 @@ describe('AuthController', () => {
         new UnauthorizedException('Credenciais inválidas.'),
       );
 
-      await expect(controller.login(emptyDto)).rejects.toThrow(
+      await expect(controller.login(emptyDto, mockRes)).rejects.toThrow(
         UnauthorizedException,
       );
     });
@@ -151,6 +156,7 @@ describe('AuthController', () => {
 
       const result = await controller.refreshTokens(
         mockRequest as unknown as AuthenticatedRequest,
+        mockRes,
       );
 
       expect(result).toEqual(mockResponse);
@@ -165,6 +171,7 @@ describe('AuthController', () => {
       await expect(
         controller.refreshTokens(
           invalidRequest as unknown as AuthenticatedRequest,
+          mockRes,
         ),
       ).rejects.toThrow(TypeError);
     });
@@ -185,6 +192,7 @@ describe('AuthController', () => {
       await expect(
         controller.refreshTokens(
           mockRequest as unknown as AuthenticatedRequest,
+          mockRes,
         ),
       ).rejects.toThrow(UnauthorizedException);
     });
@@ -228,7 +236,7 @@ describe('AuthController', () => {
         new UnauthorizedException('Credenciais inválidas.'),
       );
 
-      await expect(controller.login(loginDto)).rejects.toThrow(
+      await expect(controller.login(loginDto, mockRes)).rejects.toThrow(
         UnauthorizedException,
       );
       // The error message should be generic, not specific about whether

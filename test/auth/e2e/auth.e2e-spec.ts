@@ -94,7 +94,9 @@ describe('AuthController (e2e)', () => {
         .expect(409);
 
       const body = response.body as ErrorResponse;
-      expect(body.message).toContain('Email já cadastrado');
+      expect(body.message).toContain(
+        'Não foi possível concluir o cadastro com esses dados.',
+      );
     });
 
     it('should return 400 when name is missing', async () => {

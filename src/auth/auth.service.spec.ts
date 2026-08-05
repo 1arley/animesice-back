@@ -150,46 +150,6 @@ describe('AuthService', () => {
     });
   });
 
-  describe('validateUser', () => {
-    it('deve retornar usuário sem senha se ID for válido', async () => {
-      const createdAt = new Date();
-      const updatedAt = new Date();
-      const user = {
-        id: '1',
-        name: 'Test User',
-        email: 'test@example.com',
-        password: 'hashed-password',
-        role: 'USER',
-        createdAt,
-        updatedAt,
-      };
-
-      mockPrismaService.user.findUnique.mockResolvedValue(user);
-
-      const result = await service.validateUser('1');
-
-      expect(result).not.toHaveProperty('password');
-      expect(result).toEqual({
-        id: '1',
-        name: 'Test User',
-        email: 'test@example.com',
-        role: 'USER',
-        createdAt,
-        updatedAt,
-      });
-      expect(prisma.user.findUnique).toHaveBeenCalledWith({
-        where: { id: '1' },
-      });
-    });
-
-    it('deve lançar UnauthorizedException se usuário não existir', async () => {
-      mockPrismaService.user.findUnique.mockResolvedValue(null);
-      await expect(service.validateUser('999')).rejects.toThrow(
-        UnauthorizedException,
-      );
-    });
-  });
-
   describe('refreshTokens', () => {
     it('deve gerar novos tokens para um userId válido', async () => {
       const user = {

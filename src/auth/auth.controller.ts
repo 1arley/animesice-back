@@ -6,10 +6,12 @@ import {
   Req,
   Res,
   Get,
+  Query,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { AuthService } from '@/auth/auth.service';
 import { LoginDto } from '@/auth/dto/login.dto';
 import { RegisterDto } from '@/auth/dto/register.dto';
@@ -24,6 +26,8 @@ import { JwtAuthGuard } from '@/auth/jwt-auth.guard';
 import type { AuthenticatedRequest } from '@/common/interfaces/request.interface';
 import type { Response } from 'express';
 
+const AUTH_THROTTLE_LIMIT = Number(process.env.AUTH_THROTTLE_LIMIT ?? 5);
+
 @ApiTags('auth')
 @Controller('auth')
 export class AuthController {
@@ -31,12 +35,14 @@ export class AuthController {
 
   @Post('register')
   @ApiRegisterUser()
+  @Throttle({ default: { limit: AUTH_THROTTLE_LIMIT, ttl: 60_000 } })
   async register(@Body() registerDto: RegisterDto) {
     return await this.authService.register(registerDto);
   }
 
   @Post('login')
   @ApiLoginUser()
+  @Throttle({ default: { limit: AUTH_THROTTLE_LIMIT, ttl: 60_000 } })
   async login(
     @Body() loginDto: LoginDto,
     @Res({ passthrough: true }) res: Response,
@@ -69,7 +75,16 @@ export class AuthController {
 
   @Post('logout')
   @HttpCode(HttpStatus.OK)
-  logout(@Res({ passthrough: true }) res: Response) {
+  async logout(
+    @Req() req: AuthenticatedRequest,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const refreshToken = req.cookies?.['refresh_token'] as string | undefined;
+    if (refreshToken) {
+      await this.authService
+        .revokeRefreshToken(refreshToken)
+        .catch(() => undefined);
+    }
     this.authService.clearAuthCookies(res);
     return { message: 'Logout realizado com sucesso.' };
   }
@@ -83,12 +98,16 @@ export class AuthController {
     @Body() dto: ChangeEmailDto,
     @Req() req: AuthenticatedRequest,
   ) {
-    return this.authService.requestEmailChange(req.user.id, dto.newEmail);
+    return this.authService.requestEmailChange(
+      req.user.id,
+      dto.newEmail,
+      dto.password,
+    );
   }
 
   @Get('confirm-email')
   @HttpCode(HttpStatus.OK)
-  async confirmEmailChange(@Body('token') token: string) {
+  async confirmEmailChange(@Query('token') token: string) {
     return this.authService.confirmEmailChange(token);
   }
 

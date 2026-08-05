@@ -14,6 +14,7 @@ import { RegisterDto } from '@/auth/dto/register.dto';
 import { ConfigService } from '@nestjs/config';
 import type { StringValue } from 'ms';
 import { Response } from 'express';
+import { BCRYPT_ROUNDS } from '@/common/constants';
 
 @Injectable()
 export class AuthService {
@@ -37,9 +38,14 @@ export class AuthService {
       maxAge = parseInt(expiresIn.slice(0, -1)) * 60 * 1000;
     }
 
+    const explicit = this.configService.get<string>('JWT_COOKIE_SECURE');
+    const secure =
+      explicit === 'true' ||
+      (process.env.NODE_ENV === 'production' && explicit !== 'false');
+
     return {
       httpOnly: true,
-      secure: this.configService.get<string>('JWT_COOKIE_SECURE') === 'true',
+      secure,
       sameSite: (this.configService.get<string>('JWT_COOKIE_SAMESITE') ||
         'lax') as 'lax' | 'strict' | 'none',
       domain: this.configService.get<string>('JWT_COOKIE_DOMAIN') || undefined,
@@ -82,10 +88,12 @@ export class AuthService {
     });
 
     if (userExists) {
-      throw new ConflictException('Email já cadastrado.');
+      throw new ConflictException(
+        'Não foi possível concluir o cadastro com esses dados.',
+      );
     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
+    const hashedPassword = await bcrypt.hash(password, BCRYPT_ROUNDS);
 
     const user = await this.prisma.user.create({
       data: {
@@ -134,19 +142,6 @@ export class AuthService {
     };
   }
 
-  async validateUser(userId: string) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-    });
-
-    if (!user) {
-      throw new UnauthorizedException('Usuário não encontrado.');
-    }
-
-    const { password: _, ...userWithoutPassword } = user;
-    return userWithoutPassword;
-  }
-
   async refreshTokens(userId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -166,13 +161,22 @@ export class AuthService {
 
   // ── Settings: change email ──────────────────────────────────────────
 
-  async requestEmailChange(userId: string, newEmail: string) {
+  async requestEmailChange(
+    userId: string,
+    newEmail: string,
+    currentPassword: string,
+  ) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
     });
 
     if (!user) {
       throw new UnauthorizedException('Usuário não encontrado.');
+    }
+
+    const isMatch = await bcrypt.compare(currentPassword, user.password);
+    if (!isMatch) {
+      throw new BadRequestException('Senha atual incorreta.');
     }
 
     if (user.email === newEmail) {
@@ -191,12 +195,13 @@ export class AuthService {
       where: { userId },
     });
 
-    const token = crypto.randomUUID();
+    const token = crypto.randomBytes(32).toString('hex');
+    const tokenHash = this.hashToken(token);
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
     await this.prisma.emailChangeToken.create({
       data: {
-        token,
+        token: tokenHash,
         userId,
         newEmail,
         expiresAt,
@@ -205,9 +210,9 @@ export class AuthService {
 
     const confirmUrl = `${this.configService.get<string>('FRONTEND_URL') || 'http://localhost:3000'}/settings/confirm-email?token=${token}`;
 
-    console.log(
-      `[email-change] Confirmation link for ${newEmail}: ${confirmUrl}`,
-    );
+    // TODO: enviar por e-mail real. Enquanto não há mailer, o token é
+    // devolvido no corpo como canal de entrega para o frontend.
+    void confirmUrl;
 
     return {
       message:
@@ -217,8 +222,9 @@ export class AuthService {
   }
 
   async confirmEmailChange(token: string) {
+    const tokenHash = this.hashToken(token);
     const record = await this.prisma.emailChangeToken.findUnique({
-      where: { token },
+      where: { token: tokenHash },
     });
 
     if (!record) {
@@ -272,7 +278,13 @@ export class AuthService {
       throw new BadRequestException('Senha atual incorreta.');
     }
 
-    const hashed = await bcrypt.hash(newPassword, 10);
+    if (currentPassword === newPassword) {
+      throw new BadRequestException(
+        'A nova senha deve ser diferente da atual.',
+      );
+    }
+
+    const hashed = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
     await this.prisma.user.update({
       where: { id: userId },
       data: { password: hashed },
@@ -349,7 +361,7 @@ export class AuthService {
       expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
     }
 
-    const hashedToken = crypto.createHash('sha256').update(token).digest('hex');
+    const hashedToken = this.hashToken(token);
 
     await this.prisma.refreshToken.create({
       data: {
@@ -367,18 +379,17 @@ export class AuthService {
   }
 
   async revokeRefreshToken(token: string): Promise<void> {
-    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-    const refreshTokens = await this.prisma.refreshToken.findMany();
+    const tokenHash = this.hashToken(token);
+    const { count } = await this.prisma.refreshToken.deleteMany({
+      where: { token: tokenHash },
+    });
 
-    for (const refreshToken of refreshTokens) {
-      if (tokenHash === refreshToken.token) {
-        await this.prisma.refreshToken.delete({
-          where: { id: refreshToken.id },
-        });
-        return;
-      }
+    if (count === 0) {
+      throw new NotFoundException('Refresh token não encontrado.');
     }
+  }
 
-    throw new NotFoundException('Refresh token não encontrado.');
+  private hashToken(token: string): string {
+    return crypto.createHash('sha256').update(token).digest('hex');
   }
 }
