@@ -103,8 +103,13 @@ export class StreamingService {
 
     const expiresUnix = Math.floor(expiresAt.getTime() / 1000);
 
+    const tokenUrl = new URL(episode.videoUrl);
+    tokenUrl.searchParams.set('token', token);
+    tokenUrl.searchParams.set('expires', String(expiresUnix));
+    tokenUrl.searchParams.set('ip', clientIp);
+
     return {
-      url: `${episode.videoUrl}?token=${token}&expires=${expiresUnix}&ip=${clientIp}`,
+      url: tokenUrl.toString(),
       token,
       expires: expiresUnix,
       ip: clientIp,
