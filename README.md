@@ -30,6 +30,12 @@ Fornecer API robusta para catálogo de animes, episódios, gêneros, streaming d
 
 Consulte a pasta `docs/` para guias detalhados:
 
+- [ARCHITECTURE.md](docs/ARCHITECTURE.md) - Visão geral dos módulos e fluxo de streaming
+- [STREAMING.md](docs/STREAMING.md) - Como o vídeo chega ao player (proxy, anti-hotlinking, IP-vínculo)
+- [SCRAPING.md](docs/SCRAPING.md) - Extração multi-fonte (animefire HTTP, Playwright, re-extração)
+- [ADMIN-CRUD.md](docs/ADMIN-CRUD.md) - Endpoints admin + status da UI frontend
+- [DATABASE.md](docs/DATABASE.md) - Schema, seed, mapeamento slugs, comandos Prisma
+- [DEPLOY.md](docs/DEPLOY.md) - Env vars, build backend/frontend, Docker, caveats
 - [docker.md](docs/docker.md) - Configuração Docker
 - [authentication.md](docs/authentication.md) - Autenticação JWT
 - [api-documentation.md](docs/api-documentation.md) - Documentação Swagger
