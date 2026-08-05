@@ -26,6 +26,7 @@ model User {
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
   refreshTokens RefreshToken[]
+  emailChangeTokens EmailChangeToken[]
   comments      Comment[]
 }
 
@@ -34,6 +35,19 @@ model RefreshToken {
   token        String   @unique
   userId       String
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model EmailChangeToken {
+  id           String   @id @default(uuid())
+  token        String   @unique
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  newEmail     String
   expiresAt    DateTime
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt

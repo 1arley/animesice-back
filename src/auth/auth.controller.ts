@@ -1,13 +1,28 @@
-import { Controller, Post, Body, UseGuards, Req } from '@nestjs/common';
+import {
+  Controller,
+  Post,
+  Body,
+  UseGuards,
+  Req,
+  Res,
+  Get,
+  HttpCode,
+  HttpStatus,
+} from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { AuthService } from '@/auth/auth.service';
 import { LoginDto } from '@/auth/dto/login.dto';
 import { RegisterDto } from '@/auth/dto/register.dto';
+import { ChangeEmailDto } from '@/auth/dto/change-email.dto';
+import { ChangePasswordDto } from '@/auth/dto/change-password.dto';
+import { UpdateProfileDto } from '@/auth/dto/update-profile.dto';
 import { ApiRegisterUser } from '@/auth/swagger/auth.post.register.swagger';
 import { ApiLoginUser } from '@/auth/swagger/auth.post.login.swagger';
 import { ApiRefreshTokens } from '@/auth/swagger/auth.post.refresh.swagger';
 import { JwtRefreshAuthGuard } from '@/auth/jwt-refresh-auth.guard';
+import { JwtAuthGuard } from '@/auth/jwt-auth.guard';
 import type { AuthenticatedRequest } from '@/common/interfaces/request.interface';
+import type { Response } from 'express';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -22,16 +37,88 @@ export class AuthController {
 
   @Post('login')
   @ApiLoginUser()
-  async login(@Body() loginDto: LoginDto) {
-    return await this.authService.login(loginDto);
+  async login(
+    @Body() loginDto: LoginDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const result = await this.authService.login(loginDto);
+    this.authService.setAuthCookies(
+      res,
+      result.access_token,
+      result.refresh_token,
+    );
+    return result;
   }
 
   @Post('refresh')
   @ApiRefreshTokens()
   @UseGuards(JwtRefreshAuthGuard)
-  async refreshTokens(@Req() req: AuthenticatedRequest) {
+  async refreshTokens(
+    @Req() req: AuthenticatedRequest,
+    @Res({ passthrough: true }) res: Response,
+  ) {
     const userId = req.user.id;
+    const tokens = await this.authService.refreshTokens(userId);
+    this.authService.setAuthCookies(
+      res,
+      tokens.access_token,
+      tokens.refresh_token,
+    );
+    return tokens;
+  }
 
-    return await this.authService.refreshTokens(userId);
+  @Post('logout')
+  @HttpCode(HttpStatus.OK)
+  logout(@Res({ passthrough: true }) res: Response) {
+    this.authService.clearAuthCookies(res);
+    return { message: 'Logout realizado com sucesso.' };
+  }
+
+  // ── Settings endpoints ──────────────────────────────────────────────
+
+  @Post('change-email')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  async requestEmailChange(
+    @Body() dto: ChangeEmailDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.authService.requestEmailChange(req.user.id, dto.newEmail);
+  }
+
+  @Get('confirm-email')
+  @HttpCode(HttpStatus.OK)
+  async confirmEmailChange(@Body('token') token: string) {
+    return this.authService.confirmEmailChange(token);
+  }
+
+  @Post('confirm-email')
+  @HttpCode(HttpStatus.OK)
+  async confirmEmailChangePost(@Body('token') token: string) {
+    return this.authService.confirmEmailChange(token);
+  }
+
+  @Post('change-password')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  async changePassword(
+    @Body() dto: ChangePasswordDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.authService.changePassword(
+      req.user.id,
+      dto.currentPassword,
+      dto.newPassword,
+    );
+  }
+
+  @Post('update-profile')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  async updateProfile(
+    @Body() dto: UpdateProfileDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.authService.updateProfile(req.user.id, dto.name);
   }
 }
