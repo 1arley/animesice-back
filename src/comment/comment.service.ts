@@ -2,9 +2,19 @@ import {
   Injectable,
   NotFoundException,
   ForbiddenException,
+  BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from '@/prisma/prisma.service';
 import { CreateCommentDto } from '@/comment/dto/create-comment.dto';
+import { DEFAULT_PAGE } from '@/common/constants';
+
+const MAX_COMMENTS_PER_PAGE = 50;
+const MAX_REPLIES_PER_COMMENT = 5;
+
+/** Remove HTML/tags de conteúdo criado pelo usuário (anti-XSS). */
+function sanitizeContent(content: string): string {
+  return content.replace(/<[^>]*>/g, '').trim();
+}
 
 @Injectable()
 export class CommentService {
@@ -41,9 +51,14 @@ export class CommentService {
       }
     }
 
+    const content = sanitizeContent(dto.content);
+    if (!content) {
+      throw new BadRequestException('Comentário vazio.');
+    }
+
     return this.prisma.comment.create({
       data: {
-        content: dto.content,
+        content,
         userId,
         animeId: dto.animeId ?? null,
         episodeId: dto.episodeId ?? null,
@@ -53,26 +68,41 @@ export class CommentService {
     });
   }
 
-  async findByAnime(animeId: string) {
-    return this.prisma.comment.findMany({
-      where: { animeId, parentId: null },
-      include: {
-        user: { select: { id: true, name: true } },
-        replies: {
-          include: { user: { select: { id: true, name: true } } },
-          orderBy: { createdAt: 'asc' },
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+  async findByAnime(
+    animeId: string,
+    page = DEFAULT_PAGE,
+    limit = MAX_COMMENTS_PER_PAGE,
+  ) {
+    return this.findTopLevel({ animeId, parentId: null }, page, limit);
   }
 
-  async findByEpisode(episodeId: string) {
+  async findByEpisode(
+    episodeId: string,
+    page = DEFAULT_PAGE,
+    limit = MAX_COMMENTS_PER_PAGE,
+  ) {
+    return this.findTopLevel({ episodeId, parentId: null }, page, limit);
+  }
+
+  private findTopLevel(
+    where: {
+      animeId?: string | null;
+      episodeId?: string | null;
+      parentId: null;
+    },
+    page: number,
+    limit: number,
+  ) {
+    const safeLimit = Math.min(Math.max(limit, 1), MAX_COMMENTS_PER_PAGE);
+    const safePage = Math.max(page, 1);
     return this.prisma.comment.findMany({
-      where: { episodeId, parentId: null },
+      where,
+      take: safeLimit,
+      skip: (safePage - 1) * safeLimit,
       include: {
         user: { select: { id: true, name: true } },
         replies: {
+          take: MAX_REPLIES_PER_COMMENT,
           include: { user: { select: { id: true, name: true } } },
           orderBy: { createdAt: 'asc' },
         },

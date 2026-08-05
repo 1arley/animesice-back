@@ -5,6 +5,7 @@ import {
   Delete,
   Body,
   Param,
+  Query,
   UseGuards,
   Req,
 } from '@nestjs/common';
@@ -37,15 +38,31 @@ export class CommentController {
   @Get('anime/:animeId')
   @ApiOperation({ summary: 'Listar comentários de um anime' })
   @ApiResponse({ status: 200, description: 'Comentários retornados' })
-  findByAnime(@Param('animeId') animeId: string) {
-    return this.commentService.findByAnime(animeId);
+  findByAnime(
+    @Param('animeId') animeId: string,
+    @Query('page') page: string,
+    @Query('limit') limit: string,
+  ) {
+    return this.commentService.findByAnime(
+      animeId,
+      parseInt(page ?? '1', 10) || 1,
+      parseInt(limit ?? '50', 10) || 50,
+    );
   }
 
   @Get('episode/:episodeId')
   @ApiOperation({ summary: 'Listar comentários de um episódio' })
   @ApiResponse({ status: 200, description: 'Comentários retornados' })
-  findByEpisode(@Param('episodeId') episodeId: string) {
-    return this.commentService.findByEpisode(episodeId);
+  findByEpisode(
+    @Param('episodeId') episodeId: string,
+    @Query('page') page: string,
+    @Query('limit') limit: string,
+  ) {
+    return this.commentService.findByEpisode(
+      episodeId,
+      parseInt(page ?? '1', 10) || 1,
+      parseInt(limit ?? '50', 10) || 50,
+    );
   }
 
   @Delete(':id')
