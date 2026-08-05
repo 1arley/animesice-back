@@ -9,15 +9,22 @@ import { LoggingInterceptor } from '@/common/interceptors/logging.interceptor';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
+  assertSecrets();
+
   app.use(cookieParser());
 
   // Global prefix
   const apiPrefix = process.env.API_PREFIX || 'api';
   app.setGlobalPrefix(apiPrefix);
 
-  // CORS configuration
+  // CORS: com cookie httpOnly, origins devem ser explícitas. Sem CORS_ORIGIN
+  // configurado, cross-origin fica desabilitado (origin: false).
+  const corsOrigins = (process.env.CORS_ORIGIN ?? '')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
   app.enableCors({
-    origin: process.env.CORS_ORIGIN?.split(',') || '*',
+    origin: corsOrigins.length > 0 ? corsOrigins : false,
     credentials: process.env.CORS_CREDENTIALS === 'true',
   });
 
@@ -84,6 +91,30 @@ async function bootstrap() {
   console.log(
     `📚 Swagger documentation: http://localhost:${port}/${swaggerPath}\n`,
   );
+}
+
+const PLACEHOLDER_SECRETS = new Set([
+  'your-access-secret',
+  'your-refresh-secret',
+]);
+
+function assertSecrets(): void {
+  const secrets = [
+    ['JWT_ACCESS_SECRET', process.env.JWT_ACCESS_SECRET],
+    ['JWT_REFRESH_SECRET', process.env.JWT_REFRESH_SECRET],
+  ] as const;
+
+  for (const [name, value] of secrets) {
+    const insecure =
+      !value || value.length < 32 || PLACEHOLDER_SECRETS.has(value);
+    if (!insecure) continue;
+
+    const message = `[env] ${name} ausente, curto demais ou placeholder. Gere um secret forte (>= 32 chars).`;
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(message);
+    }
+    console.warn(message);
+  }
 }
 
 void bootstrap();
