@@ -5,6 +5,7 @@ import {
   Delete,
   Get,
   Param,
+  ParseIntPipe,
   Patch,
   Post,
   Query,
@@ -40,6 +41,23 @@ const ALLOWED_VIDEO_MIMETYPES = [
   'application/x-mpegURL',
 ];
 
+/** Teto de tamanho de upload (500MB). */
+const MAX_UPLOAD_BYTES = 500 * 1024 * 1024;
+
+/** Valida o arquivo por mimetype exato + magic bytes (não confia no cliente). */
+function isAllowedVideoFile(buffer: Buffer, mimetype: string): boolean {
+  if (!ALLOWED_VIDEO_MIMETYPES.includes(mimetype)) return false;
+
+  if (mimetype === 'video/mp4') {
+    return buffer.length > 8 && buffer.toString('latin1', 4, 8) === 'ftyp';
+  }
+  if (mimetype === 'video/mp2t') {
+    return buffer.length > 0 && buffer[0] === 0x47;
+  }
+  const head = buffer.subarray(0, 1024).toString('latin1');
+  return head.includes('#EXTM3U');
+}
+
 @ApiTags('admin')
 @ApiBearerAuth('JWT-auth')
 @Controller('admin')
@@ -55,10 +73,12 @@ export class AdminController {
   @Get('animes')
   @ApiOperation({ summary: 'Listar animes (admin, com contagem de episódios)' })
   listAnimes(@Query('page') page: string, @Query('limit') limit: string) {
-    return this.adminService.listAnimesForAdmin(
-      parseInt(page || '1', 10) || 1,
-      parseInt(limit || '50', 10) || 50,
+    const pageNumber = Math.max(parseInt(page || '1', 10) || 1, 1);
+    const limitNumber = Math.min(
+      Math.max(parseInt(limit || '50', 10) || 50, 1),
+      100,
     );
+    return this.adminService.listAnimesForAdmin(pageNumber, limitNumber);
   }
 
   // --- Anime CRUD ---------------------------------------------------------
@@ -97,10 +117,10 @@ export class AdminController {
   @ApiOperation({ summary: 'Atualizar episódio (ex: cadastrar videoUrl)' })
   updateEpisode(
     @Param('slug') slug: string,
-    @Param('number') number: string,
+    @Param('number', ParseIntPipe) number: number,
     @Body() dto: UpdateEpisodeDto,
   ) {
-    return this.adminService.updateEpisode(slug, parseInt(number, 10), dto);
+    return this.adminService.updateEpisode(slug, number, dto);
   }
 
   @Post('episode/:slug/:number/upload')
@@ -120,10 +140,14 @@ export class AdminController {
       required: ['file'],
     },
   })
-  @UseInterceptors(FileInterceptor('file'))
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: MAX_UPLOAD_BYTES },
+    }),
+  )
   async uploadEpisodeVideo(
     @Param('slug') slug: string,
-    @Param('number') number: string,
+    @Param('number', ParseIntPipe) number: number,
     @UploadedFile() file: Express.Multer.File,
   ) {
     if (!file) {
@@ -131,13 +155,9 @@ export class AdminController {
     }
 
     const mimetype = file.mimetype?.toLowerCase() ?? '';
-    const isAllowed =
-      ALLOWED_VIDEO_MIMETYPES.includes(mimetype) ||
-      mimetype.startsWith('video/');
-
-    if (!isAllowed) {
+    if (!isAllowedVideoFile(file.buffer, mimetype)) {
       throw new BadRequestException(
-        'Tipo de arquivo inválido. Aceitos: .mp4, .m3u8, .ts (video/*, application/vnd.apple.mpegurl, video/mp2t).',
+        'Tipo de arquivo inválido. Aceitos: .mp4, .m3u8, .ts (video/mp4, video/mp2t, application/vnd.apple.mpegurl, application/x-mpegURL).',
       );
     }
 
@@ -147,15 +167,18 @@ export class AdminController {
       file.originalname,
     );
 
-    return this.adminService.updateEpisode(slug, parseInt(number, 10), {
+    return this.adminService.updateEpisode(slug, number, {
       videoUrl: url,
     });
   }
 
   @Delete('episode/:slug/:number')
   @ApiOperation({ summary: 'Remover episódio' })
-  deleteEpisode(@Param('slug') slug: string, @Param('number') number: string) {
-    return this.adminService.deleteEpisode(slug, parseInt(number, 10));
+  deleteEpisode(
+    @Param('slug') slug: string,
+    @Param('number', ParseIntPipe) number: number,
+  ) {
+    return this.adminService.deleteEpisode(slug, number);
   }
 
   // --- Genre --------------------------------------------------------------

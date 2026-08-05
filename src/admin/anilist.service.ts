@@ -88,14 +88,21 @@ export class AniListService {
   private async request<T>(body: string): Promise<T> {
     let res: Response;
     try {
-      res = await fetch(ANILIST_ENDPOINT, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body,
-      });
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 10_000);
+      try {
+        res = await fetch(ANILIST_ENDPOINT, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body,
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timer);
+      }
     } catch (err) {
       throw new NotFoundException(
         `Falha ao contatar a API do AniList: ${err instanceof Error ? err.message : String(err)}`,

@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '@/prisma/prisma.service';
 import { CreateAnimeDto, UpdateAnimeDto } from '@/admin/dto/update-anime.dto';
 import {
@@ -22,6 +23,17 @@ export class AdminService {
   ) {}
 
   // --- Helpers ------------------------------------------------------------
+
+  /** Remove HTML/scripts de texto vindo de fontes externas (anti-XSS). */
+  private stripHtml(input: string | null | undefined): string | undefined {
+    if (!input) return undefined;
+    return input
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
 
   private slugify(input: string): string {
     return (
@@ -82,7 +94,7 @@ export class AdminService {
     }
 
     const { genreSlugs, ...fields } = dto;
-    const data: any = { ...fields };
+    const data: Prisma.AnimeUpdateInput = { ...fields };
     if (genreSlugs !== undefined) {
       data.genres = { set: genreSlugs.map((slug) => ({ slug })) };
     }
@@ -201,7 +213,7 @@ export class AdminService {
     const createDto: CreateAnimeDto = {
       slug,
       title,
-      synopsis: media.description ?? undefined,
+      synopsis: this.stripHtml(media.description),
       coverImage:
         media.coverImage?.large ?? media.coverImage?.extraLarge ?? undefined,
       bannerImage: media.bannerImage ?? undefined,
