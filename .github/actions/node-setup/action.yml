@@ -1,0 +1,36 @@
+# Reusable composite action: install dependencies, generate Prisma client.
+# Used by every CI job to keep setup steps DRY and consistent.
+name: 'Setup Node.js & dependencies'
+description: 'Set up Node.js (pinned via .nvmrc), install npm deps with caching, and generate the Prisma client.'
+
+inputs:
+  prisma-generate:
+    description: 'Whether to run `prisma generate` after installing deps.'
+    required: false
+    default: 'true'
+
+runs:
+  using: composite
+  steps:
+    # .nvmrc pins the single supported Node version (22). No matrix needed
+    # because the project targets exactly one runtime.
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version-file: '.nvmrc'
+        cache: 'npm'
+
+    # `npm ci` also validates the lockfile: it fails if package-lock.json
+    # is out of sync with package.json.
+    - name: Install dependencies (npm ci)
+      shell: bash
+      run: npm ci
+
+    # Prisma client must be generated before lint/typecheck/build/tests,
+    # otherwise @prisma/client resolves to a stub and ts-jest / tsc fail.
+    # prisma.config.ts provides a fallback DATABASE_URL so no env is needed
+    # for `generate` (it never connects to the DB).
+    - name: Generate Prisma client
+      if: inputs.prisma-generate == 'true'
+      shell: bash
+      run: npx prisma generate
