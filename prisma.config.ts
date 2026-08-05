@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { defineConfig } from 'prisma/config';
 
 export default defineConfig({
@@ -8,6 +9,6 @@ export default defineConfig({
   datasource: {
     url:
       process.env.DATABASE_URL ||
-      'postgresql://postgres:postgres@postgres:5432/animesice_db?schema=public',
+      'postgresql://postgres:postgres@localhost:5432/animesice_db?schema=public',
   },
 });

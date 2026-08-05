@@ -35,8 +35,9 @@ export class SupabaseService {
 
   /**
    * Faz upload de um vídeo (mp4/m3u8/ts) para o bucket do Supabase Storage.
-   * Se o bucket for público, retorna a publicUrl; se for privado, gera uma
-   * signed URL válida por 1h (3600s).
+   * Retorna a publicUrl do bucket — o bucket DEVE ser público para o vídeo
+   * ficar acessível de forma persistente. Signed URLs expiram (1h) e não são
+   * adequadas para persistir como `videoUrl` permanente no banco.
    */
   async uploadVideo(
     buffer: Buffer,
@@ -65,31 +66,10 @@ export class SupabaseService {
       .from(bucket)
       .getPublicUrl(objectPath);
 
-    // getPublicUrl sempre retorna uma URL "/object/public/{bucket}/{path}".
-    // Para buckets públicos ela é acessível diretamente; para buckets
-    // privados geramos uma signed URL válida por 1h (3600s). Como a API do
-    // SDK não diferencia o tipo de bucket aqui, tentamos primeiro a URL
-    // pública e geramos a signed URL como fallback.
-    if (publicData?.publicUrl) {
-      const unsignedUrl = publicData.publicUrl;
-      const supabaseUrl = (process.env.SUPABASE_URL || '').replace(/\/$/, '');
-      const publicPathPrefix = `${supabaseUrl}/storage/v1/object/public/`;
-
-      if (unsignedUrl.startsWith(publicPathPrefix)) {
-        const { data: signed, error: signedError } = await client.storage
-          .from(bucket)
-          .createSignedUrl(objectPath, 3600);
-
-        if (signedError || !signed?.signedUrl) {
-          // Bucket provavelmente público: signed URL falha, usamos a publicUrl.
-          return { url: unsignedUrl, path: objectPath };
-        }
-        return { url: signed.signedUrl, path: objectPath };
-      }
-
-      return { url: unsignedUrl, path: objectPath };
+    if (!publicData?.publicUrl) {
+      throw new ForbiddenException('Não foi possível obter a URL do vídeo.');
     }
 
-    throw new ForbiddenException('Não foi possível obter a URL do vídeo.');
+    return { url: publicData.publicUrl, path: objectPath };
   }
 }
