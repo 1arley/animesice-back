@@ -13,11 +13,19 @@ export class MailService {
   private readonly logger = new Logger(MailService.name);
   private readonly workerUrl: string | undefined;
   private readonly workerToken: string | undefined;
+  private readonly cfAccessClientId: string | undefined;
+  private readonly cfAccessClientSecret: string | undefined;
   private readonly fromName: string;
 
   constructor(private readonly configService: ConfigService) {
     this.workerUrl = this.configService.get<string>('MAIL_WORKER_URL');
     this.workerToken = this.configService.get<string>('MAIL_WORKER_TOKEN');
+    this.cfAccessClientId = this.configService.get<string>(
+      'CF_ACCESS_CLIENT_ID',
+    );
+    this.cfAccessClientSecret = this.configService.get<string>(
+      'CF_ACCESS_CLIENT_SECRET',
+    );
     this.fromName =
       this.configService.get<string>('MAIL_FROM_NAME') || 'AnimesIce';
   }
@@ -34,6 +42,16 @@ export class MailService {
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
       };
+
+      // Cloudflare Access service token authentication — required when the
+      // Worker is behind CF Access. The Access policy validates these headers
+      // before the request reaches the Worker.
+      if (this.cfAccessClientId && this.cfAccessClientSecret) {
+        headers['CF-Access-Client-Id'] = this.cfAccessClientId;
+        headers['CF-Access-Client-Secret'] = this.cfAccessClientSecret;
+      }
+
+      // Bearer token as a second layer (validated by the Worker itself).
       if (this.workerToken) {
         headers['Authorization'] = `Bearer ${this.workerToken}`;
       }
