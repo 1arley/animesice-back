@@ -13,6 +13,23 @@ async function bootstrap() {
 
   app.use(cookieParser());
 
+  // HSTS — tell browsers to use HTTPS for 1 year (incl. subdomains).
+  app.use(
+    (
+      req: import('express').Request,
+      res: import('express').Response,
+      next: import('express').NextFunction,
+    ) => {
+      if (process.env.NODE_ENV === 'production') {
+        res.setHeader(
+          'Strict-Transport-Security',
+          'max-age=31536000; includeSubDomains; preload',
+        );
+      }
+      next();
+    },
+  );
+
   // Global prefix
   const apiPrefix = process.env.API_PREFIX || 'api';
   app.setGlobalPrefix(apiPrefix);
@@ -74,13 +91,19 @@ async function bootstrap() {
     .addTag('comment', 'Comentários de usuários')
     .build();
 
-  const document = SwaggerModule.createDocument(app, config);
   const swaggerPath = process.env.SWAGGER_PATH || 'api/docs';
-  SwaggerModule.setup(swaggerPath, app, document, {
-    customSiteTitle: 'AnimesIce API Docs',
-    customfavIcon: 'https://nestjs.com/img/logo-small.svg',
-    customCss: '.swagger-ui .topbar { display: none }',
-  });
+  const enableSwagger =
+    process.env.NODE_ENV !== 'production' ||
+    process.env.SWAGGER_ENABLE === 'true';
+
+  if (enableSwagger) {
+    const document = SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup(swaggerPath, app, document, {
+      customSiteTitle: 'AnimesIce API Docs',
+      customfavIcon: 'https://nestjs.com/img/logo-small.svg',
+      customCss: '.swagger-ui .topbar { display: none }',
+    });
+  }
 
   const port = process.env.PORT || 3000;
   await app.listen(port);

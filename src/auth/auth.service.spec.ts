@@ -4,6 +4,7 @@ import { PrismaService } from '@/prisma/prisma.service';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { ConflictException, UnauthorizedException } from '@nestjs/common';
+import { MailService } from '@/mail/mail.service';
 import * as bcrypt from 'bcrypt';
 
 describe('AuthService', () => {
@@ -16,11 +17,24 @@ describe('AuthService', () => {
     user: {
       findUnique: jest.fn(),
       create: jest.fn(),
+      update: jest.fn(),
     },
     refreshToken: {
       create: jest.fn(),
       deleteMany: jest.fn(),
     },
+    emailVerificationCode: {
+      create: jest.fn(),
+      deleteMany: jest.fn(),
+      findFirst: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+    },
+    $transaction: jest.fn(),
+  };
+
+  const mockMailService = {
+    sendVerificationCode: jest.fn().mockResolvedValue(true),
   };
 
   beforeEach(async () => {
@@ -30,6 +44,7 @@ describe('AuthService', () => {
         { provide: PrismaService, useValue: mockPrismaService },
         { provide: JwtService, useValue: { signAsync: jest.fn() } },
         { provide: ConfigService, useValue: { get: jest.fn() } },
+        { provide: MailService, useValue: mockMailService },
       ],
     }).compile();
 
@@ -59,7 +74,7 @@ describe('AuthService', () => {
         name: registerDto.name,
         email: registerDto.email,
         password: hashedPassword,
-        role: 'USER',
+        isVerified: false,
         createdAt,
         updatedAt,
       };
@@ -71,13 +86,12 @@ describe('AuthService', () => {
 
       expect(result).toHaveProperty(
         'message',
-        'Usuário cadastrado com sucesso.',
+        'Conta criada. Verifique seu email para o código de verificação.',
       );
-      expect(result).toHaveProperty('user');
-      expect(result.user.email).toBe(registerDto.email);
-      expect(result.user).not.toHaveProperty('password');
-      expect(result.user.createdAt).toEqual(createdAt);
-      expect(result.user.updatedAt).toEqual(updatedAt);
+      expect(mockMailService.sendVerificationCode).toHaveBeenCalledWith(
+        registerDto.email,
+        expect.any(String),
+      );
 
       expect(prisma.user.findUnique).toHaveBeenCalledWith({
         where: { email: registerDto.email },
@@ -85,10 +99,11 @@ describe('AuthService', () => {
       expect(prisma.user.create).toHaveBeenCalled();
     });
 
-    it('deve lançar ConflictException se email já existir', async () => {
+    it('deve lançar ConflictException se email verificado já existir', async () => {
       mockPrismaService.user.findUnique.mockResolvedValue({
         id: '1',
         email: registerDto.email,
+        isVerified: true,
       });
 
       await expect(service.register(registerDto)).rejects.toThrow(
@@ -112,6 +127,7 @@ describe('AuthService', () => {
         email: loginDto.email,
         password: hashedPassword,
         role: 'USER',
+        isVerified: true,
         createdAt: new Date(),
         updatedAt: new Date(),
       };

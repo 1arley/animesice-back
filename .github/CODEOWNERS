@@ -1,0 +1,14 @@
+# CODEOWNERS — requests review from the repository owner on changed paths.
+# Syntax: pattern  @owner (one per line). This makes @1arley an automatic
+# required reviewer for all changes, enabling branch protection rule
+# "Require review from Code Owners".
+
+# Default owner for everything in the repository.
+* @1arley
+
+# CI/CD pipeline changes should get an explicit review (overlapping with the
+# default above keeps them enforced even if the wildcard is edited later).
+/.github/                 @1arley
+/Dockerfile               @1arley
+/docker-compose.yml       @1arley
+/prisma/schema.prisma     @1arley

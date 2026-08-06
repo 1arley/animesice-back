@@ -1,0 +1,37 @@
+# Dependabot keeps npm packages and GitHub Actions up to date.
+# PRs created by Dependabot automatically run the CI workflow, so updates are
+# gated by the same quality checks as human PRs.
+version: 2
+
+updates:
+  # NPM dependencies (production + dev)
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '04:00'
+      timezone: America/Sao_Paulo
+    open-pull-requests-limit: 10
+    labels: ['dependencies']
+    commit-message:
+      prefix: 'chore(deps)'
+      include: scope
+    # Group minor/patch updates to reduce PR noise; keep majors separate.
+    groups:
+      minor-and-patch:
+        update-types: ['minor', 'patch']
+
+  # GitHub Actions used in workflows
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '04:00'
+      timezone: America/Sao_Paulo
+    open-pull-requests-limit: 5
+    labels: ['dependencies', 'github-actions']
+    commit-message:
+      prefix: 'chore(actions)'
+      include: scope

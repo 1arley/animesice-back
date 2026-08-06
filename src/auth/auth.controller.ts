@@ -20,6 +20,7 @@ import { ChangePasswordDto } from '@/auth/dto/change-password.dto';
 import { UpdateProfileDto } from '@/auth/dto/update-profile.dto';
 import { ForgotPasswordDto } from '@/auth/dto/forgot-password.dto';
 import { ResetPasswordDto } from '@/auth/dto/reset-password.dto';
+import { VerifyEmailDto } from '@/auth/dto/verify-email.dto';
 import { ApiRegisterUser } from '@/auth/swagger/auth.post.register.swagger';
 import { ApiLoginUser } from '@/auth/swagger/auth.post.login.swagger';
 import { ApiRefreshTokens } from '@/auth/swagger/auth.post.refresh.swagger';
@@ -40,6 +41,20 @@ export class AuthController {
   @Throttle({ default: { limit: AUTH_THROTTLE_LIMIT, ttl: 60_000 } })
   async register(@Body() registerDto: RegisterDto) {
     return await this.authService.register(registerDto);
+  }
+
+  @Post('verify-email')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  async verifyEmail(@Body() dto: VerifyEmailDto) {
+    return this.authService.verifyEmail(dto.email, dto.code);
+  }
+
+  @Post('resend-verification')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 3, ttl: 60_000 } })
+  async resendVerification(@Body('email') email: string) {
+    return this.authService.resendVerificationCode(email);
   }
 
   @Post('login')

@@ -275,22 +275,17 @@ describe('AuthController', () => {
       };
 
       const mockResponse = {
-        message: 'Usuário cadastrado com sucesso.',
-        user: {
-          id: '1',
-          name: largeDto.name,
-          email: largeDto.email,
-          role: 'USER',
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        },
+        message:
+          'Conta criada. Verifique seu email para o código de verificação.',
       };
 
       mockAuthService.register.mockResolvedValue(mockResponse);
 
       const result = await controller.register(largeDto);
 
-      expect(result.user.name).toBe(largeDto.name);
+      expect(result.message).toBe(
+        'Conta criada. Verifique seu email para o código de verificação.',
+      );
       expect(authService.register).toHaveBeenCalledWith(largeDto);
     });
 

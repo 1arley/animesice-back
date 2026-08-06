@@ -1,0 +1,145 @@
+# Continuous Deployment (production).
+# Builds the Docker image, publishes it to GitHub Container Registry (GHCR),
+# and deploys over SSH to a Docker host. Triggered automatically when a
+# Release is published (created by the Release workflow), or manually for
+# rollbacks (deploy any previously released tag).
+#
+# SAFETY:
+#   - Only runs from a tag/release (never from a raw PR). PRs cannot deploy.
+#   - Uses the `production` GitHub Environment so protection rules
+#     (required reviewers, wait timer) apply before any server change.
+#   - Rollback: re-run this workflow manually and select a previous tag.
+name: Deploy
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Git tag to deploy (for rollback). Defaults to the tag on the running workflow_dispatch ref.'
+        required: false
+        default: ''
+
+concurrency:
+  # Only one deployment at a time; new deploys wait for the previous to finish
+  # (do not cancel mid-deploy).
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write # push image to GHCR
+
+jobs:
+  deploy:
+    name: Deploy to production
+    runs-on: ubuntu-latest
+    # The `production` Environment must be created in repo settings; add
+    # protection rules (required reviewers, deployment branch = main, wait
+    # timer) so nothing reaches the server without human approval.
+    environment: production
+
+    # Safety gates:
+    # - never from a PR
+    # - automatic deploy only for *stable* releases (not prereleases from `dev`)
+    # - workflow_dispatch always allowed (explicit rollback / hotfixes)
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'release' && github.event.release.prerelease == false)
+
+    steps:
+      - name: Resolve deploy ref
+        id: ref
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            echo "ref=${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
+          elif [ -n "${{ inputs.tag }}" ]; then
+            echo "ref=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout at deploy ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.ref.outputs.ref }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive lowercase image name
+        id: image
+        shell: bash
+        # GHCR repos must be lowercase; repo owners can contain uppercase.
+        run: echo "name=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Build & push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          # Tag with the release tag (e.g. v1.2.3) and `latest` for the
+          # server's `docker compose pull` to pick up by default.
+          tags: |
+            ${{ steps.image.outputs.name }}:${{ steps.ref.outputs.ref }}
+            ${{ steps.image.outputs.name }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: false
+
+      # Remote deploy over SSH. The server is expected to have docker compose
+      # and a compose file (see README "Deployment" section) that references
+      # the GHCR image. Secrets are never logged.
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          port: ${{ secrets.DEPLOY_PORT }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script_stop: true
+          envs: |
+            DEPLOY_TAG
+            DEPLOY_PATH
+            DEPLOY_GHCR_USER
+            DEPLOY_GHCR_TOKEN
+          script: |
+            set -euo pipefail
+            export DEPLOY_PATH="${{ secrets.DEPLOY_APP_DIR }}"
+            export DEPLOY_GHCR_USER="${{ secrets.DEPLOY_GHCR_USER }}"
+            export DEPLOY_GHCR_TOKEN="${{ secrets.DEPLOY_GHCR_TOKEN }}"
+            export DEPLOY_TAG="${{ steps.ref.outputs.ref }}"
+
+            cd "$DEPLOY_PATH"
+
+            # Authenticate the server to GHCR.
+            echo "$DEPLOY_GHCR_TOKEN" | docker login ghcr.io -u "$DEPLOY_GHCR_USER" --password-stdin
+
+            # Set the image tag in the server's .env so the compose file can
+            # interpolate it. Replace an existing line or append if missing.
+            touch .env
+            if grep -q '^APP_IMAGE_TAG=' .env; then
+              sed -i.bak "s|^APP_IMAGE_TAG=.*|APP_IMAGE_TAG=$DEPLOY_TAG|" .env
+            else
+              printf '\nAPP_IMAGE_TAG=%s\n' "$DEPLOY_TAG" >> .env
+            fi
+
+            # Pull the exact tag and recreate the app container (DB stays up).
+            docker compose pull app
+            docker compose up -d --no-deps app
+
+            # Optional rollback safety: keep recent images around for ~7 days.
+            rm -f .env.bak
+            docker image prune -f --filter "until=168h" || true
+
+            echo "Deployed $DEPLOY_TAG to $DEPLOY_PATH"
+

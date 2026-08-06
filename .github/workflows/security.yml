@@ -1,0 +1,116 @@
+# Security & quality scanning
+# - npm audit (dependency vulnerabilities, high+)
+# - Gitleaks (secret scanning across history)
+# - CodeQL analysis (JavaScript/TypeScript semantic analysis)
+# - Dependency review on pull requests (blocking new vulnerable deps)
+name: Security
+
+on:
+  pull_request:
+    branches: [main, dev]
+  push:
+    branches: [main, dev]
+  # Weekly scheduled scan catches vulnerabilities disclosed after the code
+  # was merged (no PR/push event would otherwise re-trigger).
+  schedule:
+    - cron: '17 4 * * 1'
+  # Allow manual runs for ad-hoc audits.
+  workflow_dispatch:
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  # Required to upload SARIF findings to the repository's code scanning view.
+  security-events: write
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # npm audit: scans package-lock.json for known advisories.
+  # ---------------------------------------------------------------------------
+  npm-audit:
+    name: npm audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js & install deps
+        uses: ./.github/actions/node-setup
+
+      # Reports high/critical production advisories. Set to non-blocking
+      # (`continue-on-error`) because the current tree has pre-existing high
+      # findings that need `npm audit fix` and cannot be solved in CI alone.
+      # Once resolved, flip this to blocking. The *dynamic* gate for NEW vulns
+      # is the `dependency-review` job below, which blocks PR introductions.
+      - name: Run npm audit
+        run: npm audit --audit-level=high --omit=dev
+        continue-on-error: true
+
+  # ---------------------------------------------------------------------------
+  # Secret scanning with Gitleaks across the full Git history.
+  # ---------------------------------------------------------------------------
+  secret-scan:
+    name: Secret scan (Gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history so Gitleaks can scan all commits
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ---------------------------------------------------------------------------
+  # CodeQL semantic analysis (JS/TS).
+  # ---------------------------------------------------------------------------
+  codeql:
+    name: CodeQL analysis
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ['javascript-typescript']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          # security-and-quality includes a broader set of useful queries.
+          queries: security-and-quality
+
+      # CodeQL autobuild attempts to compile a JS/TS project. For pure
+      # Node/NestJS apps it needs deps installed to resolve imports.
+      - name: Set up Node.js & install deps
+        uses: ./.github/actions/node-setup
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: '/language:${{ matrix.language }}'
+
+  # ---------------------------------------------------------------------------
+  # Dependency review: blocks PRs that introduce vulnerable or unlicensed
+  # dependencies. Only relevant on pull requests.
+  # ---------------------------------------------------------------------------
+  dependency-review:
+    name: Dependency review
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Dependency review
+        uses: actions/dependency-review-action@v4
+        with:
+          # Block PRs that introduce high/critical vulnerabilities.
+          fail-on-severity: high

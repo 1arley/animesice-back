@@ -1,111 +1,51 @@
+# Release automation via semantic-release.
+# Triggers only after CI completes successfully (workflow_run), which avoids
+# releasing a red tree. semantic-release (configured in .releaserc) decides
+# whether a release is needed based on conventional commits since the last tag.
 name: Release
 
 on:
-  push:
-    branches:
-      - main
-      - dev
+  workflow_run:
+    workflows: ['CI']
+    branches: [main, dev]
+    types: [completed]
+
+concurrency:
+  group: release-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
 
 permissions:
-  contents: write
-  issues: write
-  pull-requests: write
+  contents: write # create tags/releases + commit changelog/version bump
+  issues: write # close/release notes issue references
+  pull-requests: write # PR comments / release notes
+  packages: write # (in case @semantic-release/npm ever publishes a package)
 
 jobs:
-  lint-and-test:
-    name: Lint and Test
-    runs-on: self-hosted
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version-file: '.nvmrc'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Generate Prisma Client
-        run: npx prisma generate
-        env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/animesice_db?schema=public
-
-      - name: Run linter
-        run: npm run lint
-
-      - name: Run tests
-        run: npm test
-
-  build:
-    name: Build
-    runs-on: self-hosted
-    needs: lint-and-test
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version-file: '.nvmrc'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Generate Prisma Client
-        run: npm run generate
-        env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/animesice_db?schema=public
-
-      - name: Build application
-        run: npm run build
-
-  docker-build:
-    name: Docker Build
-    runs-on: self-hosted
-    needs: build
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build Docker image
-        run: docker build -t nestjs-template:${{ github.sha }} .
-
   release:
-    name: Semantic Release
-    runs-on: self-hosted
-    needs: docker-build
-
+    name: Semantic release
+    runs-on: ubuntu-latest
+    # Only run if CI succeeded. Prevents releases from failed builds.
+    if: github.event.workflow_run.conclusion == 'success'
     steps:
+      # Checkout the exact commit that CI ran against, with full history so
+      # semantic-release can compute the conventional-commits range.
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_sha }}
+          # persist-credentials: false is the recommended security pinning for
+          # semantic-release; it pushes via the GITHUB_TOKEN env instead of a
+          # stored credential helper.
           persist-credentials: false
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version-file: '.nvmrc'
-          cache: 'npm'
+      - name: Setup Node.js & dependencies
+        uses: ./.github/actions/node-setup
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Release
+      # semantic-release reads .releaserc and commits changelog/version bumps
+      # back to the branch, then creates a GitHub Release with auto-generated
+      # notes. The release includes a `v*` tag used by the Deploy workflow.
+      - name: Run semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm run release
-

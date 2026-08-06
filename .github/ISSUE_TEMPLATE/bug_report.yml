@@ -1,0 +1,47 @@
+name: 🐛 Bug report
+description: Report something that is broken or behaving unexpectedly.
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report. Fill in the sections below.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Describe the issue and what you expected to happen.
+      placeholder: 'Steps: 1) ... 2) ...  Expected: ...  Actual: ...'
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: A minimal, self-contained set of steps.
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      description: Node version, OS, backend version / commit.
+      placeholder: 'Node 22, Ubuntu 22.04, commit abc1234'
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Paste error messages / stack traces. Do not paste secrets.
+      render: shell
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Code of conduct
+      options:
+        - label: I have searched existing issues for duplicates.
+          required: true

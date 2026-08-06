@@ -23,12 +23,27 @@ model User {
   password      String
   name          String?
   role          Role          @default(USER)
+  isVerified    Boolean       @default(false)
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
   refreshTokens RefreshToken[]
   emailChangeTokens EmailChangeToken[]
   passwordResetTokens PasswordResetToken[]
+  emailVerificationCodes EmailVerificationCode[]
   comments      Comment[]
+}
+
+model EmailVerificationCode {
+  id           String   @id @default(uuid())
+  codeHash     String   @unique
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  attempts     Int      @default(0)
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([userId])
 }
 
 model RefreshToken {

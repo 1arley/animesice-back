@@ -15,6 +15,7 @@ import { ConfigService } from '@nestjs/config';
 import type { StringValue } from 'ms';
 import { Response } from 'express';
 import { BCRYPT_ROUNDS } from '@/common/constants';
+import { MailService } from '@/mail/mail.service';
 
 @Injectable()
 export class AuthService {
@@ -22,6 +23,7 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
+    private readonly mailService: MailService,
   ) {}
 
   // ── Cookie helpers ──────────────────────────────────────────────────
@@ -97,9 +99,22 @@ export class AuthService {
     });
 
     if (userExists) {
-      throw new ConflictException(
-        'Não foi possível concluir o cadastro com esses dados.',
-      );
+      if (userExists.isVerified) {
+        throw new ConflictException(
+          'Não foi possível concluir o cadastro com esses dados.',
+        );
+      }
+
+      // Unverified user re-registering — resend code instead of erroring.
+      await this.prisma.emailVerificationCode.deleteMany({
+        where: { userId: userExists.id },
+      });
+      const code = await this.createVerificationCode(userExists.id);
+      await this.mailService.sendVerificationCode(email, code);
+
+      return {
+        message: 'Código de verificação reenviado. Verifique seu email.',
+      };
     }
 
     const hashedPassword = await bcrypt.hash(password, BCRYPT_ROUNDS);
@@ -110,14 +125,16 @@ export class AuthService {
         email,
         password: hashedPassword,
         role: 'USER',
+        isVerified: false,
       },
     });
 
-    const { password: _, ...userWithoutPassword } = user;
+    const code = await this.createVerificationCode(user.id);
+    await this.mailService.sendVerificationCode(email, code);
 
     return {
-      message: 'Usuário cadastrado com sucesso.',
-      user: userWithoutPassword,
+      message:
+        'Conta criada. Verifique seu email para o código de verificação.',
     };
   }
 
@@ -130,6 +147,12 @@ export class AuthService {
 
     if (!user) {
       throw new UnauthorizedException('Credenciais inválidas.');
+    }
+
+    if (!user.isVerified) {
+      throw new UnauthorizedException(
+        'Conta não verificada. Verifique seu email para o código de ativação.',
+      );
     }
 
     const isPasswordValid = await bcrypt.compare(password, user.password);
@@ -397,6 +420,106 @@ export class AuthService {
     await this.revokeAllUserRefreshTokens(record.userId);
 
     return { message: 'Senha redefinida com sucesso.' };
+  }
+
+  async verifyEmail(email: string, code: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { email },
+    });
+
+    if (!user) {
+      throw new NotFoundException('Usuário não encontrado.');
+    }
+
+    if (user.isVerified) {
+      return { message: 'Conta já verificada.' };
+    }
+
+    const record = await this.prisma.emailVerificationCode.findFirst({
+      where: { userId: user.id },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (!record) {
+      throw new BadRequestException(
+        'Nenhum código encontrado. Solicite um novo.',
+      );
+    }
+
+    if (record.attempts >= 5) {
+      await this.prisma.emailVerificationCode.delete({
+        where: { id: record.id },
+      });
+      throw new BadRequestException(
+        'Muitas tentativas. Solicite um novo código.',
+      );
+    }
+
+    await this.prisma.emailVerificationCode.update({
+      where: { id: record.id },
+      data: { attempts: { increment: 1 } },
+    });
+
+    const codeHash = this.hashToken(code);
+    if (record.codeHash !== codeHash) {
+      throw new BadRequestException('Código de verificação inválido.');
+    }
+
+    if (record.expiresAt < new Date()) {
+      await this.prisma.emailVerificationCode.delete({
+        where: { id: record.id },
+      });
+      throw new BadRequestException('Código de verificação expirado.');
+    }
+
+    await this.prisma.$transaction([
+      this.prisma.user.update({
+        where: { id: user.id },
+        data: { isVerified: true },
+      }),
+      this.prisma.emailVerificationCode.delete({
+        where: { id: record.id },
+      }),
+    ]);
+
+    return { message: 'Conta verificada com sucesso.' };
+  }
+
+  async resendVerificationCode(email: string) {
+    const user = await this.prisma.user.findUnique({ where: { email } });
+
+    if (!user) {
+      // Don't leak whether email exists.
+      return { message: 'Se o email existir, um código foi enviado.' };
+    }
+
+    if (user.isVerified) {
+      return { message: 'Conta já verificada.' };
+    }
+
+    await this.prisma.emailVerificationCode.deleteMany({
+      where: { userId: user.id },
+    });
+
+    const code = await this.createVerificationCode(user.id);
+    await this.mailService.sendVerificationCode(email, code);
+
+    return { message: 'Código de verificação reenviado.' };
+  }
+
+  private async createVerificationCode(userId: string): Promise<string> {
+    const code = Array.from({ length: 8 }, () =>
+      Math.floor(Math.random() * 10),
+    ).join('');
+
+    const codeHash = this.hashToken(code);
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+
+    await this.prisma.emailVerificationCode.create({
+      data: { codeHash, userId, expiresAt },
+    });
+
+    return code;
   }
 
   // ── Token internals ─────────────────────────────────────────────────
