@@ -67,7 +67,7 @@ jobs:
         run: npx dotenv-cli -e .env.test -- npm run test:unit -- --coverage
 
       - name: Upload coverage artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: unit-test-coverage
           path: coverage/
@@ -133,7 +133,7 @@ jobs:
         run: npm run build
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: build-output
           path: dist/
