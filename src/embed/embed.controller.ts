@@ -8,13 +8,7 @@ import {
   ValidationPipe,
   BadRequestException,
 } from '@nestjs/common';
-import {
-  ApiTags,
-  ApiOperation,
-  ApiResponse,
-  ApiQuery,
-  ApiBearerAuth,
-} from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
 import express from 'express';
 import { EmbedService } from '@/embed/embed.service';
 import { ScrapeService } from '@/embed/scrape/scrape.service';
@@ -49,8 +43,6 @@ export class EmbedController {
   ) {}
 
   @Get('proxy')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth('JWT-auth')
   @ApiOperation({
     summary:
       'Proxy de HTML removendo X-Frame-Options/CSP para iframe embed (ex: animefire.io)',
@@ -109,8 +101,6 @@ export class EmbedController {
   }
 
   @Get('media')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth('JWT-auth')
   @ApiOperation({
     summary:
       'Proxy de mídia (.mp4/.m3u8/.ts): injeta Referer/Origin/UA anti-hotlinking e faz streaming com Range.',
