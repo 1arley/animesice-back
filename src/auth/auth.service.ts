@@ -149,12 +149,6 @@ export class AuthService {
       throw new UnauthorizedException('Credenciais inválidas.');
     }
 
-    if (!user.isVerified) {
-      throw new UnauthorizedException(
-        'Conta não verificada. Verifique seu email para o código de ativação.',
-      );
-    }
-
     const isPasswordValid = await bcrypt.compare(password, user.password);
 
     if (!isPasswordValid) {

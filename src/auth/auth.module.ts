@@ -8,6 +8,7 @@ import { JwtStrategy } from '@/auth/jwt.strategy';
 import { JwtRefreshStrategy } from '@/auth/jwt-refresh.strategy';
 import { JwtAuthGuard } from '@/auth/jwt-auth.guard';
 import { RolesGuard } from '@/auth/roles.guard';
+import { VerifiedGuard } from '@/auth/verified.guard';
 import { MailModule } from '@/mail/mail.module';
 
 @Module({
@@ -19,7 +20,8 @@ import { MailModule } from '@/mail/mail.module';
     JwtRefreshStrategy,
     JwtAuthGuard,
     RolesGuard,
+    VerifiedGuard,
   ],
-  exports: [AuthService, JwtAuthGuard, RolesGuard],
+  exports: [AuthService, JwtAuthGuard, RolesGuard, VerifiedGuard],
 })
 export class AuthModule {}
