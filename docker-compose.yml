@@ -13,7 +13,9 @@ services:
     env_file:
       - .env
     environment:
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-animesice_db}?schema=public
+      # DATABASE_URL vem do .env — em prod aponta pro Supabase pooler
+      # (postgres.svuaszdqsgztnetefcex.pooler.supabase.com), não pro postgres local.
+      - DATABASE_URL=${DATABASE_URL}
     volumes:
       - .:/app
       - /app/node_modules
@@ -24,54 +26,10 @@ services:
         npx prisma migrate deploy &&
         npm run start:dev
       "
-    depends_on:
-      postgres:
-        condition: service_healthy
     networks:
       - nestjs-network
 
-  postgres:
-    image: postgres:15-alpine
-    container_name: nestjs-postgres
-    restart: unless-stopped
-    env_file:
-      - .env
-    ports:
-      - '5432:5432'
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-animesice_db}" ]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-    networks:
-      - nestjs-network
-
-  pgadmin:
-    image: dpage/pgadmin4:latest
-    container_name: nestjs-pgadmin
-    restart: unless-stopped
-    profiles:
-      - tools
-    env_file:
-      - .env
-    environment:
-      PGADMIN_CONFIG_SERVER_MODE: 'False'
-      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@admin.com}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin}
-    ports:
-      - '5050:80'
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks:
-      - nestjs-network
-
-volumes:
-  postgres_data:
-    driver: local
+volumes: {}
 
 networks:
   nestjs-network:

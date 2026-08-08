@@ -33,6 +33,7 @@ export default tseslint.config(
       '@typescript-eslint/no-unsafe-call': 'error',          // ← explicit
       '@typescript-eslint/no-unsafe-member-access': 'error', // ← explicit
       '@typescript-eslint/no-unsafe-return': 'error',        // ← added
+      '@typescript-eslint/require-await': 'error',
       '@typescript-eslint/no-unused-vars': [
         'error',
         {
