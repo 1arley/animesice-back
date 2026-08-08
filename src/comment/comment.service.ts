@@ -5,7 +5,11 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from '@/prisma/prisma.service';
-import { CreateCommentDto } from '@/comment/dto/create-comment.dto';
+import { NotificationService } from '@/notification/notification.service';
+import {
+  CreateCommentDto,
+  EditCommentDto,
+} from '@/comment/dto/create-comment.dto';
 import { DEFAULT_PAGE } from '@/common/constants';
 
 const MAX_COMMENTS_PER_PAGE = 50;
@@ -18,7 +22,10 @@ function sanitizeContent(content: string): string {
 
 @Injectable()
 export class CommentService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationService: NotificationService,
+  ) {}
 
   async create(userId: string, dto: CreateCommentDto) {
     if (dto.animeId) {
@@ -56,16 +63,46 @@ export class CommentService {
       throw new BadRequestException('Comentário vazio.');
     }
 
-    return this.prisma.comment.create({
-      data: {
-        content,
-        userId,
-        animeId: dto.animeId ?? null,
-        episodeId: dto.episodeId ?? null,
-        parentId: dto.parentId ?? null,
-      },
-      include: { user: { select: { id: true, name: true } } },
-    });
+    return this.prisma.comment
+      .create({
+        data: {
+          content,
+          userId,
+          animeId: dto.animeId ?? null,
+          episodeId: dto.episodeId ?? null,
+          parentId: dto.parentId ?? null,
+        },
+        include: {
+          user: { select: { id: true, name: true, avatar: true } },
+          _count: { select: { likes: true } },
+        },
+      })
+      .then(async (comment) => {
+        if (dto.parentId) {
+          const author = await this.prisma.user.findUnique({
+            where: { id: userId },
+            select: { name: true },
+          });
+          const parent = await this.prisma.comment.findUnique({
+            where: { id: dto.parentId },
+            select: { animeId: true },
+          });
+          const animeSlug = parent?.animeId
+            ? (
+                await this.prisma.anime.findUnique({
+                  where: { id: parent.animeId },
+                  select: { slug: true },
+                })
+              )?.slug
+            : undefined;
+          void this.notificationService.notifyCommentReply(
+            dto.parentId,
+            author?.name ?? 'Alguém',
+            animeSlug,
+          );
+        }
+        return comment;
+      });
   }
 
   async findByAnime(
@@ -100,12 +137,16 @@ export class CommentService {
       take: safeLimit,
       skip: (safePage - 1) * safeLimit,
       include: {
-        user: { select: { id: true, name: true } },
+        user: { select: { id: true, name: true, avatar: true } },
         replies: {
           take: MAX_REPLIES_PER_COMMENT,
-          include: { user: { select: { id: true, name: true } } },
+          include: {
+            user: { select: { id: true, name: true, avatar: true } },
+            _count: { select: { likes: true } },
+          },
           orderBy: { createdAt: 'asc' },
         },
+        _count: { select: { likes: true, replies: true } },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -128,5 +169,128 @@ export class CommentService {
     return this.prisma.comment.delete({
       where: { id: commentId },
     });
+  }
+
+  async edit(userId: string, commentId: string, dto: EditCommentDto) {
+    const comment = await this.prisma.comment.findUnique({
+      where: { id: commentId },
+      select: { id: true, userId: true },
+    });
+
+    if (!comment) {
+      throw new NotFoundException('Comentário não encontrado.');
+    }
+
+    if (comment.userId !== userId) {
+      throw new ForbiddenException('Você não pode editar este comentário.');
+    }
+
+    const content = sanitizeContent(dto.content);
+    if (!content) {
+      throw new BadRequestException('Comentário vazio.');
+    }
+
+    return this.prisma.comment.update({
+      where: { id: commentId },
+      data: { content, edited: true },
+      include: {
+        user: { select: { id: true, name: true, avatar: true } },
+        _count: { select: { likes: true } },
+      },
+    });
+  }
+
+  async toggleLike(userId: string, commentId: string) {
+    const existingComment = await this.prisma.comment.findUnique({
+      where: { id: commentId },
+      select: { id: true },
+    });
+
+    if (!existingComment) {
+      throw new NotFoundException('Comentário não encontrado.');
+    }
+
+    const existing = await this.prisma.commentLike.findUnique({
+      where: {
+        userId_commentId: { userId, commentId },
+      },
+    });
+
+    if (existing) {
+      await this.prisma.commentLike.delete({
+        where: { userId_commentId: { userId, commentId } },
+      });
+      return { liked: false };
+    }
+
+    await this.prisma.commentLike.create({
+      data: { userId, commentId },
+    });
+
+    const liker = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { name: true },
+    });
+    const likedComment = await this.prisma.comment.findUnique({
+      where: { id: commentId },
+      select: { animeId: true },
+    });
+    const animeSlug = likedComment?.animeId
+      ? (
+          await this.prisma.anime.findUnique({
+            where: { id: likedComment.animeId },
+            select: { slug: true },
+          })
+        )?.slug
+      : undefined;
+    void this.notificationService.notifyCommentLike(
+      commentId,
+      liker?.name ?? 'Alguém',
+      animeSlug,
+    );
+
+    return { liked: true };
+  }
+
+  async findReplies(
+    commentId: string,
+    page = DEFAULT_PAGE,
+    limit = MAX_COMMENTS_PER_PAGE,
+  ) {
+    const parent = await this.prisma.comment.findUnique({
+      where: { id: commentId },
+      select: { id: true },
+    });
+
+    if (!parent) {
+      throw new NotFoundException('Comentário não encontrado.');
+    }
+
+    const safeLimit = Math.min(Math.max(limit, 1), MAX_COMMENTS_PER_PAGE);
+    const safePage = Math.max(page, 1);
+
+    const [replies, total] = await this.prisma.$transaction([
+      this.prisma.comment.findMany({
+        where: { parentId: commentId },
+        take: safeLimit,
+        skip: (safePage - 1) * safeLimit,
+        include: {
+          user: { select: { id: true, name: true, avatar: true } },
+          _count: { select: { likes: true } },
+        },
+        orderBy: { createdAt: 'asc' },
+      }),
+      this.prisma.comment.count({ where: { parentId: commentId } }),
+    ]);
+
+    return {
+      data: replies,
+      meta: {
+        total,
+        page: safePage,
+        limit: safeLimit,
+        totalPages: Math.ceil(total / safeLimit),
+      },
+    };
   }
 }

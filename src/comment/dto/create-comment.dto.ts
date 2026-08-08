@@ -33,3 +33,11 @@ export class CreateCommentDto {
   @IsUUID()
   parentId?: string;
 }
+
+export class EditCommentDto {
+  @ApiProperty({ description: 'Novo conteúdo do comentário', maxLength: 1000 })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(1000)
+  content!: string;
+}
