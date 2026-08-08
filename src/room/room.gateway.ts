@@ -1,0 +1,242 @@
+import {
+  WebSocketGateway,
+  WebSocketServer,
+  OnGatewayConnection,
+  OnGatewayDisconnect,
+  SubscribeMessage,
+  MessageBody,
+  ConnectedSocket,
+} from '@nestjs/websockets';
+import { Server, Socket } from 'socket.io';
+import { RoomService } from '@/room/room.service';
+import { ModerationService } from '@/moderation/moderation.service';
+import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
+
+const MAX_MESSAGES_PER_MINUTE = 15;
+const MAX_MESSAGE_LENGTH = 500;
+const DUPLICATE_WINDOW_MS = 3000;
+
+@WebSocketGateway({
+  cors: {
+    origin: (process.env.CORS_ORIGIN ?? '')
+      .split(',')
+      .map((o) => o.trim())
+      .filter(Boolean),
+    credentials: true,
+  },
+  namespace: '/room',
+})
+export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
+  @WebSocketServer()
+  server!: Server;
+
+  private userMap = new Map<string, string>();
+  private messageTimestamps = new Map<string, number[]>();
+  private lastMessage = new Map<string, { content: string; time: number }>();
+
+  constructor(
+    private readonly roomService: RoomService,
+    private readonly moderationService: ModerationService,
+    private readonly jwtService: JwtService,
+    private readonly configService: ConfigService,
+  ) {}
+
+  async handleConnection(client: Socket) {
+    try {
+      const token = this.extractToken(client);
+      if (!token) {
+        client.disconnect();
+        return;
+      }
+
+      const payload = await this.jwtService.verifyAsync<{
+        sub?: unknown;
+      }>(token, {
+        secret: this.configService.get<string>('JWT_ACCESS_SECRET'),
+      });
+
+      if (typeof payload.sub !== 'string') {
+        client.disconnect();
+        return;
+      }
+
+      const isSuspended = await this.moderationService.isUserSuspended(
+        payload.sub,
+      );
+      if (isSuspended) {
+        client.emit('suspended', {
+          message: 'Sua conta está suspensa.',
+        });
+        client.disconnect();
+        return;
+      }
+
+      this.userMap.set(client.id, payload.sub);
+    } catch {
+      client.disconnect();
+    }
+  }
+
+  handleDisconnect(client: Socket) {
+    this.userMap.delete(client.id);
+    this.messageTimestamps.delete(client.id);
+    this.lastMessage.delete(client.id);
+    for (const room of client.rooms) {
+      if (room.startsWith('room:')) {
+        void client.leave(room);
+      }
+    }
+  }
+
+  @SubscribeMessage('joinRoom')
+  async handleJoinRoom(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { slug: string },
+  ) {
+    const userId = this.userMap.get(client.id);
+    if (!userId) return;
+
+    try {
+      const room = await this.roomService.getRoomBySlug(data.slug);
+
+      if (!client.rooms.has(`room:${room.id}`)) {
+        const participantCount = await this.roomService.getParticipantCount(
+          room.id,
+        );
+        if (participantCount >= room.maxParticipants) {
+          client.emit('roomFull', {
+            message: 'Sala cheia.',
+          });
+          return;
+        }
+      }
+
+      void client.join(`room:${room.id}`);
+      await this.roomService.touchActivity(room.id);
+      client.emit('joinedRoom', {
+        roomId: room.id,
+        slug: room.slug,
+        animeSlug: room.animeSlug,
+        episodeNumber: room.episodeNumber,
+      });
+
+      this.server.to(`room:${room.id}`).emit('userJoined', {
+        userId,
+      });
+    } catch {
+      client.emit('error', { message: 'Sala não encontrada.' });
+    }
+  }
+
+  @SubscribeMessage('leaveRoom')
+  handleLeaveRoom(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() _data: { slug: string },
+  ) {
+    for (const room of client.rooms) {
+      if (room.startsWith('room:')) {
+        void client.leave(room);
+      }
+    }
+  }
+
+  @SubscribeMessage('sendMessage')
+  async handleMessage(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { slug: string; content: string },
+  ) {
+    const userId = this.userMap.get(client.id);
+    if (!userId || !data.content?.trim()) return;
+
+    const isSuspended = await this.moderationService.isUserSuspended(userId);
+    if (isSuspended) {
+      client.emit('error', {
+        message: 'Sua conta está suspensa.',
+      });
+      return;
+    }
+
+    if (!this.checkRateLimit(client.id)) {
+      client.emit('rateLimited', {
+        message: 'Muitas mensagens. Aguarde um momento.',
+      });
+      return;
+    }
+
+    const trimmed = data.content.trim().slice(0, MAX_MESSAGE_LENGTH);
+    if (!trimmed) return;
+
+    if (this.isDuplicate(client.id, trimmed)) {
+      client.emit('duplicate', { message: 'Mensagem duplicada.' });
+      return;
+    }
+
+    try {
+      const room = await this.roomService.getRoomBySlug(data.slug);
+      const message = await this.roomService.createMessage(
+        room.id,
+        userId,
+        trimmed,
+      );
+
+      if (!message) return;
+
+      await this.roomService.touchActivity(room.id);
+      this.server.to(`room:${room.id}`).emit('newMessage', message);
+    } catch {
+      client.emit('error', { message: 'Falha ao enviar mensagem.' });
+    }
+  }
+
+  @SubscribeMessage('loadHistory')
+  async handleLoadHistory(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { slug: string },
+  ) {
+    try {
+      const room = await this.roomService.getRoomBySlug(data.slug);
+      const messages = await this.roomService.getMessages(room.id);
+      client.emit('messageHistory', messages);
+    } catch {
+      client.emit('error', { message: 'Sala não encontrada.' });
+    }
+  }
+
+  private checkRateLimit(clientId: string): boolean {
+    const now = Date.now();
+    const timestamps = this.messageTimestamps.get(clientId) ?? [];
+    const recent = timestamps.filter((t) => now - t < 60_000);
+    if (recent.length >= MAX_MESSAGES_PER_MINUTE) {
+      return false;
+    }
+    recent.push(now);
+    this.messageTimestamps.set(clientId, recent);
+    return true;
+  }
+
+  private isDuplicate(clientId: string, content: string): boolean {
+    const last = this.lastMessage.get(clientId);
+    const now = Date.now();
+    if (
+      last &&
+      last.content === content &&
+      now - last.time < DUPLICATE_WINDOW_MS
+    ) {
+      return true;
+    }
+    this.lastMessage.set(clientId, { content, time: now });
+    return false;
+  }
+
+  private extractToken(client: Socket): string | null {
+    const cookieHeader = client.handshake.headers.cookie;
+    if (typeof cookieHeader === 'string') {
+      const match = cookieHeader.match(/access_token=([^;]+)/);
+      if (match) return match[1] ?? null;
+    }
+    const auth = client.handshake.auth;
+    if (auth && typeof auth.token === 'string') return auth.token;
+    return null;
+  }
+}
