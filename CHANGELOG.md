@@ -1,3 +1,16 @@
+# [1.1.0](https://github.com/1arley/animesice-back/compare/v1.0.5...v1.1.0) (2026-08-08)
+
+
+### Bug Fixes
+
+* **episode:** remove dateModified not-null filter from latest query ([85b747d](https://github.com/1arley/animesice-back/commit/85b747d9021711faf3e82dd39eee2d174416ab0a))
+* **turnstile:** fix TS build errors — cast json() and accept undefined token ([3e0a781](https://github.com/1arley/animesice-back/commit/3e0a781f1618b80a31dfb2e7aae0141d059afe04))
+
+
+### Features
+
+* **auth:** add Cloudflare Turnstile verify on login ([031fcdb](https://github.com/1arley/animesice-back/commit/031fcdbab033730185591ed9b5565b1d48cd1ebe))
+
 ## [1.0.5](https://github.com/1arley/animesice-back/compare/v1.0.4...v1.0.5) (2026-08-08)
 
 
