@@ -14,6 +14,15 @@ import { EpisodeModule } from '@/episode/episode.module';
 import { CommentModule } from '@/comment/comment.module';
 import { AdminModule } from '@/admin/admin.module';
 import { EmbedModule } from '@/embed/embed.module';
+import { RatingModule } from '@/rating/rating.module';
+import { FavoriteModule } from '@/favorite/favorite.module';
+import { WatchHistoryModule } from '@/watch-history/watch-history.module';
+import { NotificationModule } from '@/notification/notification.module';
+import { RoomModule } from '@/room/room.module';
+import { UserAnimeListModule } from '@/user-anime-list/user-anime-list.module';
+import { ModerationModule } from '@/moderation/moderation.module';
+import { RecommendationModule } from '@/recommendation/recommendation.module';
+import { CommunityModule } from '@/community/community.module';
 
 @Module({
   imports: [
@@ -42,6 +51,15 @@ import { EmbedModule } from '@/embed/embed.module';
     CommentModule,
     AdminModule,
     EmbedModule,
+    RatingModule,
+    FavoriteModule,
+    WatchHistoryModule,
+    NotificationModule,
+    RoomModule,
+    UserAnimeListModule,
+    ModerationModule,
+    RecommendationModule,
+    CommunityModule,
   ],
   controllers: [AppController],
   providers: [
