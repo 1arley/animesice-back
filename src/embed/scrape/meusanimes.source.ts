@@ -41,7 +41,7 @@ export class MeusanimesScrapeSource implements ScrapeSource {
   private readonly PICKER_RE = /\/(e\/)?\?a=\d+\/\d+\/\d+/i;
 
   private readonly IFRAME_PHP_RE =
-    /location\.href='(iframe\.php\?[abc]=\d+\/\d+\/\d+)'/gi;
+    /location\.href='(iframe\.php\?[abc]=\d+\/\d+\/\d+\/?)'/gi;
 
   supports(url: string): boolean {
     return /meusanimes\.blog|meusdoramas\.club/i.test(url);
@@ -118,6 +118,32 @@ export class MeusanimesScrapeSource implements ScrapeSource {
       bloggerTokens.push(videoUrl);
       return;
     }
+
+    // Player próprio MeuDoramas: video.meusdoramas.club/embed/<uuid> é página
+    // JWPlayer com o config embutido no HTML — extrai o .mp4/.m3u8 direto.
+    if (/video\.meusdoramas\.club\/embed\//i.test(videoUrl)) {
+      try {
+        const embedHtml = await this.get(
+          videoUrl,
+          ua,
+          `${new URL(videoUrl).origin}/`,
+        );
+        const files = [
+          ...embedHtml.matchAll(
+            /"file":\s*"([^"]+\.(?:mp4|m3u8)(?:\?[^"]*)?)"/gi,
+          ),
+        ]
+          .map((m) => m[1]!.replace(/\\\//g, '/'))
+          .filter((f) => /^https?:\/\//i.test(f));
+        for (const f of files) {
+          if (!videos.includes(f)) videos.push(f);
+        }
+      } catch {
+        /* embed irresolvível — segue sem vídeo */
+      }
+      return;
+    }
+
     if (/\.(mp4|m3u8)($|\?|#)/i.test(videoUrl)) {
       videos.push(videoUrl);
       return;

@@ -558,36 +558,45 @@ export class ScrapeService {
    * -> get-video.php -> token Blogger -> Playwright headless:false + Xvfb ->
    * googlevideo.com/videoplayback (.mp4).
    *
+   * Filmes/singles não usam o sufixo `-<season>-episodio-<n>` — a URL é
+   * meusanimes.blog/e/<slug>/ — então tenta candidatos em ordem até achar o
+   * que não retorne 404.
+   *
    * Retorna a URL .mp4 RAW (sem wrap) ou null se falhar.
    */
   async scrapeFromMeusanimes(
     animeSlug: string,
     episodeNumber: number,
   ): Promise<string | null> {
-    const episodeUrl = this.meusanimesEpisodeUrl(animeSlug, episodeNumber);
-    dbg(`[MEUSANIMES] start ${animeSlug}/${episodeNumber} -> ${episodeUrl}`);
+    const candidates = [
+      this.meusanimesEpisodeUrl(animeSlug, episodeNumber),
+      `https://meusanimes.blog/e/${animeSlug}/`,
+      `https://meusanimes.blog/e/${animeSlug}-episodio-${episodeNumber}/`,
+    ];
 
-    try {
-      const result = await this.scrapeEpisodeVideo(
-        episodeUrl,
-        undefined,
-        false,
-      );
-      const video = result.videos[0] ?? null;
-      if (video) {
-        dbg(
-          `[MEUSANIMES] OK ${animeSlug}/${episodeNumber}: ${video.slice(0, 80)}...`,
+    for (const episodeUrl of candidates) {
+      dbg(`[MEUSANIMES] try ${animeSlug}/${episodeNumber} -> ${episodeUrl}`);
+      try {
+        const result = await this.scrapeEpisodeVideo(
+          episodeUrl,
+          undefined,
+          false,
         );
-      } else {
+        const video = result.videos[0] ?? null;
+        if (video) {
+          dbg(
+            `[MEUSANIMES] OK ${animeSlug}/${episodeNumber}: ${video.slice(0, 80)}...`,
+          );
+          return video;
+        }
         dbg(`[MEUSANIMES] no video returned ${animeSlug}/${episodeNumber}`);
+      } catch (err) {
+        dbg(
+          `[MEUSANIMES] candidate failed ${episodeUrl}: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
-      return video;
-    } catch (err) {
-      dbg(
-        `[MEUSANIMES] FAILED ${animeSlug}/${episodeNumber}: ${err instanceof Error ? err.message : String(err)}\n${err instanceof Error ? (err.stack ?? '') : ''}`,
-      );
-      return null;
     }
+    return null;
   }
 
   /**
