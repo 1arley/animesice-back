@@ -87,7 +87,7 @@ async function fetchSitemap(): Promise<string[]> {
   const re = /<loc>([^<]+)<\/loc>/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(xml))) {
-    const url = m[1].trim();
+    const url = m[1]!.trim();
     if (/\/animes\/[^/]+\/\d+/.test(url)) {
       urls.push(url);
     }
@@ -101,8 +101,8 @@ function groupBySlug(urls: string[]): AnimefireCatalogEntry[] {
   for (const url of urls) {
     const m = url.match(/\/animes\/([^/]+)\/(\d+)/);
     if (!m) continue;
-    const slug = m[1];
-    const number = parseInt(m[2], 10);
+    const slug = m[1]!;
+    const number = parseInt(m[2]!, 10);
     const entry = map.get(slug) ?? { slug, episodeUrls: [] };
     entry.episodeUrls.push({ number, url });
     map.set(slug, entry);
@@ -141,20 +141,20 @@ async function fetchAnimefirePageInfo(
     let synopsis: string | null = null;
 
     const titleM = html.match(/<h1[^>]*>([^<]+)<\/h1>/i);
-    if (titleM) title = titleM[1].trim();
+    if (titleM) title = titleM[1]!.trim();
 
     const coverM = html.match(/\/div_botPages_bg[^>]*>[\s\S]*?<img[^>]+src=["']([^"']+)["']/i)
       || html.match(/<img[^>]+class=["'][^"']*(?:anime|cover|poster|capa)[^"']*["'][^>]+src=["']([^"']+)["']/i);
     if (coverM) {
-      coverImage = coverM[1].startsWith('http')
-        ? coverM[1]
-        : `${ANIMEFIRE_BASE}${coverM[1]}`;
+      coverImage = coverM[1]!.startsWith('http')
+        ? coverM[1]!
+        : `${ANIMEFIRE_BASE}${coverM[1]!}`;
     }
 
     const synM = html.match(/<div[^>]*id=["']synopsis["'][^>]*>([\s\S]*?)<\/div>/i)
       || html.match(/<p[^>]*class=["'][^"']*syn[^"']*["'][^>]*>([\s\S]*?)<\/p>/i);
     if (synM) {
-      synopsis = synM[1].replace(/<[^>]+>/g, '').trim().slice(0, 2000);
+      synopsis = synM[1]!.replace(/<[^>]+>/g, '').trim().slice(0, 2000);
     }
 
     return { title, coverImage, synopsis };

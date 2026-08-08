@@ -23,6 +23,24 @@ export interface AniListMedia {
   status?: string | null;
   genres?: (string | null)[] | null;
   isAdult?: boolean | null;
+  season?: string | null;
+  seasonYear?: number | null;
+  format?: string | null;
+  episodes?: number | null;
+  startDate?: {
+    year?: number | null;
+    month?: number | null;
+    day?: number | null;
+  } | null;
+  endDate?: {
+    year?: number | null;
+    month?: number | null;
+    day?: number | null;
+  } | null;
+  studios?: {
+    nodes?: Array<{ name: string; isAnimationStudio?: boolean }> | null;
+  } | null;
+  source?: string | null;
 }
 
 interface GraphQLResponse<T> {
@@ -46,6 +64,14 @@ export class AniListService {
           status
           genres
           isAdult
+          season
+          seasonYear
+          format
+          episodes
+          startDate { year month day }
+          endDate { year month day }
+          studios(isMain: true) { nodes { name isAnimationStudio } }
+          source
         }
       }`;
 
@@ -69,6 +95,14 @@ export class AniListService {
             status
             genres
             isAdult
+            season
+            seasonYear
+            format
+            episodes
+            startDate { year month day }
+            endDate { year month day }
+            studios(isMain: true) { nodes { name isAnimationStudio } }
+            source
           }
         }
       }`;

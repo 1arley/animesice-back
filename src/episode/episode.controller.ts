@@ -1,4 +1,11 @@
-import { Controller, Get, Param, ParseIntPipe, Query } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Param,
+  ParseIntPipe,
+  Query,
+} from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { EpisodeService } from '@/episode/episode.service';
 import { MAX_PAGE_SIZE } from '@/common/constants';
@@ -15,6 +22,18 @@ export class EpisodeController {
     const parsed = parseInt(limit ?? '12', 10);
     const clamped = Number.isNaN(parsed) || parsed < 1 ? 12 : parsed;
     return this.episodeService.findLatest(Math.min(clamped, MAX_PAGE_SIZE));
+  }
+
+  @Post(':slug/:number/views')
+  @ApiOperation({
+    summary: 'Incrementar contador de visualizações do episódio',
+  })
+  @ApiResponse({ status: 200, description: 'View incrementada' })
+  incrementViews(
+    @Param('slug') slug: string,
+    @Param('number', ParseIntPipe) number: number,
+  ) {
+    return this.episodeService.incrementViews(slug, number);
   }
 
   @Get(':slug')

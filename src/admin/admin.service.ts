@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '@/prisma/prisma.service';
+import { NotificationService } from '@/notification/notification.service';
 import { CreateAnimeDto, UpdateAnimeDto } from '@/admin/dto/update-anime.dto';
 import {
   CreateEpisodeDto,
@@ -13,13 +14,14 @@ import {
 import { CreateGenreDto } from '@/admin/dto/create-genre.dto';
 import { AniListService, AniListMedia } from '@/admin/anilist.service';
 import { ImportAnimeDto } from '@/admin/dto/import-anime.dto';
-import { AudioType } from '@prisma/client';
+import { AnimeFormat, AnimeSeason, AudioType } from '@prisma/client';
 
 @Injectable()
 export class AdminService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly anilistService: AniListService,
+    private readonly notificationService: NotificationService,
   ) {}
 
   // --- Helpers ------------------------------------------------------------
@@ -122,9 +124,18 @@ export class AdminService {
     if (!anime) {
       throw new NotFoundException('Anime não encontrado.');
     }
-    return this.prisma.episode.create({
+    const episode = await this.prisma.episode.create({
       data: { ...dto, animeId: anime.id },
     });
+
+    void this.notificationService.notifyNewEpisode(
+      anime.id,
+      anime.title,
+      episode.number,
+      anime.slug,
+    );
+
+    return episode;
   }
 
   async updateEpisode(slug: string, number: number, dto: UpdateEpisodeDto) {
@@ -210,6 +221,53 @@ export class AdminService {
       );
     }
 
+    // Mapeia season string → enum -------------------------------------
+    const seasonMap: Record<string, AnimeSeason> = {
+      WINTER: AnimeSeason.WINTER,
+      SPRING: AnimeSeason.SPRING,
+      SUMMER: AnimeSeason.SUMMER,
+      FALL: AnimeSeason.FALL,
+    };
+    const season = media.season ? seasonMap[media.season] : undefined;
+
+    // Mapeia format string → enum --------------------------------------
+    const formatMap: Record<string, AnimeFormat> = {
+      TV: AnimeFormat.TV,
+      MOVIE: AnimeFormat.MOVIE,
+      OVA: AnimeFormat.OVA,
+      ONA: AnimeFormat.ONA,
+      SPECIAL: AnimeFormat.SPECIAL,
+      MUSIC: AnimeFormat.MUSIC,
+    };
+    const format = media.format ? formatMap[media.format] : undefined;
+
+    // Estúdios de animação ----------------------------------------------
+    const studios = (media.studios?.nodes ?? [])
+      .filter((s) => s.isAnimationStudio !== false)
+      .map((s) => s.name);
+
+    // Datas de estreia/fim ---------------------------------------------
+    const releaseDate = media.startDate?.year
+      ? new Date(
+          media.startDate.year,
+          (media.startDate.month ?? 1) - 1,
+          media.startDate.day ?? 1,
+        )
+      : undefined;
+    const endDate = media.endDate?.year
+      ? new Date(
+          media.endDate.year,
+          (media.endDate.month ?? 1) - 1,
+          media.endDate.day ?? 1,
+        )
+      : undefined;
+
+    // Títulos alternativos ---------------------------------------------
+    const alternativeTitles = [
+      media.title?.english,
+      media.title?.native,
+    ].filter((t): t is string => !!t && t !== title);
+
     const createDto: CreateAnimeDto = {
       slug,
       title,
@@ -223,6 +281,17 @@ export class AdminService {
       audio: dto.audio ?? AudioType.LEGENDADO,
       ageRating: media.isAdult ? 'A18' : 'A14',
       genreSlugs,
+      ...(format ? { format } : {}),
+      ...(media.seasonYear ? { year: media.seasonYear } : {}),
+      ...(season ? { season } : {}),
+      ...(studios.length ? { studios } : {}),
+      ...(alternativeTitles.length ? { alternativeTitles } : {}),
+      ...(media.title?.native ? { japaneseTitle: media.title.native } : {}),
+      ...(media.source ? { source: media.source } : {}),
+      ...(releaseDate ? { releaseDate: releaseDate.toISOString() } : {}),
+      ...(endDate ? { endDate: endDate.toISOString() } : {}),
+      ...(media.episodes ? { episodeCount: media.episodes } : {}),
+      published: true,
     };
 
     const anime = await this.createAnime(createDto);
