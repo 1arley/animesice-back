@@ -1,3 +1,10 @@
+## [1.0.4](https://github.com/1arley/animesice-back/compare/v1.0.3...v1.0.4) (2026-08-08)
+
+
+### Bug Fixes
+
+* **streaming:** probe stored media URL and auto re-extract when dead in getSource ([78cc3e8](https://github.com/1arley/animesice-back/commit/78cc3e8c78eb0c653a59b0a1cd9b29ac8cafffad))
+
 ## [1.0.3](https://github.com/1arley/animesice-back/compare/v1.0.2...v1.0.3) (2026-08-08)
 
 
