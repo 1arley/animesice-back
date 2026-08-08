@@ -1,3 +1,10 @@
+## [1.0.5](https://github.com/1arley/animesice-back/compare/v1.0.4...v1.0.5) (2026-08-08)
+
+
+### Bug Fixes
+
+* **scrape:** resolve movie/single episodes from meusanimes ([2ae8119](https://github.com/1arley/animesice-back/commit/2ae8119d0ee42b73c5c11e0b907a0a7d58870b19))
+
 ## [1.0.4](https://github.com/1arley/animesice-back/compare/v1.0.3...v1.0.4) (2026-08-08)
 
 
