@@ -4,14 +4,23 @@ import type { Server } from 'node:http';
 import * as bcrypt from 'bcrypt';
 import { AppModule } from '@/app.module';
 import { PrismaService } from '@/prisma/prisma.service';
+import { MailService } from '@/mail/mail.service';
 
 let app: INestApplication;
 let prismaService: PrismaService;
 
+const mockMailService = {
+  send: jest.fn().mockResolvedValue(true),
+  sendVerificationCode: jest.fn().mockResolvedValue(true),
+};
+
 beforeAll(async () => {
   const moduleRef = await Test.createTestingModule({
     imports: [AppModule],
-  }).compile();
+  })
+    .overrideProvider(MailService)
+    .useValue(mockMailService)
+    .compile();
 
   app = moduleRef.createNestApplication();
   app.useGlobalPipes(
@@ -70,6 +79,7 @@ export async function createTestUser(
   password: string = 'Test123!',
   name: string = 'Test User',
   role: Role = Role.USER,
+  isVerified: boolean = false,
 ) {
   return prismaService.user.create({
     data: {
@@ -77,6 +87,7 @@ export async function createTestUser(
       password: await bcrypt.hash(password, 1),
       name,
       role,
+      isVerified,
     },
   });
 }

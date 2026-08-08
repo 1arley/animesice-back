@@ -1,5 +1,6 @@
 import request from 'supertest';
 import type { IncomingHttpHeaders } from 'node:http';
+import { Role } from '@prisma/client';
 import {
   getHttpServer,
   getPrismaService,
@@ -55,6 +56,7 @@ describe('AuthController (e2e)', () => {
   afterEach(async () => {
     const prisma = getPrismaService();
     await prisma.refreshToken.deleteMany({});
+    await prisma.emailVerificationCode.deleteMany({});
     await prisma.user.deleteMany({});
   });
 
@@ -75,11 +77,9 @@ describe('AuthController (e2e)', () => {
 
       const body = response.body as RegisterResponse;
 
-      expect(body.message).toBe('Usuário cadastrado com sucesso.');
-      expect(body.user).toHaveProperty('id');
-      expect(body.user.email).toBe(registerDto.email);
-      expect(body.user.name).toBe(registerDto.name);
-      expect(body.user).not.toHaveProperty('password');
+      expect(body.message).toBe(
+        'Conta criada. Verifique seu email para o código de verificação.',
+      );
 
       const userInDb = await prisma.user.findUnique({
         where: { email: registerDto.email },
@@ -88,10 +88,17 @@ describe('AuthController (e2e)', () => {
       expect(userInDb).toBeDefined();
       expect(userInDb?.name).toBe(registerDto.name);
       expect(userInDb?.role).toBe('USER');
+      expect(userInDb?.isVerified).toBe(false);
     });
 
     it('should return 409 Conflict when email already exists', async () => {
-      await createTestUser('existing@example.com');
+      await createTestUser(
+        'existing@example.com',
+        'Password123!',
+        'Test User',
+        Role.USER,
+        true,
+      );
 
       const registerDto = {
         name: 'Another User',
@@ -418,8 +425,8 @@ describe('AuthController (e2e)', () => {
         .send(registerDto)
         .expect(201);
 
-      expect((registerResponse.body as RegisterResponse).user.email).toBe(
-        registerDto.email,
+      expect((registerResponse.body as RegisterResponse).message).toBe(
+        'Conta criada. Verifique seu email para o código de verificação.',
       );
 
       const loginResponse = await request(getHttpServer())
