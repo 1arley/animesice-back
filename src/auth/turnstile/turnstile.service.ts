@@ -5,7 +5,7 @@ export class TurnstileService {
   private readonly siteverify =
     'https://challenges.cloudflare.com/turnstile/v0/siteverify';
 
-  async verify(token: string, secret?: string): Promise<void> {
+  async verify(token: string | undefined, secret?: string): Promise<void> {
     const expectedSecret = secret ?? process.env.TURNSTILE_SECRET;
 
     if (!expectedSecret) return;
@@ -27,8 +27,10 @@ export class TurnstileService {
         }),
       });
       if (res.ok) {
-        const data: { success?: boolean; error_codes?: string[] } =
-          await res.json();
+        const data = (await res.json()) as {
+          success?: boolean;
+          error_codes?: string[];
+        };
         verified = !!data.success;
       }
     } catch {
