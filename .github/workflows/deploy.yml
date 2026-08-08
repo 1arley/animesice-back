@@ -8,11 +8,21 @@
 #   - Uses the `production` GitHub Environment so protection rules
 #     (required reviewers, wait timer) apply before any server change.
 #   - Rollback: re-run this workflow manually and select a previous tag.
+#
+# NOTE on triggers: semantic-release creates tags/releases with the default
+# GITHUB_TOKEN, and events caused by GITHUB_TOKEN never spawn new workflow
+# runs — so a bare `release: [published]` trigger would never fire here.
+# The `workflow_run` trigger on the Release workflow is the reliable path
+# (workflow_run events are delivered regardless of token provenance).
 name: Deploy
 
 on:
   release:
     types: [published]
+  workflow_run:
+    workflows: ['Release']
+    branches: [main]
+    types: [completed]
   workflow_dispatch:
     inputs:
       tag:
@@ -41,10 +51,14 @@ jobs:
     # Safety gates:
     # - never from a PR
     # - automatic deploy only for stable releases (not prereleases from `dev`)
+    # - after the Release workflow succeeds on main (semantic-release tag)
     # - workflow_dispatch always allowed (explicit rollback / hotfixes)
     if: >
       github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'release' && github.event.release.prerelease == false)
+      (github.event_name == 'release' && github.event.release.prerelease == false) ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
 
     steps:
       - name: Resolve deploy ref
@@ -53,6 +67,10 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "release" ]; then
             echo "ref=${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "workflow_run" ]; then
+            # Release workflow tags the exact commit it ran against; checkout
+            # that SHA and resolve the tag locally in the next step.
+            echo "ref=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_OUTPUT"
           elif [ -n "${{ inputs.tag }}" ]; then
             echo "ref=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
           else
@@ -63,6 +81,19 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ steps.ref.outputs.ref }}
+          fetch-depth: 0
+
+      # On workflow_run the ref is the release commit SHA; resolve the tag it
+      # belongs to for deterministic image tagging (git describe needs history).
+      - name: Resolve release tag
+        id: tag
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            echo "tag=$(git describe --tags --abbrev=0)" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ steps.ref.outputs.ref }}" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -81,7 +112,7 @@ jobs:
           # Tag with the release tag (e.g. v1.2.3) and `latest` for the
           # server's `docker compose pull` to pick up by default.
           tags: |
-            ${{ secrets.DOCKERHUB_REPO }}:${{ steps.ref.outputs.ref }}
+            ${{ secrets.DOCKERHUB_REPO }}:${{ steps.tag.outputs.tag }}
             ${{ secrets.DOCKERHUB_REPO }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -108,7 +139,7 @@ jobs:
             export DEPLOY_APP_DIR="${{ secrets.DEPLOY_APP_DIR }}"
             export DOCKERHUB_USERNAME="${{ secrets.DOCKERHUB_USERNAME }}"
             export DOCKERHUB_TOKEN="${{ secrets.DOCKERHUB_TOKEN }}"
-            export DEPLOY_TAG="${{ steps.ref.outputs.ref }}"
+            export DEPLOY_TAG="${{ steps.tag.outputs.tag }}"
 
             cd "$DEPLOY_APP_DIR"
 
