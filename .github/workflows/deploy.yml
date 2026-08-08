@@ -83,14 +83,15 @@ jobs:
           ref: ${{ steps.ref.outputs.ref }}
           fetch-depth: 0
 
-      # On workflow_run the ref is the release commit SHA; resolve the tag it
-      # belongs to for deterministic image tagging (git describe needs history).
+      # On workflow_run the ref is the release commit SHA; resolve the actual
+      # release tag via the API (git describe would return the previous tag,
+      # since the semantic-release tag points at a child commit).
       - name: Resolve release tag
         id: tag
         shell: bash
         run: |
           if [ "${{ github.event_name }}" = "workflow_run" ]; then
-            echo "tag=$(git describe --tags --abbrev=0)" >> "$GITHUB_OUTPUT"
+            echo "tag=$(gh api repos/${{ github.repository }}/releases/latest --jq .tag_name)" >> "$GITHUB_OUTPUT"
           else
             echo "tag=${{ steps.ref.outputs.ref }}" >> "$GITHUB_OUTPUT"
           fi
@@ -114,8 +115,8 @@ jobs:
           tags: |
             ${{ secrets.DOCKERHUB_REPO }}:${{ steps.tag.outputs.tag }}
             ${{ secrets.DOCKERHUB_REPO }}:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=deploy
+          cache-to: type=gha,mode=max,scope=deploy
           provenance: false
 
       # Remote deploy over SSH. The server has docker compose and the compose
