@@ -1,3 +1,10 @@
+## [1.0.2](https://github.com/1arley/animesice-back/compare/v1.0.1...v1.0.2) (2026-08-08)
+
+
+### Bug Fixes
+
+* **ci:** resolve release tag via API and isolate deploy cache scope ([8707f06](https://github.com/1arley/animesice-back/commit/8707f06ecceb0da7125538285c0dfd0a77772811))
+
 ## [1.0.1](https://github.com/1arley/animesice-back/compare/v1.0.0...v1.0.1) (2026-08-08)
 
 
