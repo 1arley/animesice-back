@@ -1,3 +1,10 @@
+## [1.0.3](https://github.com/1arley/animesice-back/compare/v1.0.2...v1.0.3) (2026-08-08)
+
+
+### Bug Fixes
+
+* **ci:** provide GH_TOKEN to gh in tag resolution step ([bd8e21a](https://github.com/1arley/animesice-back/commit/bd8e21a6f5d560757937dbfe1771cb6d59a2a650))
+
 ## [1.0.2](https://github.com/1arley/animesice-back/compare/v1.0.1...v1.0.2) (2026-08-08)
 
 
