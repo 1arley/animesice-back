@@ -105,4 +105,61 @@ export class UserService {
     const { password: _, ...userWithoutPassword } = user;
     return userWithoutPassword;
   }
+
+  async getPublicProfile(id: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        name: true,
+        avatar: true,
+        bio: true,
+        createdAt: true,
+        _count: {
+          select: {
+            comments: true,
+            ratings: true,
+            favorites: true,
+            watchHistories: true,
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      throw new NotFoundException('Usuário não encontrado.');
+    }
+
+    return user;
+  }
+
+  async updateProfileMeta(
+    userId: string,
+    dto: { avatar?: string; bio?: string },
+  ) {
+    const data: Record<string, string | null> = {};
+    if (dto.avatar !== undefined) data.avatar = dto.avatar;
+    if (dto.bio !== undefined) data.bio = dto.bio;
+
+    if (Object.keys(data).length === 0) {
+      throw new NotFoundException('Nada para atualizar.');
+    }
+
+    const user = await this.prisma.user.update({
+      where: { id: userId },
+      data,
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+        avatar: true,
+        bio: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+
+    return user;
+  }
 }
