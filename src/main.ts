@@ -137,6 +137,7 @@ function assertSecrets(): void {
   const secrets = [
     ['JWT_ACCESS_SECRET', process.env.JWT_ACCESS_SECRET],
     ['JWT_REFRESH_SECRET', process.env.JWT_REFRESH_SECRET],
+    ['TURNSTILE_SECRET', process.env.TURNSTILE_SECRET],
   ] as const;
 
   for (const [name, value] of secrets) {

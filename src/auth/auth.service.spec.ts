@@ -5,6 +5,7 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { ConflictException, UnauthorizedException } from '@nestjs/common';
 import { MailService } from '@/mail/mail.service';
+import { TurnstileService } from '@/auth/turnstile/turnstile.service';
 import * as bcrypt from 'bcrypt';
 
 describe('AuthService', () => {
@@ -37,6 +38,10 @@ describe('AuthService', () => {
     sendVerificationCode: jest.fn().mockResolvedValue(true),
   };
 
+  const mockTurnstileService = {
+    verify: jest.fn().mockResolvedValue(true),
+  };
+
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -45,6 +50,7 @@ describe('AuthService', () => {
         { provide: JwtService, useValue: { signAsync: jest.fn() } },
         { provide: ConfigService, useValue: { get: jest.fn() } },
         { provide: MailService, useValue: mockMailService },
+        { provide: TurnstileService, useValue: mockTurnstileService },
       ],
     }).compile();
 

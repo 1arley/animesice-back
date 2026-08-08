@@ -9,6 +9,7 @@ import { JwtRefreshStrategy } from '@/auth/jwt-refresh.strategy';
 import { JwtAuthGuard } from '@/auth/jwt-auth.guard';
 import { RolesGuard } from '@/auth/roles.guard';
 import { VerifiedGuard } from '@/auth/verified.guard';
+import { TurnstileService } from '@/auth/turnstile/turnstile.service';
 import { MailModule } from '@/mail/mail.module';
 
 @Module({
@@ -16,6 +17,7 @@ import { MailModule } from '@/mail/mail.module';
   controllers: [AuthController],
   providers: [
     AuthService,
+    TurnstileService,
     JwtStrategy,
     JwtRefreshStrategy,
     JwtAuthGuard,

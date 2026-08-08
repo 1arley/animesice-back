@@ -16,6 +16,7 @@ import type { StringValue } from 'ms';
 import { Response } from 'express';
 import { BCRYPT_ROUNDS } from '@/common/constants';
 import { MailService } from '@/mail/mail.service';
+import { TurnstileService } from '@/auth/turnstile/turnstile.service';
 
 @Injectable()
 export class AuthService {
@@ -24,6 +25,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly mailService: MailService,
+    private readonly turnstileService: TurnstileService,
   ) {}
 
   // ── Cookie helpers ──────────────────────────────────────────────────
@@ -140,6 +142,10 @@ export class AuthService {
 
   async login(loginDto: LoginDto) {
     const { email, password } = loginDto;
+
+    if (process.env.NODE_ENV !== 'test') {
+      await this.turnstileService.verify(loginDto.turnstileToken);
+    }
 
     const user = await this.prisma.user.findUnique({
       where: { email },
