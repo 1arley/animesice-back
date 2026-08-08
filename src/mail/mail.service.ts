@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Resend } from 'resend';
 
 export interface MailPayload {
   to: string;
@@ -11,70 +12,52 @@ export interface MailPayload {
 @Injectable()
 export class MailService {
   private readonly logger = new Logger(MailService.name);
-  private readonly workerUrl: string | undefined;
-  private readonly workerToken: string | undefined;
-  private readonly cfAccessClientId: string | undefined;
-  private readonly cfAccessClientSecret: string | undefined;
+  private readonly resend: Resend | null = null;
   private readonly fromName: string;
+  private readonly fromEmail: string;
 
   constructor(private readonly configService: ConfigService) {
-    this.workerUrl = this.configService.get<string>('MAIL_WORKER_URL');
-    this.workerToken = this.configService.get<string>('MAIL_WORKER_TOKEN');
-    this.cfAccessClientId = this.configService.get<string>(
-      'CF_ACCESS_CLIENT_ID',
-    );
-    this.cfAccessClientSecret = this.configService.get<string>(
-      'CF_ACCESS_CLIENT_SECRET',
-    );
+    const apiKey = this.configService.get<string>('RESEND_API_KEY');
     this.fromName =
       this.configService.get<string>('MAIL_FROM_NAME') || 'AnimesIce';
+    this.fromEmail =
+      this.configService.get<string>('MAIL_FROM_EMAIL') ||
+      'noreply@animesice.app';
+
+    if (apiKey) {
+      this.resend = new Resend(apiKey);
+    } else {
+      this.logger.warn('RESEND_API_KEY not set — email sending disabled');
+    }
   }
 
   async send(payload: MailPayload): Promise<boolean> {
-    if (!this.workerUrl) {
+    if (!this.resend) {
       this.logger.warn(
-        `MAIL_WORKER_URL not set — skipping email to ${payload.to}`,
+        `RESEND_API_KEY not configured — skipping email to ${payload.to}`,
       );
       return false;
     }
 
     try {
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-      };
-
-      // Cloudflare Access service token authentication — required when the
-      // Worker is behind CF Access. The Access policy validates these headers
-      // before the request reaches the Worker.
-      if (this.cfAccessClientId && this.cfAccessClientSecret) {
-        headers['CF-Access-Client-Id'] = this.cfAccessClientId;
-        headers['CF-Access-Client-Secret'] = this.cfAccessClientSecret;
-      }
-
-      // Bearer token as a second layer (validated by the Worker itself).
-      if (this.workerToken) {
-        headers['Authorization'] = `Bearer ${this.workerToken}`;
-      }
-
-      const res = await fetch(this.workerUrl, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          from: `${this.fromName} <noreply@animesice.app>`,
-          to: payload.to,
-          subject: payload.subject,
-          html: payload.html,
-          text: payload.text,
-        }),
+      const { data, error } = await this.resend.emails.send({
+        from: `${this.fromName} <${this.fromEmail}>`,
+        to: [payload.to],
+        subject: payload.subject,
+        html: payload.html,
+        text: payload.text,
       });
 
-      if (!res.ok) {
-        const body = await res.text().catch(() => 'unknown');
-        this.logger.error(`Mail worker returned ${res.status}: ${body}`);
+      if (error) {
+        this.logger.error(
+          `Resend error sending to ${payload.to}: ${error.name} — ${error.message}`,
+        );
         return false;
       }
 
-      this.logger.log(`Email sent to ${payload.to} — ${payload.subject}`);
+      this.logger.log(
+        `Email sent to ${payload.to} — ${payload.subject} (id: ${data?.id})`,
+      );
       return true;
     } catch (err) {
       this.logger.error(
