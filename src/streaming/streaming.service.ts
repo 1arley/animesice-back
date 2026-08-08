@@ -20,6 +20,60 @@ function dbg(msg: string): void {
 }
 
 /**
+ * Probe leve de liveness da URL de mídia. Reproduz EXATAMENTE os headers do
+ * proxy de mídia (embed.service.proxyMedia): googlevideo valida o User-Agent
+ * contra o token extraído (cver) — UA errado gera 403 falso. Usa o mesmo
+ * UA/Referer/Origin do proxy para o teste ser representativo.
+ *
+ * Otimização: URLs googlevideo carregam `expire` (unix). Se expire - agora >
+ * 30min, assume viva sem rede; só faz GET (Range bytes=0-0) quando próximo
+ * do vencimento ou sem `expire`. Trata 401/403/404/410 como morta; demais
+ * (5xx, 429, timeout, erro de rede) como viva, evitando re-extração por
+ * problema transitório.
+ */
+async function probeMediaUrlDead(url: string): Promise<boolean> {
+  try {
+    const parsed = new URL(url);
+    const expire = parseInt(parsed.searchParams.get('expire') ?? '', 10);
+    if (Number.isFinite(expire) && expire - Date.now() / 1000 > 1800) {
+      return false;
+    }
+  } catch {
+    /* segue para probe de rede */
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
+  try {
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'user-agent':
+          'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        referer: refererForMediaUrl(url),
+        origin: refererForMediaUrl(url).replace(/\/$/, ''),
+        accept: '*/*',
+        'accept-language': 'pt-BR,pt;q=0.9,en;q=0.5',
+        Range: 'bytes=0-0',
+      },
+      redirect: 'follow',
+      signal: controller.signal,
+    });
+    await res.body?.cancel();
+    return (
+      res.status === 401 ||
+      res.status === 403 ||
+      res.status === 404 ||
+      res.status === 410
+    );
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * Origem da fonte, injetada como Referer/Origin no proxy de mídia anti-hotlink.
  * Derivada por host: googlevideo exige youtube.googleapis.com,
  * lightspeedst exige animefire.io.
@@ -212,6 +266,19 @@ export class StreamingService {
         if (inner) rawVideoUrl = inner;
       } catch {
         /* mantém */
+      }
+    }
+
+    // videoUrl guardada pode estar morta (token CDN/IP-URL expirado). Probe
+    // leve e, se morta, zera para o fluxo de re-extração abaixo recompor.
+    if (rawVideoUrl && /^https?:\/\//i.test(rawVideoUrl)) {
+      const dead = await probeMediaUrlDead(rawVideoUrl);
+      dbg(`[STREAM] probe videoUrl=${rawVideoUrl.slice(0, 80)} dead=${dead}`);
+      if (dead) {
+        dbg(
+          `[STREAM] videoUrl morta — forçando re-extração p/ ${animeSlug}/${episodeNumber}`,
+        );
+        rawVideoUrl = null;
       }
     }
 
