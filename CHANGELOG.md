@@ -1,3 +1,10 @@
+## [1.0.1](https://github.com/1arley/animesice-back/compare/v1.0.0...v1.0.1) (2026-08-08)
+
+
+### Bug Fixes
+
+* **ci:** trigger deploy after semantic-release completes ([3990148](https://github.com/1arley/animesice-back/commit/3990148bc545cedd3743e959659d52617607e3a6))
+
 # 1.0.0 (2026-08-08)
 
 
