@@ -7,6 +7,19 @@ import { AnimefireScrapeSource } from './animefire.source';
 import { AnimesonlineccScrapeSource } from './animesonlinecc.source';
 import { MeusanimesScrapeSource } from './meusanimes.source';
 import { PrismaService } from '@/prisma/prisma.service';
+import { ensureXvfb } from './xvfb.helper';
+import * as fs from 'fs';
+
+/** Debug logger that writes to /tmp/scrape-debug.log (survives NestJS log suppression). */
+function dbg(msg: string): void {
+  const line = `${new Date().toISOString()} ${msg}`;
+  try {
+    fs.appendFileSync('/tmp/scrape-debug.log', line + '\n');
+  } catch {
+    // log de debug nunca deve derrubar o fluxo
+  }
+  console.error(line);
+}
 
 /** Subconjunto do DOM usado no diagnostico do scraping. */
 interface EmbedDocument {
@@ -29,7 +42,7 @@ interface EmbedDocument {
 /**
  * Origem do site fonte (ex: https://animefire.io) injetada como Referer/Origin
  * no proxy de mídia p/ contornar anti-hotlinking das CDNs (lightspeedst.net
- * valida Referer contra animefire.io; googlevideo valida contra blogger.com).
+ * valida Referer contra animefire.io; googlevideo valida contra youtube.googleapis.com).
  */
 function originOf(rawUrl: string): string {
   try {
@@ -40,11 +53,39 @@ function originOf(rawUrl: string): string {
   }
 }
 
+/**
+ * Resolve o Referer correto para a URL de mídia com base no host da CDN.
+ * - googlevideo.com (vindo de Blogger/YouTube): exige Referer youtube.googleapis.com
+ * - lightspeedst.net (vindo de animefire): exige Referer animefire.io
+ * - default: origem da própria URL
+ */
+function refererForMediaUrl(mediaUrl: string, episodeUrl: string): string {
+  try {
+    const u = new URL(mediaUrl);
+    const host = u.hostname.toLowerCase();
+
+    // googlevideo (tokens Blogger resolvidos via Playwright)
+    if (/googlevideo\.com$/i.test(host)) {
+      return 'https://youtube.googleapis.com/';
+    }
+
+    // lightspeedst (animefire CDN)
+    if (/lightspeedst\.net$/i.test(host)) {
+      return 'https://animefire.io/';
+    }
+
+    // fallback: origem do episódio
+    return originOf(episodeUrl);
+  } catch {
+    return originOf(episodeUrl);
+  }
+}
+
 function wrapMediaUrl(raw: string, episodeUrl: string): string {
   if (!raw) return raw;
   const trimmed = raw.trim();
   if (!/^https?:\/\//i.test(trimmed)) return trimmed;
-  const ref = originOf(episodeUrl);
+  const ref = refererForMediaUrl(trimmed, episodeUrl);
   const refererParam = ref ? `&referer=${encodeURIComponent(ref)}` : '';
   const apiPrefix = process.env.API_PREFIX || 'api';
   return `/${apiPrefix}/embed/media?url=${encodeURIComponent(trimmed)}${refererParam}`;
@@ -109,12 +150,22 @@ export class ScrapeService {
    * @param episodeUrl URL absoluta do episodio.
    * @param sourceId opcional força um adapter (animefire/animesonlinecc/meusanimes);
    *                 sem source, auto-detecta pelo host.
+   * @param wrap se true (default), URLs externas sao embrulhadas no proxy de
+   *             midia interno (/api/embed/media?url=...). Use false p/ obter
+   *             RAW (re-extração de streaming precisa do RAW).
    */
   async scrapeEpisodeVideo(
     episodeUrl: string,
     sourceId?: string,
+    wrap = false,
   ): Promise<ScrapeEpisodeResult> {
+    dbg(
+      `[SCRAPE] scrapeEpisodeVideo url=${episodeUrl} sourceId=${sourceId ?? 'auto'} wrap=${wrap}`,
+    );
     const source = this.resolveSource(episodeUrl, sourceId);
+    dbg(
+      `[SCRAPE] resolved source=${source.id} supports=${source.supports(episodeUrl)}`,
+    );
 
     // Limita a concorrência de chromium headless (memória/CPU do host).
     if (this.activeScrapes >= this.MAX_CONCURRENT_SCRAPES) {
@@ -125,12 +176,116 @@ export class ScrapeService {
     this.activeScrapes += 1;
 
     // Caminho HTTP puro: se o adapter implementa extractHttp, pula o Playwright.
-    // Relevante p/ animefire (extraível por fetch, sem Cloudflare/browser em prod).
+    // Relevante p/ animefire (extraível por fetch, sem Cloudflare/browser em prod)
+    // e meusanimes (get-video.php). Se o adapter devolver bloggerTokens (player
+    // Blogger), ainda precisa do chromium p/ virar .mp4 googlevideo.
     if (typeof source.extractHttp === 'function') {
       try {
+        dbg(`[SCRAPE] calling extractHttp on ${source.id}...`);
         const raw = await source.extractHttp({ episodeUrl, ua: UA_DESKTOP });
+        dbg(
+          `[SCRAPE] extractHttp OK: videos=${raw.videos.length} bloggerTokens=${(raw.bloggerTokens ?? []).length}`,
+        );
+
+        let videos = raw.videos;
+        const bloggerTokens = raw.bloggerTokens ?? [];
+        if (videos.length === 0 && bloggerTokens.length > 0) {
+          dbg(
+            `[SCRAPE] ${bloggerTokens.length} Blogger tokens, resolving via chromium...`,
+          );
+          // Blogger token resolve via googlevideo videoplayback interceptado
+          // pelo chromium. headless:true funciona no chrome moderno (validado).
+          // Fallback: Xvfb + headless:false se headless falhar.
+          let browser: Browser | null = null;
+          let resolved = false;
+
+          // Tentativa 1: headless:true (preferido — funciona em containers sem X).
+          try {
+            browser = await chromium.launch({
+              headless: true,
+              chromiumSandbox: false,
+              args: [],
+            });
+            const context = await browser.newContext({
+              userAgent: UA_DESKTOP,
+              locale: 'pt-BR',
+              viewport: { width: 1366, height: 768 },
+            });
+            for (const token of bloggerTokens) {
+              const bv = await this.extractBloggerVideo(
+                context,
+                token,
+                episodeUrl,
+              );
+              if (bv.length > 0) {
+                videos = bv;
+                resolved = true;
+                break;
+              }
+            }
+            await context.close().catch(() => undefined);
+          } catch (err) {
+            dbg(
+              `[SCRAPE] headless:true falhou p/ Blogger: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          } finally {
+            if (browser) await browser.close().catch(() => undefined);
+            browser = null;
+          }
+
+          // Tentativa 2: Xvfb + headless:false (fallback se headless falhou).
+          if (!resolved) {
+            const display = await ensureXvfb();
+            if (display) {
+              dbg(
+                `[SCRAPE] tentando Xvfb (${display}) + headless:false para Blogger...`,
+              );
+              try {
+                browser = await chromium.launch({
+                  headless: false,
+                  chromiumSandbox: false,
+                  args: ['--no-sandbox', '--disable-gpu'],
+                });
+                await new Promise((r) => setTimeout(r, 1000));
+                const context = await browser.newContext({
+                  userAgent: UA_DESKTOP,
+                  locale: 'pt-BR',
+                  viewport: { width: 1366, height: 768 },
+                });
+                for (const token of bloggerTokens) {
+                  const bv = await this.extractBloggerVideo(
+                    context,
+                    token,
+                    episodeUrl,
+                  );
+                  if (bv.length > 0) {
+                    videos = bv;
+                    break;
+                  }
+                }
+                await context.close().catch(() => undefined);
+              } catch (err) {
+                dbg(
+                  `[SCRAPE] headless:false (Xvfb) também falhou: ${err instanceof Error ? err.message : String(err)}`,
+                );
+              } finally {
+                if (browser) await browser.close().catch(() => undefined);
+              }
+            } else {
+              dbg(
+                `[SCRAPE] Xvfb indisponível e headless:true não resolveu Blogger.`,
+              );
+            }
+          }
+        }
+
+        dbg(
+          `[SCRAPE] extractHttp returning: videos=${videos.length} wrap=${wrap}`,
+        );
         return {
-          videos: raw.videos.map((v) => wrapMediaUrl(v, episodeUrl)),
+          videos: wrap
+            ? videos.map((v) => wrapMediaUrl(v, episodeUrl))
+            : videos,
           iframes: [],
           cloudflare: false,
         };
@@ -141,7 +296,10 @@ export class ScrapeService {
 
     let browser: Browser;
     try {
-      browser = await chromium.launch({ headless: true });
+      browser = await chromium.launch({
+        headless: true,
+        chromiumSandbox: false,
+      });
     } catch (err) {
       this.activeScrapes -= 1;
       throw err;
@@ -176,7 +334,7 @@ export class ScrapeService {
 
       // Diagnostico: titulo da pagina (detecta paywall/redirect/erro).
 
-      console.log(
+      console.error(
         '[SCRAPE] goto OK url=',
         episodeUrl,
         'title=',
@@ -197,7 +355,7 @@ export class ScrapeService {
 
       // Diagnostico: se ja capturamos requests de midia no load, usa direto.
 
-      console.log(
+      console.error(
         '[SCRAPE] pre-extract media requests:',
         allMediaRequests.length,
         JSON.stringify(allMediaRequests.slice(0, 5)),
@@ -228,9 +386,9 @@ export class ScrapeService {
         })
         .catch(() => []);
 
-      console.log('[SCRAPE] iframes:', JSON.stringify(diagIframes));
+      console.error('[SCRAPE] iframes:', JSON.stringify(diagIframes));
 
-      console.log(
+      console.error(
         '[SCRAPE] botoes-play-candidatos:',
         JSON.stringify(diagButtons),
       );
@@ -257,7 +415,7 @@ export class ScrapeService {
           /blogger\.com\/video\.g\?token=/i.test(u),
         );
         if (bloggerToken) {
-          console.log(
+          console.error(
             '[SCRAPE] abrindo token Blogger:',
             bloggerToken.slice(0, 80) + '...',
           );
@@ -272,7 +430,7 @@ export class ScrapeService {
 
       // Diagnostico final.
 
-      console.log(
+      console.error(
         '[SCRAPE] resultado final videos=',
         videos.length,
         videos.slice(0, 2),
@@ -327,8 +485,7 @@ export class ScrapeService {
    * null se não houver fonte HTTP/re-extração falhar.
    *
    * Pressupõe `episode.embedUrl` guarda a URL da página do episódio na fonte
-   * (ex: https://animefire.io/animes/<slug>/<ep>). Hoje só animefire tem
-   * extração HTTP pura; outras fontes retornam null (sem re-extração).
+   * (ex: https://animefire.io/animes/<slug>/<ep>).
    */
   async reextractEpisodeVideo(
     animeSlug: string,
@@ -360,7 +517,7 @@ export class ScrapeService {
       });
       rawMp4 = result.videos[0] ?? null;
     } catch (err) {
-      console.log(
+      console.error(
         `[REEXTRACT] falhou p/ ${animeSlug}/${episodeNumber}:`,
         err instanceof Error ? err.message : String(err),
       );
@@ -373,11 +530,64 @@ export class ScrapeService {
       data: { videoUrl: rawMp4 },
     });
 
-    console.log(
+    console.error(
       `[REEXTRACT] atualizado ${animeSlug}/${episodeNumber} ->`,
       rawMp4.slice(0, 80) + '...',
     );
     return rawMp4;
+  }
+
+  /**
+   * Constrói a URL de um episódio no meusanimes.blog a partir do slug do anime,
+   * número do episódio e temporada.
+   * Padrão: meusanimes.blog/e/<slug>-<season>-episodio-<n>/
+   */
+  meusanimesEpisodeUrl(
+    animeSlug: string,
+    episodeNumber: number,
+    seasonNumber: number = 1,
+  ): string {
+    return `https://meusanimes.blog/e/${animeSlug}-${seasonNumber}-episodio-${episodeNumber}/`;
+  }
+
+  /**
+   * Tenta extrair vídeo de um episódio via meusanimes.blog (fallback quando
+   * animefire.io bloqueia o IP da VPS com Cloudflare WAF 403).
+   *
+   * Fluxo: GET meusanimes.blog/e/<slug>-1-episodio-<n>/ -> iframe servN.meusdoramas.club
+   * -> get-video.php -> token Blogger -> Playwright headless:false + Xvfb ->
+   * googlevideo.com/videoplayback (.mp4).
+   *
+   * Retorna a URL .mp4 RAW (sem wrap) ou null se falhar.
+   */
+  async scrapeFromMeusanimes(
+    animeSlug: string,
+    episodeNumber: number,
+  ): Promise<string | null> {
+    const episodeUrl = this.meusanimesEpisodeUrl(animeSlug, episodeNumber);
+    dbg(`[MEUSANIMES] start ${animeSlug}/${episodeNumber} -> ${episodeUrl}`);
+
+    try {
+      const result = await this.scrapeEpisodeVideo(
+        episodeUrl,
+        undefined,
+        false,
+      );
+      const video = result.videos[0] ?? null;
+      if (video) {
+        dbg(
+          `[MEUSANIMES] OK ${animeSlug}/${episodeNumber}: ${video.slice(0, 80)}...`,
+        );
+      } else {
+        dbg(`[MEUSANIMES] no video returned ${animeSlug}/${episodeNumber}`);
+      }
+      return video;
+    } catch (err) {
+      dbg(
+        `[MEUSANIMES] FAILED ${animeSlug}/${episodeNumber}: ${err instanceof Error ? err.message : String(err)}\n${err instanceof Error ? (err.stack ?? '') : ''}`,
+      );
+      return null;
+    }
   }
 
   /**
@@ -406,71 +616,62 @@ export class ScrapeService {
         waitUntil: 'domcontentloaded',
         timeout: 30000,
       });
-      // Aguarda o player do YouTube/Blogger carregar.
-      await bvPage.waitForTimeout(4000);
+      // Aguarda o player do Blogger/YouTube carregar e fazer batchexecute.
+      await bvPage.waitForTimeout(8000);
 
-      // Tenta clicar no botao de play do player do YouTube (dentro de iframe).
+      // O player do Blogger não tem <video> no DOM; o clique no body
+      // dispara o play do YouTube embed que gera a request googlevideo.
+      await bvPage.click('body', { timeout: 3000 }).catch(() => undefined);
+
+      // Tenta clicar em botões de play do YouTube (caso existam no iframe).
       const playSelectors = [
         '.ytp-cued-thumbnail-overlay',
         '.ytp-large-play-button',
         '[aria-label*="Play" i]',
         'button[aria-label*="Play" i]',
       ];
-      let clicked = false;
       for (const sel of playSelectors) {
         try {
           const el = await bvPage.$(sel);
           if (el) {
             await el.click({ timeout: 3000 }).catch(() => undefined);
-            clicked = true;
             break;
           }
         } catch {
           /* tentative */
         }
       }
-      // Se nao achou no page principal, procura nos iframes do Blogger.
-      if (!clicked) {
-        for (const frame of bvPage.mainFrame().childFrames()) {
-          for (const sel of playSelectors) {
-            try {
-              const el = await frame.$(sel);
-              if (el) {
-                await el.click({ timeout: 3000 }).catch(() => undefined);
-                clicked = true;
-                break;
-              }
-            } catch {
-              /* cross-origin */
+      // Procura nos iframes do Blogger.
+      for (const frame of bvPage.mainFrame().childFrames()) {
+        for (const sel of playSelectors) {
+          try {
+            const el = await frame.$(sel);
+            if (el) {
+              await el.click({ timeout: 3000 }).catch(() => undefined);
+              break;
             }
+          } catch {
+            /* cross-origin */
           }
-          if (clicked) break;
         }
       }
 
-      console.log(
-        '[BLOGGER] clicked=',
-        clicked,
-        'capturado-ate-agora=',
-        captured.length,
-      );
-
-      // Aguarda as requests de videoplayback apos o clique.
+      // Aguarda as requests de videoplayback após o clique.
       const start = Date.now();
-      while (Date.now() - start < 12000) {
+      while (Date.now() - start < 15000) {
         if (bvPage.isClosed()) break;
         await bvPage.waitForTimeout(300).catch(() => undefined);
         if (captured.length > 0) break;
       }
 
-      console.log(
-        '[BLOGGER] capturado-final=',
+      console.error(
+        '[BLOGGER] capturado=',
         captured.length,
-        captured.slice(0, 2),
+        captured.slice(0, 2).map((u) => u.slice(0, 80)),
       );
       return [...new Set(captured)];
     } catch (err) {
-      console.log(
+      console.error(
         '[BLOGGER] erro:',
         err instanceof Error ? err.message : String(err),
       );

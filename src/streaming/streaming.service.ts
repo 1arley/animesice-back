@@ -7,13 +7,46 @@ import { PrismaService } from '@/prisma/prisma.service';
 import { EmbedService } from '@/embed/embed.service';
 import { ScrapeService } from '@/embed/scrape/scrape.service';
 import { Readable } from 'stream';
+import * as fs from 'fs';
+
+function dbg(msg: string): void {
+  const line = `${new Date().toISOString()} ${msg}`;
+  try {
+    fs.appendFileSync('/tmp/scrape-debug.log', line + '\n');
+  } catch {
+    // log de debug nunca deve derrubar o fluxo
+  }
+  console.error(line);
+}
 
 /**
  * Origem da fonte, injetada como Referer/Origin no proxy de mídia anti-hotlink.
- * Hoje a única fonte HTTP pura é animefire; se surgirem mais, derive por host
- * do videoUrl ou adicione uma coluna `sourceOrigin` em Episode.
+ * Derivada por host: googlevideo exige youtube.googleapis.com,
+ * lightspeedst exige animefire.io.
  */
-const DEFAULT_SOURCE_ORIGIN = 'https://animefire.io';
+/**
+ * Resolve o Referer correto para a URL de mídia com base no host da CDN.
+ * - googlevideo.com (vindo de Blogger/YouTube): exige Referer youtube.googleapis.com
+ * - lightspeedst.net (vindo de animefire): exige Referer animefire.io
+ * - default: origem da própria URL
+ */
+function refererForMediaUrl(mediaUrl: string): string {
+  try {
+    const u = new URL(mediaUrl);
+    const host = u.hostname.toLowerCase();
+
+    if (/googlevideo\.com$/i.test(host)) {
+      return 'https://youtube.googleapis.com/';
+    }
+    if (/lightspeedst\.net$/i.test(host)) {
+      return 'https://animefire.io/';
+    }
+
+    return `${u.protocol}//${u.host}`;
+  } catch {
+    return 'https://animefire.io/';
+  }
+}
 
 /**
  * Helper que envolve uma URL externa (.mp4/.m3u8) no proxy de mídia interno
@@ -21,13 +54,11 @@ const DEFAULT_SOURCE_ORIGIN = 'https://animefire.io';
  * consome pelo mesmo host do backend, injetando Referer/Origin/UA anti-hotlinking
  * e usando o IP de saída do backend (mesmo IP que extraiu o token da CDN).
  */
-function wrapMediaUrl(
-  raw: string,
-  sourceOrigin = DEFAULT_SOURCE_ORIGIN,
-): string {
+function wrapMediaUrl(raw: string): string {
   const trimmed = raw.trim();
   if (!/^https?:\/\//i.test(trimmed)) return trimmed;
-  return `/embed/media?url=${encodeURIComponent(trimmed)}&referer=${encodeURIComponent(sourceOrigin)}`;
+  const referer = refererForMediaUrl(trimmed);
+  return `/embed/media?url=${encodeURIComponent(trimmed)}&referer=${encodeURIComponent(referer)}`;
 }
 
 /**
@@ -168,6 +199,10 @@ export class StreamingService {
     let rawVideoUrl: string | null = episode.videoUrl;
     let reextracted = false;
 
+    dbg(
+      `[STREAM] getSource animeSlug=${animeSlug} ep=${episodeNumber} embedUrl=${episode.embedUrl ?? 'null'} videoUrl=${episode.videoUrl?.slice(0, 80) ?? 'null'}`,
+    );
+
     // videoUrl pode estar no formato legado "http://localhost:3001/embed/media?url=..."
     // (wrap que quebra em deploy). Tenta recuperar a URL CRU do parâmetro `url`.
     if (rawVideoUrl && /\/embed\/media\?url=/i.test(rawVideoUrl)) {
@@ -180,38 +215,54 @@ export class StreamingService {
       }
     }
 
-    // Sem videoUrl utilizável -> tenta re-extração via ScrapeService.
+    // Sem videoUrl utilizável -> tenta re-extração.
+    // 1ª tentativa: embedUrl do episódio (geralmente animefire.io).
+    // 2ª tentativa (fallback): meusanimes.blog se animefire bloquear (403 CF).
     if (!rawVideoUrl || !/^https?:\/\//i.test(rawVideoUrl)) {
-      if (!episode.embedUrl) {
-        throw new NotFoundException(
-          'Vídeo não disponível: episódio sem videoUrl e sem embedUrl p/ re-extração.',
+      // Tentativa 1: fonte original (embedUrl)
+      if (episode.embedUrl) {
+        dbg(
+          `[STREAM] tentativa 1: scrapeEpisodeVideo(embedUrl=${episode.embedUrl.slice(0, 80)})`,
         );
+        try {
+          const result = await this.scrapeService.scrapeEpisodeVideo(
+            episode.embedUrl,
+            undefined,
+            false,
+          );
+          rawVideoUrl = result.videos[0] ?? null;
+          dbg(
+            `[STREAM] tentativa 1 resultado: videos=${result.videos.length} rawVideoUrl=${rawVideoUrl?.slice(0, 80) ?? 'null'}`,
+          );
+        } catch (err) {
+          dbg(
+            `[STREAM] tentativa 1 FALHOU: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
       }
-      const source = this.scrapeService.findHttpSource(episode.embedUrl);
-      if (!source || !source.extractHttp) {
-        throw new NotFoundException(
-          'Vídeo não disponível: fonte não suporta extração HTTP.',
-        );
-      }
-      try {
-        const result = await source.extractHttp({
-          episodeUrl: episode.embedUrl,
-          ua: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        });
-        rawVideoUrl = result.videos[0] ?? null;
-      } catch (err) {
-        console.log(
-          `[STREAM/SOURCE] re-extração falhou p/ ${animeSlug}/${episodeNumber}:`,
-          err instanceof Error ? err.message : String(err),
-        );
-        throw new NotFoundException(
-          'Vídeo não disponível: re-extração falhou.',
-        );
-      }
+
+      // Tentativa 2: fallback meusanimes.blog
       if (!rawVideoUrl) {
-        throw new NotFoundException('Vídeo não disponível: extração vazia.');
+        dbg(
+          `[STREAM] tentativa 2: scrapeFromMeusanimes(${animeSlug}, ${episodeNumber})`,
+        );
+        rawVideoUrl = await this.scrapeService.scrapeFromMeusanimes(
+          animeSlug,
+          episodeNumber,
+        );
+        dbg(
+          `[STREAM] tentativa 2 resultado: ${rawVideoUrl?.slice(0, 80) ?? 'null'}`,
+        );
       }
-      // Persiste RAW (sem wrap) p/ próximas chamadas e p/ re-extração 403.
+
+      if (!rawVideoUrl) {
+        dbg(`[STREAM] ambas tentativas falharam — 404`);
+        throw new NotFoundException(
+          'Vídeo não disponível: re-extração falhou em todas as fontes.',
+        );
+      }
+
+      // Persiste RAW (sem wrap) p/ próximas chamadas.
       await this.prisma.episode.update({
         where: { id: episode.id },
         data: { videoUrl: rawVideoUrl },
@@ -315,10 +366,13 @@ export class StreamingService {
     const reqHeaders: Record<string, string> = {};
     if (range) reqHeaders.range = range;
 
+    // Referer dinâmico por host da CDN (googlevideo vs lightspeedst).
+    const sourceOrigin = refererForMediaUrl(videoUrl);
+
     let result = await this.embedService.proxyMedia(
       videoUrl,
       reqHeaders,
-      DEFAULT_SOURCE_ORIGIN,
+      sourceOrigin,
     );
 
     // 403 = token .mp4 da CDN expirado -> re-extração e retry único.
@@ -326,15 +380,24 @@ export class StreamingService {
       console.log(
         `[STREAM] 403 p/ ${animeSlug}/${episodeNumber}, re-extraindo...`,
       );
-      const fresh = await this.scrapeService.reextractEpisodeVideo(
+      // Tenta re-extração da fonte original.
+      let fresh = await this.scrapeService.reextractEpisodeVideo(
         animeSlug,
         episodeNumber,
       );
+      // Fallback meusanimes.
+      if (!fresh) {
+        fresh = await this.scrapeService.scrapeFromMeusanimes(
+          animeSlug,
+          episodeNumber,
+        );
+      }
       if (fresh) {
+        const freshOrigin = refererForMediaUrl(fresh);
         result = await this.embedService.proxyMedia(
           fresh,
           reqHeaders,
-          DEFAULT_SOURCE_ORIGIN,
+          freshOrigin,
         );
       }
     }

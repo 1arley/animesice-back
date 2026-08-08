@@ -1,12 +1,16 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { IoAdapter } from '@nestjs/platform-socket.io';
 import cookieParser from 'cookie-parser';
 import { AppModule } from '@/app.module';
 import { HttpExceptionFilter } from '@/common/filters/http-exception.filter';
 import { LoggingInterceptor } from '@/common/interceptors/logging.interceptor';
+import { setupOutboundProxy } from '@/common/outbound-proxy';
 
 async function bootstrap() {
+  setupOutboundProxy();
+
   const app = await NestFactory.create(AppModule);
 
   assertSecrets();
@@ -89,6 +93,11 @@ async function bootstrap() {
     .addTag('episode', 'Episódios de animes')
     .addTag('streaming', 'Streaming de vídeos com token')
     .addTag('comment', 'Comentários de usuários')
+    .addTag('rating', 'Avaliações de animes')
+    .addTag('favorite', 'Favoritos do usuário')
+    .addTag('watch-history', 'Histórico e progresso de visualização')
+    .addTag('notification', 'Notificações do usuário')
+    .addTag('room', 'Salas de watch party')
     .build();
 
   const swaggerPath = process.env.SWAGGER_PATH || 'api/docs';
@@ -106,6 +115,9 @@ async function bootstrap() {
   }
 
   const port = process.env.PORT || 3000;
+
+  app.useWebSocketAdapter(new IoAdapter(app));
+
   await app.listen(port);
 
   console.log(

@@ -8,6 +8,12 @@ export interface ScrapeEpisodeResult {
   iframes: string[];
   /** Marcador de bloqueio Cloudflare (sempre false aqui — se true lanca excecao). */
   cloudflare: boolean;
+  /**
+   * Tokens de player do Blogger (blogger.com/video.g?token=...) descobertos
+   * por HTTP. NÃO são tocáveis direto (devolvem HTML); precisam do fluxo
+   * Playwright (extractBloggerVideo) p/ virar .mp4 googlevideo.
+   */
+  bloggerTokens?: string[];
 }
 
 /** Contexto p/ extração HTTP pura (sem Playwright). */
