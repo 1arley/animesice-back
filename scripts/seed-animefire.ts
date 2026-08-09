@@ -216,7 +216,7 @@ async function searchAniList(query: string): Promise<AniListResult | null> {
       english: media.title?.english,
       coverImage: media.coverImage?.large || media.coverImage?.extraLarge,
       bannerImage: media.bannerImage ?? null,
-      description: media.description?.replace(/<[^>]+>/g, '').trim().slice(0, 2000) || null,
+      description: media.description?.replace(/<|>/g, '').trim().slice(0, 2000) || null,
       averageScore: media.averageScore,
       isAdult: media.isAdult,
       genres: media.genres ?? [],
