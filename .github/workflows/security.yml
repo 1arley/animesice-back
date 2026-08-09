@@ -40,14 +40,13 @@ jobs:
       - name: Set up Node.js & install deps
         uses: ./.github/actions/node-setup
 
-      # Reports high/critical production advisories. Set to non-blocking
-      # (`continue-on-error`) because the current tree has pre-existing high
-      # findings that need `npm audit fix` and cannot be solved in CI alone.
-      # Once resolved, flip this to blocking. The *dynamic* gate for NEW vulns
-      # is the `dependency-review` job below, which blocks PR introductions.
+      # Reports high/critical production advisories (dev deps omitted: the
+      # remaining advisories live inside the npm CLI bundle used only by
+      # semantic-release at release time, with no patched npm release yet).
+      # The *dynamic* gate for NEW vulns is the `dependency-review` job below,
+      # which blocks PR introductions.
       - name: Run npm audit
         run: npm audit --audit-level=high --omit=dev
-        continue-on-error: true
 
   # ---------------------------------------------------------------------------
   # Secret scanning with Gitleaks across the full Git history.
