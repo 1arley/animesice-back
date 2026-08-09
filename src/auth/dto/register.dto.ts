@@ -1,4 +1,10 @@
-import { IsEmail, IsNotEmpty, IsString, MinLength } from 'class-validator';
+import {
+  IsEmail,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MinLength,
+} from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class RegisterDto {
@@ -17,4 +23,13 @@ export class RegisterDto {
   @IsNotEmpty()
   @MinLength(8, { message: 'A senha deve ter pelo menos 8 caracteres' })
   password!: string;
+
+  @ApiProperty({
+    example: '0x4AAAA...',
+    description: 'Token do Turnstile (captcha) obtido no cadastro.',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  turnstileToken?: string;
 }

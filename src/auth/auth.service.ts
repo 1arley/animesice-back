@@ -96,6 +96,10 @@ export class AuthService {
   async register(registerDto: RegisterDto) {
     const { name, email, password } = registerDto;
 
+    if (process.env.NODE_ENV !== 'test') {
+      await this.turnstileService.verify(registerDto.turnstileToken);
+    }
+
     const userExists = await this.prisma.user.findUnique({
       where: { email },
     });
