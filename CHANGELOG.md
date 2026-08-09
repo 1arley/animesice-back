@@ -1,3 +1,17 @@
+## [1.1.5](https://github.com/1arley/animesice-back/compare/v1.1.4...v1.1.5) (2026-08-09)
+
+
+### Bug Fixes
+
+* **admin:** harden HTML tag stripping in sanitizer ([96f291d](https://github.com/1arley/animesice-back/commit/96f291d4302f16b96084b16d945780808e549cb1))
+* **auth:** rename unused param to satisfy lint ([3a5b450](https://github.com/1arley/animesice-back/commit/3a5b4502edecdf791ba9cb5431c2983472f0c32e))
+* Clear text storage of sensitive information ([313fb4d](https://github.com/1arley/animesice-back/commit/313fb4d353c68db7f7f3059d9eca27d20580f153))
+* **comment:** sanitize HTML with sanitize-html to close XSS bypass ([d776d0c](https://github.com/1arley/animesice-back/commit/d776d0ce11fb0077b3218bd48ab5030306db2973))
+* **deps:** bump multer to 2.2.0 and patch js-yaml via override ([55b38e0](https://github.com/1arley/animesice-back/commit/55b38e007bfc63f6abae1ea4ca63821d713e3b34))
+* **embed:** harden SSRF validation of outbound URLs ([6393433](https://github.com/1arley/animesice-back/commit/6393433363d3cedc767342b1fc749714518df97f))
+* **embed:** sanitize log lines and drop file debug logger ([e091bc8](https://github.com/1arley/animesice-back/commit/e091bc8b1eeb30a9dfc69d7c5f56e3fa8d06cb97))
+* **seed:** strip stray angle brackets from AniList description ([73267e4](https://github.com/1arley/animesice-back/commit/73267e4525a2b8d44b427946de3cdcf1bff54ee0))
+
 ## [1.1.4](https://github.com/1arley/animesice-back/compare/v1.1.3...v1.1.4) (2026-08-09)
 
 
