@@ -76,7 +76,7 @@ export class AuthService {
     res: Response,
     accessToken: string,
     refreshToken: string,
-    role: string,
+    _role: string,
   ) {
     res.cookie('access_token', accessToken, this.getCookieOptions());
     res.cookie('refresh_token', refreshToken, this.getRefreshCookieOptions());
