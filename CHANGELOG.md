@@ -1,3 +1,10 @@
+## [1.2.1](https://github.com/1arley/animesice-back/compare/v1.2.0...v1.2.1) (2026-08-09)
+
+
+### Bug Fixes
+
+* **deploy:** remove GHA Docker cache (quota exhausted) ([c037c8a](https://github.com/1arley/animesice-back/commit/c037c8a4463cdfba4713010ca91dcf2e610389cf))
+
 # [1.2.0](https://github.com/1arley/animesice-back/compare/v1.1.5...v1.2.0) (2026-08-09)
 
 
