@@ -33,6 +33,7 @@ function buildWhere(filters: AnimeFilterDto): Prisma.AnimeWhereInput {
     where.OR = [
       { title: { contains: filters.search, mode: 'insensitive' } },
       { japaneseTitle: { contains: filters.search, mode: 'insensitive' } },
+      { slug: { contains: filters.search, mode: 'insensitive' } },
     ];
   }
 

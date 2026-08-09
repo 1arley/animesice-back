@@ -72,13 +72,21 @@ export class AdminController {
   // --- Overview -----------------------------------------------------------
   @Get('animes')
   @ApiOperation({ summary: 'Listar animes (admin, com contagem de episódios)' })
-  listAnimes(@Query('page') page: string, @Query('limit') limit: string) {
+  listAnimes(
+    @Query('page') page: string,
+    @Query('limit') limit: string,
+    @Query('search') search?: string,
+  ) {
     const pageNumber = Math.max(parseInt(page || '1', 10) || 1, 1);
     const limitNumber = Math.min(
       Math.max(parseInt(limit || '50', 10) || 50, 1),
-      100,
+      200,
     );
-    return this.adminService.listAnimesForAdmin(pageNumber, limitNumber);
+    return this.adminService.listAnimesForAdmin(
+      pageNumber,
+      limitNumber,
+      search?.trim() || undefined,
+    );
   }
 
   // --- Anime CRUD ---------------------------------------------------------

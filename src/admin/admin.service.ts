@@ -241,6 +241,18 @@ export class AdminService {
     };
     const format = media.format ? formatMap[media.format] : undefined;
 
+    // Mapeia AniList status → status interno ---------------------------
+    // FINISHED / CANCELLED → FINALIZADO | NOT_YET_RELEASED → EM_BREVE
+    // RELEASING / HIATUS → LANCAMENTO
+    const statusMap: Record<string, string> = {
+      FINISHED: 'FINALIZADO',
+      CANCELLED: 'FINALIZADO',
+      NOT_YET_RELEASED: 'EM_BREVE',
+      RELEASING: 'LANCAMENTO',
+      HIATUS: 'LANCAMENTO',
+    };
+    const mappedStatus = media.status ? statusMap[media.status] : undefined;
+
     // Estúdios de animação ----------------------------------------------
     const studios = (media.studios?.nodes ?? [])
       .filter((s) => s.isAnimationStudio !== false)
@@ -277,7 +289,7 @@ export class AdminService {
       bannerImage: media.bannerImage ?? undefined,
       rating:
         typeof media.averageScore === 'number' ? media.averageScore : undefined,
-      status: 'LANCAMENTO',
+      status: mappedStatus ?? 'LANCAMENTO',
       audio: dto.audio ?? AudioType.LEGENDADO,
       ageRating: media.isAdult ? 'A18' : 'A14',
       genreSlugs,
@@ -305,16 +317,25 @@ export class AdminService {
 
   // --- Admin overview -----------------------------------------------------
 
-  async listAnimesForAdmin(page = 1, limit = 50) {
+  async listAnimesForAdmin(page = 1, limit = 50, search?: string) {
     const skip = (page - 1) * limit;
+    const where: Prisma.AnimeWhereInput = {};
+    if (search) {
+      where.OR = [
+        { title: { contains: search, mode: 'insensitive' } },
+        { japaneseTitle: { contains: search, mode: 'insensitive' } },
+        { slug: { contains: search, mode: 'insensitive' } },
+      ];
+    }
     const [animes, total] = await this.prisma.$transaction([
       this.prisma.anime.findMany({
+        where,
         skip,
         take: limit,
         orderBy: { createdAt: 'desc' },
         include: { genres: true, _count: { select: { episodes: true } } },
       }),
-      this.prisma.anime.count(),
+      this.prisma.anime.count({ where }),
     ]);
     return {
       data: animes,
