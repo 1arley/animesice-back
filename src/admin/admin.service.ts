@@ -46,7 +46,7 @@ export class AdminService {
         .toLowerCase()
         .trim()
         .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '')
+        .replace(/^-+|(?<!-)-+$/g, '')
         .replace(/-{2,}/g, '-')
         .slice(0, 80) || 'anime'
     );
