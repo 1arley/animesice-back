@@ -30,7 +30,7 @@ export class AdminService {
   private stripHtml(input: string | null | undefined): string | undefined {
     if (!input) return undefined;
     return input
-      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<script\b[\s\S]*?<\/script\b[^>]*>/gi, ' ')
       .replace(/<[^>]+>/g, ' ')
       .replace(/&nbsp;/g, ' ')
       .replace(/\s+/g, ' ')
