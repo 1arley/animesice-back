@@ -212,6 +212,7 @@ model Anime {
   releaseDate        DateTime?
   endDate            DateTime?
   episodeCount       Int?
+  anilistId          Int?         @unique
   published          Boolean      @default(true)
   episodes          Episode[]
   genres            Genre[]
@@ -256,6 +257,9 @@ model Episode {
   duration        String?
   views           Int              @default(0)
   dateModified    DateTime?
+  sourceId        String?
+  videoBroken     Boolean          @default(false)
+  videoCheckedAt  DateTime?
   anime           Anime            @relation(fields: [animeId], references: [id], onDelete: Cascade)
   animeId         String
   comments        Comment[]
@@ -525,4 +529,45 @@ model SiteFeedback {
 
   @@index([type, status, createdAt])
   @@index([userId])
+}
+
+/// Job da fila do Anime Watchtower. Cada job representa uma tarefa isolada
+/// (extrair episódio, validar, descobrir temporada, reparar vídeo morto).
+/// Anti-duplicação via @@unique([type, dedupeKey]) — ex: "extract:<animeId>:7".
+/// Backoff exponencial via nextRunAt; DEAD após maxAttempts.
+model WatchtowerJob {
+  id          String   @id @default(uuid())
+  type        String
+  dedupeKey   String
+  payload     Json
+  status      String   @default("PENDING")
+  priority    Int      @default(100)
+  attempts    Int      @default(0)
+  maxAttempts Int      @default(5)
+  nextRunAt   DateTime @default(now())
+  lastError   String?
+  lockedBy    String?
+  lockedAt    DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([type, dedupeKey])
+  @@index([status, nextRunAt, priority])
+  @@index([type, status])
+}
+
+/// Saúde por fonte (adapter de scrape). Watchtower prioriza fontes saudáveis
+/// e desabilita automaticamente as que falham N vezes seguidas (canário 1x/h
+/// reabilita).
+model WatchtowerSourceHealth {
+  sourceId            String    @id
+  successCount        Int       @default(0)
+  failureCount        Int       @default(0)
+  consecutiveFailures Int       @default(0)
+  avgLatencyMs        Int       @default(0)
+  disabled            Boolean   @default(false)
+  lastSuccessAt       DateTime?
+  lastFailureAt       DateTime?
+
+  @@index([disabled])
 }

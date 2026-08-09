@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { ScheduleModule } from '@nestjs/schedule';
 import { AppController } from '@/app.controller';
 import { AppService } from '@/app.service';
 import { PrismaModule } from '@/prisma/prisma.module';
@@ -23,6 +24,7 @@ import { UserAnimeListModule } from '@/user-anime-list/user-anime-list.module';
 import { ModerationModule } from '@/moderation/moderation.module';
 import { RecommendationModule } from '@/recommendation/recommendation.module';
 import { CommunityModule } from '@/community/community.module';
+import { WatchtowerModule } from '@/watchtower/watchtower.module';
 
 @Module({
   imports: [
@@ -60,6 +62,8 @@ import { CommunityModule } from '@/community/community.module';
     ModerationModule,
     RecommendationModule,
     CommunityModule,
+    ScheduleModule.forRoot(),
+    WatchtowerModule,
   ],
   controllers: [AppController],
   providers: [

@@ -5,7 +5,6 @@ import { RoomController } from '@/room/room.controller';
 import { RoomScheduler } from '@/room/room.scheduler';
 import { JwtModule } from '@nestjs/jwt';
 import { ModerationModule } from '@/moderation/moderation.module';
-import { ScheduleModule } from '@nestjs/schedule';
 
 @Module({
   imports: [
@@ -13,7 +12,6 @@ import { ScheduleModule } from '@nestjs/schedule';
       secret: process.env.JWT_ACCESS_SECRET,
     }),
     ModerationModule,
-    ScheduleModule.forRoot(),
   ],
   controllers: [RoomController],
   providers: [RoomGateway, RoomService, RoomScheduler],

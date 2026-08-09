@@ -35,6 +35,8 @@
     "seed": "ts-node prisma/seed.ts",
     "seed:animefire": "ts-node scripts/seed-animefire.ts",
     "seed:animefire:dry": "ts-node scripts/seed-animefire.ts --limit 5",
+    "backfill:anilist": "ts-node scripts/backfill-anilist-id.ts",
+    "backfill:anilist:dry": "ts-node scripts/backfill-anilist-id.ts --dry --limit 10",
     "docker:build": "docker compose build",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",

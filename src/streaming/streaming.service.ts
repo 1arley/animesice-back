@@ -25,46 +25,13 @@ function dbg(msg: string): void {
  * (5xx, 429, timeout, erro de rede) como viva, evitando re-extração por
  * problema transitório.
  */
+/**
+ * @deprecated Use `probeMediaUrlDead` from `@/common/media-probe`. Esta versão
+ * local mantém compatibilidade próxima ao streaming.service; novo código
+ * deve importar o util compartilhado. Mesma lógica exata.
+ */
 async function probeMediaUrlDead(url: string): Promise<boolean> {
-  try {
-    const parsed = new URL(url);
-    const expire = parseInt(parsed.searchParams.get('expire') ?? '', 10);
-    if (Number.isFinite(expire) && expire - Date.now() / 1000 > 1800) {
-      return false;
-    }
-  } catch {
-    /* segue para probe de rede */
-  }
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 5000);
-  try {
-    const res = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'user-agent':
-          'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        referer: refererForMediaUrl(url),
-        origin: refererForMediaUrl(url).replace(/\/$/, ''),
-        accept: '*/*',
-        'accept-language': 'pt-BR,pt;q=0.9,en;q=0.5',
-        Range: 'bytes=0-0',
-      },
-      redirect: 'follow',
-      signal: controller.signal,
-    });
-    await res.body?.cancel();
-    return (
-      res.status === 401 ||
-      res.status === 403 ||
-      res.status === 404 ||
-      res.status === 410
-    );
-  } catch {
-    return false;
-  } finally {
-    clearTimeout(timer);
-  }
+  return (await import('@/common/media-probe.js')).probeMediaUrlDead(url);
 }
 
 /**
