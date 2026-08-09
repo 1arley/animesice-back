@@ -1,3 +1,10 @@
+# [1.2.0](https://github.com/1arley/animesice-back/compare/v1.1.5...v1.2.0) (2026-08-09)
+
+
+### Features
+
+* **watchtower:** autonomous anime release monitoring & episode extraction ([209d15b](https://github.com/1arley/animesice-back/commit/209d15b7054b7e73047f46d3ed9b217952723c80))
+
 ## [1.1.5](https://github.com/1arley/animesice-back/compare/v1.1.4...v1.1.5) (2026-08-09)
 
 
