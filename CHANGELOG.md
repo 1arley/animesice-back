@@ -1,3 +1,10 @@
+## [1.1.4](https://github.com/1arley/animesice-back/compare/v1.1.3...v1.1.4) (2026-08-09)
+
+
+### Bug Fixes
+
+* **admin:** avoid ReDoS in slugify by using negative look-behind ([f3d7b14](https://github.com/1arley/animesice-back/commit/f3d7b144bf8e377b803e3de8680f8ec66cb57fdf))
+
 ## [1.1.3](https://github.com/1arley/animesice-back/compare/v1.1.2...v1.1.3) (2026-08-09)
 
 
