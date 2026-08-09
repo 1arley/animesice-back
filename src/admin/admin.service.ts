@@ -31,7 +31,7 @@ export class AdminService {
     if (!input) return undefined;
     return input
       .replace(/<script\b[\s\S]*?<\/script\b[^>]*>/gi, ' ')
-      .replace(/<[^>]+>/g, ' ')
+      .replace(/<|>/g, ' ')
       .replace(/&nbsp;/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
