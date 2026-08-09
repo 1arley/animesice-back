@@ -5,12 +5,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '@/prisma/prisma.service';
 import { NotificationService } from '@/notification/notification.service';
-import {
-  ReportStatus,
-  ModerationActionType,
-  ContentStatus,
-  NotificationType,
-} from '@prisma/client';
+import { ReportStatus, ContentStatus, NotificationType } from '@prisma/client';
 import {
   CreateReportDto,
   ResolveReportDto,
@@ -116,7 +111,7 @@ export class ModerationService {
       throw new NotFoundException('Usuário não encontrado.');
     }
 
-    const actionType = dto.actionType as ModerationActionType;
+    const actionType = dto.actionType;
     const expiresAt = dto.hours
       ? new Date(Date.now() + dto.hours * 3600_000)
       : dto.actionType === 'WARN'

@@ -42,7 +42,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
       typeof errorResponse === 'object' &&
       errorResponse !== null &&
       'message' in errorResponse
-        ? (errorResponse as { message: unknown }).message
+        ? errorResponse.message
         : errorResponse;
 
     response.status(status).json({

@@ -509,7 +509,7 @@ export class ScrapeService {
     );
     if (!source || !source.extractHttp) return null;
 
-    let rawMp4: string | null = null;
+    let rawMp4: string | null;
     try {
       const result = await source.extractHttp({
         episodeUrl: episode.embedUrl,

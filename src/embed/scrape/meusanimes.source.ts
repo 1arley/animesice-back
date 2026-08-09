@@ -58,6 +58,7 @@ export class MeusanimesScrapeSource implements ScrapeSource {
     } catch (err) {
       throw new Error(
         `meusanimes: ${err instanceof Error ? err.message : String(err)}`,
+        { cause: err },
       );
     }
     const iframe = pageHtml.match(this.IFRAME_RE);
@@ -204,6 +205,7 @@ export class MeusanimesScrapeSource implements ScrapeSource {
       const cause = err instanceof Error ? err.cause : undefined;
       throw new Error(
         `fetch failed para ${url}: ${err instanceof Error ? err.message : String(err)}${cause ? ` (causa: ${cause instanceof Error ? cause.message : JSON.stringify(cause)})` : ''}`,
+        { cause: err },
       );
     }
     if (!res.ok) {
