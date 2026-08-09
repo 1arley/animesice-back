@@ -117,8 +117,6 @@ jobs:
           tags: |
             ${{ secrets.DOCKERHUB_REPO }}:${{ steps.tag.outputs.tag }}
             ${{ secrets.DOCKERHUB_REPO }}:latest
-          cache-from: type=gha,scope=deploy
-          cache-to: type=gha,mode=max,scope=deploy
           provenance: false
 
       # Remote deploy over SSH. The server has docker compose and the compose
