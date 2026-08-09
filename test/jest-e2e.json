@@ -11,6 +11,9 @@
     "^~/(.*)$": "<rootDir>/src/$1",
     "^@test/(.*)$": "<rootDir>/test/$1"
   },
+  "transformIgnorePatterns": [
+    "/node_modules/(?!sanitize-html|htmlparser2|domhandler|domutils|entities|domelementtype|dom-serializer)"
+  ],
   "roots": ["<rootDir>/test"],
   "setupFilesAfterEnv": ["<rootDir>/test/setup/e2e.setup.ts"],
   "testTimeout": 30000

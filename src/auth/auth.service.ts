@@ -4,6 +4,7 @@ import {
   ConflictException,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
@@ -159,6 +160,12 @@ export class AuthService {
 
     if (!isPasswordValid) {
       throw new UnauthorizedException('Credenciais inválidas.');
+    }
+
+    if (!user.isVerified) {
+      throw new ForbiddenException(
+        'Conta não verificada. Verifique seu email para continuar.',
+      );
     }
 
     const tokens = await this.getTokens(user.id, user.email, user.role);

@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   BadRequestException,
 } from '@nestjs/common';
+import sanitizeHtml from 'sanitize-html';
 import { PrismaService } from '@/prisma/prisma.service';
 import { NotificationService } from '@/notification/notification.service';
 import {
@@ -15,9 +16,13 @@ import { DEFAULT_PAGE } from '@/common/constants';
 const MAX_COMMENTS_PER_PAGE = 50;
 const MAX_REPLIES_PER_COMMENT = 5;
 
-/** Remove HTML/tags de conteúdo criado pelo usuário (anti-XSS). */
+/** Remove todas as tags HTML/scripts de conteúdo criado pelo usuário (anti-XSS robusto). */
 function sanitizeContent(content: string): string {
-  return content.replace(/<[^>]*>/g, '').trim();
+  return sanitizeHtml(content, {
+    allowedTags: [],
+    allowedAttributes: {},
+    disallowedTagsMode: 'discard',
+  }).trim();
 }
 
 @Injectable()

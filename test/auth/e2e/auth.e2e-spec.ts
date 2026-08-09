@@ -181,7 +181,13 @@ describe('AuthController (e2e)', () => {
 
   describe('POST /auth/login', () => {
     beforeEach(async () => {
-      await createTestUser('user@example.com', 'Password123!', 'Test User');
+      await createTestUser(
+        'user@example.com',
+        'Password123!',
+        'Test User',
+        Role.USER,
+        true,
+      );
     });
 
     it('should login successfully with valid credentials', async () => {
@@ -268,7 +274,13 @@ describe('AuthController (e2e)', () => {
     let refreshToken: string | undefined;
 
     beforeEach(async () => {
-      await createTestUser('user@example.com', 'Password123!', 'Test User');
+      await createTestUser(
+        'user@example.com',
+        'Password123!',
+        'Test User',
+        Role.USER,
+        true,
+      );
 
       const loginResponse = await request(getHttpServer())
         .post('/auth/login')
@@ -366,7 +378,13 @@ describe('AuthController (e2e)', () => {
     });
 
     it('should have consistent responses under load', async () => {
-      await createTestUser('test@example.com', 'Password123!', 'Test User');
+      await createTestUser(
+        'test@example.com',
+        'Password123!',
+        'Test User',
+        Role.USER,
+        true,
+      );
 
       const requests = Array(5)
         .fill(null)
@@ -428,6 +446,12 @@ describe('AuthController (e2e)', () => {
       expect((registerResponse.body as RegisterResponse).message).toBe(
         'Conta criada. Verifique seu email para o código de verificação.',
       );
+
+      const prisma = getPrismaService();
+      await prisma.user.update({
+        where: { email: registerDto.email },
+        data: { isVerified: true },
+      });
 
       const loginResponse = await request(getHttpServer())
         .post('/auth/login')
