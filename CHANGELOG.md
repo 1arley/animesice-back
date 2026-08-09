@@ -1,3 +1,10 @@
+## [1.1.3](https://github.com/1arley/animesice-back/compare/v1.1.2...v1.1.3) (2026-08-09)
+
+
+### Bug Fixes
+
+* Server-side request forgery ([40668ca](https://github.com/1arley/animesice-back/commit/40668cafd23b4e6dc72e67d586635e97baa4eb66))
+
 ## [1.1.2](https://github.com/1arley/animesice-back/compare/v1.1.1...v1.1.2) (2026-08-09)
 
 
