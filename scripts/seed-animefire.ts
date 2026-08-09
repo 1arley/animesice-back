@@ -154,7 +154,7 @@ async function fetchAnimefirePageInfo(
     const synM = html.match(/<div[^>]*id=["']synopsis["'][^>]*>([\s\S]*?)<\/div>/i)
       || html.match(/<p[^>]*class=["'][^"']*syn[^"']*["'][^>]*>([\s\S]*?)<\/p>/i);
     if (synM) {
-      synopsis = synM[1]!.replace(/<[^>]+>/g, '').trim().slice(0, 2000);
+      synopsis = synM[1]!.replace(/[<>]/g, '').trim().slice(0, 2000);
     }
 
     return { title, coverImage, synopsis };
