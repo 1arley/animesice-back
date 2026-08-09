@@ -11,6 +11,15 @@ import net from 'net';
 /** Regex p/ validar scheme: somente http/https. */
 const VALID_SCHEME = /^https?:\/\//i;
 
+/**
+ * Allowlist de hosts externos permitidos para chamadas de proxy.
+ * Pode ser configurada via env: EMBED_ALLOWED_HOSTS=example.com,cdn.example.com
+ */
+const ALLOWED_OUTBOUND_HOSTS = (process.env.EMBED_ALLOWED_HOSTS ?? '')
+  .split(',')
+  .map((h) => h.trim().toLowerCase())
+  .filter(Boolean);
+
 /** Máximo de redirecionamentos seguidos no fetch (anti-SSRF/anti-loops). */
 const MAX_REDIRECTS = 5;
 
@@ -347,7 +356,24 @@ export class EmbedService {
       throw new BadRequestException(BLOCKED_MESSAGE);
     }
 
+    if (!this.isHostAllowed(host)) {
+      throw new BadRequestException('Host de destino não permitido.');
+    }
+
     return parsed.toString();
+  }
+
+  /**
+   * Enforce de allowlist para saída HTTP:
+   * - sem configuração => bloqueia por padrão (fail closed)
+   * - aceita match exato e subdomínio
+   */
+  private isHostAllowed(host: string): boolean {
+    if (ALLOWED_OUTBOUND_HOSTS.length === 0) return false;
+
+    return ALLOWED_OUTBOUND_HOSTS.some(
+      (allowed) => host === allowed || host.endsWith(`.${allowed}`),
+    );
   }
 
   /**
