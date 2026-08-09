@@ -7,16 +7,10 @@ import { PrismaService } from '@/prisma/prisma.service';
 import { EmbedService } from '@/embed/embed.service';
 import { ScrapeService } from '@/embed/scrape/scrape.service';
 import { Readable } from 'stream';
-import * as fs from 'fs';
 
 function dbg(msg: string): void {
-  const line = `${new Date().toISOString()} ${msg}`;
-  try {
-    fs.appendFileSync('/tmp/scrape-debug.log', line + '\n');
-  } catch {
-    // log de debug nunca deve derrubar o fluxo
-  }
-  console.error(line);
+  const safeMsg = msg.replace(/[\r\n\u2028\u2029]/g, ' ');
+  console.error(`${new Date().toISOString()} ${safeMsg}`);
 }
 
 /**

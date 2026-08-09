@@ -8,17 +8,14 @@ import { AnimesonlineccScrapeSource } from './animesonlinecc.source';
 import { MeusanimesScrapeSource } from './meusanimes.source';
 import { PrismaService } from '@/prisma/prisma.service';
 import { ensureXvfb } from './xvfb.helper';
-import * as fs from 'fs';
+/** Remove quebras de linha/separadores Unicode de dados externos antes de logar. */
+function sanitizeLog(v: string): string {
+  return v.replace(/[\r\n\u2028\u2029]/g, ' ');
+}
 
-/** Debug logger that writes to /tmp/scrape-debug.log (survives NestJS log suppression). */
+/** Debug logger (survives NestJS log suppression). */
 function dbg(msg: string): void {
-  const line = `${new Date().toISOString()} ${msg}`;
-  try {
-    fs.appendFileSync('/tmp/scrape-debug.log', line + '\n');
-  } catch {
-    // log de debug nunca deve derrubar o fluxo
-  }
-  console.error(line);
+  console.error(`${new Date().toISOString()} ${sanitizeLog(msg)}`);
 }
 
 /** Subconjunto do DOM usado no diagnostico do scraping. */
@@ -336,9 +333,9 @@ export class ScrapeService {
 
       console.error(
         '[SCRAPE] goto OK url=',
-        episodeUrl,
+        sanitizeLog(episodeUrl),
         'title=',
-        await page.title().catch(() => '?'),
+        sanitizeLog(await page.title().catch(() => '?')),
       );
 
       // Cloudflare: detecta tela de desafio e aborta (sem bypass).
@@ -358,7 +355,7 @@ export class ScrapeService {
       console.error(
         '[SCRAPE] pre-extract media requests:',
         allMediaRequests.length,
-        JSON.stringify(allMediaRequests.slice(0, 5)),
+        sanitizeLog(JSON.stringify(allMediaRequests.slice(0, 5))),
       );
 
       // Diagnostico: dump dos iframes e botoes de play candidatos.
@@ -386,11 +383,14 @@ export class ScrapeService {
         })
         .catch(() => []);
 
-      console.error('[SCRAPE] iframes:', JSON.stringify(diagIframes));
+      console.error(
+        '[SCRAPE] iframes:',
+        sanitizeLog(JSON.stringify(diagIframes)),
+      );
 
       console.error(
         '[SCRAPE] botoes-play-candidatos:',
-        JSON.stringify(diagButtons),
+        sanitizeLog(JSON.stringify(diagButtons)),
       );
 
       const result = await source.extract(page);
@@ -417,7 +417,7 @@ export class ScrapeService {
         if (bloggerToken) {
           console.error(
             '[SCRAPE] abrindo token Blogger:',
-            bloggerToken.slice(0, 80) + '...',
+            sanitizeLog(bloggerToken.slice(0, 80) + '...'),
           );
           const bv = await this.extractBloggerVideo(
             context,
@@ -433,7 +433,7 @@ export class ScrapeService {
       console.error(
         '[SCRAPE] resultado final videos=',
         videos.length,
-        videos.slice(0, 2),
+        sanitizeLog(JSON.stringify(videos.slice(0, 2))),
       );
 
       // Wrap das URLs externas via proxy de midia; descarta iframes (anuncios
@@ -518,8 +518,8 @@ export class ScrapeService {
       rawMp4 = result.videos[0] ?? null;
     } catch (err) {
       console.error(
-        `[REEXTRACT] falhou p/ ${animeSlug}/${episodeNumber}:`,
-        err instanceof Error ? err.message : String(err),
+        `[REEXTRACT] falhou p/ ${sanitizeLog(animeSlug)}/${episodeNumber}:`,
+        sanitizeLog(err instanceof Error ? err.message : String(err)),
       );
       return null;
     }
@@ -531,8 +531,8 @@ export class ScrapeService {
     });
 
     console.error(
-      `[REEXTRACT] atualizado ${animeSlug}/${episodeNumber} ->`,
-      rawMp4.slice(0, 80) + '...',
+      `[REEXTRACT] atualizado ${sanitizeLog(animeSlug)}/${episodeNumber} ->`,
+      sanitizeLog(rawMp4.slice(0, 80) + '...'),
     );
     return rawMp4;
   }
@@ -676,13 +676,15 @@ export class ScrapeService {
       console.error(
         '[BLOGGER] capturado=',
         captured.length,
-        captured.slice(0, 2).map((u) => u.slice(0, 80)),
+        sanitizeLog(
+          JSON.stringify(captured.slice(0, 2).map((u) => u.slice(0, 80))),
+        ),
       );
       return [...new Set(captured)];
     } catch (err) {
       console.error(
         '[BLOGGER] erro:',
-        err instanceof Error ? err.message : String(err),
+        sanitizeLog(err instanceof Error ? err.message : String(err)),
       );
       return [];
     } finally {
