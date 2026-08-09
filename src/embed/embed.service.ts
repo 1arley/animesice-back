@@ -12,6 +12,16 @@ import net from 'net';
 const VALID_SCHEME = /^https?:\/\//i;
 
 /**
+ * Porta padrão por scheme. Usada p/:
+ * - bloquear portas não padrão (anti port-scan SSRF) sem hardcode de 80/443;
+ * - canonicizar (remover porta redundante) na URL outbound.
+ */
+const DEFAULT_PORTS: Readonly<Record<string, string>> = Object.freeze({
+  'http:': '80',
+  'https:': '443',
+});
+
+/**
  * Allowlist de hosts externos permitidos para chamadas de proxy.
  * Pode ser configurada via env: EMBED_ALLOWED_HOSTS=example.com,cdn.example.com
  */
@@ -359,6 +369,19 @@ export class EmbedService {
       );
     }
 
+    // Rejeita userinfo no authority — cobre user:pass@ e bypass `@host` (sem
+    // credenciais preenchidas, onde `parsed.username` viria vazio).
+    if (/^https?:\/\/([^@/?#]*@)/i.test(trimmed)) {
+      throw new BadRequestException('Credenciais na URL não são permitidas.');
+    }
+
+    const defaultPort = DEFAULT_PORTS[parsed.protocol];
+    if (parsed.port && parsed.port !== defaultPort) {
+      throw new BadRequestException(
+        `Porta de destino não permitida: ${parsed.protocol} só aceita a porta padrão ${defaultPort}.`,
+      );
+    }
+
     const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
 
     if (this.isBlockedHostname(host)) {
@@ -368,6 +391,11 @@ export class EmbedService {
     if (!this.isHostAllowed(host)) {
       throw new BadRequestException('Host de destino não permitido.');
     }
+
+    // Canoniciza URL outbound: remove fragmento e porta redundante (idêntica
+    // à padrão do scheme), garantindo URL estrita e não ambígua p/ o fetch.
+    parsed.hash = '';
+    if (parsed.port === defaultPort) parsed.port = '';
 
     return parsed.toString();
   }
