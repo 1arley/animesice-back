@@ -1,3 +1,10 @@
+## [1.1.1](https://github.com/1arley/animesice-back/compare/v1.1.0...v1.1.1) (2026-08-09)
+
+
+### Bug Fixes
+
+* **back:** add search to admin anime list + raise limit cap ([0ca5249](https://github.com/1arley/animesice-back/commit/0ca524914638d45a187c6bae7face0c9ee9cf874))
+
 # [1.1.0](https://github.com/1arley/animesice-back/compare/v1.0.5...v1.1.0) (2026-08-08)
 
 
