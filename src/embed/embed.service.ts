@@ -286,12 +286,13 @@ export class EmbedService {
     for (let i = 0; i <= MAX_REDIRECTS; i++) {
       const normalized = this.normalizeUrl(current);
       await this.assertHostResolvesSafely(normalized);
+      const safeOutboundUrl = this.toSafeOutboundUrl(normalized);
 
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       let response: Response;
       try {
-        response = await fetch(normalized, {
+        response = await fetch(safeOutboundUrl, {
           ...init,
           signal: controller.signal,
           redirect: 'manual',
@@ -306,13 +307,21 @@ export class EmbedService {
       if (!isRedirect) return response;
 
       try {
-        current = new URL(location, normalized).toString();
+        current = new URL(location, safeOutboundUrl).toString();
       } catch {
         return response;
       }
     }
 
     throw new BadGatewayException('Limite de redirecionamentos excedido.');
+  }
+
+  /**
+   * Sanitiza URL para requisições HTTP de saída.
+   * Mantém validações centralizadas (scheme + allowlist/bloqueios) antes do fetch.
+   */
+  private toSafeOutboundUrl(url: string): string {
+    return this.normalizeUrl(url);
   }
 
   /**
