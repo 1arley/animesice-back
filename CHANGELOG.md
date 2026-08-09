@@ -1,3 +1,11 @@
+## [1.1.2](https://github.com/1arley/animesice-back/compare/v1.1.1...v1.1.2) (2026-08-09)
+
+
+### Bug Fixes
+
+* **back:** verify Turnstile token on register ([d5bd95f](https://github.com/1arley/animesice-back/commit/d5bd95f50b8033601141fe964092b96df289d102))
+* Server-side request forgery ([e14f8e6](https://github.com/1arley/animesice-back/commit/e14f8e6b766a273748c4f2d8a95483c9b853bd95))
+
 ## [1.1.1](https://github.com/1arley/animesice-back/compare/v1.1.0...v1.1.1) (2026-08-09)
 
 
