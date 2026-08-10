@@ -43,16 +43,15 @@ export class CatalogScanner implements OnModuleInit {
         redirect: 'follow',
       });
       if (!res.ok) {
-        console.error(`[CATALOG] ${url} retornou ${res.status}`);
-        return [];
+        throw new Error(`${url} retornou ${res.status}`);
       }
       html = await res.text();
     } catch (err) {
-      console.error(
-        `[CATALOG] fetch falhou p/ ${url}:`,
-        err instanceof Error ? err.message : String(err),
-      );
-      return [];
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[CATALOG] fetch falhou p/ ${url}:`, msg);
+      throw new Error(`[CATALOG] fetch falhou p/ ${url}: ${msg}`, {
+        cause: err,
+      });
     }
 
     const entries = this.parseCatalog(html, animeSlug);
