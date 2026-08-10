@@ -6,32 +6,12 @@ import {
 import { PrismaService } from '@/prisma/prisma.service';
 import { EmbedService } from '@/embed/embed.service';
 import { ScrapeService } from '@/embed/scrape/scrape.service';
+import { probeMediaUrlDead } from '@/common/media-probe';
 import { Readable } from 'stream';
 
 function dbg(msg: string): void {
   const safeMsg = msg.replace(/[\r\n\u2028\u2029]/g, ' ');
   console.error(`${new Date().toISOString()} ${safeMsg}`);
-}
-
-/**
- * Probe leve de liveness da URL de mídia. Reproduz EXATAMENTE os headers do
- * proxy de mídia (embed.service.proxyMedia): googlevideo valida o User-Agent
- * contra o token extraído (cver) — UA errado gera 403 falso. Usa o mesmo
- * UA/Referer/Origin do proxy para o teste ser representativo.
- *
- * Otimização: URLs googlevideo carregam `expire` (unix). Se expire - agora >
- * 30min, assume viva sem rede; só faz GET (Range bytes=0-0) quando próximo
- * do vencimento ou sem `expire`. Trata 401/403/404/410 como morta; demais
- * (5xx, 429, timeout, erro de rede) como viva, evitando re-extração por
- * problema transitório.
- */
-/**
- * @deprecated Use `probeMediaUrlDead` from `@/common/media-probe`. Esta versão
- * local mantém compatibilidade próxima ao streaming.service; novo código
- * deve importar o util compartilhado. Mesma lógica exata.
- */
-async function probeMediaUrlDead(url: string): Promise<boolean> {
-  return (await import('@/common/media-probe.js')).probeMediaUrlDead(url);
 }
 
 /**
