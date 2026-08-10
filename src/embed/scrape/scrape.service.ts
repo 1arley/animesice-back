@@ -6,7 +6,7 @@ import { ScrapeSource, ScrapeEpisodeResult } from './scrape-source.interface';
 import { AnimefireScrapeSource } from './animefire.source';
 import { AnimesonlineccScrapeSource } from './animesonlinecc.source';
 import { MeusanimesScrapeSource } from './meusanimes.source';
-import { youtubeEmbedUrl, isProxyableMediaUrl } from './extract';
+import { youtubeEmbedUrl } from './extract';
 import { PrismaService } from '@/prisma/prisma.service';
 import { ensureXvfb } from './xvfb.helper';
 /** Remove quebras de linha/separadores Unicode de dados externos antes de logar. */
@@ -222,12 +222,8 @@ export class ScrapeService {
                 token,
                 episodeUrl,
               );
-              // googlevideo (resolução do Blogger/YouTube via chromium) é
-              // IP-vinculado ao chromium e NÃO é proxyable pelo backend —
-              // não entra em `videos`. Só .mp4/.m3u8 de CDN própria servem.
-              const proxyable = bv.filter((u) => isProxyableMediaUrl(u));
-              if (proxyable.length > 0) {
-                videos = proxyable;
+              if (bv.length > 0) {
+                videos = bv;
                 resolved = true;
                 break;
               }
@@ -267,9 +263,8 @@ export class ScrapeService {
                     token,
                     episodeUrl,
                   );
-                  const proxyable = bv.filter((u) => isProxyableMediaUrl(u));
-                  if (proxyable.length > 0) {
-                    videos = proxyable;
+                  if (bv.length > 0) {
+                    videos = bv;
                     break;
                   }
                 }
@@ -289,10 +284,6 @@ export class ScrapeService {
           }
         }
 
-        // googlevideo/videoplayback nunca entra em `videos`: token IP-vinculado
-        // ao chromium, não proxyable pelo backend. Filtra defensivamente mesmo
-        // quando vier de raw.videos (ex: adapter resolvendo direto).
-        videos = videos.filter((v) => isProxyableMediaUrl(v));
         dbg(
           `[SCRAPE] extractHttp returning: videos=${videos.length} wrap=${wrap}`,
         );
