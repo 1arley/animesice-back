@@ -76,10 +76,12 @@ export class AuthService {
     res: Response,
     accessToken: string,
     refreshToken: string,
-    _role: string,
+    role: string,
   ) {
-    res.cookie('access_token', accessToken, this.getCookieOptions());
+    const opts = this.getCookieOptions();
+    res.cookie('access_token', accessToken, opts);
     res.cookie('refresh_token', refreshToken, this.getRefreshCookieOptions());
+    res.cookie('role', role, { ...opts, httpOnly: false });
   }
 
   clearAuthCookies(res: Response) {
@@ -93,7 +95,7 @@ export class AuthService {
   async register(registerDto: RegisterDto) {
     const { name, email, password } = registerDto;
 
-    if (process.env.NODE_ENV !== 'test') {
+    if (process.env.NODE_ENV === 'production') {
       await this.turnstileService.verify(registerDto.turnstileToken);
     }
 
@@ -144,7 +146,7 @@ export class AuthService {
   async login(loginDto: LoginDto) {
     const { email, password } = loginDto;
 
-    if (process.env.NODE_ENV !== 'test') {
+    if (process.env.NODE_ENV === 'production') {
       await this.turnstileService.verify(loginDto.turnstileToken);
     }
 
