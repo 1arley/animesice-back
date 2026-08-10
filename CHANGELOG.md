@@ -1,3 +1,10 @@
+# [1.4.0](https://github.com/1arley/animesice-back/compare/v1.3.1...v1.4.0) (2026-08-10)
+
+
+### Features
+
+* **auth:** userName unico, avatar upload via Supabase S3, mail templates ([6e9ca5a](https://github.com/1arley/animesice-back/commit/6e9ca5a28132ab922a9273c75c728bc7d97f7204))
+
 ## [1.3.1](https://github.com/1arley/animesice-back/compare/v1.3.0...v1.3.1) (2026-08-10)
 
 
