@@ -1,3 +1,10 @@
+## [1.7.1](https://github.com/1arley/animesice-back/compare/v1.7.0...v1.7.1) (2026-08-10)
+
+
+### Bug Fixes
+
+* **scrape:** restore googlevideo acceptance in watchtower extraction ([1c433de](https://github.com/1arley/animesice-back/commit/1c433de95dce69fef110ae2d22ef1a697c935a9e))
+
 # [1.7.0](https://github.com/1arley/animesice-back/compare/v1.6.0...v1.7.0) (2026-08-10)
 
 
