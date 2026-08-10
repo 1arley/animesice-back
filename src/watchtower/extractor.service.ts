@@ -29,11 +29,13 @@ export class Extractor {
     animeSlug: string,
     episodeNumber: number,
     season: number = 1,
+    episodeUrl?: string,
   ): Promise<ExtractResult> {
     const candidates = await this.discovery.candidates(
       animeSlug,
       episodeNumber,
       season,
+      episodeUrl,
     );
     if (candidates.length === 0) {
       // probe falhou p/ todas — usa ordem base como fallback
@@ -63,6 +65,7 @@ export class Extractor {
         out.push({
           videoUrl,
           sourceId: c.sourceId,
+          embedUrl: c.url,
           thumbnailUrl: null,
           title: null,
           duration: null,

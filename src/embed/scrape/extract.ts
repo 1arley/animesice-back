@@ -12,6 +12,32 @@ export function keepVideoUrls(urls: string[]): string[] {
 }
 
 /**
+ * Detecta URL de mídia com assinatura TEMPORÁRIA (ex: S3 SigV4, googlevideo).
+ * Essas URLs expiram (X-Amz-Expires / expire / X-Goog-Expires) e ficam
+ * suscetíveis a 403 intermitente. URLs permanentes (R2, CDN pública) não têm
+ * esses params e devem ser preferidas quando disponíveis.
+ */
+export function isExpiringMediaUrl(url: string): boolean {
+  if (/[?&#](X-Amz-Expires|X-Goog-Expires|expire|EXPIRES|se|tok)/i.test(url)) {
+    return true;
+  }
+  return /X-Amz-Date=|X-Amz-Algorithm=|X-Goog-Signature=|X-Goog-Algorithm=/i.test(
+    url,
+  );
+}
+
+/**
+ * Reordena URLs de mídia colocando as PERMANENTES primeiro (mantém a ordem
+ * original dentro de cada grupo). Previne que um token S3 expirado seja
+ * persistido/preferido quando há uma URL pública equivalente.
+ */
+export function preferPermanentMediaUrls(urls: string[]): string[] {
+  const permanent = urls.filter((u) => !isExpiringMediaUrl(u));
+  const expiring = urls.filter((u) => isExpiringMediaUrl(u));
+  return [...permanent, ...expiring];
+}
+
+/**
  * Tipos minimos do DOM usados dentro do page.evaluate (contexto do browser).
  * O tsconfig nao inclui a lib "DOM"; estas interfaces tipam apenas o que a
  * extracao usa, sem recorrer a `any`.

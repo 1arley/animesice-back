@@ -27,6 +27,8 @@ interface ExtractPayload {
   slug: string;
   episodeNumber: number;
   season?: number;
+  /** URL real do episódio vinda do catálogo (evita divergência de template). */
+  episodeUrl?: string;
 }
 
 interface RepairPayload {
@@ -104,6 +106,7 @@ export class WorkerService {
       anime.slug,
       p.episodeNumber,
       season,
+      p.episodeUrl,
     );
     if (candidates.length === 0) {
       throw new Error(
@@ -119,12 +122,14 @@ export class WorkerService {
       );
     }
 
-    const embedUrl = this.embedUrlForSource(
-      valid.sourceId,
-      anime.slug,
-      p.episodeNumber,
-      season,
-    );
+    const embedUrl =
+      valid.embedUrl ??
+      this.embedUrlForSource(
+        valid.sourceId,
+        anime.slug,
+        p.episodeNumber,
+        season,
+      );
     await this.publisher.publish({
       animeId: anime.id,
       episodeNumber: p.episodeNumber,
@@ -208,12 +213,14 @@ export class WorkerService {
         `Repair: validação falhou ${anime.slug}/${p.episodeNumber}`,
       );
 
-    const embedUrl = this.embedUrlForSource(
-      valid.sourceId,
-      anime.slug,
-      p.episodeNumber,
-      p.season ?? 1,
-    );
+    const embedUrl =
+      valid.embedUrl ??
+      this.embedUrlForSource(
+        valid.sourceId,
+        anime.slug,
+        p.episodeNumber,
+        p.season ?? 1,
+      );
     await this.publisher.publish({
       animeId: anime.id,
       episodeNumber: p.episodeNumber,

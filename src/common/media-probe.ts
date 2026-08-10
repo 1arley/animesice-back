@@ -30,6 +30,50 @@ export function refererForMediaUrl(mediaUrl: string): string {
   }
 }
 
+/**
+ * Detecta se uma URL de mídia possui assinatura temporária já vencida, sem
+ * tocar na rede. Suporta:
+ *  - `expire` (unix seconds) — googlevideo/videoplayback
+ *  - `X-Amz-Date` (YYYYMMDDTHHMMSSZ) + `X-Amz-Expires` (segundos) — S3/rumble
+ *    (assinatura AWS SigV4 expira após X-Amz-Expires desde X-Amz-Date)
+ *
+ * Retorna true (morta) apenas quando a expiração é DETERMINÍSTICA. Se não
+ * houver params de expiração, retorna null (probe de rede decide).
+ */
+export function signedExpiryDead(url: string): boolean | null {
+  try {
+    const u = new URL(url);
+
+    const expire = parseInt(u.searchParams.get('expire') ?? '', 10);
+    if (Number.isFinite(expire) && expire > 0) {
+      return Date.now() / 1000 > expire;
+    }
+
+    const amzDate = u.searchParams.get('X-Amz-Date');
+    const amzExpires = parseInt(u.searchParams.get('X-Amz-Expires') ?? '', 10);
+    if (amzDate && Number.isFinite(amzExpires) && amzExpires > 0) {
+      // X-Amz-Date: YYYYMMDDTHHMMSSZ (UTC). Assume 00:00:00 quando faltar T.
+      const dateMatch =
+        /^(\d{4})(\d{2})(\d{2})T?(\d{2})?(\d{2})?(\d{2})?Z?$/.exec(amzDate);
+      if (dateMatch) {
+        const [, y, mo, d, h = '00', mi = '00', s = '00'] = dateMatch;
+        const signedAt = Date.UTC(
+          Number(y),
+          Number(mo) - 1,
+          Number(d),
+          Number(h),
+          Number(mi),
+          Number(s),
+        );
+        return Date.now() > signedAt + amzExpires * 1000;
+      }
+    }
+  } catch {
+    /* URL malformada: segue para probe de rede */
+  }
+  return null;
+}
+
 /** true = URL morta (precisa re-extração); false = viva ou inconclusivo. */
 export async function probeMediaUrlDead(url: string): Promise<boolean> {
   try {
@@ -41,6 +85,10 @@ export async function probeMediaUrlDead(url: string): Promise<boolean> {
   } catch {
     /* URL malformada: segue para probe de rede */
   }
+
+  // Assinatura temporária vencida (S3/rumble) — morta sem depender da rede.
+  const signedDead = signedExpiryDead(url);
+  if (signedDead === true) return true;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 5000);

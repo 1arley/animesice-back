@@ -258,11 +258,12 @@ export class StreamingService {
       // Tentativa 2: fallback meusanimes.blog
       if (!rawVideoUrl) {
         dbg(
-          `[STREAM] tentativa 2: scrapeFromMeusanimes(${animeSlug}, ${episodeNumber})`,
+          `[STREAM] tentativa 2: scrapeFromMeusanimes(${animeSlug}, ${episodeNumber}, s${season})`,
         );
         rawVideoUrl = await this.scrapeService.scrapeFromMeusanimes(
           animeSlug,
           episodeNumber,
+          season,
         );
         dbg(
           `[STREAM] tentativa 2 resultado: ${rawVideoUrl?.slice(0, 80) ?? 'null'}`,
@@ -314,6 +315,7 @@ export class StreamingService {
     episodeId: string;
     animeSlug: string;
     episodeNumber: number;
+    season: number;
   }> {
     const now = Math.floor(Date.now() / 1000);
 
@@ -351,6 +353,7 @@ export class StreamingService {
       episodeId: episode.id,
       animeSlug: episode.anime.slug,
       episodeNumber: episode.number,
+      season: episode.season,
     };
   }
 
@@ -371,11 +374,8 @@ export class StreamingService {
     headers: Headers;
     body: Readable;
   }> {
-    const { videoUrl, animeSlug, episodeNumber } = await this.validateToken(
-      token,
-      expires,
-      ip,
-    );
+    const { videoUrl, animeSlug, episodeNumber, season } =
+      await this.validateToken(token, expires, ip);
 
     const reqHeaders: Record<string, string> = {};
     if (range) reqHeaders.range = range;
@@ -392,18 +392,20 @@ export class StreamingService {
     // 403 = token .mp4 da CDN expirado -> re-extração e retry único.
     if (result.status === 403) {
       console.log(
-        `[STREAM] 403 p/ ${animeSlug}/${episodeNumber}, re-extraindo...`,
+        `[STREAM] 403 p/ ${animeSlug}/s${season}/${episodeNumber}, re-extraindo...`,
       );
       // Tenta re-extração da fonte original.
       let fresh = await this.scrapeService.reextractEpisodeVideo(
         animeSlug,
         episodeNumber,
+        season,
       );
       // Fallback meusanimes.
       if (!fresh) {
         fresh = await this.scrapeService.scrapeFromMeusanimes(
           animeSlug,
           episodeNumber,
+          season,
         );
       }
       if (fresh) {

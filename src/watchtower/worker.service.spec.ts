@@ -29,8 +29,19 @@ function makeMocks() {
     },
     extractor: {
       extract: jest.fn(
-        async (_slug: string, _ep: number, _season?: number) => ({
-          candidates: [{ videoUrl: 'new.mp4', sourceId: 'meusanimes' }],
+        async (
+          _slug: string,
+          _ep: number,
+          _season?: number,
+          _episodeUrl?: string,
+        ) => ({
+          candidates: [
+            {
+              videoUrl: 'new.mp4',
+              sourceId: 'meusanimes',
+              embedUrl: 'https://meusanimes.blog/e/solo/',
+            },
+          ],
           triedSources: ['meusanimes'],
         }),
       ),
@@ -115,7 +126,7 @@ describe('WorkerService', () => {
         payload: { animeId: 'anime-1', slug: 'solo', episodeNumber: 1 },
       }),
     );
-    expect(m.extractor.extract).toHaveBeenCalledWith('solo', 1, 1);
+    expect(m.extractor.extract).toHaveBeenCalledWith('solo', 1, 1, undefined);
     expect(m.validator.pickValid).toHaveBeenCalledWith(
       expect.arrayContaining([
         expect.objectContaining({ videoUrl: 'new.mp4' }),
@@ -128,7 +139,9 @@ describe('WorkerService', () => {
         episodeNumber: 1,
         videoUrl: 'new.mp4',
         sourceId: 'meusanimes',
-        embedUrl: expect.any(String),
+        // embedUrl vem do candidato que produziu o vídeo (URL real do catálogo),
+        // não do template construído — preserva URLs de filmes (/e/<slug>/).
+        embedUrl: 'https://meusanimes.blog/e/solo/',
       }),
     );
     expect(m.jobs.complete).toHaveBeenCalledWith('job-1');

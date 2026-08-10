@@ -9,6 +9,7 @@ const UA =
 interface CatalogEntry {
   season: number;
   episode: number;
+  /** URL real do episódio publicada no catálogo (filmes usam /e/<slug>/). */
   url: string;
 }
 
@@ -140,6 +141,7 @@ export class CatalogScanner implements OnModuleInit {
           slug,
           episodeNumber: entry.episode,
           season: entry.season,
+          episodeUrl: entry.url,
         },
         priority: PRIORITY.EXTRACT,
       });
@@ -156,27 +158,26 @@ export class CatalogScanner implements OnModuleInit {
    *
    * Estrutura esperada:
    * - div.numerando contém "S - E" (temporada - episódio)
-   * - href="https://meusanimes.blog/e/{slug}-{season}-episodio-{ep}/"
+   * - o link do episódio (`a href`) traz a URL REAL publicada — usada como
+   *   candidata de extração. Para TV é /e/<slug>-<season>-episodio-<n>/;
+   *   para filmes/singles é /e/<slug>/ (sem sufixo).
    */
-  private parseCatalog(html: string, slug: string): CatalogEntry[] {
+  private parseCatalog(html: string, _slug: string): CatalogEntry[] {
     const entries: CatalogEntry[] = [];
     const seen = new Set<string>();
 
-    const numerandoRe =
-      /<div\s+class=['"]numerando['"]>\s*(\d+)\s*-\s*(\d+)\s*<\/div>/gi;
+    const entryRe =
+      /<div\s+class=['"]numerando['"]>\s*(\d+)\s*-\s*(\d+)\s*<\/div>\s*<div\s+class=['"]episodiotitle['"]>\s*<a\s+href=['"]([^'"]+)['"]>/gi;
     let match: RegExpExecArray | null;
-    while ((match = numerandoRe.exec(html)) !== null) {
+    while ((match = entryRe.exec(html)) !== null) {
       const season = parseInt(match[1] ?? '0', 10);
       const episode = parseInt(match[2] ?? '0', 10);
-      if (Number.isFinite(season) && Number.isFinite(episode)) {
+      const url = (match[3] ?? '').trim();
+      if (Number.isFinite(season) && Number.isFinite(episode) && url) {
         const key = `${season}-${episode}`;
         if (!seen.has(key)) {
           seen.add(key);
-          entries.push({
-            season,
-            episode,
-            url: `https://meusanimes.blog/e/${slug}-${season}-episodio-${episode}/`,
-          });
+          entries.push({ season, episode, url });
         }
       }
     }

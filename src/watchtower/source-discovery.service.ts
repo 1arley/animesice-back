@@ -8,6 +8,11 @@
  *               (também sem sufixo p/ filmes/singles)
  *  animefire:   https://animefire.io/animes/<slug>/<n>
  *  animesonlinecc: https://animesonlinecc.to/episodio/<slug>-episodio-<n>/
+ *
+ * Quando o catálogo fornece a URL real do episódio (episodeUrl), ela é usada
+ * como primeira candidata da fonte correspondente — evitando divergência entre
+ * a URL construída por template e a URL publicada (filmes usam /e/<slug>/,
+ * enquanto episódios TV usam /e/<slug>-<season>-episodio-<n>/).
  */
 import { Injectable } from '@nestjs/common';
 import { HealthMonitor } from './health-monitor.service';
@@ -21,25 +26,61 @@ export interface SourceCandidate {
   url: string;
 }
 
+/** Classificação do probe HTTP de uma candidata. */
+export type ProbeStatus = 'ok' | 'missing' | 'blocked' | 'inconclusive';
+
 @Injectable()
 export class SourceDiscovery {
   constructor(private readonly health: HealthMonitor) {}
 
+  /**
+   * Candidatas ordenadas por health da fonte.
+   * @param episodeUrl URL real do episódio (vinda do catálogo) — se fornecida,
+   *   vira a primeira candidata da fonte dona do host.
+   */
   async candidates(
     animeSlug: string,
     episodeNumber: number,
     season: number = 1,
+    episodeUrl?: string,
   ): Promise<SourceCandidate[]> {
     const order = await this.health.rankedSources();
     const out: SourceCandidate[] = [];
 
+    // Se o catálogo forneceu a URL real, prioriza a fonte dona dela.
+    if (episodeUrl) {
+      const explicit = this.explicitCandidate(episodeUrl);
+      if (explicit) {
+        const status = await this.probeExists(explicit.url);
+        if (status !== 'missing') out.push(explicit);
+      }
+    }
+
+    const usedSources = new Set(out.map((c) => c.sourceId));
+    const onlyExplicit = episodeUrl ? usedSources : new Set<string>();
+
     for (const sourceId of order) {
+      if (onlyExplicit.has(sourceId)) continue;
       const urls = this.urlsFor(sourceId, animeSlug, episodeNumber, season);
+      const ok: SourceCandidate[] = [];
+      const blocked: SourceCandidate[] = [];
+      const inconclusive: SourceCandidate[] = [];
+
       for (const url of urls) {
-        if (await this.probeExists(url)) {
-          out.push({ sourceId, url });
-          break; // primeira URL válida da fonte basta
-        }
+        const status = await this.probeExists(url);
+        if (status === 'ok') ok.push({ sourceId, url });
+        else if (status === 'blocked') blocked.push({ sourceId, url });
+        else if (status === 'inconclusive')
+          inconclusive.push({ sourceId, url });
+        // 'missing' é descartado — página não existe.
+      }
+
+      if (ok.length > 0) {
+        out.push(ok[0]!);
+      } else if (inconclusive.length > 0) {
+        out.push(inconclusive[0]!);
+      } else if (blocked.length > 0) {
+        out.push(blocked[0]!); // fallback: fonte existe mas pode estar sob challenge
       }
     }
     return out;
@@ -60,6 +101,21 @@ export class SourceDiscovery {
     return out;
   }
 
+  /** Candidata explícita vinda do catálogo: detecta a fonte pelo host. */
+  private explicitCandidate(episodeUrl: string): SourceCandidate | null {
+    const lower = episodeUrl.toLowerCase();
+    if (/meusanimes\.blog|meusdoramas\.club/i.test(lower)) {
+      return { sourceId: 'meusanimes', url: episodeUrl };
+    }
+    if (/animefire\.io/i.test(lower)) {
+      return { sourceId: 'animefire', url: episodeUrl };
+    }
+    if (/animesonlinecc\.to/i.test(lower)) {
+      return { sourceId: 'animesonlinecc', url: episodeUrl };
+    }
+    return null;
+  }
+
   private urlsFor(
     sourceId: string,
     slug: string,
@@ -78,8 +134,14 @@ export class SourceDiscovery {
     return [base];
   }
 
-  /** Probe HEAD/GET: false se 404. true se 200 ou erro de rede (inconclusivo). */
-  private async probeExists(url: string): Promise<boolean> {
+  /**
+   * Probe HEAD/GET classificado:
+   *  - ok: 2xx/3xx — página existe.
+   *  - missing: 404/410 — página não existe.
+   *  - blocked: 403/429/5xx — existe mas indisponível (Cloudflare/rate-limit).
+   *  - inconclusive: erro de rede/timeout — mantém como candidata.
+   */
+  private async probeExists(url: string): Promise<ProbeStatus> {
     try {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 5000);
@@ -95,9 +157,12 @@ export class SourceDiscovery {
       });
       clearTimeout(timer);
       await res.body?.cancel();
-      return res.status !== 404;
+
+      if (res.status >= 200 && res.status < 400) return 'ok';
+      if (res.status === 404 || res.status === 410) return 'missing';
+      return 'blocked';
     } catch {
-      return true; // inconclusivo — inclui como candidata
+      return 'inconclusive'; // não prova nada — mantém como candidata
     }
   }
 }

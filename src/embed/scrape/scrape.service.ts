@@ -490,6 +490,7 @@ export class ScrapeService {
   async reextractEpisodeVideo(
     animeSlug: string,
     episodeNumber: number,
+    season: number = 1,
   ): Promise<string | null> {
     const anime = await this.prisma.anime.findUnique({
       where: { slug: animeSlug },
@@ -501,7 +502,7 @@ export class ScrapeService {
       where: {
         animeId_season_number: {
           animeId: anime.id,
-          season: 1,
+          season,
           number: episodeNumber,
         },
       },
@@ -573,9 +574,10 @@ export class ScrapeService {
   async scrapeFromMeusanimes(
     animeSlug: string,
     episodeNumber: number,
+    season: number = 1,
   ): Promise<string | null> {
     const candidates = [
-      this.meusanimesEpisodeUrl(animeSlug, episodeNumber),
+      this.meusanimesEpisodeUrl(animeSlug, episodeNumber, season),
       `https://meusanimes.blog/e/${animeSlug}/`,
       `https://meusanimes.blog/e/${animeSlug}-episodio-${episodeNumber}/`,
     ];

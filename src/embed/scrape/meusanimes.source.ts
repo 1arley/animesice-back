@@ -9,6 +9,7 @@ import {
   keepVideoUrls,
   extractVideoElements,
   extractAllIframes,
+  preferPermanentMediaUrls,
 } from './extract';
 
 /**
@@ -136,7 +137,8 @@ export class MeusanimesScrapeSource implements ScrapeSource {
         ]
           .map((m) => m[1]!.replace(/\\\//g, '/'))
           .filter((f) => /^https?:\/\//i.test(f));
-        for (const f of files) {
+        // Prefere URLs permanentes (R2/CDN pública) a tokens S3 temporários.
+        for (const f of preferPermanentMediaUrls(files)) {
           if (!videos.includes(f)) videos.push(f);
         }
       } catch {

@@ -11,6 +11,8 @@ import { PrismaService } from '@/prisma/prisma.service';
 
 export interface EpisodeCandidate {
   videoUrl: string;
+  /** URL da página do episódio que produziu o vídeo (persistida em embedUrl). */
+  embedUrl?: string | null;
   thumbnailUrl?: string | null;
   title?: string | null;
   duration?: string | null;
