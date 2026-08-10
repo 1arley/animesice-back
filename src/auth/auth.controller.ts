@@ -172,6 +172,6 @@ export class AuthController {
     @Body() dto: UpdateProfileDto,
     @Req() req: AuthenticatedRequest,
   ) {
-    return this.authService.updateProfile(req.user.id, dto.name);
+    return this.authService.updateProfile(req.user.id, dto.name, dto.userName);
   }
 }

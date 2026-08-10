@@ -31,7 +31,7 @@ export class ModerationService {
         notes: dto.notes,
       },
       include: {
-        reporter: { select: { id: true, name: true } },
+        reporter: { select: { id: true, name: true, userName: true } },
       },
     });
   }
@@ -50,8 +50,8 @@ export class ModerationService {
         take: safeLimit,
         orderBy: { createdAt: 'desc' },
         include: {
-          reporter: { select: { id: true, name: true } },
-          moderator: { select: { id: true, name: true } },
+          reporter: { select: { id: true, name: true, userName: true } },
+          moderator: { select: { id: true, name: true, userName: true } },
         },
       }),
       this.prisma.report.count({ where }),
@@ -91,8 +91,8 @@ export class ModerationService {
         resolvedAt: new Date(),
       },
       include: {
-        reporter: { select: { id: true, name: true } },
-        moderator: { select: { id: true, name: true } },
+        reporter: { select: { id: true, name: true, userName: true } },
+        moderator: { select: { id: true, name: true, userName: true } },
       },
     });
   }
@@ -104,7 +104,7 @@ export class ModerationService {
   ) {
     const user = await this.prisma.user.findUnique({
       where: { id: targetUserId },
-      select: { id: true, name: true },
+      select: { id: true, name: true, userName: true },
     });
 
     if (!user) {

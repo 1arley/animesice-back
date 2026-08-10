@@ -49,6 +49,7 @@
     "docker:pgadmin": "docker compose --profile tools up -d pgadmin"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1106.0",
     "@libsql/client": "^0.17.2",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.3",

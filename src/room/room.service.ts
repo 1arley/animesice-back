@@ -92,7 +92,9 @@ export class RoomService {
       take: safeLimit,
       orderBy: { createdAt: 'desc' },
       include: {
-        user: { select: { id: true, name: true, avatar: true } },
+        user: {
+          select: { id: true, name: true, userName: true, avatar: true },
+        },
       },
     });
   }
@@ -117,7 +119,9 @@ export class RoomService {
         content: trimmed,
       },
       include: {
-        user: { select: { id: true, name: true, avatar: true } },
+        user: {
+          select: { id: true, name: true, userName: true, avatar: true },
+        },
       },
     });
   }

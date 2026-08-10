@@ -112,6 +112,7 @@ export class UserService {
       select: {
         id: true,
         name: true,
+        userName: true,
         avatar: true,
         bio: true,
         createdAt: true,
@@ -135,11 +136,24 @@ export class UserService {
 
   async updateProfileMeta(
     userId: string,
-    dto: { avatar?: string; bio?: string },
+    dto: { avatar?: string; bio?: string; userName?: string },
   ) {
     const data: Record<string, string | null> = {};
     if (dto.avatar !== undefined) data.avatar = dto.avatar;
     if (dto.bio !== undefined) data.bio = dto.bio;
+
+    if (dto.userName !== undefined && dto.userName !== null) {
+      const normalized = dto.userName.trim().toLowerCase();
+      if (normalized) {
+        const existing = await this.prisma.user.findUnique({
+          where: { userName: normalized },
+        });
+        if (existing && existing.id !== userId) {
+          throw new ConflictException('Este apelido já está em uso.');
+        }
+        data.userName = normalized;
+      }
+    }
 
     if (Object.keys(data).length === 0) {
       throw new NotFoundException('Nada para atualizar.');
@@ -152,6 +166,27 @@ export class UserService {
         id: true,
         email: true,
         name: true,
+        userName: true,
+        role: true,
+        avatar: true,
+        bio: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+
+    return user;
+  }
+
+  async clearAvatar(userId: string) {
+    const user = await this.prisma.user.update({
+      where: { id: userId },
+      data: { avatar: null },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        userName: true,
         role: true,
         avatar: true,
         bio: true,

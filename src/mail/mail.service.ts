@@ -89,4 +89,56 @@ export class MailService {
       text,
     });
   }
+
+  sendPasswordResetEmail(to: string, resetUrl: string): Promise<boolean> {
+    const html = `
+      <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 24px;">
+        <h2 style="color: #6366f1;">AnimesIce</h2>
+        <p>Recebemos um pedido para redefinir sua senha.</p>
+        <p style="margin: 20px 0;">
+          <a href="${resetUrl}"
+             style="display: inline-block; background: #6366f1; color: #ffffff; padding: 12px 20px; border-radius: 8px; text-decoration: none; font-weight: bold;">
+            Redefinir senha
+          </a>
+        </p>
+        <p style="color: #6b7280; font-size: 14px;">
+          O link expira em 1 hora. Se você não pediu a redefinição, ignore este email.
+        </p>
+      </div>
+    `;
+    const text = `Redefina sua senha do AnimesIce: ${resetUrl}\n\nO link expira em 1 hora.`;
+
+    return this.send({
+      to,
+      subject: 'Redefinição de senha — AnimesIce',
+      html,
+      text,
+    });
+  }
+
+  sendEmailChangeConfirm(to: string, confirmUrl: string): Promise<boolean> {
+    const html = `
+      <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 24px;">
+        <h2 style="color: #6366f1;">AnimesIce</h2>
+        <p>Você solicitou a troca do email da sua conta para <strong>${to}</strong>.</p>
+        <p style="margin: 20px 0;">
+          <a href="${confirmUrl}"
+             style="display: inline-block; background: #6366f1; color: #ffffff; padding: 12px 20px; border-radius: 8px; text-decoration: none; font-weight: bold;">
+            Confirmar novo email
+          </a>
+        </p>
+        <p style="color: #6b7280; font-size: 14px;">
+          O link expira em 24 horas. Se você não pediu a troca, ignore este email.
+        </p>
+      </div>
+    `;
+    const text = `Confirme seu novo email do AnimesIce: ${confirmUrl}\n\nO link expira em 24 horas.`;
+
+    return this.send({
+      to,
+      subject: 'Confirme seu novo email — AnimesIce',
+      html,
+      text,
+    });
+  }
 }

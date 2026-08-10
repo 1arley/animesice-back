@@ -2,21 +2,28 @@ import {
   Controller,
   Get,
   Post,
+  Delete,
   UseGuards,
+  UseInterceptors,
   Req,
   Query,
   Body,
   Param,
+  UploadedFile,
   HttpCode,
   HttpStatus,
+  BadRequestException,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import {
   ApiTags,
   ApiBearerAuth,
   ApiResponse,
   ApiOperation,
+  ApiConsumes,
+  ApiBody,
 } from '@nestjs/swagger';
-import { IsString, IsOptional, MaxLength } from 'class-validator';
+import { IsString, IsOptional, MaxLength, Matches } from 'class-validator';
 import { UserService } from '@/user/user.service';
 import { ApiGetUserMe } from '@/user/swagger/user.get.me.swagger';
 import { JwtAuthGuard } from '@/auth/jwt-auth.guard';
@@ -28,6 +35,11 @@ import {
   DEFAULT_PAGE_SIZE,
   parsePageParam,
 } from '@/common/constants';
+import {
+  ALLOWED_IMAGE_MIMETYPES,
+  MAX_AVATAR_BYTES,
+  SupabaseService,
+} from '@/upload/supabase.service';
 import type { AuthenticatedRequest } from '@/common/interfaces/request.interface';
 
 class UpdateProfileMetaDto {
@@ -40,6 +52,14 @@ class UpdateProfileMetaDto {
   @IsString()
   @MaxLength(500)
   bio?: string;
+
+  @IsOptional()
+  @IsString()
+  @Matches(/^[a-z0-9_-]{3,20}$/, {
+    message:
+      'Apelido deve ter entre 3 e 20 caracteres e usar apenas letras minúsculas, números, _ ou -.',
+  })
+  userName?: string;
 }
 
 @ApiTags('user')
@@ -47,7 +67,10 @@ class UpdateProfileMetaDto {
 @UseGuards(JwtAuthGuard)
 @ApiBearerAuth('JWT-auth')
 export class UserController {
-  constructor(private readonly userService: UserService) {}
+  constructor(
+    private readonly userService: UserService,
+    private readonly supabaseService: SupabaseService,
+  ) {}
 
   @Get()
   @ApiFindAllUsers()
@@ -100,5 +123,72 @@ export class UserController {
     @Body() dto: UpdateProfileMetaDto,
   ) {
     return this.userService.updateProfileMeta(req.user.id, dto);
+  }
+
+  @Post('me/avatar')
+  @HttpCode(HttpStatus.OK)
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        file: { type: 'string', format: 'binary' },
+      },
+      required: ['file'],
+    },
+  })
+  @ApiOperation({
+    summary: 'Upload do avatar do usuário (JPG/PNG, máx 50KB)',
+  })
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: MAX_AVATAR_BYTES },
+      fileFilter: (_req, file, cb) => {
+        const mime = file.mimetype?.toLowerCase() ?? '';
+        if (!ALLOWED_IMAGE_MIMETYPES.includes(mime)) {
+          cb(
+            new BadRequestException(
+              'Tipo de arquivo inválido. Aceitos: JPG, PNG.',
+            ),
+            false,
+          );
+          return;
+        }
+        cb(null, true);
+      },
+    }),
+  )
+  async uploadAvatar(
+    @Req() req: AuthenticatedRequest,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file) {
+      throw new BadRequestException('Arquivo de imagem não enviado.');
+    }
+
+    const { url } = await this.supabaseService.uploadImage(
+      file.buffer,
+      file.mimetype,
+      file.originalname,
+      req.user.id,
+    );
+
+    const current = await this.userService.findById(req.user.id);
+    if (current.avatar) {
+      await this.supabaseService.deleteAvatarImage(current.avatar);
+    }
+
+    return this.userService.updateProfileMeta(req.user.id, { avatar: url });
+  }
+
+  @Delete('me/avatar')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Remover avatar do usuário (volta ao fallback)' })
+  async deleteAvatar(@Req() req: AuthenticatedRequest) {
+    const current = await this.userService.findById(req.user.id);
+    if (current.avatar) {
+      await this.supabaseService.deleteAvatarImage(current.avatar);
+    }
+    return this.userService.clearAvatar(req.user.id);
   }
 }

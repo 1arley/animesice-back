@@ -78,7 +78,9 @@ export class CommentService {
           parentId: dto.parentId ?? null,
         },
         include: {
-          user: { select: { id: true, name: true, avatar: true } },
+          user: {
+            select: { id: true, name: true, userName: true, avatar: true },
+          },
           _count: { select: { likes: true } },
         },
       })
@@ -142,11 +144,15 @@ export class CommentService {
       take: safeLimit,
       skip: (safePage - 1) * safeLimit,
       include: {
-        user: { select: { id: true, name: true, avatar: true } },
+        user: {
+          select: { id: true, name: true, userName: true, avatar: true },
+        },
         replies: {
           take: MAX_REPLIES_PER_COMMENT,
           include: {
-            user: { select: { id: true, name: true, avatar: true } },
+            user: {
+              select: { id: true, name: true, userName: true, avatar: true },
+            },
             _count: { select: { likes: true } },
           },
           orderBy: { createdAt: 'asc' },
@@ -199,7 +205,9 @@ export class CommentService {
       where: { id: commentId },
       data: { content, edited: true },
       include: {
-        user: { select: { id: true, name: true, avatar: true } },
+        user: {
+          select: { id: true, name: true, userName: true, avatar: true },
+        },
         _count: { select: { likes: true } },
       },
     });
@@ -280,7 +288,9 @@ export class CommentService {
         take: safeLimit,
         skip: (safePage - 1) * safeLimit,
         include: {
-          user: { select: { id: true, name: true, avatar: true } },
+          user: {
+            select: { id: true, name: true, userName: true, avatar: true },
+          },
           _count: { select: { likes: true } },
         },
         orderBy: { createdAt: 'asc' },

@@ -94,10 +94,15 @@ export class AuthService {
   // ── Auth flows ──────────────────────────────────────────────────────
 
   async register(registerDto: RegisterDto) {
-    const { name, email, password } = registerDto;
+    const { name, userName, email, password } = registerDto;
 
     if (this.shouldVerifyCaptcha()) {
       await this.turnstileService.verify(registerDto.turnstileToken);
+    }
+
+    const normalizedUserName = this.normalizeUserName(userName);
+    if (normalizedUserName) {
+      await this.ensureUserNameUnique(normalizedUserName);
     }
 
     const userExists = await this.prisma.user.findUnique({
@@ -125,23 +130,31 @@ export class AuthService {
 
     const hashedPassword = await bcrypt.hash(password, BCRYPT_ROUNDS);
 
-    const user = await this.prisma.user.create({
-      data: {
-        name,
-        email,
-        password: hashedPassword,
-        role: 'USER',
-        isVerified: false,
-      },
-    });
+    try {
+      const user = await this.prisma.user.create({
+        data: {
+          name,
+          email,
+          password: hashedPassword,
+          role: 'USER',
+          isVerified: false,
+          ...(normalizedUserName ? { userName: normalizedUserName } : {}),
+        },
+      });
 
-    const code = await this.createVerificationCode(user.id);
-    await this.mailService.sendVerificationCode(email, code);
+      const code = await this.createVerificationCode(user.id);
+      await this.mailService.sendVerificationCode(email, code);
 
-    return {
-      message:
-        'Conta criada. Verifique seu email para o código de verificação.',
-    };
+      return {
+        message:
+          'Conta criada. Verifique seu email para o código de verificação.',
+      };
+    } catch (err) {
+      if (this.isUniqueViolation(err)) {
+        throw new ConflictException('Este apelido já está em uso.');
+      }
+      throw err;
+    }
   }
 
   async login(loginDto: LoginDto) {
@@ -257,9 +270,7 @@ export class AuthService {
 
     const confirmUrl = `${this.configService.get<string>('FRONTEND_URL') || 'http://localhost:3000'}/settings/confirm-email?token=${token}`;
 
-    // TODO: enviar por e-mail real. Enquanto não há mailer, o token é
-    // devolvido no corpo como canal de entrega para o frontend.
-    void confirmUrl;
+    await this.mailService.sendEmailChangeConfirm(newEmail, confirmUrl);
 
     return {
       message:
@@ -344,9 +355,16 @@ export class AuthService {
 
   // ── Settings: update profile ───────────────────────────────────────
 
-  async updateProfile(userId: string, name?: string) {
+  async updateProfile(userId: string, name?: string, userName?: string) {
     const data: Record<string, string> = {};
     if (name !== undefined) data.name = name;
+    if (userName !== undefined) {
+      const normalized = this.normalizeUserName(userName);
+      if (normalized) {
+        await this.ensureUserNameUnique(normalized, userId);
+        data.userName = normalized;
+      }
+    }
 
     if (Object.keys(data).length === 0) {
       throw new BadRequestException('Nada para atualizar.');
@@ -392,7 +410,7 @@ export class AuthService {
 
     const resetUrl = `${this.configService.get<string>('FRONTEND_URL') || 'http://localhost:3000'}/redefinir-senha?token=${token}`;
 
-    void resetUrl;
+    await this.mailService.sendPasswordResetEmail(email, resetUrl);
 
     return {
       message: 'Se o email existir, um link de redefinição foi enviado.',
@@ -609,6 +627,32 @@ export class AuthService {
 
   private hashToken(token: string): string {
     return crypto.createHash('sha256').update(token).digest('hex');
+  }
+
+  private normalizeUserName(userName?: string): string | undefined {
+    if (userName === undefined || userName === null) return undefined;
+    const normalized = userName.trim().toLowerCase();
+    return normalized || undefined;
+  }
+
+  private async ensureUserNameUnique(
+    userName: string,
+    excludeUserId?: string,
+  ): Promise<void> {
+    const existing = await this.prisma.user.findUnique({
+      where: { userName },
+    });
+    if (existing && existing.id !== excludeUserId) {
+      throw new ConflictException('Este apelido já está em uso.');
+    }
+  }
+
+  private isUniqueViolation(err: unknown): boolean {
+    return (
+      typeof err === 'object' &&
+      err !== null &&
+      (err as { code?: string }).code === 'P2002'
+    );
   }
 
   private shouldVerifyCaptcha(): boolean {

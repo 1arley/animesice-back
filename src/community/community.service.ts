@@ -40,7 +40,9 @@ export class CommunityService {
         votes: { create: { userId } },
       },
       include: {
-        user: { select: { id: true, name: true, avatar: true } },
+        user: {
+          select: { id: true, name: true, userName: true, avatar: true },
+        },
         _count: { select: { votes: true } },
       },
     });
@@ -67,7 +69,9 @@ export class CommunityService {
         take: safeLimit,
         orderBy: [{ voteCount: 'desc' }, { createdAt: 'desc' }],
         include: {
-          user: { select: { id: true, name: true, avatar: true } },
+          user: {
+            select: { id: true, name: true, userName: true, avatar: true },
+          },
           _count: { select: { votes: true } },
           votes: userId
             ? { where: { userId }, select: { userId: true } }
@@ -147,7 +151,9 @@ export class CommunityService {
       where: { id: requestId },
       data: { status, adminNote },
       include: {
-        user: { select: { id: true, name: true, avatar: true } },
+        user: {
+          select: { id: true, name: true, userName: true, avatar: true },
+        },
         _count: { select: { votes: true } },
       },
     });
@@ -164,7 +170,9 @@ export class CommunityService {
         description: dto.description,
       },
       include: {
-        user: { select: { id: true, name: true, avatar: true } },
+        user: {
+          select: { id: true, name: true, userName: true, avatar: true },
+        },
       },
     });
   }
@@ -184,7 +192,9 @@ export class CommunityService {
         take: safeLimit,
         orderBy: [{ upvotes: 'desc' }, { createdAt: 'desc' }],
         include: {
-          user: { select: { id: true, name: true, avatar: true } },
+          user: {
+            select: { id: true, name: true, userName: true, avatar: true },
+          },
         },
       }),
       this.prisma.siteFeedback.count({ where }),
@@ -235,7 +245,9 @@ export class CommunityService {
       where: { id: feedbackId },
       data: { status, adminNote },
       include: {
-        user: { select: { id: true, name: true, avatar: true } },
+        user: {
+          select: { id: true, name: true, userName: true, avatar: true },
+        },
       },
     });
   }
