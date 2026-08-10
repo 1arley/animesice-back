@@ -23,7 +23,11 @@ export class WatchHistoryService {
 
     const episode = await this.prisma.episode.findUnique({
       where: {
-        animeId_number: { animeId: anime.id, number: episodeNumber },
+        animeId_season_number: {
+          animeId: anime.id,
+          season: 1,
+          number: episodeNumber,
+        },
       },
       select: { id: true, duration: true },
     });

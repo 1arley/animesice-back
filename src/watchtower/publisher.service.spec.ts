@@ -11,19 +11,20 @@ function makeMocks() {
     animeStore,
     prisma: {
       episode: {
-        findUnique: jest.fn(async (args: any) =>
-          existingEpisode.get(
-            `${args.where.animeId_number.animeId}:${args.where.animeId_number.number}`,
-          )
+        findUnique: jest.fn(async (args: any) => {
+          const w = args.where.animeId_season_number;
+          return existingEpisode.get(`${w.animeId}:${w.season}:${w.number}`)
             ? { id: 'ep-exists' }
-            : null,
-        ),
+            : null;
+        }),
         upsert: jest.fn(async (args: any) => {
-          const key = `${args.where.animeId_number.animeId}:${args.where.animeId_number.number}`;
+          const w = args.where.animeId_season_number;
+          const key = `${w.animeId}:${w.season}:${w.number}`;
           const row = {
             id: 'ep-' + key,
-            animeId: args.where.animeId_number.animeId,
-            number: args.where.animeId_number.number,
+            animeId: w.animeId,
+            season: w.season,
+            number: w.number,
             ...args.create,
             ...args.update,
           };
@@ -75,7 +76,7 @@ describe('Publisher', () => {
       thumbnailUrl: 'https://img.test/t1.jpg',
     });
     expect(m.prisma.episode.upsert).toHaveBeenCalledTimes(1);
-    const row = m.episodeStore.get('anime-1:1');
+    const row = m.episodeStore.get('anime-1:1:1');
     expect(row).toBeDefined();
     expect(row.videoUrl).toContain('v.test');
     expect(row.sourceId).toBe('meusanimes');
@@ -96,7 +97,7 @@ describe('Publisher', () => {
 
   it('publish não notifica quando episódio já existe', async () => {
     m.animeStore.set('anime-1', { slug: 'solo', title: 'Solo Leveling' });
-    m.existingEpisode.set('anime-1:1', true);
+    m.existingEpisode.set('anime-1:1:1', true);
     await pub.publish({
       animeId: 'anime-1',
       episodeNumber: 1,
@@ -109,10 +110,11 @@ describe('Publisher', () => {
 
   it('publish atualiza episódio existente (videoUrl/sourceId)', async () => {
     m.animeStore.set('anime-1', { slug: 'solo', title: 'Solo' });
-    m.existingEpisode.set('anime-1:1', true);
-    m.episodeStore.set('anime-1:1', {
+    m.existingEpisode.set('anime-1:1:1', true);
+    m.episodeStore.set('anime-1:1:1', {
       id: 'ep-exists',
       animeId: 'anime-1',
+      season: 1,
       number: 1,
       videoUrl: 'old',
     });
@@ -123,7 +125,7 @@ describe('Publisher', () => {
       embedUrl: 'embed-new',
       sourceId: 'animefire',
     });
-    const row = m.episodeStore.get('anime-1:1');
+    const row = m.episodeStore.get('anime-1:1:1');
     expect(row.videoUrl).toContain('new.test');
     expect(row.sourceId).toBe('animefire');
     expect(row.videoBroken).toBe(false);
@@ -148,7 +150,7 @@ describe('Publisher', () => {
       embedUrl: 'embed5',
       sourceId: 'meusanimes',
     });
-    const row = m.episodeStore.get('anime-1:5');
+    const row = m.episodeStore.get('anime-1:1:5');
     expect(row.title).toBe('Episódio 5');
   });
 });

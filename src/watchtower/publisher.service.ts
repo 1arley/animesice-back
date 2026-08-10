@@ -1,10 +1,10 @@
 /**
- * Publisher — upsert Episode no DB por (animeId, number), atualiza sourceId,
- * marca videoCheckedAt, dispara notificação NEW_EPISODE e atualiza status do
- * anime (COMPLETO quando AniList diz FINISHED).
+ * Publisher — upsert Episode no DB por (animeId, season, number), atualiza
+ * sourceId, marca videoCheckedAt, dispara notificação NEW_EPISODE e atualiza
+ * status do anime (COMPLETO quando AniList diz FINISHED).
  *
- * Anti-duplicação: @@unique([animeId, number]) no Prisma garante 1 episódio
- * por número. Upsert idempotente.
+ * Anti-duplicação: @@unique([animeId, season, number]) no Prisma garante 1
+ * episódio por (temporada, número). Upsert idempotente.
  */
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '@/prisma/prisma.service';
@@ -13,6 +13,7 @@ import { NotificationService } from '@/notification/notification.service';
 export interface PublishInput {
   animeId: string;
   episodeNumber: number;
+  season?: number;
   videoUrl: string;
   embedUrl: string;
   sourceId: string;
@@ -29,10 +30,12 @@ export class Publisher {
   ) {}
 
   async publish(input: PublishInput): Promise<void> {
+    const season = input.season ?? 1;
     const existing = await this.prisma.episode.findUnique({
       where: {
-        animeId_number: {
+        animeId_season_number: {
           animeId: input.animeId,
+          season,
           number: input.episodeNumber,
         },
       },
@@ -41,8 +44,9 @@ export class Publisher {
 
     const episode = await this.prisma.episode.upsert({
       where: {
-        animeId_number: {
+        animeId_season_number: {
           animeId: input.animeId,
+          season,
           number: input.episodeNumber,
         },
       },
@@ -58,6 +62,7 @@ export class Publisher {
       },
       create: {
         animeId: input.animeId,
+        season,
         number: input.episodeNumber,
         videoUrl: input.videoUrl,
         embedUrl: input.embedUrl,

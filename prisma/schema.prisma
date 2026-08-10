@@ -250,6 +250,7 @@ model AnimeSchedule {
 
 model Episode {
   id              String           @id @default(uuid())
+  season          Int              @default(1)
   number          Int
   title           String?
   thumbnailUrl    String?
@@ -269,8 +270,9 @@ model Episode {
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
 
-  @@unique([animeId, number])
+  @@unique([animeId, season, number])
   @@index([animeId])
+  @@index([animeId, season])
   @@index([dateModified])
 }
 

@@ -21,7 +21,11 @@ export class EpisodeService {
     });
   }
 
-  async findByAnimeSlugAndNumber(slug: string, number: number) {
+  async findByAnimeSlugAndNumber(
+    slug: string,
+    number: number,
+    season: number = 1,
+  ) {
     const anime = await this.prisma.anime.findUnique({
       where: { slug },
       select: { id: true },
@@ -33,8 +37,9 @@ export class EpisodeService {
 
     const episode = await this.prisma.episode.findUnique({
       where: {
-        animeId_number: {
+        animeId_season_number: {
           animeId: anime.id,
+          season,
           number,
         },
       },
@@ -48,7 +53,7 @@ export class EpisodeService {
     return episode;
   }
 
-  async incrementViews(slug: string, number: number) {
+  async incrementViews(slug: string, number: number, season: number = 1) {
     const anime = await this.prisma.anime.findUnique({
       where: { slug },
       select: { id: true },
@@ -60,7 +65,7 @@ export class EpisodeService {
 
     const episode = await this.prisma.episode.findUnique({
       where: {
-        animeId_number: { animeId: anime.id, number },
+        animeId_season_number: { animeId: anime.id, season, number },
       },
       select: { id: true },
     });

@@ -65,7 +65,7 @@ export class CatalogScanner implements OnModuleInit {
    * Escaneia todos os animes FINALIZADO/EM_LANCAMENTO com episodeCount > episódios no DB.
    * Enfileira SCAN_CATALOG como job único, evitando execução em loop.
    */
-  async scanAll(): Promise<{ scanned: number; enqueued: number }> {
+  async scanAll(force = false): Promise<{ scanned: number; enqueued: number }> {
     const animes = await this.prisma.anime.findMany({
       where: {
         status: { in: ['FINALIZADO', 'LANCAMENTO'] },
@@ -88,8 +88,9 @@ export class CatalogScanner implements OnModuleInit {
       const dbEpisodeCount = anime._count.episodes;
       const expected = anime.episodeCount ?? 0;
 
-      if (expected > 0 && dbEpisodeCount >= expected) {
-        continue; // já tem todos os episódios esperados
+      // Se não for 'force', pula apenas quando DB tem episódios e atinge/supera o esperado
+      if (!force && expected > 0 && dbEpisodeCount >= expected) {
+        continue;
       }
 
       scanned++;
@@ -103,14 +104,14 @@ export class CatalogScanner implements OnModuleInit {
     }
 
     console.error(
-      `[CATALOG] scanAll: ${scanned} animes com gap, ${enqueued} jobs enfileirados`,
+      `[CATALOG] scanAll(force=${force}): ${scanned} animes com gap, ${enqueued} jobs enfileirados`,
     );
     return { scanned, enqueued };
   }
 
   /**
    * Processa um job SCAN_CATALOG: escaneia o anime, compara com o DB e enfileira
-   * EXTRACT_EPISODE para episódios faltantes.
+   * EXTRACT_EPISODE para episódios faltantes por (season, number).
    */
   async processScanCatalog(
     animeId: string,
@@ -121,29 +122,15 @@ export class CatalogScanner implements OnModuleInit {
 
     const existing = await this.prisma.episode.findMany({
       where: { animeId },
-      select: { number: true },
+      select: { season: true, number: true },
     });
-    const haveSet = new Set(existing.map((e) => e.number));
-
-    const offsetBySeason = new Map<number, number>();
-    let prevSeason = -1;
-    let prevMaxEp = 0;
-    for (const entry of entries) {
-      if (entry.season !== prevSeason) {
-        offsetBySeason.set(entry.season, prevMaxEp);
-        prevSeason = entry.season;
-      }
-      prevMaxEp = Math.max(
-        prevMaxEp,
-        offsetBySeason.get(entry.season)! + entry.episode,
-      );
-    }
+    const haveSet = new Set(existing.map((e) => `${e.season}:${e.number}`));
 
     let missing = 0;
     for (const entry of entries) {
-      const sequentialNumber =
-        offsetBySeason.get(entry.season)! + entry.episode;
-      if (haveSet.has(sequentialNumber)) continue;
+      const key = `${entry.season}:${entry.episode}`;
+      if (haveSet.has(key)) continue;
+
       missing++;
       await this.jobs.enqueue({
         type: JOB_TYPE.EXTRACT_EPISODE,
@@ -151,7 +138,7 @@ export class CatalogScanner implements OnModuleInit {
         payload: {
           animeId,
           slug,
-          episodeNumber: sequentialNumber,
+          episodeNumber: entry.episode,
           season: entry.season,
         },
         priority: PRIORITY.EXTRACT,

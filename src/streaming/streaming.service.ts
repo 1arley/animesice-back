@@ -100,8 +100,9 @@ export class StreamingService {
 
     const episode = await this.prisma.episode.findUnique({
       where: {
-        animeId_number: {
+        animeId_season_number: {
           animeId: anime.id,
+          season: 1,
           number: parseInt(episodeSlug, 10),
         },
       },
@@ -166,6 +167,7 @@ export class StreamingService {
     animeSlug: string,
     episodeNumber: number,
     apiOriginBackend: string,
+    season: number = 1,
   ): Promise<StreamSourceResponse> {
     const anime = await this.prisma.anime.findUnique({
       where: { slug: animeSlug },
@@ -177,7 +179,11 @@ export class StreamingService {
 
     const episode = await this.prisma.episode.findUnique({
       where: {
-        animeId_number: { animeId: anime.id, number: episodeNumber },
+        animeId_season_number: {
+          animeId: anime.id,
+          season,
+          number: episodeNumber,
+        },
       },
       select: {
         id: true,

@@ -128,6 +128,7 @@ export class WorkerService {
     await this.publisher.publish({
       animeId: anime.id,
       episodeNumber: p.episodeNumber,
+      season,
       videoUrl: valid.videoUrl,
       embedUrl,
       sourceId: valid.sourceId,
@@ -138,9 +139,14 @@ export class WorkerService {
   }
 
   private async handleRepair(p: RepairPayload): Promise<void> {
+    const season = p.season ?? 1;
     const episode = await this.prisma.episode.findUnique({
       where: {
-        animeId_number: { animeId: p.animeId, number: p.episodeNumber },
+        animeId_season_number: {
+          animeId: p.animeId,
+          season,
+          number: p.episodeNumber,
+        },
       },
       select: { id: true, animeId: true, number: true },
     });
@@ -211,6 +217,7 @@ export class WorkerService {
     await this.publisher.publish({
       animeId: anime.id,
       episodeNumber: p.episodeNumber,
+      season: p.season ?? 1,
       videoUrl: valid.videoUrl,
       embedUrl,
       sourceId: valid.sourceId,

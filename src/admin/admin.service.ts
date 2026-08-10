@@ -138,13 +138,20 @@ export class AdminService {
     return episode;
   }
 
-  async updateEpisode(slug: string, number: number, dto: UpdateEpisodeDto) {
+  async updateEpisode(
+    slug: string,
+    number: number,
+    dto: UpdateEpisodeDto,
+    season: number = 1,
+  ) {
     const anime = await this.prisma.anime.findUnique({ where: { slug } });
     if (!anime) {
       throw new NotFoundException('Anime não encontrado.');
     }
     const episode = await this.prisma.episode.findUnique({
-      where: { animeId_number: { animeId: anime.id, number } },
+      where: {
+        animeId_season_number: { animeId: anime.id, season, number },
+      },
     });
     if (!episode) {
       throw new NotFoundException('Episódio não encontrado.');
@@ -155,13 +162,15 @@ export class AdminService {
     });
   }
 
-  async deleteEpisode(slug: string, number: number) {
+  async deleteEpisode(slug: string, number: number, season: number = 1) {
     const anime = await this.prisma.anime.findUnique({ where: { slug } });
     if (!anime) {
       throw new NotFoundException('Anime não encontrado.');
     }
     const episode = await this.prisma.episode.findUnique({
-      where: { animeId_number: { animeId: anime.id, number } },
+      where: {
+        animeId_season_number: { animeId: anime.id, season, number },
+      },
     });
     if (!episode) {
       throw new NotFoundException('Episódio não encontrado.');

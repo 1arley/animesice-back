@@ -498,7 +498,13 @@ export class ScrapeService {
     if (!anime) return null;
 
     const episode = await this.prisma.episode.findUnique({
-      where: { animeId_number: { animeId: anime.id, number: episodeNumber } },
+      where: {
+        animeId_season_number: {
+          animeId: anime.id,
+          season: 1,
+          number: episodeNumber,
+        },
+      },
       select: { id: true, embedUrl: true },
     });
     if (!episode || !episode.embedUrl) return null;

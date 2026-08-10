@@ -19,6 +19,7 @@ import { JobsService } from './jobs.service';
 import { ReleaseMonitor } from './release-monitor.service';
 import { SeasonDiscovery } from './season-discovery.service';
 import { RepairWorker } from './repair-worker.service';
+import { CatalogScanner } from './catalog-scanner.service';
 
 @ApiTags('Watchtower')
 @ApiBearerAuth()
@@ -32,6 +33,7 @@ export class WatchtowerController {
     private readonly release: ReleaseMonitor,
     private readonly season: SeasonDiscovery,
     private readonly repair: RepairWorker,
+    private readonly catalog: CatalogScanner,
   ) {}
 
   @Get('status')
@@ -96,5 +98,12 @@ export class WatchtowerController {
   async repairSweep() {
     const enqueued = await this.repair.sweep();
     return { enqueued };
+  }
+
+  @Post('scan-all')
+  @ApiOperation({ summary: 'Força escaneamento de catálogo de todos animes' })
+  async scanAll(@Body() body?: { force?: boolean }) {
+    const res = await this.catalog.scanAll(body?.force ?? false);
+    return res;
   }
 }
