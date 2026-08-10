@@ -16,6 +16,9 @@ function makeMocks() {
     health: {
       reviveOne: jest.fn(async () => null),
     },
+    catalog: {
+      scanAll: jest.fn(async () => ({ scanned: 0, enqueued: 0 })),
+    },
   };
 }
 
@@ -23,6 +26,8 @@ describe('WatchtowerScheduler', () => {
   let m: ReturnType<typeof makeMocks>;
   let scheduler: WatchtowerScheduler;
   const origEnabled = process.env.WATCHTOWER_ENABLED;
+  const origRepair = process.env.WT_REPAIR_ENABLED;
+  const origDiscover = process.env.WT_SEASON_DISCOVERY_ENABLED;
 
   beforeEach(() => {
     m = makeMocks();
@@ -31,6 +36,7 @@ describe('WatchtowerScheduler', () => {
       m.worker as any,
       m.repair as any,
       m.health as any,
+      m.catalog as any,
     );
     jest.clearAllMocks();
   });
@@ -38,6 +44,13 @@ describe('WatchtowerScheduler', () => {
   afterEach(() => {
     if (origEnabled === undefined) delete process.env.WATCHTOWER_ENABLED;
     else process.env.WATCHTOWER_ENABLED = origEnabled;
+
+    if (origRepair === undefined) delete process.env.WT_REPAIR_ENABLED;
+    else process.env.WT_REPAIR_ENABLED = origRepair;
+
+    if (origDiscover === undefined)
+      delete process.env.WT_SEASON_DISCOVERY_ENABLED;
+    else process.env.WT_SEASON_DISCOVERY_ENABLED = origDiscover;
   });
 
   it('tick não processa quando WATCHTOWER_ENABLED != true', async () => {

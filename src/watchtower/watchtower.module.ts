@@ -20,6 +20,7 @@ import { SeasonDiscovery } from './season-discovery.service';
 import { RepairWorker } from './repair-worker.service';
 import { WorkerService } from './worker.service';
 import { WatchtowerScheduler } from './watchtower.scheduler';
+import { CatalogScanner } from './catalog-scanner.service';
 import { WatchtowerController } from './watchtower.controller';
 
 @Module({
@@ -38,6 +39,7 @@ import { WatchtowerController } from './watchtower.controller';
     RepairWorker,
     WorkerService,
     WatchtowerScheduler,
+    CatalogScanner,
   ],
   exports: [JobsService, HealthMonitor, ReleaseMonitor],
 })

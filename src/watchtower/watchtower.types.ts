@@ -11,6 +11,8 @@ export const JOB_TYPE = {
   CHECK_RELEASES: 'CHECK_RELEASES',
   /** Descobre animes da temporada atual (AniList season) -> cria catálogo */
   DISCOVER_SEASON: 'DISCOVER_SEASON',
+  /** Escaneia catálogo do meusanimes (/a/{slug}/) -> descobre todas seasons+eps */
+  SCAN_CATALOG: 'SCAN_CATALOG',
   /** Extrai vídeo de um episódio (itera fontes) */
   EXTRACT_EPISODE: 'EXTRACT_EPISODE',
   /** Valida resultado da extração (campos + probe de vídeo) */
@@ -40,6 +42,7 @@ export const PRIORITY = {
   VALIDATE: 90,
   CHECK_RELEASES: 200,
   DISCOVER_SEASON: 300,
+  SCAN_CATALOG: 280,
   SYNC_AIRING: 250,
 } as const;
 
@@ -64,10 +67,11 @@ export function sourceEpisodeUrl(
   sourceId: string,
   animeSlug: string,
   episodeNumber: number,
+  season: number = 1,
 ): string | null {
   switch (sourceId) {
     case 'meusanimes':
-      return `https://meusanimes.blog/e/${animeSlug}-1-episodio-${episodeNumber}/`;
+      return `https://meusanimes.blog/e/${animeSlug}-${season}-episodio-${episodeNumber}/`;
     case 'animefire':
       return `https://animefire.io/animes/${animeSlug}/${episodeNumber}`;
     case 'animesonlinecc':

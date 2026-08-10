@@ -10,6 +10,7 @@
  */
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '@/prisma/prisma.service';
+import { probeMediaUrlDead } from '@/common/media-probe';
 import { JobsService, WatchtowerJobRow } from './jobs.service';
 import { Extractor } from './extractor.service';
 import { Validator } from './validator.service';
@@ -18,17 +19,25 @@ import { ReleaseMonitor } from './release-monitor.service';
 import { SeasonDiscovery } from './season-discovery.service';
 import { RepairWorker } from './repair-worker.service';
 import { HealthMonitor } from './health-monitor.service';
+import { CatalogScanner } from './catalog-scanner.service';
 import { JOB_TYPE } from './watchtower.types';
 
 interface ExtractPayload {
   animeId: string;
   slug: string;
   episodeNumber: number;
+  season?: number;
 }
 
 interface RepairPayload {
   animeId: string;
   episodeNumber: number;
+  season?: number;
+}
+
+interface ScanCatalogPayload {
+  animeId?: string;
+  slug?: string;
 }
 
 @Injectable()
@@ -43,6 +52,7 @@ export class WorkerService {
     private readonly season: SeasonDiscovery,
     private readonly repair: RepairWorker,
     private readonly health: HealthMonitor,
+    private readonly catalog: CatalogScanner,
   ) {}
 
   async process(job: WatchtowerJobRow): Promise<void> {
@@ -60,6 +70,15 @@ export class WorkerService {
         case JOB_TYPE.DISCOVER_SEASON:
           await this.season.discover();
           break;
+        case JOB_TYPE.SCAN_CATALOG: {
+          const p = (job.payload ?? {}) as ScanCatalogPayload;
+          if (p.animeId && p.slug) {
+            await this.catalog.processScanCatalog(p.animeId, p.slug);
+          } else {
+            await this.catalog.scanAll();
+          }
+          break;
+        }
         case JOB_TYPE.SYNC_AIRING:
           await this.release.checkAll();
           break;
@@ -80,13 +99,15 @@ export class WorkerService {
     });
     if (!anime) throw new Error(`Anime ${p.animeId} não encontrado`);
 
+    const season = p.season ?? 1;
     const { candidates } = await this.extractor.extract(
       anime.slug,
       p.episodeNumber,
+      season,
     );
     if (candidates.length === 0) {
       throw new Error(
-        `Nenhuma fonte resolveu ${anime.slug}/${p.episodeNumber}`,
+        `Nenhuma fonte resolveu ${anime.slug}/s${season}/${p.episodeNumber}`,
       );
     }
 
@@ -94,7 +115,7 @@ export class WorkerService {
     if (!valid) {
       for (const c of candidates) await this.health.recordFailure(c.sourceId);
       throw new Error(
-        `Validação falhou p/ ${anime.slug}/${p.episodeNumber} (vídeos mortos)`,
+        `Validação falhou p/ ${anime.slug}/s${season}/${p.episodeNumber} (vídeos mortos)`,
       );
     }
 
@@ -102,6 +123,7 @@ export class WorkerService {
       valid.sourceId,
       anime.slug,
       p.episodeNumber,
+      season,
     );
     await this.publisher.publish({
       animeId: anime.id,
@@ -149,7 +171,6 @@ export class WorkerService {
       select: { videoUrl: true },
     });
     if (current?.videoUrl) {
-      const { probeMediaUrlDead } = await import('@/common/media-probe.js');
       const dead = await probeMediaUrlDead(current.videoUrl);
       if (!dead) {
         await this.prisma.episode.update({
@@ -170,6 +191,7 @@ export class WorkerService {
     const { candidates } = await this.extractor.extract(
       anime.slug,
       p.episodeNumber,
+      p.season ?? 1,
     );
     if (candidates.length === 0)
       throw new Error(`Repair: sem fonte p/ ${anime.slug}/${p.episodeNumber}`);
@@ -184,6 +206,7 @@ export class WorkerService {
       valid.sourceId,
       anime.slug,
       p.episodeNumber,
+      p.season ?? 1,
     );
     await this.publisher.publish({
       animeId: anime.id,
@@ -200,10 +223,11 @@ export class WorkerService {
     sourceId: string,
     slug: string,
     ep: number,
+    season: number = 1,
   ): string {
     switch (sourceId) {
       case 'meusanimes':
-        return `https://meusanimes.blog/e/${slug}-1-episodio-${ep}/`;
+        return `https://meusanimes.blog/e/${slug}-${season}-episodio-${ep}/`;
       case 'animefire':
         return `https://animefire.io/animes/${slug}/${ep}`;
       case 'animesonlinecc':

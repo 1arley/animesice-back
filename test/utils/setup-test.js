@@ -2,6 +2,22 @@
 const { execSync } = require('child_process');
 const { existsSync } = require('fs');
 
+// Prisma refuses destructive CLI commands (db push --force-reset, migrate reset)
+// when it detects AI agent env vars. Strip them so the test harness can run.
+delete process.env.OPENCODE;
+delete process.env.OPENCODE_PID;
+delete process.env.AGENT;
+delete process.env.CLAUDECODE;
+delete process.env.CODEX;
+delete process.env.CURSOR;
+delete process.env.GITHUB_COPILOT;
+delete process.env.WINDSURF;
+delete process.env.CONTINUE;
+delete process.env.AIDER;
+delete process.env.DEVIN;
+delete process.env.REPLIT_AGENT;
+
+
 function checkRequirements() {
   const errors = [];
 

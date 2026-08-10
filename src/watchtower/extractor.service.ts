@@ -28,10 +28,12 @@ export class Extractor {
   async extract(
     animeSlug: string,
     episodeNumber: number,
+    season: number = 1,
   ): Promise<ExtractResult> {
     const candidates = await this.discovery.candidates(
       animeSlug,
       episodeNumber,
+      season,
     );
     if (candidates.length === 0) {
       // probe falhou p/ todas — usa ordem base como fallback

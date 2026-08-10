@@ -15,6 +15,7 @@ import { JobsService } from './jobs.service';
 import { WorkerService } from './worker.service';
 import { RepairWorker } from './repair-worker.service';
 import { HealthMonitor } from './health-monitor.service';
+import { CatalogScanner } from './catalog-scanner.service';
 import { JOB_TYPE, PRIORITY } from './watchtower.types';
 
 const TICK_BATCH = Number(process.env.WT_TICK_BATCH ?? 5);
@@ -29,6 +30,7 @@ export class WatchtowerScheduler implements OnModuleInit {
     private readonly worker: WorkerService,
     private readonly repair: RepairWorker,
     private readonly health: HealthMonitor,
+    private readonly catalog: CatalogScanner,
   ) {}
 
   onModuleInit(): void {
@@ -87,6 +89,12 @@ export class WatchtowerScheduler implements OnModuleInit {
         dedupeKey: 'discover-season',
         payload: {},
         priority: PRIORITY.DISCOVER_SEASON,
+      });
+      await this.catalog.scanAll().catch((e) => {
+        console.error(
+          '[WATCHTOWER] scanAll falhou:',
+          e instanceof Error ? e.message : String(e),
+        );
       });
     }
   }

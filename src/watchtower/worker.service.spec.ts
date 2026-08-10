@@ -28,10 +28,12 @@ function makeMocks() {
       fail: jest.fn(async () => undefined),
     },
     extractor: {
-      extract: jest.fn(async (_slug: string) => ({
-        candidates: [{ videoUrl: 'new.mp4', sourceId: 'meusanimes' }],
-        triedSources: ['meusanimes'],
-      })),
+      extract: jest.fn(
+        async (_slug: string, _ep: number, _season?: number) => ({
+          candidates: [{ videoUrl: 'new.mp4', sourceId: 'meusanimes' }],
+          triedSources: ['meusanimes'],
+        }),
+      ),
     },
     validator: {
       pickValid: jest.fn(async (cands: any[]) => cands[0] ?? null),
@@ -52,6 +54,11 @@ function makeMocks() {
     },
     health: {
       reviveOne: jest.fn(async () => null),
+      recordFailure: jest.fn(async () => undefined),
+    },
+    catalog: {
+      scanAll: jest.fn(async () => ({ scanned: 0, enqueued: 0 })),
+      processScanCatalog: jest.fn(async () => ({ found: 0, missing: 0 })),
     },
   };
 }
@@ -98,6 +105,7 @@ describe('WorkerService', () => {
       m.season as any,
       m.repair as any,
       m.health as any,
+      m.catalog as any,
     );
     await worker.process(
       job({
@@ -107,14 +115,20 @@ describe('WorkerService', () => {
         payload: { animeId: 'anime-1', slug: 'solo', episodeNumber: 1 },
       }),
     );
-    expect(m.extractor.extract).toHaveBeenCalledWith('solo', 1);
-    expect(m.validator.pickValid).toHaveBeenCalled();
+    expect(m.extractor.extract).toHaveBeenCalledWith('solo', 1, 1);
+    expect(m.validator.pickValid).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ videoUrl: 'new.mp4' }),
+      ]),
+      'anime-1',
+    );
     expect(m.publisher.publish).toHaveBeenCalledWith(
       expect.objectContaining({
         animeId: 'anime-1',
         episodeNumber: 1,
         videoUrl: 'new.mp4',
         sourceId: 'meusanimes',
+        embedUrl: expect.any(String),
       }),
     );
     expect(m.jobs.complete).toHaveBeenCalledWith('job-1');
@@ -135,6 +149,7 @@ describe('WorkerService', () => {
       m.season as any,
       m.repair as any,
       m.health as any,
+      m.catalog as any,
     );
     await worker.process(
       job({
@@ -161,6 +176,7 @@ describe('WorkerService', () => {
       m.season as any,
       m.repair as any,
       m.health as any,
+      m.catalog as any,
     );
     await worker.process(
       job({
@@ -185,6 +201,7 @@ describe('WorkerService', () => {
       m.season as any,
       m.repair as any,
       m.health as any,
+      m.catalog as any,
     );
     await worker.process(
       job({
@@ -208,6 +225,7 @@ describe('WorkerService', () => {
       m.season as any,
       m.repair as any,
       m.health as any,
+      m.catalog as any,
     );
     await worker.process(
       job({
@@ -235,6 +253,7 @@ describe('WorkerService', () => {
       m.season as any,
       m.repair as any,
       m.health as any,
+      m.catalog as any,
     );
     await worker.process(
       job({
