@@ -2,6 +2,7 @@ import {
   keepVideoUrls,
   isExpiringMediaUrl,
   preferPermanentMediaUrls,
+  youtubeVideoId,
 } from '@/embed/scrape/extract';
 
 describe('extract helpers', () => {
@@ -61,6 +62,38 @@ describe('extract helpers', () => {
       expect(
         keepVideoUrls(['https://cdn/v.mp4', 'blob:xyz', 'https://cdn/v.m3u8']),
       ).toEqual(['https://cdn/v.mp4', 'https://cdn/v.m3u8']);
+    });
+  });
+
+  describe('youtubeVideoId', () => {
+    it('extrai id de youtube-nocookie.com/embed (retorno do get-video.php)', () => {
+      expect(
+        youtubeVideoId(
+          'https://www.youtube-nocookie.com/embed/0YpXN40vIxM?autoplay=1&playsinline=1',
+        ),
+      ).toBe('0YpXN40vIxM');
+    });
+
+    it('extrai id de youtube.com/embed e watch', () => {
+      expect(youtubeVideoId('https://www.youtube.com/embed/abcDEFghi12')).toBe(
+        'abcDEFghi12',
+      );
+      expect(
+        youtubeVideoId('https://www.youtube.com/watch?v=0YpXN40vIxM&t=10s'),
+      ).toBe('0YpXN40vIxM');
+    });
+
+    it('extrai id de youtu.be', () => {
+      expect(youtubeVideoId('https://youtu.be/0YpXN40vIxM')).toBe(
+        '0YpXN40vIxM',
+      );
+    });
+
+    it('retorna null p/ URLs não-YouTube', () => {
+      expect(youtubeVideoId('https://www.blogger.com/video.g?token=x')).toBe(
+        null,
+      );
+      expect(youtubeVideoId('https://cdn/v.mp4')).toBe(null);
     });
   });
 });

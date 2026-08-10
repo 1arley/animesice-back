@@ -12,6 +12,22 @@ export function keepVideoUrls(urls: string[]): string[] {
 }
 
 /**
+ * Extrai o videoId de qualquer URL de player do YouTube:
+ *  - youtube-nocookie.com/embed/<id>
+ *  - youtube.com/embed/<id>
+ *  - youtube.com/watch?v=<id>
+ *  - youtu.be/<id>
+ * Retorna null se a URL não for do YouTube.
+ */
+export function youtubeVideoId(url: string): string | null {
+  const m =
+    /(?:youtube(?:-nocookie)?\.com\/(?:embed\/|watch\?v=|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/i.exec(
+      url,
+    );
+  return m?.[1] ?? null;
+}
+
+/**
  * Detecta URL de mídia com assinatura TEMPORÁRIA (ex: S3 SigV4, googlevideo).
  * Essas URLs expiram (X-Amz-Expires / expire / X-Goog-Expires) e ficam
  * suscetíveis a 403 intermitente. URLs permanentes (R2, CDN pública) não têm

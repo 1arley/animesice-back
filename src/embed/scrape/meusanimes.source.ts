@@ -10,6 +10,7 @@ import {
   extractVideoElements,
   extractAllIframes,
   preferPermanentMediaUrls,
+  youtubeVideoId,
 } from './extract';
 
 /**
@@ -20,8 +21,10 @@ import {
  *      <iframe src="servN.meusdoramas.club/#/video/<tmdb>/<season>/<ep>">.
  *   2. GET /posts/get-video.php?tmdb=&season_number=&episode_number= nesse
  *      servidor -> { videoUrl } onde videoUrl pode ser:
- *        - https://www.blogger.com/video.g?token=...  (player Blogger;
- *          vira .mp4 googlevideo só via Playwright — devolvido em bloggerTokens)
+ *      - https://www.blogger.com/video.g?token=...  (player Blogger;
+ *          vira .mp4 googlevideo só via Playwright — devolvido em playerTokens)
+ *        - https://www.youtube-nocookie.com/embed/<id> (player YouTube;
+ *          também vira .mp4 googlevideo via Playwright — playerTokens)
  *        - .mp4/.m3u8 direto (raro)                   -> videos
  *        - URL de seletor "e/?a=..&b=..&c=.."         -> resolve os servidores
  *          (iframe.php?a=/b=/c= -> servN -> get-video.php recursivo).
@@ -51,7 +54,7 @@ export class MeusanimesScrapeSource implements ScrapeSource {
   async extractHttp(ctx: HttpExtractContext): Promise<ScrapeEpisodeResult> {
     const visited = new Set<string>();
     const videos: string[] = [];
-    const bloggerTokens: string[] = [];
+    const playerTokens: string[] = [];
 
     let pageHtml: string;
     try {
@@ -72,7 +75,7 @@ export class MeusanimesScrapeSource implements ScrapeSource {
         ctx.ua,
         visited,
         videos,
-        bloggerTokens,
+        playerTokens,
       );
     }
 
@@ -80,7 +83,7 @@ export class MeusanimesScrapeSource implements ScrapeSource {
       videos: [...new Set(videos)],
       iframes: [],
       cloudflare: false,
-      bloggerTokens: [...new Set(bloggerTokens)],
+      playerTokens: [...new Set(playerTokens)],
     };
   }
 
@@ -96,7 +99,7 @@ export class MeusanimesScrapeSource implements ScrapeSource {
     ua: string,
     visited: Set<string>,
     videos: string[],
-    bloggerTokens: string[],
+    playerTokens: string[],
   ): Promise<void> {
     const key = `${host}/${tmdb}/${season}/${episode}`;
     if (visited.has(key)) return;
@@ -117,7 +120,17 @@ export class MeusanimesScrapeSource implements ScrapeSource {
     if (typeof videoUrl !== 'string' || !videoUrl) return;
 
     if (/blogger\.com\/video\.g\?token=/i.test(videoUrl)) {
-      bloggerTokens.push(videoUrl);
+      playerTokens.push(videoUrl);
+      return;
+    }
+
+    // Player YouTube: youtube-nocookie.com/embed/<id> (ou youtube.com/embed,
+    // youtu.be). Não é .mp4/.m3u8 direto — vira token de player resolvido via
+    // Playwright (mesmo fluxo do Blogger), que clica no play e intercepta a
+    // request googlevideo.com/videoplayback.
+    const yt = youtubeVideoId(videoUrl);
+    if (yt) {
+      playerTokens.push(`https://www.youtube.com/watch?v=${yt}`);
       return;
     }
 
@@ -178,7 +191,7 @@ export class MeusanimesScrapeSource implements ScrapeSource {
               ua,
               visited,
               videos,
-              bloggerTokens,
+              playerTokens,
             );
           }
         }

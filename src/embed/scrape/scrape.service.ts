@@ -174,21 +174,21 @@ export class ScrapeService {
 
     // Caminho HTTP puro: se o adapter implementa extractHttp, pula o Playwright.
     // Relevante p/ animefire (extraível por fetch, sem Cloudflare/browser em prod)
-    // e meusanimes (get-video.php). Se o adapter devolver bloggerTokens (player
-    // Blogger), ainda precisa do chromium p/ virar .mp4 googlevideo.
+    // e meusanimes (get-video.php). Se o adapter devolver playerTokens (player
+    // Blogger/YouTube), ainda precisa do chromium p/ virar .mp4 googlevideo.
     if (typeof source.extractHttp === 'function') {
       try {
         dbg(`[SCRAPE] calling extractHttp on ${source.id}...`);
         const raw = await source.extractHttp({ episodeUrl, ua: UA_DESKTOP });
         dbg(
-          `[SCRAPE] extractHttp OK: videos=${raw.videos.length} bloggerTokens=${(raw.bloggerTokens ?? []).length}`,
+          `[SCRAPE] extractHttp OK: videos=${raw.videos.length} playerTokens=${(raw.playerTokens ?? []).length}`,
         );
 
         let videos = raw.videos;
-        const bloggerTokens = raw.bloggerTokens ?? [];
-        if (videos.length === 0 && bloggerTokens.length > 0) {
+        const playerTokens = raw.playerTokens ?? [];
+        if (videos.length === 0 && playerTokens.length > 0) {
           dbg(
-            `[SCRAPE] ${bloggerTokens.length} Blogger tokens, resolving via chromium...`,
+            `[SCRAPE] ${playerTokens.length} player tokens, resolving via chromium...`,
           );
           // Blogger token resolve via googlevideo videoplayback interceptado
           // pelo chromium. headless:true funciona no chrome moderno (validado).
@@ -208,8 +208,8 @@ export class ScrapeService {
               locale: 'pt-BR',
               viewport: { width: 1366, height: 768 },
             });
-            for (const token of bloggerTokens) {
-              const bv = await this.extractBloggerVideo(
+            for (const token of playerTokens) {
+              const bv = await this.extractPlayerVideo(
                 context,
                 token,
                 episodeUrl,
@@ -249,8 +249,8 @@ export class ScrapeService {
                   locale: 'pt-BR',
                   viewport: { width: 1366, height: 768 },
                 });
-                for (const token of bloggerTokens) {
-                  const bv = await this.extractBloggerVideo(
+                for (const token of playerTokens) {
+                  const bv = await this.extractPlayerVideo(
                     context,
                     token,
                     episodeUrl,
@@ -406,22 +406,22 @@ export class ScrapeService {
         }
       }
 
-      // Estrategia Blogger: se ainda sem video mas capturamos um token
-      // blogger.com/video.g?token=, abrimos essa pagina do player do Blogger
-      // num frame proprio e clicamos no play do YouTube -> gera googlevideo
-      // videoplayback (IP-vinculado ao backend). E o fluxo documentado pelo user.
+      // Estrategia de player: se ainda sem video mas capturamos um token
+      // blogger.com/video.g?token= (ou YouTube), abrimos essa pagina do player
+      // num frame proprio e clicamos no play -> gera googlevideo videoplayback
+      // (IP-vinculado ao backend). E o fluxo documentado pelo user.
       if (videos.length === 0) {
-        const bloggerToken = allMediaRequests.find((u) =>
+        const playerToken = allMediaRequests.find((u) =>
           /blogger\.com\/video\.g\?token=/i.test(u),
         );
-        if (bloggerToken) {
+        if (playerToken) {
           console.error(
-            '[SCRAPE] abrindo token Blogger:',
-            sanitizeLog(bloggerToken.slice(0, 80) + '...'),
+            '[SCRAPE] abrindo token de player:',
+            sanitizeLog(playerToken.slice(0, 80) + '...'),
           );
-          const bv = await this.extractBloggerVideo(
+          const bv = await this.extractPlayerVideo(
             context,
-            bloggerToken,
+            playerToken,
             episodeUrl,
           );
           if (bv.length > 0) videos = bv;
@@ -608,15 +608,17 @@ export class ScrapeService {
   }
 
   /**
-   * Estrategia Blogger: abre a pagina do player do Blogger
-   * (blogger.com/video.g?token=...) num frame proprio do mesmo contexto do
-   * browser (mesmo IP p/ satisfazer o IP-vinculo do token), clica no botao de
-   * play do YouTube/Blogger e intercepta a request googlevideo.com/videoplayback
-   * (.mp4 real). E o fluxo que o player faz quando o user clica em play.
+   * Estrategia de player: abre a pagina do player (Blogger video.g?token=...,
+   * YouTube watch/embed) num frame proprio do mesmo contexto do browser
+   * (mesmo IP p/ satisfazer o IP-vinculo do token), clica no botao de play e
+   * intercepta a request googlevideo.com/videoplayback (.mp4 real). E o fluxo
+   * que o player faz quando o user clica em play.
+   *
+   * Descarta requests auxiliares (generate_204) — so devolve videoplayback/.mp4.
    */
-  private async extractBloggerVideo(
+  private async extractPlayerVideo(
     context: BrowserContext,
-    bloggerTokenUrl: string,
+    playerTokenUrl: string,
     _episodeUrl: string,
   ): Promise<string[]> {
     const captured: string[] = [];
@@ -629,7 +631,7 @@ export class ScrapeService {
     });
 
     try {
-      await bvPage.goto(bloggerTokenUrl, {
+      await bvPage.goto(playerTokenUrl, {
         waitUntil: 'domcontentloaded',
         timeout: 30000,
       });
@@ -658,7 +660,7 @@ export class ScrapeService {
           /* tentative */
         }
       }
-      // Procura nos iframes do Blogger.
+      // Procura nos iframes do player.
       for (const frame of bvPage.mainFrame().childFrames()) {
         for (const sel of playSelectors) {
           try {
@@ -681,17 +683,24 @@ export class ScrapeService {
         if (captured.length > 0) break;
       }
 
+      // So URLs de stream de verdade (.mp4/videoplayback); generate_204 do
+      // YouTube é keep-alive, não vira <video src>.
+      const playable = [...new Set(captured)].filter((u) =>
+        /videoplayback|\.mp4($|\?|#)/i.test(u),
+      );
       console.error(
-        '[BLOGGER] capturado=',
+        '[PLAYER] capturado=',
         captured.length,
+        'playable=',
+        playable.length,
         sanitizeLog(
-          JSON.stringify(captured.slice(0, 2).map((u) => u.slice(0, 80))),
+          JSON.stringify(playable.slice(0, 2).map((u) => u.slice(0, 80))),
         ),
       );
-      return [...new Set(captured)];
+      return playable;
     } catch (err) {
       console.error(
-        '[BLOGGER] erro:',
+        '[PLAYER] erro:',
         sanitizeLog(err instanceof Error ? err.message : String(err)),
       );
       return [];
