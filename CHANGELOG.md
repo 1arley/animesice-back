@@ -1,3 +1,10 @@
+## [1.4.1](https://github.com/1arley/animesice-back/compare/v1.4.0...v1.4.1) (2026-08-10)
+
+
+### Bug Fixes
+
+* **watchtower:** throw on catalog fetch failure ([ca8fb62](https://github.com/1arley/animesice-back/commit/ca8fb620c99cc9050f3548236a4298b8f629c087))
+
 # [1.4.0](https://github.com/1arley/animesice-back/compare/v1.3.1...v1.4.0) (2026-08-10)
 
 
