@@ -40,6 +40,53 @@ export function youtubeEmbedUrl(url: string): string | null {
 }
 
 /**
+ * Detecta URLs googlevideo.com/videoplayback — tokens temporários IP-vinculados
+ * gerados pelo player do YouTube/Blogger. Essas URLs NÃO pode ser:
+ *  - persistidas como episode.videoUrl (expiram + IP-vinculadas ao chromium)
+ *  - proxyadas via /embed/media (o proxy usa IP diferente do chromium -> 403)
+ */
+export function isGoogleVideoUrl(url: string): boolean {
+  return /googlevideo\.com\/videoplayback/i.test(url);
+}
+
+/**
+ * Classifica se uma URL de mídia PODE ser proxyada pelo backend via
+ * /embed/media. Critérios:
+ *
+ *  - googlevideo.com/videoplayback: NÃO proxyable. Token IP-vinculado ao
+ *    chromium que extraiu — o proxy backend usa IP diferente -> 403.
+ *    Essas URLs devem ser classificadas no scrape e nunca persistidas.
+ *  - URLs de embed do YouTube: NÃO proxyable. Reproduz via iframe no cliente.
+ *  - .mp4/.m3u8 de CDNs próprias (animefire, R2, etc): PROXYABLE. O proxy
+ *    injeta Referer/Origin anti-hotlinking e usa o IP do backend.
+ */
+export function isProxyableMediaUrl(raw: string): boolean {
+  if (!raw || typeof raw !== 'string') return false;
+  const trimmed = raw.trim();
+  if (!/^https?:\/\//i.test(trimmed)) return false;
+  // precisa ter hostname válido (não "https://" vazio).
+  try {
+    const u = new URL(trimmed);
+    if (!u.hostname || u.hostname.length < 3) return false;
+  } catch {
+    return false;
+  }
+  if (isGoogleVideoUrl(trimmed)) return false;
+  if (youtubeVideoId(trimmed)) return false;
+  return true;
+}
+
+/**
+ * Filtra lista de URLs mantendo apenas as proxyable (.mp4/.m3u8 de CDNs
+ * próprias). Descarta googlevideo (IP-vinculado), YouTube embeds, URLs
+ * relativas e inválidas. Usado no ponto de consumo (StreamingService) para
+ * defender contra fontes que retornam googlevideo sem classificar.
+ */
+export function keepProxyableMediaUrls(urls: string[]): string[] {
+  return urls.filter((u) => isProxyableMediaUrl(u));
+}
+
+/**
  * Detecta URL de mídia com assinatura TEMPORÁRIA (ex: S3 SigV4, googlevideo).
  * Essas URLs expiram (X-Amz-Expires / expire / X-Goog-Expires) e ficam
  * suscetíveis a 403 intermitente. URLs permanentes (R2, CDN pública) não têm

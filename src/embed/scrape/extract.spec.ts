@@ -4,6 +4,8 @@ import {
   preferPermanentMediaUrls,
   youtubeVideoId,
   youtubeEmbedUrl,
+  isGoogleVideoUrl,
+  isProxyableMediaUrl,
 } from '@/embed/scrape/extract';
 
 describe('extract helpers', () => {
@@ -118,6 +120,59 @@ describe('extract helpers', () => {
         null,
       );
       expect(youtubeEmbedUrl('https://cdn/v.mp4')).toBe(null);
+    });
+  });
+
+  describe('isGoogleVideoUrl', () => {
+    it('detecta googlevideo.com/videoplayback', () => {
+      expect(
+        isGoogleVideoUrl(
+          'https://rr3.sn-q4flrnld.googlevideo.com/videoplayback?expire=2174176075&ei=x&ip=12.26.53.98',
+        ),
+      ).toBe(true);
+      expect(
+        isGoogleVideoUrl('https://other.cdn/v.mp4'),
+      ).toBe(false);
+      expect(
+        isGoogleVideoUrl('https://www.youtube-nocookie.com/embed/abcDEFghi12'),
+      ).toBe(false);
+    });
+  });
+
+  describe('isProxyableMediaUrl', () => {
+    it('aceita .mp4/.m3u8 de CDN própria (animefire, R2)', () => {
+      expect(isProxyableMediaUrl('https://pub-c7f4.r2.dev/Leg.mp4')).toBe(true);
+      expect(
+        isProxyableMediaUrl('https://animefire.io/v/abcd/stream.m3u8'),
+      ).toBe(true);
+      expect(
+        isProxyableMediaUrl('https://video.meusdoramas.club/embed/x.mp4?token=abc'),
+      ).toBe(true);
+    });
+
+    it('rejeita googlevideo/videoplayback (IP-vinculado/temporário)', () => {
+      expect(
+        isProxyableMediaUrl(
+          'https://rr3.googlevideo.com/videoplayback?expire=2174176075&ei=x',
+        ),
+      ).toBe(false);
+    });
+
+    it('rejeita embedding YouTube/youtu.be (reproduz via iframe)', () => {
+      expect(
+        isProxyableMediaUrl('https://www.youtube-nocookie.com/embed/abcDEFghi12'),
+      ).toBe(false);
+      expect(
+        isProxyableMediaUrl('https://www.youtube.com/watch?v=abcDEFghi12'),
+      ).toBe(false);
+      expect(isProxyableMediaUrl('https://youtu.be/abcDEFghi12')).toBe(false);
+    });
+
+    it('rejeita URLs inválidas (relativas, blob, empty)', () => {
+      expect(isProxyableMediaUrl('blob:xyz')).toBe(false);
+      expect(isProxyableMediaUrl('/foo.mp4')).toBe(false);
+      expect(isProxyableMediaUrl('')).toBe(false);
+      expect(isProxyableMediaUrl('https://')).toBe(false);
     });
   });
 });
