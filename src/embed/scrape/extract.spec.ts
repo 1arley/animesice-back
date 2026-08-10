@@ -3,6 +3,7 @@ import {
   isExpiringMediaUrl,
   preferPermanentMediaUrls,
   youtubeVideoId,
+  youtubeEmbedUrl,
 } from '@/embed/scrape/extract';
 
 describe('extract helpers', () => {
@@ -94,6 +95,29 @@ describe('extract helpers', () => {
         null,
       );
       expect(youtubeVideoId('https://cdn/v.mp4')).toBe(null);
+    });
+  });
+
+  describe('youtubeEmbedUrl', () => {
+    it('converte watch/embed/shorts/youtu.be em embed reproduzível', () => {
+      expect(
+        youtubeEmbedUrl('https://www.youtube.com/watch?v=0YpXN40vIxM'),
+      ).toBe('https://www.youtube-nocookie.com/embed/0YpXN40vIxM');
+      expect(
+        youtubeEmbedUrl(
+          'https://www.youtube-nocookie.com/embed/0YpXN40vIxM?autoplay=1&playsinline=1',
+        ),
+      ).toBe('https://www.youtube-nocookie.com/embed/0YpXN40vIxM');
+      expect(youtubeEmbedUrl('https://youtu.be/abcDEFghi12')).toBe(
+        'https://www.youtube-nocookie.com/embed/abcDEFghi12',
+      );
+    });
+
+    it('retorna null p/ URLs não-YouTube', () => {
+      expect(youtubeEmbedUrl('https://www.blogger.com/video.g?token=x')).toBe(
+        null,
+      );
+      expect(youtubeEmbedUrl('https://cdn/v.mp4')).toBe(null);
     });
   });
 });

@@ -6,6 +6,7 @@ import { ScrapeSource, ScrapeEpisodeResult } from './scrape-source.interface';
 import { AnimefireScrapeSource } from './animefire.source';
 import { AnimesonlineccScrapeSource } from './animesonlinecc.source';
 import { MeusanimesScrapeSource } from './meusanimes.source';
+import { youtubeEmbedUrl } from './extract';
 import { PrismaService } from '@/prisma/prisma.service';
 import { ensureXvfb } from './xvfb.helper';
 /** Remove quebras de linha/separadores Unicode de dados externos antes de logar. */
@@ -186,9 +187,16 @@ export class ScrapeService {
 
         let videos = raw.videos;
         const playerTokens = raw.playerTokens ?? [];
-        if (videos.length === 0 && playerTokens.length > 0) {
+        // Embeds do YouTube não são resolvíveis p/ .mp4 server-side (YouTube
+        // bloqueia IPs datacenter com LOGIN_REQUIRED). Ficam no retorno p/ o
+        // streaming servir como iframe no browser do usuário.
+        const resolvableTokens = playerTokens.filter(
+          (t) => !youtubeEmbedUrl(t),
+        );
+        const youtubeEmbeds = playerTokens.filter((t) => youtubeEmbedUrl(t));
+        if (videos.length === 0 && resolvableTokens.length > 0) {
           dbg(
-            `[SCRAPE] ${playerTokens.length} player tokens, resolving via chromium...`,
+            `[SCRAPE] ${resolvableTokens.length} player tokens, resolving via chromium...`,
           );
           // Blogger token resolve via googlevideo videoplayback interceptado
           // pelo chromium. headless:true funciona no chrome moderno (validado).
@@ -208,7 +216,7 @@ export class ScrapeService {
               locale: 'pt-BR',
               viewport: { width: 1366, height: 768 },
             });
-            for (const token of playerTokens) {
+            for (const token of resolvableTokens) {
               const bv = await this.extractPlayerVideo(
                 context,
                 token,
@@ -249,7 +257,7 @@ export class ScrapeService {
                   locale: 'pt-BR',
                   viewport: { width: 1366, height: 768 },
                 });
-                for (const token of playerTokens) {
+                for (const token of resolvableTokens) {
                   const bv = await this.extractPlayerVideo(
                     context,
                     token,
@@ -285,6 +293,9 @@ export class ScrapeService {
             : videos,
           iframes: [],
           cloudflare: false,
+          // Expõe tokens de player não resolvíveis por HTTP (YouTube embeds
+          // bloqueados p/ IP datacenter, etc.) p/ o chamador decidir fallback.
+          playerTokens: youtubeEmbeds,
         };
       } finally {
         this.activeScrapes -= 1;

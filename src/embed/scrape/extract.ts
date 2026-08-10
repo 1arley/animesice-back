@@ -28,6 +28,18 @@ export function youtubeVideoId(url: string): string | null {
 }
 
 /**
+ * Converte qualquer URL do YouTube (watch/embed/shorts/youtu.be) na URL de
+ * embed reproduzível em iframe: https://www.youtube-nocookie.com/embed/<id>.
+ * Usada p/ títulos cuja fonte é player do YouTube (não extraível p/ .mp4
+ * server-side quando o IP de origem é datacenter — YouTube devolve
+ * LOGIN_REQUIRED). Retorna null se não for YouTube.
+ */
+export function youtubeEmbedUrl(url: string): string | null {
+  const id = youtubeVideoId(url);
+  return id ? `https://www.youtube-nocookie.com/embed/${id}` : null;
+}
+
+/**
  * Detecta URL de mídia com assinatura TEMPORÁRIA (ex: S3 SigV4, googlevideo).
  * Essas URLs expiram (X-Amz-Expires / expire / X-Goog-Expires) e ficam
  * suscetíveis a 403 intermitente. URLs permanentes (R2, CDN pública) não têm

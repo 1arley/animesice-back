@@ -69,7 +69,7 @@ describe('MeusanimesScrapeSource.extractHttp', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it('converte youtube-nocookie embed em playerToken de watch', async () => {
+  it('converte youtube-nocookie embed em playerToken de embed', async () => {
     const fetchMock = mockFetchResponder({
       'https://meusanimes.blog/e/all-you-need-is-kill-episodio-1/':
         EPISODE_HTML,
@@ -83,7 +83,7 @@ describe('MeusanimesScrapeSource.extractHttp', () => {
     expect(result.videos).toEqual([]);
     expect(result.playerTokens).toHaveLength(1);
     expect(result.playerTokens![0]).toBe(
-      'https://www.youtube.com/watch?v=0YpXN40vIxM',
+      'https://www.youtube-nocookie.com/embed/0YpXN40vIxM',
     );
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });

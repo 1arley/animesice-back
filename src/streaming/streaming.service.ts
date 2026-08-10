@@ -6,6 +6,7 @@ import {
 import { PrismaService } from '@/prisma/prisma.service';
 import { EmbedService } from '@/embed/embed.service';
 import { ScrapeService } from '@/embed/scrape/scrape.service';
+import { youtubeEmbedUrl } from '@/embed/scrape/extract';
 import { probeMediaUrlDead } from '@/common/media-probe';
 import { Readable } from 'stream';
 
@@ -232,6 +233,7 @@ export class StreamingService {
     // Sem videoUrl utilizável -> tenta re-extração.
     // 1ª tentativa: embedUrl do episódio (geralmente animefire.io).
     // 2ª tentativa (fallback): meusanimes.blog se animefire bloquear (403 CF).
+    let youtubeEmbed: string | null = null;
     if (!rawVideoUrl || !/^https?:\/\//i.test(rawVideoUrl)) {
       // Tentativa 1: fonte original (embedUrl)
       if (episode.embedUrl) {
@@ -245,8 +247,10 @@ export class StreamingService {
             false,
           );
           rawVideoUrl = result.videos[0] ?? null;
+          youtubeEmbed =
+            (result.playerTokens ?? []).find((t) => youtubeEmbedUrl(t)) ?? null;
           dbg(
-            `[STREAM] tentativa 1 resultado: videos=${result.videos.length} rawVideoUrl=${rawVideoUrl?.slice(0, 80) ?? 'null'}`,
+            `[STREAM] tentativa 1 resultado: videos=${result.videos.length} rawVideoUrl=${rawVideoUrl?.slice(0, 80) ?? 'null'} youtubeEmbed=${youtubeEmbed?.slice(0, 60) ?? 'null'}`,
           );
         } catch (err) {
           dbg(
@@ -270,7 +274,7 @@ export class StreamingService {
         );
       }
 
-      if (!rawVideoUrl) {
+      if (!rawVideoUrl && !youtubeEmbed) {
         dbg(`[STREAM] ambas tentativas falharam — 404`);
         throw new NotFoundException(
           'Vídeo não disponível: re-extração falhou em todas as fontes.',
@@ -278,17 +282,35 @@ export class StreamingService {
       }
 
       // Persiste RAW (sem wrap) p/ próximas chamadas.
-      await this.prisma.episode.update({
-        where: { id: episode.id },
-        data: { videoUrl: rawVideoUrl },
-      });
-      reextracted = true;
+      if (rawVideoUrl) {
+        await this.prisma.episode.update({
+          where: { id: episode.id },
+          data: { videoUrl: rawVideoUrl },
+        });
+        reextracted = true;
+      }
+    }
+
+    // Fonte é player do YouTube (embed): não há .mp4 server-side extraível
+    // (YouTube bloqueia IPs datacenter com LOGIN_REQUIRED). O embed reproduz
+    // no browser do usuário via iframe — src aponta direto p/ o embed.
+    if (youtubeEmbed && !rawVideoUrl) {
+      dbg(`[STREAM] fonte é YouTube embed — servindo iframe: ${youtubeEmbed}`);
+      return {
+        animeSlug: anime.slug,
+        episodeNumber: episode.number,
+        src: youtubeEmbed,
+        rawVideoUrl: youtubeEmbed,
+        embedUrl: youtubeEmbed,
+        reextracted,
+        thumbnailUrl: episode.thumbnailUrl,
+      };
     }
 
     // Monta src final: proxy de mídia do backend (absoluto + prefixo api).
     const base = apiOriginBackend.replace(/\/$/, '');
     const apiPrefix = process.env.API_PREFIX || 'api';
-    const src = `${base}/${apiPrefix}${wrapMediaUrl(rawVideoUrl)}`;
+    const src = `${base}/${apiPrefix}${wrapMediaUrl(rawVideoUrl!)}`;
 
     return {
       animeSlug: anime.slug,

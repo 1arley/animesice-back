@@ -10,7 +10,7 @@ import {
   extractVideoElements,
   extractAllIframes,
   preferPermanentMediaUrls,
-  youtubeVideoId,
+  youtubeEmbedUrl,
 } from './extract';
 
 /**
@@ -125,12 +125,13 @@ export class MeusanimesScrapeSource implements ScrapeSource {
     }
 
     // Player YouTube: youtube-nocookie.com/embed/<id> (ou youtube.com/embed,
-    // youtu.be). Não é .mp4/.m3u8 direto — vira token de player resolvido via
-    // Playwright (mesmo fluxo do Blogger), que clica no play e intercepta a
-    // request googlevideo.com/videoplayback.
-    const yt = youtubeVideoId(videoUrl);
+    // youtu.be). Não é .mp4/.m3u8 direto e NÃO é resolvível p/ .mp4 server-side
+    // (YouTube bloqueia IPs datacenter com LOGIN_REQUIRED). O embed funciona no
+    // browser do usuário via iframe — devolvido em playerTokens p/ o streaming
+    // servir como embed (getSource devolve src=<embed>).
+    const yt = youtubeEmbedUrl(videoUrl);
     if (yt) {
-      playerTokens.push(`https://www.youtube.com/watch?v=${yt}`);
+      playerTokens.push(yt);
       return;
     }
 
