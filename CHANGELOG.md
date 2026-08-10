@@ -1,3 +1,11 @@
+## [1.3.1](https://github.com/1arley/animesice-back/compare/v1.3.0...v1.3.1) (2026-08-10)
+
+
+### Bug Fixes
+
+* **auth:** set role cookie for middleware + skip Turnstile outside prod ([abdd935](https://github.com/1arley/animesice-back/commit/abdd9356ce07ced884f58a67efe53ae5efcdb0e3))
+* **auth:** skip captcha with demo/empty Turnstile secret + clear role cookie on logout ([15cb879](https://github.com/1arley/animesice-back/commit/15cb8794c02f0914ff67f3f4036c701c241c51a5))
+
 # [1.3.0](https://github.com/1arley/animesice-back/compare/v1.2.1...v1.3.0) (2026-08-10)
 
 
