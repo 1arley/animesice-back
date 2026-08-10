@@ -1,3 +1,10 @@
+## [1.5.1](https://github.com/1arley/animesice-back/compare/v1.5.0...v1.5.1) (2026-08-10)
+
+
+### Bug Fixes
+
+* **scrape:** resolve YouTube player embeds from meusanimes get-video.php ([0d48fa8](https://github.com/1arley/animesice-back/commit/0d48fa86bf3d6138185a0149a0c099e629e8b2f1))
+
 # [1.5.0](https://github.com/1arley/animesice-back/compare/v1.4.1...v1.5.0) (2026-08-10)
 
 
