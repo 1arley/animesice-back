@@ -1,3 +1,11 @@
+# [1.3.0](https://github.com/1arley/animesice-back/compare/v1.2.1...v1.3.0) (2026-08-10)
+
+
+### Features
+
+* add catalog scanner service ([436807b](https://github.com/1arley/animesice-back/commit/436807b6a438ecda9ab92f38e42255286388a2b2))
+* improve streaming URL handling ([570b981](https://github.com/1arley/animesice-back/commit/570b9816b9fd762223b9eca533240492413c8bd9))
+
 ## [1.2.1](https://github.com/1arley/animesice-back/compare/v1.2.0...v1.2.1) (2026-08-09)
 
 
