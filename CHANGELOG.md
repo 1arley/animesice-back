@@ -1,3 +1,16 @@
+# [1.7.0](https://github.com/1arley/animesice-back/compare/v1.6.0...v1.7.0) (2026-08-10)
+
+
+### Bug Fixes
+
+* **lint:** remove unused imports and apply prettier formatting ([b945095](https://github.com/1arley/animesice-back/commit/b94509542c3d5704ff18c23298952b6ca942fd57))
+* **streaming:** classify and reject googlevideo URLs from media proxy ([2041d21](https://github.com/1arley/animesice-back/commit/2041d218882b2cb4effb90f8208aaa91b2a9e215))
+
+
+### Features
+
+* **audit:** add admin audit log for sensitive data access ([086ca5d](https://github.com/1arley/animesice-back/commit/086ca5d8a264882b4cb49249ab06ac25393d28c1))
+
 # [1.6.0](https://github.com/1arley/animesice-back/compare/v1.5.1...v1.6.0) (2026-08-10)
 
 
