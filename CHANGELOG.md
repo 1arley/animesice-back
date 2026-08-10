@@ -1,3 +1,15 @@
+# [1.5.0](https://github.com/1arley/animesice-back/compare/v1.4.1...v1.5.0) (2026-08-10)
+
+
+### Bug Fixes
+
+* **streaming:** unblock playback of expired CDN URLs and multi-season extraction ([017bd2c](https://github.com/1arley/animesice-back/commit/017bd2c184f4b0509a9af09bbccd5c6802ff69c5))
+
+
+### Features
+
+* **schema:** add season column to Episode with multi-season support ([c937534](https://github.com/1arley/animesice-back/commit/c93753470eed91e379f86ad499a8928102e1f8ed))
+
 ## [1.4.1](https://github.com/1arley/animesice-back/compare/v1.4.0...v1.4.1) (2026-08-10)
 
 
