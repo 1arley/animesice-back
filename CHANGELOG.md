@@ -1,3 +1,10 @@
+# [1.6.0](https://github.com/1arley/animesice-back/compare/v1.5.1...v1.6.0) (2026-08-10)
+
+
+### Features
+
+* **streaming:** serve YouTube embed sources as iframe ([522e3ca](https://github.com/1arley/animesice-back/commit/522e3ca2042c503dd44fed61e52243b4675fd4fb))
+
 ## [1.5.1](https://github.com/1arley/animesice-back/compare/v1.5.0...v1.5.1) (2026-08-10)
 
 
