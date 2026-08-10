@@ -6,12 +6,7 @@ import {
 import { PrismaService } from '@/prisma/prisma.service';
 import { EmbedService } from '@/embed/embed.service';
 import { ScrapeService } from '@/embed/scrape/scrape.service';
-import {
-  youtubeEmbedUrl,
-  isProxyableMediaUrl,
-  isGoogleVideoUrl,
-  keepProxyableMediaUrls,
-} from '@/embed/scrape/extract';
+import { youtubeEmbedUrl } from '@/embed/scrape/extract';
 import { probeMediaUrlDead } from '@/common/media-probe';
 import { Readable } from 'stream';
 
@@ -222,25 +217,16 @@ export class StreamingService {
       }
     }
 
-    // videoUrl guardada pode estar morta (token CDN/IP-URL expirado) ou ser
-    // googlevideo/videoplayback (IP-vinculado ao chromium que extraiu — o
-    // proxy do backend usa IP diferente -> 403). Probe leve e, se morta ou
-    // não-proxyable, zera para o fluxo de re-extração abaixo recompor.
+    // videoUrl guardada pode estar morta (token CDN/IP-URL expirado). Probe
+    // leve e, se morta, zera para o fluxo de re-extração abaixo recompor.
     if (rawVideoUrl && /^https?:\/\//i.test(rawVideoUrl)) {
-      if (!isProxyableMediaUrl(rawVideoUrl)) {
+      const dead = await probeMediaUrlDead(rawVideoUrl);
+      dbg(`[STREAM] probe videoUrl=${rawVideoUrl.slice(0, 80)} dead=${dead}`);
+      if (dead) {
         dbg(
-          `[STREAM] videoUrl não-proxyable (${isGoogleVideoUrl(rawVideoUrl) ? 'googlevideo IP-vinculado' : 'YouTube embed'}) — forçando re-extração p/ ${animeSlug}/${episodeNumber}`,
+          `[STREAM] videoUrl morta — forçando re-extração p/ ${animeSlug}/${episodeNumber}`,
         );
         rawVideoUrl = null;
-      } else {
-        const dead = await probeMediaUrlDead(rawVideoUrl);
-        dbg(`[STREAM] probe videoUrl=${rawVideoUrl.slice(0, 80)} dead=${dead}`);
-        if (dead) {
-          dbg(
-            `[STREAM] videoUrl morta — forçando re-extração p/ ${animeSlug}/${episodeNumber}`,
-          );
-          rawVideoUrl = null;
-        }
       }
     }
 
@@ -260,11 +246,7 @@ export class StreamingService {
             undefined,
             false,
           );
-          // Filtra URLs não-proxyable (googlevideo IP-vinculado, YouTube
-          // embeds) dos vídeos retornados. Defesa: mesmo se o scraper não
-          // classificou, não deixa googlevideo virar src do proxy.
-          const proxyable = keepProxyableMediaUrls(result.videos);
-          rawVideoUrl = proxyable[0] ?? null;
+          rawVideoUrl = result.videos[0] ?? null;
           youtubeEmbed =
             (result.playerTokens ?? []).find((t) => youtubeEmbedUrl(t)) ?? null;
           dbg(
@@ -299,21 +281,13 @@ export class StreamingService {
         );
       }
 
-      // Persiste RAW (sem wrap) p/ próximas chamadas — SOMENTE se for URL
-      // proxyable (.mp4/.m3u8 de CDN própria). googlevideo/videoplayback é
-      // IP-vinculado ao chromium e expira: não pode ser persistido como
-      // episode.videoUrl (proxying posterior -> 403).
-      if (rawVideoUrl && isProxyableMediaUrl(rawVideoUrl)) {
+      // Persiste RAW (sem wrap) p/ próximas chamadas.
+      if (rawVideoUrl) {
         await this.prisma.episode.update({
           where: { id: episode.id },
           data: { videoUrl: rawVideoUrl },
         });
         reextracted = true;
-      } else if (rawVideoUrl) {
-        dbg(
-          `[STREAM] não persiste videoUrl não-proxyable (${rawVideoUrl.slice(0, 60)}...)`,
-        );
-        rawVideoUrl = null;
       }
     }
 
@@ -427,47 +401,6 @@ export class StreamingService {
 
     const reqHeaders: Record<string, string> = {};
     if (range) reqHeaders.range = range;
-
-    // googlevideo/videoplayback não pode ser proxyado (IP-vinculado ao
-    // chromium que extraiu; o proxy do backend usa IP diferente -> 403).
-    // Se videoUrl persistido é googlevideo, pula direto p/ re-extração.
-    if (!isProxyableMediaUrl(videoUrl)) {
-      console.log(
-        `[STREAM] videoUrl não-proxyable (${videoUrl.slice(0, 60)}...) p/ ${animeSlug}/s${season}/${episodeNumber}, re-extraindo...`,
-      );
-      // cai no mesmo fluxo de 403 abaixo
-      let fresh = await this.scrapeService.reextractEpisodeVideo(
-        animeSlug,
-        episodeNumber,
-        season,
-      );
-      if (!fresh) {
-        fresh = await this.scrapeService.scrapeFromMeusanimes(
-          animeSlug,
-          episodeNumber,
-          season,
-        );
-      }
-      if (!fresh || !isProxyableMediaUrl(fresh)) {
-        throw new ForbiddenException(
-          'Vídeo não-proxyable em proxy. Re-extração falhou.',
-        );
-      }
-      const freshOrigin = refererForMediaUrl(fresh);
-      const probeResult = await this.embedService.proxyMedia(
-        fresh,
-        reqHeaders,
-        freshOrigin,
-      );
-      if (probeResult.status === 403) {
-        throw new ForbiddenException('Vídeo expirado e re-extração falhou.');
-      }
-      return {
-        status: probeResult.status,
-        headers: new Headers(probeResult.headers),
-        body: probeResult.body,
-      };
-    }
 
     // Referer dinâmico por host da CDN (googlevideo vs lightspeedst).
     const sourceOrigin = refererForMediaUrl(videoUrl);
