@@ -6,7 +6,7 @@ import { ScrapeSource, ScrapeEpisodeResult } from './scrape-source.interface';
 import { AnimefireScrapeSource } from './animefire.source';
 import { AnimesonlineccScrapeSource } from './animesonlinecc.source';
 import { MeusanimesScrapeSource } from './meusanimes.source';
-import { youtubeEmbedUrl, isGoogleVideoUrl, isProxyableMediaUrl, youtubeVideoId } from './extract';
+import { youtubeEmbedUrl, isProxyableMediaUrl } from './extract';
 import { PrismaService } from '@/prisma/prisma.service';
 import { ensureXvfb } from './xvfb.helper';
 /** Remove quebras de linha/separadores Unicode de dados externos antes de logar. */

@@ -1,5 +1,5 @@
 import { StreamingService } from './streaming.service';
-import { NotFoundException, ForbiddenException } from '@nestjs/common';
+import { NotFoundException } from '@nestjs/common';
 import * as mediaProbe from '@/common/media-probe';
 
 function makeMocks() {
@@ -179,9 +179,7 @@ describe('StreamingService.getSource', () => {
     // Caso misterioso onde a única fonte disponível é googlevideo; deve
     // descartar e tentar fallback. Se não houver embed, deve 404.
     scrapeService.scrapeEpisodeVideo.mockResolvedValue({
-      videos: [
-        'https://rr3.googlevideo.com/videoplayback?expire=2174176075',
-      ],
+      videos: ['https://rr3.googlevideo.com/videoplayback?expire=2174176075'],
       playerTokens: [],
     });
     scrapeService.scrapeFromMeusanimes.mockResolvedValue(null);

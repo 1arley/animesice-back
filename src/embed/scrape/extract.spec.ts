@@ -130,9 +130,7 @@ describe('extract helpers', () => {
           'https://rr3.sn-q4flrnld.googlevideo.com/videoplayback?expire=2174176075&ei=x&ip=12.26.53.98',
         ),
       ).toBe(true);
-      expect(
-        isGoogleVideoUrl('https://other.cdn/v.mp4'),
-      ).toBe(false);
+      expect(isGoogleVideoUrl('https://other.cdn/v.mp4')).toBe(false);
       expect(
         isGoogleVideoUrl('https://www.youtube-nocookie.com/embed/abcDEFghi12'),
       ).toBe(false);
@@ -146,7 +144,9 @@ describe('extract helpers', () => {
         isProxyableMediaUrl('https://animefire.io/v/abcd/stream.m3u8'),
       ).toBe(true);
       expect(
-        isProxyableMediaUrl('https://video.meusdoramas.club/embed/x.mp4?token=abc'),
+        isProxyableMediaUrl(
+          'https://video.meusdoramas.club/embed/x.mp4?token=abc',
+        ),
       ).toBe(true);
     });
 
@@ -160,7 +160,9 @@ describe('extract helpers', () => {
 
     it('rejeita embedding YouTube/youtu.be (reproduz via iframe)', () => {
       expect(
-        isProxyableMediaUrl('https://www.youtube-nocookie.com/embed/abcDEFghi12'),
+        isProxyableMediaUrl(
+          'https://www.youtube-nocookie.com/embed/abcDEFghi12',
+        ),
       ).toBe(false);
       expect(
         isProxyableMediaUrl('https://www.youtube.com/watch?v=abcDEFghi12'),

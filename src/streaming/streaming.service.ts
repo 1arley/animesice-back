@@ -6,7 +6,12 @@ import {
 import { PrismaService } from '@/prisma/prisma.service';
 import { EmbedService } from '@/embed/embed.service';
 import { ScrapeService } from '@/embed/scrape/scrape.service';
-import { youtubeEmbedUrl, isProxyableMediaUrl, isGoogleVideoUrl, keepProxyableMediaUrls } from '@/embed/scrape/extract';
+import {
+  youtubeEmbedUrl,
+  isProxyableMediaUrl,
+  isGoogleVideoUrl,
+  keepProxyableMediaUrls,
+} from '@/embed/scrape/extract';
 import { probeMediaUrlDead } from '@/common/media-probe';
 import { Readable } from 'stream';
 
