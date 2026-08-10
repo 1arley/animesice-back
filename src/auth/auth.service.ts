@@ -88,6 +88,7 @@ export class AuthService {
     const opts = this.getCookieOptions();
     res.clearCookie('access_token', opts);
     res.clearCookie('refresh_token', this.getRefreshCookieOptions());
+    res.clearCookie('role', { ...opts, httpOnly: false });
   }
 
   // ── Auth flows ──────────────────────────────────────────────────────
@@ -95,7 +96,7 @@ export class AuthService {
   async register(registerDto: RegisterDto) {
     const { name, email, password } = registerDto;
 
-    if (process.env.NODE_ENV === 'production') {
+    if (this.shouldVerifyCaptcha()) {
       await this.turnstileService.verify(registerDto.turnstileToken);
     }
 
@@ -146,7 +147,7 @@ export class AuthService {
   async login(loginDto: LoginDto) {
     const { email, password } = loginDto;
 
-    if (process.env.NODE_ENV === 'production') {
+    if (this.shouldVerifyCaptcha()) {
       await this.turnstileService.verify(loginDto.turnstileToken);
     }
 
@@ -608,5 +609,13 @@ export class AuthService {
 
   private hashToken(token: string): string {
     return crypto.createHash('sha256').update(token).digest('hex');
+  }
+
+  private shouldVerifyCaptcha(): boolean {
+    const secret = process.env.TURNSTILE_SECRET;
+    if (!secret || secret.startsWith('0x4AAAAA')) {
+      return false;
+    }
+    return true;
   }
 }
