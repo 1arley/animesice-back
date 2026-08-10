@@ -60,17 +60,24 @@ export class UserService {
         skip,
         take: limit,
         orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          userName: true,
+          role: true,
+          isVerified: true,
+          avatar: true,
+          bio: true,
+          createdAt: true,
+          updatedAt: true,
+        },
       }),
       this.prisma.user.count(),
     ]);
 
-    const safeUsers = users.map((user) => {
-      const { password: _, ...userWithoutPassword } = user;
-      return userWithoutPassword;
-    });
-
     return {
-      data: safeUsers,
+      data: users,
       meta: {
         total,
         page,

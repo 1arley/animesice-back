@@ -1,5 +1,5 @@
 import { Module } from '@nestjs/common';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { ScheduleModule } from '@nestjs/schedule';
@@ -25,6 +25,8 @@ import { ModerationModule } from '@/moderation/moderation.module';
 import { RecommendationModule } from '@/recommendation/recommendation.module';
 import { CommunityModule } from '@/community/community.module';
 import { WatchtowerModule } from '@/watchtower/watchtower.module';
+import { AuditService } from '@/common/services/audit.service';
+import { AuditInterceptor } from '@/common/interceptors/audit.interceptor';
 
 @Module({
   imports: [
@@ -68,9 +70,14 @@ import { WatchtowerModule } from '@/watchtower/watchtower.module';
   controllers: [AppController],
   providers: [
     AppService,
+    AuditService,
     {
       provide: APP_GUARD,
       useClass: ThrottlerGuard,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: AuditInterceptor,
     },
   ],
 })

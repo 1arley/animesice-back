@@ -29,6 +29,7 @@ import { ApiGetUserMe } from '@/user/swagger/user.get.me.swagger';
 import { JwtAuthGuard } from '@/auth/jwt-auth.guard';
 import { RolesGuard } from '@/auth/roles.guard';
 import { Roles } from '@/auth/roles.decorators';
+import { Audit } from '@/auth/decorators/audit.decorator';
 import { ApiFindAllUsers } from '@/user/swagger/user.get.findAll.swagger';
 import {
   DEFAULT_PAGE,
@@ -76,6 +77,7 @@ export class UserController {
   @ApiFindAllUsers()
   @UseGuards(RolesGuard)
   @Roles('ADMIN', 'SUPERADMIN')
+  @Audit('LIST_USERS', 'User')
   findAll(@Query('page') page: string, @Query('limit') limit: string) {
     const pageNumber = parsePageParam(page, DEFAULT_PAGE);
     const limitNumber = parsePageParam(limit, DEFAULT_PAGE_SIZE);

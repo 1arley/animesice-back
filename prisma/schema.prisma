@@ -123,6 +123,7 @@ model User {
   passwordResetTokens    PasswordResetToken[]
   emailVerificationCodes EmailVerificationCode[]
   comments               Comment[]
+  adminAuditLogs         AdminAuditLog[]         @relation("AdminActions")
   ratings                Rating[]
   favorites              Favorite[]
   watchHistories         WatchHistory[]
@@ -573,4 +574,24 @@ model WatchtowerSourceHealth {
   lastFailureAt       DateTime?
 
   @@index([disabled])
+}
+
+/// Auditoria de ações administrativas - rastreia acessos a dados sensíveis
+model AdminAuditLog {
+  id             String   @id @default(uuid())
+  adminId        String
+  admin          User     @relation("AdminActions", fields: [adminId], references: [id], onDelete: Cascade)
+  action         String   // "LIST_USERS", "VIEW_USER", "DELETE_USER", etc
+  resourceType   String   // "User", "Comment", "Report"
+  resourceId     String?
+  ipAddress      String
+  userAgent      String?
+  status         String   @default("SUCCESS") // "SUCCESS", "FAILED"
+  errorMessage   String?
+  dataAccessed   Int?     // Quantos registros foram acessados
+  createdAt      DateTime @default(now())
+
+  @@index([adminId, createdAt])
+  @@index([action, createdAt])
+  @@index([resourceType])
 }
