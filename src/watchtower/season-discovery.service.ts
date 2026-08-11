@@ -14,6 +14,15 @@ import { JOB_TYPE, PRIORITY } from './watchtower.types';
 
 type Season = 'WINTER' | 'SPRING' | 'SUMMER' | 'FALL';
 
+const VALID_FORMATS = new Set(['TV', 'MOVIE', 'OVA', 'ONA', 'SPECIAL', 'MUSIC']);
+
+function mapFormat(raw?: string | null): 'TV' | 'MOVIE' | 'OVA' | 'ONA' | 'SPECIAL' | 'MUSIC' | null {
+  if (!raw) return null;
+  const upper = raw.toUpperCase();
+  if (VALID_FORMATS.has(upper)) return upper as 'TV' | 'MOVIE' | 'OVA' | 'ONA' | 'SPECIAL' | 'MUSIC';
+  return null;
+}
+
 function currentSeason(now: Date = new Date()): {
   season: Season;
   year: number;
@@ -115,9 +124,7 @@ export class SeasonDiscovery {
               season:
                 (media.season as 'WINTER' | 'SPRING' | 'SUMMER' | 'FALL') ??
                 null,
-              format:
-                (media.format as
-                  'TV' | 'MOVIE' | 'OVA' | 'ONA' | 'SPECIAL' | 'MUSIC') ?? null,
+              format: mapFormat(media.format),
               episodeCount: media.episodes ?? null,
               studios:
                 media.studios?.nodes
