@@ -25,6 +25,9 @@ import { ModerationModule } from '@/moderation/moderation.module';
 import { RecommendationModule } from '@/recommendation/recommendation.module';
 import { CommunityModule } from '@/community/community.module';
 import { WatchtowerModule } from '@/watchtower/watchtower.module';
+import { MeModule } from '@/me/me.module';
+import { UsersModule } from '@/users/users.module';
+import { SettingsModule } from '@/settings/settings.module';
 import { AuditService } from '@/common/services/audit.service';
 import { AuditInterceptor } from '@/common/interceptors/audit.interceptor';
 
@@ -66,6 +69,9 @@ import { AuditInterceptor } from '@/common/interceptors/audit.interceptor';
     CommunityModule,
     ScheduleModule.forRoot(),
     WatchtowerModule,
+    MeModule,
+    UsersModule,
+    SettingsModule,
   ],
   controllers: [AppController],
   providers: [
