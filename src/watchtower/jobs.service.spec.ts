@@ -40,9 +40,39 @@ function makeMockPrisma() {
         const want = args.where?.status ?? 'PENDING';
         return [...store.values()].filter((j) => j.status === want);
       }),
-      findUnique: jest.fn(
-        async (args: any) => store.get(args.where?.id) ?? null,
-      ),
+      findUnique: jest.fn(async (args: any) => {
+        if (args.where?.id) return store.get(args.where?.id) ?? null;
+        if (args.where?.type_dedupeKey) {
+          const { type, dedupeKey } = args.where.type_dedupeKey;
+          return (
+            [...store.values()].find(
+              (j) => j.type === type && j.dedupeKey === dedupeKey,
+            ) ?? null
+          );
+        }
+        return null;
+      }),
+      create: jest.fn(async (args: any) => {
+        const id = crypto.randomUUID();
+        const row = {
+          id,
+          type: args.data?.type,
+          dedupeKey: args.data?.dedupeKey,
+          payload: args.data?.payload ?? {},
+          status: 'PENDING',
+          priority: args.data?.priority ?? 100,
+          attempts: 0,
+          maxAttempts: args.data?.maxAttempts ?? 5,
+          nextRunAt: args.data?.nextRunAt ?? new Date(),
+          lastError: null,
+          lockedBy: null,
+          lockedAt: null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+        store.set(id, row);
+        return row;
+      }),
       groupBy: jest.fn(async () => [{ status: 'PENDING', _count: 3 }]),
       update: jest.fn(async (args: any) => {
         const id = args.where?.id;
@@ -91,7 +121,7 @@ describe('JobsService', () => {
       dedupeKey: 'extract:anime1:1',
       payload: { animeId: 'anime1', episodeNumber: 1, slug: 'slug' },
     });
-    expect(mock.watchtowerJob.upsert).toHaveBeenCalledTimes(1);
+    expect(mock.watchtowerJob.create).toHaveBeenCalledTimes(1);
     const row = [...mock.store.values()][0];
     expect(row).toBeDefined();
     expect(row.status).toBe('PENDING');
@@ -121,6 +151,45 @@ describe('JobsService', () => {
       payload: {},
     });
     expect(mock.store.size).toBe(1);
+  });
+
+  it('enqueue reseta job DONE para PENDING', async () => {
+    await svc.enqueue({
+      type: 'CHECK_RELEASES',
+      dedupeKey: 'check-releases',
+      payload: {},
+    });
+    const claimed = await svc.claimBatch(1);
+    const jobId = claimed[0]!.id;
+    await svc.complete(jobId);
+    const row = mock.store.get(jobId)!;
+    expect(row.status).toBe('DONE');
+
+    await svc.enqueue({
+      type: 'CHECK_RELEASES',
+      dedupeKey: 'check-releases',
+      payload: {},
+    });
+    expect(row.status).toBe('PENDING');
+    expect(row.attempts).toBe(0);
+  });
+
+  it('enqueue não reseta job PENDING existente', async () => {
+    await svc.enqueue({
+      type: 'EXTRACT_EPISODE',
+      dedupeKey: 'extract:pend:1',
+      payload: {},
+    });
+    const before = [...mock.store.values()][0];
+    const originalNextRunAt = before.nextRunAt;
+
+    await svc.enqueue({
+      type: 'EXTRACT_EPISODE',
+      dedupeKey: 'extract:pend:1',
+      payload: {},
+    });
+    expect(mock.store.size).toBe(1);
+    expect(before.nextRunAt).toBe(originalNextRunAt);
   });
 
   it('claimBatch marca jobs como RUNNING', async () => {
