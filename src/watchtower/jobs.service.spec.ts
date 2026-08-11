@@ -6,36 +6,6 @@ function makeMockPrisma() {
   return {
     store,
     watchtowerJob: {
-      upsert: jest.fn(async (args: any) => {
-        const tk = args.where?.type_dedupeKey;
-        const type = tk?.type ?? args.create?.type;
-        const dedupeKey = tk?.dedupeKey ?? args.create?.dedupeKey;
-        const existing = [...store.values()].find(
-          (j) => j.type === type && j.dedupeKey === dedupeKey,
-        );
-        if (existing) {
-          return existing; // idempotent — keep original
-        }
-        const id = crypto.randomUUID();
-        const row = {
-          id,
-          type,
-          dedupeKey,
-          payload: args.create?.payload ?? {},
-          status: 'PENDING',
-          priority: args.create?.priority ?? 100,
-          attempts: 0,
-          maxAttempts: args.create?.maxAttempts ?? 5,
-          nextRunAt: args.create?.nextRunAt ?? new Date(),
-          lastError: null,
-          lockedBy: null,
-          lockedAt: null,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        };
-        store.set(id, row);
-        return row;
-      }),
       findMany: jest.fn(async (args: any) => {
         const want = args.where?.status ?? 'PENDING';
         return [...store.values()].filter((j) => j.status === want);

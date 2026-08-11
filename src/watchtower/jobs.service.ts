@@ -7,7 +7,7 @@
  *
  * Backoff exponencial em nextRunAt; DEAD após maxAttempts.
  */
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '@/prisma/prisma.service';
 
 interface EnqueueInput {
@@ -20,37 +20,38 @@ interface EnqueueInput {
 
 @Injectable()
 export class JobsService {
+  private readonly logger = new Logger(JobsService.name);
   constructor(private readonly prisma: PrismaService) {}
 
   async enqueue(input: EnqueueInput): Promise<void> {
     const nextRunAt = new Date();
-    try {
-      const existing = await this.prisma.watchtowerJob.findUnique({
-        where: {
-          type_dedupeKey: { type: input.type, dedupeKey: input.dedupeKey },
-        },
-        select: { id: true, status: true },
-      });
+    const existing = await this.prisma.watchtowerJob.findUnique({
+      where: {
+        type_dedupeKey: { type: input.type, dedupeKey: input.dedupeKey },
+      },
+      select: { id: true, status: true },
+    });
 
-      if (existing) {
-        if (existing.status === 'DONE' || existing.status === 'DEAD') {
-          await this.prisma.watchtowerJob.update({
-            where: { id: existing.id },
-            data: {
-              status: 'PENDING',
-              nextRunAt,
-              attempts: 0,
-              lastError: null,
-              lockedBy: null,
-              lockedAt: null,
-              payload: input.payload as object,
-              priority: input.priority ?? 100,
-            },
-          });
-        }
-        return;
+    if (existing) {
+      if (existing.status === 'DONE' || existing.status === 'DEAD') {
+        await this.prisma.watchtowerJob.update({
+          where: { id: existing.id },
+          data: {
+            status: 'PENDING',
+            nextRunAt,
+            attempts: 0,
+            lastError: null,
+            lockedBy: null,
+            lockedAt: null,
+            payload: input.payload as object,
+            priority: input.priority ?? 100,
+          },
+        });
       }
+      return;
+    }
 
+    try {
       await this.prisma.watchtowerJob.create({
         data: {
           type: input.type,
@@ -61,8 +62,13 @@ export class JobsService {
           nextRunAt,
         },
       });
-    } catch {
-      // dedupe race — ignora
+    } catch (err) {
+      // P2002 = unique constraint violation (dedupe race — another worker
+      // inserted the same type+dedupeKey between our findUnique and create).
+      if ((err as { code?: string })?.code === 'P2002') return;
+      this.logger.error(
+        `enqueue failed for ${input.type}:${input.dedupeKey}: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 

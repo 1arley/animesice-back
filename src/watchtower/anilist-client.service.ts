@@ -11,6 +11,7 @@ import { Injectable } from '@nestjs/common';
 
 const ANILIST_ENDPOINT = 'https://graphql.anilist.co';
 const SLEEP_MS = 700;
+const MAX_429_RETRIES = 5;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -183,7 +184,10 @@ export class AniListClient {
     return { media: data.Page.media, hasNext: data.Page.pageInfo.hasNextPage };
   }
 
-  private async request<T>(body: string): Promise<T> {
+  private async request<T>(
+    body: string,
+    retries = MAX_429_RETRIES,
+  ): Promise<T> {
     await this.rateLimit();
 
     let res: Response;
@@ -204,8 +208,11 @@ export class AniListClient {
     }
 
     if (res.status === 429) {
+      if (retries <= 0) {
+        throw new Error('AniList: rate limit (429) — max retries exhausted');
+      }
       await sleep(5000);
-      return this.request<T>(body);
+      return this.request<T>(body, retries - 1);
     }
 
     const json = (await res.json()) as GraphQLResponse<T>;
