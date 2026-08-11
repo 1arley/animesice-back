@@ -1,3 +1,10 @@
+## [1.7.3](https://github.com/1arley/animesice-back/compare/v1.7.2...v1.7.3) (2026-08-11)
+
+
+### Bug Fixes
+
+* **watchtower:** enqueue now resets DONE/DEAD jobs to PENDING ([#29](https://github.com/1arley/animesice-back/issues/29)) ([6945497](https://github.com/1arley/animesice-back/commit/69454971a81da273fd604e330a678ee0beebb043))
+
 ## [1.7.2](https://github.com/1arley/animesice-back/compare/v1.7.1...v1.7.2) (2026-08-11)
 
 
