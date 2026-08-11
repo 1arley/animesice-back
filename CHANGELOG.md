@@ -1,3 +1,10 @@
+## [1.7.6](https://github.com/1arley/animesice-back/compare/v1.7.5...v1.7.6) (2026-08-11)
+
+
+### Bug Fixes
+
+* **auth:** update password on re-register for unverified users ([e5aeb6b](https://github.com/1arley/animesice-back/commit/e5aeb6b3f5c400d14d62ded7bfc4d39b87e73189))
+
 ## [1.7.5](https://github.com/1arley/animesice-back/compare/v1.7.4...v1.7.5) (2026-08-11)
 
 
