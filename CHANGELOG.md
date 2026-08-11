@@ -1,3 +1,15 @@
+## [1.7.2](https://github.com/1arley/animesice-back/compare/v1.7.1...v1.7.2) (2026-08-11)
+
+
+### Bug Fixes
+
+* **watchtower:** post-split self-healing — URL pattern, scanner siblings, repair sweep, gap detection ([879ba03](https://github.com/1arley/animesice-back/commit/879ba034342fc64210c2ad04cab96935d2840a1b))
+
+
+### Reverts
+
+* **streaming:** fully revert 2041d21 googlevideo rejection ([83af4e2](https://github.com/1arley/animesice-back/commit/83af4e2b12417ed345054b3677251d4241948b3e))
+
 ## [1.7.1](https://github.com/1arley/animesice-back/compare/v1.7.0...v1.7.1) (2026-08-10)
 
 
