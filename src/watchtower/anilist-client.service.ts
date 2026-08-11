@@ -94,17 +94,17 @@ export class AniListClient {
     const query = `
       query ($id: Int, $notYetAired: Boolean) {
         Media(id: $id) {
-          airingSchedules(notYetAired: $notYetAired) {
+          airingSchedule(notYetAired: $notYetAired) {
             nodes { airingAt episode }
           }
         }
       }`;
     const data = await this.request<{
-      Media: { airingSchedules: { nodes: AiringEpisode[] } };
+      Media: { airingSchedule: { nodes: AiringEpisode[] } };
     }>(
       JSON.stringify({ query, variables: { id: mediaId, notYetAired: false } }),
     );
-    return data.Media.airingSchedules.nodes;
+    return data.Media.airingSchedule.nodes;
   }
 
   /** Busca media por título (sort: SEARCH_MATCH). */
