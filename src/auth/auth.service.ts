@@ -116,7 +116,17 @@ export class AuthService {
         );
       }
 
-      // Unverified user re-registering — resend code instead of erroring.
+      // Unverified user re-registering — update password/name and resend code.
+      const hashedPassword = await bcrypt.hash(password, BCRYPT_ROUNDS);
+      await this.prisma.user.update({
+        where: { id: userExists.id },
+        data: {
+          password: hashedPassword,
+          name,
+          ...(normalizedUserName ? { userName: normalizedUserName } : {}),
+        },
+      });
+
       await this.prisma.emailVerificationCode.deleteMany({
         where: { userId: userExists.id },
       });
