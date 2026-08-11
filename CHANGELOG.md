@@ -1,3 +1,10 @@
+## [1.7.4](https://github.com/1arley/animesice-back/compare/v1.7.3...v1.7.4) (2026-08-11)
+
+
+### Bug Fixes
+
+* **watchtower:** airingSchedules -> airingSchedule (AniList API change) ([#30](https://github.com/1arley/animesice-back/issues/30)) ([2415983](https://github.com/1arley/animesice-back/commit/24159833e47494b5c5eaf03f77544057b2fb1b8e))
+
 ## [1.7.3](https://github.com/1arley/animesice-back/compare/v1.7.2...v1.7.3) (2026-08-11)
 
 
