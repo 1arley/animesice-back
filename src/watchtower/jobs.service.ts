@@ -25,12 +25,34 @@ export class JobsService {
   async enqueue(input: EnqueueInput): Promise<void> {
     const nextRunAt = new Date();
     try {
-      await this.prisma.watchtowerJob.upsert({
+      const existing = await this.prisma.watchtowerJob.findUnique({
         where: {
           type_dedupeKey: { type: input.type, dedupeKey: input.dedupeKey },
         },
-        update: {},
-        create: {
+        select: { id: true, status: true },
+      });
+
+      if (existing) {
+        if (existing.status === 'DONE' || existing.status === 'DEAD') {
+          await this.prisma.watchtowerJob.update({
+            where: { id: existing.id },
+            data: {
+              status: 'PENDING',
+              nextRunAt,
+              attempts: 0,
+              lastError: null,
+              lockedBy: null,
+              lockedAt: null,
+              payload: input.payload as object,
+              priority: input.priority ?? 100,
+            },
+          });
+        }
+        return;
+      }
+
+      await this.prisma.watchtowerJob.create({
+        data: {
           type: input.type,
           dedupeKey: input.dedupeKey,
           payload: input.payload as object,
