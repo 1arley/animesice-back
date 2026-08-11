@@ -125,10 +125,15 @@ export class SourceDiscovery {
     const base = sourceEpisodeUrl(sourceId, slug, ep, season);
     if (!base) return [];
     if (sourceId === 'meusanimes') {
+      // Post-split: slug sibling (ex: "kaguya-sama-love-is-war-2") 404 no catálogo.
+      // Fallbacks: tenta slug base sem sufixo de temporada + URL sem sufixo de episódio.
+      const baseSlug = slug.replace(/-\d+$/, '');
       return [
         base,
+        ...(baseSlug !== slug
+          ? [`https://meusanimes.blog/e/${baseSlug}-episodio-${ep}/`]
+          : []),
         `https://meusanimes.blog/e/${slug}/`,
-        `https://meusanimes.blog/e/${slug}-episodio-${ep}/`,
       ];
     }
     return [base];

@@ -2,6 +2,12 @@ import { WatchtowerScheduler } from '@/watchtower/watchtower.scheduler';
 
 function makeMocks() {
   return {
+    prisma: {
+      $queryRaw: jest.fn(async () => []),
+      anime: {
+        findMany: jest.fn(async () => []),
+      },
+    },
     jobs: {
       claimBatch: jest.fn(async () => []),
       reapStale: jest.fn(async () => 0),
@@ -32,6 +38,7 @@ describe('WatchtowerScheduler', () => {
   beforeEach(() => {
     m = makeMocks();
     scheduler = new WatchtowerScheduler(
+      m.prisma as any,
       m.jobs as any,
       m.worker as any,
       m.repair as any,

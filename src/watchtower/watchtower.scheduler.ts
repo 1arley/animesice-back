@@ -2,15 +2,17 @@
  * WatchtowerScheduler — dispatcher de cron do NestJS.
  *
  *Ticks:
- *  - a cada 1 min: processa batch de jobs devidos (cap env WT_TICK_BATCH=5)
+ *  - a cada 1 min: processa batch de jobs devidos (cap env WT_TICK_BATCH=20)
  *  - a cada 15 min: enfileira CHECK_RELEASES + reapStale
- *  - 1x/dia (03:00): DISCOVER_SEASON + repair sweep + canário revive
+ *  - a cada 6h: enfileira GAP_CHECK (detecta gaps de episódios e enfileira SCAN_CATALOG)
+ *  - 1x/dia (03:00): DISCOVER_SEASON + repair sweep + canário revive + scanAll force
  *
  * Guarda se WATCHTOWER_ENABLED != 'true' — feature flag total.
  * Sub-flags: WT_SEASON_DISCOVERY_ENABLED, WT_REPAIR_ENABLED.
  */
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { PrismaService } from '@/prisma/prisma.service';
 import { JobsService } from './jobs.service';
 import { WorkerService } from './worker.service';
 import { RepairWorker } from './repair-worker.service';
@@ -18,7 +20,7 @@ import { HealthMonitor } from './health-monitor.service';
 import { CatalogScanner } from './catalog-scanner.service';
 import { JOB_TYPE, PRIORITY } from './watchtower.types';
 
-const TICK_BATCH = Number(process.env.WT_TICK_BATCH ?? 5);
+const TICK_BATCH = Number(process.env.WT_TICK_BATCH ?? 20);
 const STALE_MS = 10 * 60_000;
 
 @Injectable()
@@ -26,6 +28,7 @@ export class WatchtowerScheduler implements OnModuleInit {
   private running = false;
 
   constructor(
+    private readonly prisma: PrismaService,
     private readonly jobs: JobsService,
     private readonly worker: WorkerService,
     private readonly repair: RepairWorker,
@@ -68,6 +71,21 @@ export class WatchtowerScheduler implements OnModuleInit {
       dedupeKey: 'check-releases',
       payload: {},
       priority: PRIORITY.CHECK_RELEASES,
+    });
+  }
+
+  /**
+   * A cada 6h: detecta animes com gaps nos episódios (ex: One Piece 110→1037)
+   * e enfileira SCAN_CATALOG force para repará-los.
+   */
+  @Cron('0 */6 * * *')
+  async gapCheck(): Promise<void> {
+    if (!this.enabled()) return;
+    await this.jobs.enqueue({
+      type: JOB_TYPE.GAP_CHECK,
+      dedupeKey: 'gap-check',
+      payload: {},
+      priority: PRIORITY.GAP_CHECK,
     });
   }
 

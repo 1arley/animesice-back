@@ -21,6 +21,8 @@ export const JOB_TYPE = {
   REPAIR_EPISODE: 'REPAIR_EPISODE',
   /** Sincroniza airingSchedule (completa episódios esperados) */
   SYNC_AIRING: 'SYNC_AIRING',
+  /** Detecta gaps nos episódios (ex: pulou do ep 110 → 1037) e enfileira SCAN_CATALOG */
+  GAP_CHECK: 'GAP_CHECK',
 } as const;
 
 export type JobType = (typeof JOB_TYPE)[keyof typeof JOB_TYPE];
@@ -44,6 +46,7 @@ export const PRIORITY = {
   DISCOVER_SEASON: 300,
   SCAN_CATALOG: 280,
   SYNC_AIRING: 250,
+  GAP_CHECK: 60,
 } as const;
 
 /** Backoff exponencial: [15min, 1h, 6h, 24h, 48h]. */
@@ -62,16 +65,21 @@ export const SOURCE_IDS = [
   'animesonlinecc',
 ] as const;
 
-/** Template de URL de episódio por fonte. */
+/** Template de URL de episódio por fonte.
+ *
+ * Post-split: cada anime sibling tem slug que já codifica a temporada
+ * (ex: "kaguya-sama-love-is-war-2"). O parâmetro `season` é mantido para
+ * compatibilidade de assinatura mas NÃO é injetado no slug do meusanimes.
+ */
 export function sourceEpisodeUrl(
   sourceId: string,
   animeSlug: string,
   episodeNumber: number,
-  season: number = 1,
+  _season: number = 1,
 ): string | null {
   switch (sourceId) {
     case 'meusanimes':
-      return `https://meusanimes.blog/e/${animeSlug}-${season}-episodio-${episodeNumber}/`;
+      return `https://meusanimes.blog/e/${animeSlug}-episodio-${episodeNumber}/`;
     case 'animefire':
       return `https://animefire.io/animes/${animeSlug}/${episodeNumber}`;
     case 'animesonlinecc':

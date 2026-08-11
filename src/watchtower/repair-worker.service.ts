@@ -3,6 +3,10 @@
  * aleatória de episódios antigos p/ probe. Enfileira REPAIR_EPISODE p/ os
  * mortos (prioridade 50, cap diário configurável via env WT_REPAIR_DAILY_CAP).
  *
+ * Post-split: sem filtro embedUrl — eps recém-criados pelo scan podem não ter
+ * embedUrl ainda mas ainda precisam de repair. Cap aumentado para 500 default
+ * (33k eps no catálogo, 20/dia = 4.5 anos).
+ *
  * Reusa probeMediaUrlDead (common/media-probe).
  */
 import { Injectable } from '@nestjs/common';
@@ -11,8 +15,8 @@ import { probeMediaUrlDead } from '@/common/media-probe';
 import { JobsService } from './jobs.service';
 import { JOB_TYPE, PRIORITY } from './watchtower.types';
 
-const DEFAULT_DAILY_CAP = 20;
-const SAMPLE_SIZE = 50;
+const DEFAULT_DAILY_CAP = 500;
+const SAMPLE_SIZE = 200;
 
 @Injectable()
 export class RepairWorker {
@@ -25,19 +29,23 @@ export class RepairWorker {
     const cap = Number(process.env.WT_REPAIR_DAILY_CAP ?? DEFAULT_DAILY_CAP);
     let enqueued = 0;
 
+    // Sem filtro embedUrl — eps sem embed também precisam de repair
     const broken = await this.prisma.episode.findMany({
       where: {
         OR: [{ videoUrl: null }, { videoBroken: true }],
-        embedUrl: { not: null },
       },
       take: cap,
-      select: { id: true, animeId: true, number: true },
+      select: { id: true, animeId: true, number: true, season: true },
     });
     for (const ep of broken) {
       await this.jobs.enqueue({
         type: JOB_TYPE.REPAIR_EPISODE,
-        dedupeKey: `repair:${ep.animeId}:${ep.number}`,
-        payload: { animeId: ep.animeId, episodeNumber: ep.number },
+        dedupeKey: `repair:${ep.animeId}:${ep.season ?? 1}:${ep.number}`,
+        payload: {
+          animeId: ep.animeId,
+          episodeNumber: ep.number,
+          season: ep.season ?? 1,
+        },
         priority: PRIORITY.REPAIR,
       });
       enqueued++;
@@ -45,10 +53,17 @@ export class RepairWorker {
 
     if (enqueued >= cap) return enqueued;
 
+    // Amostra maior p/ detectar vídeos mortos mais rápido
     const sample = await this.prisma.episode.findMany({
       where: { videoUrl: { not: null }, videoBroken: false },
       take: SAMPLE_SIZE,
-      select: { id: true, animeId: true, number: true, videoUrl: true },
+      select: {
+        id: true,
+        animeId: true,
+        number: true,
+        season: true,
+        videoUrl: true,
+      },
     });
     for (const ep of sample) {
       if (enqueued >= cap) break;
@@ -63,8 +78,12 @@ export class RepairWorker {
           .catch(() => undefined);
         await this.jobs.enqueue({
           type: JOB_TYPE.REPAIR_EPISODE,
-          dedupeKey: `repair:${ep.animeId}:${ep.number}`,
-          payload: { animeId: ep.animeId, episodeNumber: ep.number },
+          dedupeKey: `repair:${ep.animeId}:${ep.season ?? 1}:${ep.number}`,
+          payload: {
+            animeId: ep.animeId,
+            episodeNumber: ep.number,
+            season: ep.season ?? 1,
+          },
           priority: PRIORITY.REPAIR,
         });
         enqueued++;

@@ -33,8 +33,8 @@ afterEach(() => {
 describe('RepairWorker', () => {
   it('enfileira REPAIR para episódios com videoUrl null/videoBroken', async () => {
     m.brokenEps.push(
-      { id: 'ep1', animeId: 'a1', number: 1 },
-      { id: 'ep2', animeId: 'a2', number: 3 },
+      { id: 'ep1', animeId: 'a1', number: 1, season: 1 },
+      { id: 'ep2', animeId: 'a2', number: 3, season: 1 },
     );
     const worker = new RepairWorker(
       m.prisma as any,
@@ -47,7 +47,7 @@ describe('RepairWorker', () => {
       expect.objectContaining({
         type: 'REPAIR_EPISODE',
         priority: 50,
-        payload: { animeId: 'a1', episodeNumber: 1 },
+        payload: { animeId: 'a1', episodeNumber: 1, season: 1 },
       }),
     );
   });
@@ -55,8 +55,8 @@ describe('RepairWorker', () => {
   it('cap diário respeita WT_REPAIR_DAILY_CAP', async () => {
     process.env.WT_REPAIR_DAILY_CAP = '1';
     m.brokenEps.push(
-      { id: 'ep1', animeId: 'a1', number: 1 },
-      { id: 'ep2', animeId: 'a2', number: 3 },
+      { id: 'ep1', animeId: 'a1', number: 1, season: 1 },
+      { id: 'ep2', animeId: 'a2', number: 3, season: 1 },
     );
     const worker = new RepairWorker(
       m.prisma as any,

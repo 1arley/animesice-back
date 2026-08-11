@@ -558,25 +558,28 @@ export class ScrapeService {
   /**
    * Constrói a URL de um episódio no meusanimes.blog a partir do slug do anime,
    * número do episódio e temporada.
-   * Padrão: meusanimes.blog/e/<slug>-<season>-episodio-<n>/
+   * Padrão: meusanimes.blog/e/<slug>-episodio-<n>/
+   *
+   * Post-split: o slug já codifica a temporada (ex: "kaguya-sama-love-is-war-2").
+   * O parâmetro season é mantido para compatibilidade mas NÃO é injetado no slug.
    */
   meusanimesEpisodeUrl(
     animeSlug: string,
     episodeNumber: number,
-    seasonNumber: number = 1,
+    _seasonNumber: number = 1,
   ): string {
-    return `https://meusanimes.blog/e/${animeSlug}-${seasonNumber}-episodio-${episodeNumber}/`;
+    return `https://meusanimes.blog/e/${animeSlug}-episodio-${episodeNumber}/`;
   }
 
   /**
    * Tenta extrair vídeo de um episódio via meusanimes.blog (fallback quando
    * animefire.io bloqueia o IP da VPS com Cloudflare WAF 403).
    *
-   * Fluxo: GET meusanimes.blog/e/<slug>-1-episodio-<n>/ -> iframe servN.meusdoramas.club
+   * Fluxo: GET meusanimes.blog/e/<slug>-episodio-<n>/ -> iframe servN.meusdoramas.club
    * -> get-video.php -> token Blogger -> Playwright headless:false + Xvfb ->
    * googlevideo.com/videoplayback (.mp4).
    *
-   * Filmes/singles não usam o sufixo `-<season>-episodio-<n>` — a URL é
+   * Filmes/singles não usam o sufixo `-episodio-<n>` — a URL é
    * meusanimes.blog/e/<slug>/ — então tenta candidatos em ordem até achar o
    * que não retorne 404.
    *

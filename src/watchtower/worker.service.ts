@@ -7,6 +7,8 @@
  * CHECK_RELEASES: delega p/ ReleaseMonitor (enfileira EXTRAÇÕES).
  * DISCOVER_SEASON: delega p/ SeasonDiscovery.
  * SYNC_AIRING: delega p/ ReleaseMonitor.checkAll.
+ * GAP_CHECK: detecta animes com gaps nos episódios (ex: One Piece 110→1037)
+ *   e enfileira SCAN_CATALOG force para repará-los.
  */
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '@/prisma/prisma.service';
@@ -20,7 +22,7 @@ import { SeasonDiscovery } from './season-discovery.service';
 import { RepairWorker } from './repair-worker.service';
 import { HealthMonitor } from './health-monitor.service';
 import { CatalogScanner } from './catalog-scanner.service';
-import { JOB_TYPE } from './watchtower.types';
+import { JOB_TYPE, PRIORITY } from './watchtower.types';
 
 interface ExtractPayload {
   animeId: string;
@@ -83,6 +85,9 @@ export class WorkerService {
         }
         case JOB_TYPE.SYNC_AIRING:
           await this.release.checkAll();
+          break;
+        case JOB_TYPE.GAP_CHECK:
+          await this.handleGapCheck();
           break;
         default:
           throw new Error(`Tipo de job desconhecido: ${job.type}`);
@@ -233,15 +238,84 @@ export class WorkerService {
     });
   }
 
+  /**
+   * GAP_CHECK: detecta animes com gaps nos episódios (ex: One Piece 110→1037)
+   * e enfileira SCAN_CATALOG para repará-los. Um gap é quando há um salto de
+   * mais de 2 no number entre episódios consecutivos do mesmo anime.
+   * Também detecta animes com episodeCount > count real de episódios.
+   */
+  private async handleGapCheck(): Promise<void> {
+    // 1. Detecta gaps via query SQL (window function)
+    const gaps = await this.prisma.$queryRaw<
+      Array<{ animeId: string; slug: string; gapCount: bigint }>
+    >`
+      WITH ep_gaps AS (
+        SELECT
+          "animeId",
+          number,
+          number - LAG(number) OVER (PARTITION BY "animeId" ORDER BY number) AS gap_size
+        FROM "Episode"
+      )
+      SELECT
+        g."animeId",
+        a.slug,
+        COUNT(*)::bigint AS gap_count
+      FROM ep_gaps g
+      JOIN "Anime" a ON a.id = g."animeId"
+      WHERE g.gap_size > 2
+      GROUP BY g."animeId", a.slug
+    `;
+
+    let enqueued = 0;
+    for (const gap of gaps) {
+      await this.jobs.enqueue({
+        type: JOB_TYPE.SCAN_CATALOG,
+        dedupeKey: `scan-catalog:${gap.animeId}`,
+        payload: { animeId: gap.animeId, slug: gap.slug },
+        priority: PRIORITY.GAP_CHECK,
+      });
+      enqueued++;
+    }
+
+    // 2. Detecta animes com episodeCount > count real de eps
+    const incomplete = await this.prisma.anime.findMany({
+      where: {
+        episodeCount: { gt: 0 },
+        status: { in: ['FINALIZADO', 'LANCAMENTO'] },
+      },
+      select: {
+        id: true,
+        slug: true,
+        episodeCount: true,
+        _count: { select: { episodes: true } },
+      },
+    });
+
+    for (const anime of incomplete) {
+      if (anime._count.episodes >= (anime.episodeCount ?? 0)) continue;
+      await this.jobs.enqueue({
+        type: JOB_TYPE.SCAN_CATALOG,
+        dedupeKey: `scan-catalog:${anime.id}`,
+        payload: { animeId: anime.id, slug: anime.slug },
+        priority: PRIORITY.GAP_CHECK,
+      });
+      enqueued++;
+    }
+
+    console.error(
+      `[GAP_CHECK] ${gaps.length} animes com gaps, ${incomplete.filter((a) => a._count.episodes < (a.episodeCount ?? 0)).length} incompletos, ${enqueued} jobs enfileirados`,
+    );
+  }
+
   private embedUrlForSource(
     sourceId: string,
     slug: string,
     ep: number,
-    season: number = 1,
+    _season: number = 1,
   ): string {
     switch (sourceId) {
       case 'meusanimes':
-        return `https://meusanimes.blog/e/${slug}-${season}-episodio-${ep}/`;
+        return `https://meusanimes.blog/e/${slug}-episodio-${ep}/`;
       case 'animefire':
         return `https://animefire.io/animes/${slug}/${ep}`;
       case 'animesonlinecc':

@@ -88,11 +88,11 @@ describe('SourceDiscovery', () => {
     expect(result.map((c) => c.sourceId)).toContain('animesonlinecc');
   });
 
-  it('URL meusanimes segue template <slug>-1-episodio-<n>/', () => {
+  it('URL meusanimes segue template <slug>-episodio-<n>/ (sem season no slug)', () => {
     const result = discovery.allCandidates('mushoku-tensei', 7);
     const meusa = result.find((c) => c.sourceId === 'meusanimes');
     expect(meusa?.url).toBe(
-      'https://meusanimes.blog/e/mushoku-tensei-1-episodio-7/',
+      'https://meusanimes.blog/e/mushoku-tensei-episodio-7/',
     );
   });
 

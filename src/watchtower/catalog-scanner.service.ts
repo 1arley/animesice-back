@@ -28,8 +28,25 @@ export class CatalogScanner implements OnModuleInit {
 
   /**
    * Escaneia um anime específico no meusanimes.blog e retorna todas as temporadas+episódios.
+   * Se o slug sibling (ex: "kaguya-sama-love-is-war-2") 404, tenta o slug base
+   * (ex: "kaguya-sama-love-is-war") — meusanimes publica todas temporadas na mesma página.
    */
   async scanAnime(animeSlug: string): Promise<CatalogEntry[]> {
+    const entries = await this.tryScan(animeSlug);
+    if (entries.length > 0) return entries;
+
+    // Slug sibling 404 — tenta slug base (sem sufixo de temporada)
+    const baseSlug = animeSlug.replace(/-\d+$/, '');
+    if (baseSlug !== animeSlug) {
+      console.error(
+        `[CATALOG] ${animeSlug} vazio — tentando slug base: ${baseSlug}`,
+      );
+      return this.tryScan(baseSlug);
+    }
+    return [];
+  }
+
+  private async tryScan(animeSlug: string): Promise<CatalogEntry[]> {
     const url = `https://meusanimes.blog/a/${animeSlug}/`;
     console.error(`[CATALOG] scanning ${url}`);
 
@@ -50,9 +67,7 @@ export class CatalogScanner implements OnModuleInit {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[CATALOG] fetch falhou p/ ${url}:`, msg);
-      throw new Error(`[CATALOG] fetch falhou p/ ${url}: ${msg}`, {
-        cause: err,
-      });
+      return [];
     }
 
     const entries = this.parseCatalog(html, animeSlug);
@@ -61,10 +76,11 @@ export class CatalogScanner implements OnModuleInit {
     );
     return entries;
   }
-
   /**
-   * Escaneia todos os animes FINALIZADO/EM_LANCAMENTO com episodeCount > episódios no DB.
-   * Enfileira SCAN_CATALOG como job único, evitando execução em loop.
+   * Escaneia todos os animes FINALIZADO/EM_LANCAMENTO.
+   * Enfileira SCAN_CATALOG para cada anime (dedupeKey previne duplicação).
+   * Pós-split: não usa episodeCount como critério de skip — o count pode estar
+   * desatualizado (426 animes com overcount). dedupeKey garante idempotência.
    */
   async scanAll(force = false): Promise<{ scanned: number; enqueued: number }> {
     const animes = await this.prisma.anime.findMany({
@@ -89,8 +105,13 @@ export class CatalogScanner implements OnModuleInit {
       const dbEpisodeCount = anime._count.episodes;
       const expected = anime.episodeCount ?? 0;
 
-      // Se não for 'force', pula apenas quando DB tem episódios e atinge/supera o esperado
+      // Sem force: pula apenas se tem episódios e parece completo (count real >= expected)
+      // MAS se expected é 0 (episodeCount null), sempre escaneia
       if (!force && expected > 0 && dbEpisodeCount >= expected) {
+        continue;
+      }
+      // Sem force e sem episodeCount: pula se tem pelo menos 1 episódio
+      if (!force && expected === 0 && dbEpisodeCount > 0) {
         continue;
       }
 
@@ -112,7 +133,13 @@ export class CatalogScanner implements OnModuleInit {
 
   /**
    * Processa um job SCAN_CATALOG: escaneia o anime, compara com o DB e enfileira
-   * EXTRACT_EPISODE para episódios faltantes por (season, number).
+   * EXTRACT_EPISODE para episódios faltantes. Catalog split-aware: S1 fica no
+   * anime original; S2+ são defendidas em animes-irmãos (`<slug>-<n>`), que
+   * são criados (Anime row) sob demanda. Episódios sempre season=1 no destino.
+   *
+   * Detecção de sibling: se o slug termina em `-<n>` (ex: "kaguya-...-2"),
+   * processa apenas a temporada N do catálogo. Se for slug base, processa
+   * todas as temporadas (criando siblings conforme necessário).
    */
   async processScanCatalog(
     animeId: string,
@@ -121,30 +148,143 @@ export class CatalogScanner implements OnModuleInit {
     const entries = await this.scanAnime(slug);
     if (entries.length === 0) return { found: 0, missing: 0 };
 
-    const existing = await this.prisma.episode.findMany({
-      where: { animeId },
-      select: { season: true, number: true },
+    // Detecta se este anime é um sibling (slug termina em -<n>)
+    const siblingMatch = slug.match(/-(\d+)$/);
+    const siblingSeason = siblingMatch ? parseInt(siblingMatch[1]!, 10) : null;
+
+    const seasonsMap = new Map<number, typeof entries>();
+    for (const e of entries) {
+      const arr = seasonsMap.get(e.season) ?? [];
+      arr.push(e);
+      seasonsMap.set(e.season, arr);
+    }
+
+    const baseAnime = await this.prisma.anime.findUnique({
+      where: { id: animeId },
+      select: {
+        id: true,
+        slug: true,
+        title: true,
+        synopsis: true,
+        coverImage: true,
+        bannerImage: true,
+        ageRating: true,
+        status: true,
+        audio: true,
+        format: true,
+        year: true,
+        season: true,
+        studios: true,
+        themes: true,
+        alternativeTitles: true,
+        published: true,
+      },
     });
-    const haveSet = new Set(existing.map((e) => `${e.season}:${e.number}`));
+    if (!baseAnime) return { found: 0, missing: 0 };
 
     let missing = 0;
-    for (const entry of entries) {
-      const key = `${entry.season}:${entry.episode}`;
-      if (haveSet.has(key)) continue;
 
-      missing++;
-      await this.jobs.enqueue({
-        type: JOB_TYPE.EXTRACT_EPISODE,
-        dedupeKey: `extract:${animeId}:s${entry.season}:${entry.episode}`,
-        payload: {
-          animeId,
-          slug,
-          episodeNumber: entry.episode,
-          season: entry.season,
-          episodeUrl: entry.url,
-        },
-        priority: PRIORITY.EXTRACT,
+    // Se sibling, processa apenas a sua temporada
+    const seasonsToProcess = siblingSeason
+      ? [siblingSeason]
+      : [...seasonsMap.keys()];
+
+    for (const seasonNum of seasonsToProcess) {
+      const seasonEntries = seasonsMap.get(seasonNum);
+      if (!seasonEntries || seasonEntries.length === 0) continue;
+
+      // Target anime: S1 → original; S2+ → slug-<n> sibling
+      let targetId: string;
+      let targetSlug: string;
+      if (seasonNum === 1 && !siblingSeason) {
+        targetId = animeId;
+        targetSlug = slug;
+      } else {
+        const baseSlugForSibling = siblingSeason
+          ? slug.replace(/-\d+$/, '')
+          : slug;
+        const siblingSlug = `${baseSlugForSibling}-${seasonNum}`;
+        const existing = await this.prisma.anime.findUnique({
+          where: { slug: siblingSlug },
+          select: { id: true },
+        });
+        if (existing) {
+          targetId = existing.id;
+        } else if (siblingSeason) {
+          // Já é o sibling correto
+          targetId = animeId;
+          targetSlug = siblingSlug;
+          const existingEps = await this.prisma.episode.findMany({
+            where: { animeId: targetId },
+            select: { number: true },
+          });
+          const haveSet = new Set(existingEps.map((e) => e.number));
+          for (const entry of seasonEntries) {
+            if (haveSet.has(entry.episode)) continue;
+            missing++;
+            await this.jobs.enqueue({
+              type: JOB_TYPE.EXTRACT_EPISODE,
+              dedupeKey: `extract:${targetId}:1:${entry.episode}`,
+              payload: {
+                animeId: targetId,
+                slug: targetSlug,
+                episodeNumber: entry.episode,
+                season: 1,
+                episodeUrl: entry.url,
+              },
+              priority: PRIORITY.EXTRACT,
+            });
+          }
+          continue;
+        } else {
+          const created = await this.prisma.anime.create({
+            data: {
+              slug: siblingSlug,
+              title: `${baseAnime.title} ${seasonNum}`,
+              synopsis: baseAnime.synopsis,
+              coverImage: baseAnime.coverImage,
+              bannerImage: baseAnime.bannerImage,
+              rating: 0,
+              ageRating: baseAnime.ageRating,
+              status: baseAnime.status,
+              audio: baseAnime.audio,
+              format: baseAnime.format,
+              year: baseAnime.year,
+              season: baseAnime.season,
+              studios: baseAnime.studios,
+              themes: baseAnime.themes,
+              alternativeTitles: baseAnime.alternativeTitles,
+              published: baseAnime.published,
+              episodeCount: 0,
+            },
+          });
+          targetId = created.id;
+        }
+        targetSlug = siblingSlug;
+      }
+
+      const existing = await this.prisma.episode.findMany({
+        where: { animeId: targetId },
+        select: { number: true },
       });
+      const haveSet = new Set(existing.map((e) => e.number));
+
+      for (const entry of seasonEntries) {
+        if (haveSet.has(entry.episode)) continue;
+        missing++;
+        await this.jobs.enqueue({
+          type: JOB_TYPE.EXTRACT_EPISODE,
+          dedupeKey: `extract:${targetId}:1:${entry.episode}`,
+          payload: {
+            animeId: targetId,
+            slug: targetSlug,
+            episodeNumber: entry.episode,
+            season: 1,
+            episodeUrl: entry.url,
+          },
+          priority: PRIORITY.EXTRACT,
+        });
+      }
     }
 
     console.error(
