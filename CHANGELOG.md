@@ -1,3 +1,10 @@
+## [1.7.5](https://github.com/1arley/animesice-back/compare/v1.7.4...v1.7.5) (2026-08-11)
+
+
+### Bug Fixes
+
+* **watchtower:** narrow enqueue catch + bound 429 recursion + remove dead mock ([9236df4](https://github.com/1arley/animesice-back/commit/9236df48b7ba44034fbcfd60a48fe9eaae90ff3d))
+
 ## [1.7.4](https://github.com/1arley/animesice-back/compare/v1.7.3...v1.7.4) (2026-08-11)
 
 
