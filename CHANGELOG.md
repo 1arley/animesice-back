@@ -1,3 +1,10 @@
+# [1.11.0](https://github.com/1arley/animesice-back/compare/v1.10.0...v1.11.0) (2026-08-12)
+
+
+### Features
+
+* **embed:** provider orchestration layer with health-aware source selection and SWR cache ([c0b0bf7](https://github.com/1arley/animesice-back/commit/c0b0bf7dffc52c61281fe6c45955cfd04e29bfa2))
+
 # [1.10.0](https://github.com/1arley/animesice-back/compare/v1.9.0...v1.10.0) (2026-08-12)
 
 
