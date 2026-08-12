@@ -42,7 +42,7 @@ export class Publisher {
       select: { id: true },
     });
 
-    const episode = await this.prisma.episode.upsert({
+    await this.prisma.episode.upsert({
       where: {
         animeId_season_number: {
           animeId: input.animeId,
@@ -56,6 +56,7 @@ export class Publisher {
         sourceId: input.sourceId,
         videoBroken: false,
         videoCheckedAt: new Date(),
+        dateModified: new Date(),
         ...(input.thumbnailUrl ? { thumbnailUrl: input.thumbnailUrl } : {}),
         ...(input.title ? { title: input.title } : {}),
         ...(input.duration ? { duration: input.duration } : {}),
@@ -75,6 +76,8 @@ export class Publisher {
       },
     });
 
+    // Só notifica em episódio realmente novo. Com reap/ownership corrigidos,
+    // dois workers não processam o mesmo job (dedupeKey) → sem dupla notificação.
     if (!existing) {
       const anime = await this.prisma.anime.findUnique({
         where: { id: input.animeId },
@@ -91,13 +94,6 @@ export class Publisher {
           .catch(() => undefined);
       }
     }
-
-    await this.prisma.episode
-      .update({
-        where: { id: episode.id },
-        data: { dateModified: new Date() },
-      })
-      .catch(() => undefined);
   }
 
   /** Marca anime como COMPLETO quando airingSchedule indica fim. */

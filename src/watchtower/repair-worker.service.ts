@@ -57,6 +57,7 @@ export class RepairWorker {
     const sample = await this.prisma.episode.findMany({
       where: { videoUrl: { not: null }, videoBroken: false },
       take: SAMPLE_SIZE,
+      orderBy: { videoCheckedAt: 'asc' },
       select: {
         id: true,
         animeId: true,

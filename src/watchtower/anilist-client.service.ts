@@ -187,6 +187,7 @@ export class AniListClient {
   private async request<T>(
     body: string,
     retries = MAX_429_RETRIES,
+    retried5xx = false,
   ): Promise<T> {
     await this.rateLimit();
 
@@ -213,6 +214,12 @@ export class AniListClient {
       }
       await sleep(5000);
       return this.request<T>(body, retries - 1);
+    }
+
+    // 5xx transiente: 1 retry rápido antes de falhar o job inteiro.
+    if (res.status >= 500 && !retried5xx) {
+      await sleep(1500);
+      return this.request<T>(body, retries, true);
     }
 
     const json = (await res.json()) as GraphQLResponse<T>;

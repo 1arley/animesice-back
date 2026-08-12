@@ -37,25 +37,51 @@ export class RoomService {
     const expiresAt = new Date();
     expiresAt.setHours(expiresAt.getHours() + ROOM_TTL_HOURS);
 
-    return this.prisma.room.create({
-      data: {
-        slug,
-        creatorId: userId,
-        animeSlug: dto.animeSlug,
-        episodeNumber: dto.episodeNumber,
-        maxParticipants: dto.maxParticipants ?? DEFAULT_MAX_PARTICIPANTS,
-        expiresAt,
-      },
-      select: {
-        id: true,
-        slug: true,
-        animeSlug: true,
-        episodeNumber: true,
-        maxParticipants: true,
-        expiresAt: true,
-        createdAt: true,
-      },
-    });
+    try {
+      return await this.prisma.room.create({
+        data: {
+          slug,
+          creatorId: userId,
+          animeSlug: dto.animeSlug,
+          episodeNumber: dto.episodeNumber,
+          maxParticipants: dto.maxParticipants ?? DEFAULT_MAX_PARTICIPANTS,
+          expiresAt,
+        },
+        select: {
+          id: true,
+          slug: true,
+          animeSlug: true,
+          episodeNumber: true,
+          maxParticipants: true,
+          expiresAt: true,
+          createdAt: true,
+        },
+      });
+    } catch (err) {
+      // Colisão rara de slug — gera outro e tenta uma vez mais.
+      if ((err as { code?: string })?.code === 'P2002') {
+        return this.prisma.room.create({
+          data: {
+            slug: generateRoomSlug(),
+            creatorId: userId,
+            animeSlug: dto.animeSlug,
+            episodeNumber: dto.episodeNumber,
+            maxParticipants: dto.maxParticipants ?? DEFAULT_MAX_PARTICIPANTS,
+            expiresAt,
+          },
+          select: {
+            id: true,
+            slug: true,
+            animeSlug: true,
+            episodeNumber: true,
+            maxParticipants: true,
+            expiresAt: true,
+            createdAt: true,
+          },
+        });
+      }
+      throw err;
+    }
   }
 
   async getRoomBySlug(slug: string) {
@@ -127,12 +153,17 @@ export class RoomService {
   }
 
   async touchActivity(roomId: string) {
+    // Throttle: só grava se lastActivityAt está há >5min (evita write
+    // amplification e impede keep-alive contínuo por joins repetidos).
+    const cutoff = new Date(Date.now() - 5 * 60_000);
     await this.prisma.room.updateMany({
-      where: { id: roomId },
+      where: { id: roomId, lastActivityAt: { lt: cutoff } },
       data: { lastActivityAt: new Date() },
     });
   }
 
+  /** Contagem de participantes pelo histórico (fallback p/ cenários sem socket
+   *  live disponível). O gateway usa conexões reais via fetchSockets(). */
   async getParticipantCount(roomId: string): Promise<number> {
     const count = await this.prisma.roomMessage.findMany({
       where: { roomId },

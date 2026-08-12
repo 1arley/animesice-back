@@ -1,5 +1,10 @@
 import { RepairWorker } from '@/watchtower/repair-worker.service';
 
+jest.mock('@/common/ssrf', () => ({
+  assertHostResolvesSafely: jest.fn().mockResolvedValue(undefined),
+  isBlockedHostname: jest.fn().mockReturnValue(false),
+}));
+
 function makeMocks() {
   const brokenEps: any[] = [];
   const sampleEps: any[] = [];
@@ -75,7 +80,13 @@ describe('RepairWorker', () => {
       number: 1,
       videoUrl: 'https://dead.test/v.mp4',
     });
-    global.fetch = jest.fn(async () => ({ status: 403 }) as any);
+    global.fetch = jest.fn(
+      async () =>
+        ({
+          status: 403,
+          headers: { get: () => null },
+        }) as any,
+    );
     const worker = new RepairWorker(
       m.prisma as any,
       { enqueue: m.enqueue } as any,
@@ -102,7 +113,13 @@ describe('RepairWorker', () => {
       number: 1,
       videoUrl: 'https://ok.test/v.mp4',
     });
-    global.fetch = jest.fn(async () => ({ status: 200 }) as any);
+    global.fetch = jest.fn(
+      async () =>
+        ({
+          status: 200,
+          headers: { get: () => null },
+        }) as any,
+    );
     const worker = new RepairWorker(
       m.prisma as any,
       { enqueue: m.enqueue } as any,

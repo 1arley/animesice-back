@@ -3,7 +3,7 @@ import { PrismaService } from '@/prisma/prisma.service';
 import { NotificationService } from '@/notification/notification.service';
 import { NotificationType, NotificationChannel } from '@prisma/client';
 import { AuthService } from '@/auth/auth.service';
-import { UpdateSiteSettingsDto } from './dto/settings.dto';
+import { UpdateSiteSettingsDto, UpdatePrivacyDto } from './dto/settings.dto';
 
 @Injectable()
 export class SettingsService {
@@ -62,22 +62,53 @@ export class SettingsService {
     return this.authService.updateProfile(userId, name, userName);
   }
 
-  // ── Personal settings: privacy ────────────────────────────────────────
-  // TODO: add PrivacySettings model to Prisma schema when ready.
-  // For now, uses UserAnimeList.private field as the existing privacy mechanism.
+  // ── Personal settings: privacy ──────────────────────────────────────
 
   async getPrivacySettings(userId: string) {
-    const privateListsCount = await this.prisma.userAnimeList.count({
-      where: { userId, private: true },
-    });
+    const [privacy, privateListsCount] = await this.prisma.$transaction([
+      this.prisma.privacySettings.upsert({
+        where: { userId },
+        update: {},
+        create: { userId },
+        select: {
+          profilePublic: true,
+          showActivity: true,
+          showFavorites: true,
+          showRatings: true,
+        },
+      }),
+      this.prisma.userAnimeList.count({
+        where: { userId, private: true },
+      }),
+    ]);
 
     return {
-      profilePublic: true,
-      showActivity: true,
-      showFavorites: true,
-      showRatings: true,
+      ...privacy,
       privateAnimeLists: privateListsCount,
     };
+  }
+
+  async updatePrivacySettings(userId: string, dto: UpdatePrivacyDto) {
+    await this.prisma.privacySettings.upsert({
+      where: { userId },
+      update: {
+        ...(dto.profilePublic !== undefined
+          ? { profilePublic: dto.profilePublic }
+          : {}),
+        ...(dto.showActivity !== undefined
+          ? { showActivity: dto.showActivity }
+          : {}),
+        ...(dto.showFavorites !== undefined
+          ? { showFavorites: dto.showFavorites }
+          : {}),
+        ...(dto.showRatings !== undefined
+          ? { showRatings: dto.showRatings }
+          : {}),
+      },
+      create: { userId },
+    });
+
+    return this.getPrivacySettings(userId);
   }
 
   // ── Personal settings: notifications ──────────────────────────────────
@@ -101,34 +132,55 @@ export class SettingsService {
   }
 
   // ── Site settings (ADMIN, SUPERADMIN) ─────────────────────────────────
-  // TODO: add SiteSettings model to Prisma schema when ready.
-  // For now, returns env-based defaults.
+  // Persistidas no DB (model SiteSetting) com fallback p/ env vars quando a
+  // chave nunca foi gravada.
 
   async getSiteSettings() {
-    return await Promise.resolve({
-      siteName: process.env.SITE_NAME ?? 'AnimesIce',
+    const rows = await this.prisma.siteSetting.findMany();
+    const stored = new Map(rows.map((r) => [r.key, r.value]));
+
+    return {
+      siteName: stored.get('SITE_NAME') ?? process.env.SITE_NAME ?? 'AnimesIce',
       siteDescription:
-        process.env.SITE_DESCRIPTION ?? 'Catálogo de animes com streaming',
-      registrationOpen: process.env.REGISTRATION_OPEN !== 'false',
-      maintenanceMode: process.env.MAINTENANCE_MODE === 'true',
-    });
+        stored.get('SITE_DESCRIPTION') ??
+        process.env.SITE_DESCRIPTION ??
+        'Catálogo de animes com streaming',
+      registrationOpen:
+        stored.get('REGISTRATION_OPEN') !== undefined
+          ? stored.get('REGISTRATION_OPEN') !== 'false'
+          : process.env.REGISTRATION_OPEN !== 'false',
+      maintenanceMode:
+        stored.get('MAINTENANCE_MODE') !== undefined
+          ? stored.get('MAINTENANCE_MODE') === 'true'
+          : process.env.MAINTENANCE_MODE === 'true',
+    };
   }
 
   async updateSiteSettings(dto: UpdateSiteSettingsDto) {
-    if (dto.siteName !== undefined) {
-      process.env.SITE_NAME = dto.siteName;
-    }
-    if (dto.siteDescription !== undefined) {
-      process.env.SITE_DESCRIPTION = dto.siteDescription;
-    }
-    if (dto.registrationOpen !== undefined) {
-      process.env.REGISTRATION_OPEN = dto.registrationOpen ? 'true' : 'false';
-    }
-    if (dto.maintenanceMode !== undefined) {
-      process.env.MAINTENANCE_MODE = dto.maintenanceMode ? 'true' : 'false';
+    const entries: Array<[string, string]> = [];
+    if (dto.siteName !== undefined) entries.push(['SITE_NAME', dto.siteName]);
+    if (dto.siteDescription !== undefined)
+      entries.push(['SITE_DESCRIPTION', dto.siteDescription]);
+    if (dto.registrationOpen !== undefined)
+      entries.push([
+        'REGISTRATION_OPEN',
+        dto.registrationOpen ? 'true' : 'false',
+      ]);
+    if (dto.maintenanceMode !== undefined)
+      entries.push([
+        'MAINTENANCE_MODE',
+        dto.maintenanceMode ? 'true' : 'false',
+      ]);
+
+    for (const [key, value] of entries) {
+      await this.prisma.siteSetting.upsert({
+        where: { key },
+        update: { value },
+        create: { key, value },
+      });
     }
 
-    return await this.getSiteSettings();
+    return this.getSiteSettings();
   }
 
   // ── Admin settings: user management (ADMIN, SUPERADMIN) ──────────────

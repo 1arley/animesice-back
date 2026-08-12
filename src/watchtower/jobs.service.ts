@@ -9,6 +9,7 @@
  */
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '@/prisma/prisma.service';
+import { nextBackoffMs } from './watchtower.types';
 
 interface EnqueueInput {
   type: string;
@@ -29,7 +30,7 @@ export class JobsService {
       where: {
         type_dedupeKey: { type: input.type, dedupeKey: input.dedupeKey },
       },
-      select: { id: true, status: true },
+      select: { id: true, status: true, priority: true },
     });
 
     if (existing) {
@@ -47,6 +48,21 @@ export class JobsService {
             priority: input.priority ?? 100,
           },
         });
+      } else {
+        // PENDING/RUNNING: atualiza payload/priority sem resetar status/attempts
+        // (payload novo traz episodeUrl do catálogo; priority pode subir).
+        await this.prisma.watchtowerJob
+          .update({
+            where: { id: existing.id },
+            data: {
+              payload: input.payload as object,
+              priority: Math.min(
+                existing.priority ?? 100,
+                input.priority ?? 100,
+              ),
+            },
+          })
+          .catch(() => undefined);
       }
       return;
     }
@@ -103,21 +119,34 @@ export class JobsService {
     return claimed;
   }
 
-  /** Marca job como DONE, limpa lock. */
-  async complete(id: string): Promise<void> {
-    await this.prisma.watchtowerJob.update({
-      where: { id },
+  /** Marca job como DONE, limpa lock. Guarda lockedBy p/ checar ownership. */
+  async complete(id: string, lockedBy: string): Promise<void> {
+    const r = await this.prisma.watchtowerJob.updateMany({
+      where: { id, lockedBy },
       data: { status: 'DONE', lockedBy: null, lockedAt: null, lastError: null },
     });
+    if (r.count === 0) {
+      // Job foi reapado/claimado por outra instância — não clobber.
+      this.logger.debug(
+        `complete skip: job ${id} não está mais lockedBy ${lockedBy}`,
+      );
+    }
   }
 
   /** Marca falha: reenfileira com backoff ou marca DEAD se esgotou tentativas. */
-  async fail(id: string, error: string): Promise<void> {
+  async fail(id: string, lockedBy: string, error: string): Promise<void> {
     const job = await this.prisma.watchtowerJob.findUnique({
       where: { id },
-      select: { attempts: true, maxAttempts: true },
+      select: { attempts: true, maxAttempts: true, lockedBy: true },
     });
     if (!job) return;
+    // Outra instância já resetou/claimou — não clobber.
+    if (job.lockedBy !== lockedBy) {
+      this.logger.debug(
+        `fail skip: job ${id} lockedBy diverge (esperado ${lockedBy}, atual ${job.lockedBy})`,
+      );
+      return;
+    }
 
     const newAttempts = job.attempts + 1;
     const isDead = newAttempts >= job.maxAttempts;
@@ -147,21 +176,47 @@ export class JobsService {
     return out;
   }
 
-  /** Reset de jobs RUNNING presos (crash/restart). Retorna p/ PENDING. */
+  /** Reset de jobs RUNNING presos (crash/restart). Incrementa attempts e
+   * marca DEAD se esgotou maxAttempts (evita loop infinito de restart). */
   async reapStale(maxAgeMs: number): Promise<number> {
     const cutoff = new Date(Date.now() - maxAgeMs);
-    const r = await this.prisma.watchtowerJob.updateMany({
+    const stale = await this.prisma.watchtowerJob.findMany({
       where: { status: 'RUNNING', lockedAt: { lt: cutoff } },
-      data: { status: 'PENDING', lockedBy: null, lockedAt: null },
+      select: { id: true, attempts: true, maxAttempts: true },
     });
-    return r.count;
+    if (stale.length === 0) return 0;
+
+    let dead = 0;
+    let pending = 0;
+    for (const j of stale) {
+      const newAttempts = (j.attempts ?? 0) + 1;
+      const isDead = newAttempts >= (j.maxAttempts ?? 5);
+      const backoff = this.backoffMs(j.attempts);
+      await this.prisma.watchtowerJob
+        .update({
+          where: { id: j.id },
+          data: {
+            status: isDead ? 'DEAD' : 'PENDING',
+            attempts: newAttempts,
+            nextRunAt: isDead ? undefined : new Date(Date.now() + backoff),
+            lockedBy: null,
+            lockedAt: null,
+            lastError: 'stale reap (worker crashed/timeout)',
+          },
+        })
+        .catch(() => undefined);
+      if (isDead) dead++;
+      else pending++;
+    }
+    this.logger.log(
+      `reapStale: ${stale.length} resetados (${pending} -> PENDING, ${dead} -> DEAD)`,
+    );
+    return stale.length;
   }
 
+  /** Backoff exponencial (fonte única em watchtower.types). */
   private backoffMs(attempts: number): number {
-    const steps = [15 * 60_000, 60 * 60_000, 6 * 60 * 60_000, 24 * 60 * 60_000];
-    return (
-      steps[Math.min(attempts, steps.length - 1)] ?? steps[steps.length - 1]!
-    );
+    return nextBackoffMs(attempts);
   }
 }
 

@@ -61,18 +61,20 @@ export class WatchtowerController {
   @Post('jobs/:id/retry')
   @ApiOperation({ summary: 'Reenfileira job DEAD/FAILED' })
   async retry(@Param('id') id: string) {
-    await this.prisma.watchtowerJob
-      .update({
-        where: { id },
+    const r = await this.prisma.watchtowerJob
+      .updateMany({
+        where: { id, status: { in: ['DEAD', 'FAILED'] } },
         data: {
           status: 'PENDING',
           attempts: 0,
           nextRunAt: new Date(),
           lastError: null,
+          lockedBy: null,
+          lockedAt: null,
         },
       })
-      .catch(() => undefined);
-    return { ok: true };
+      .catch(() => ({ count: 0 }));
+    return { ok: r.count === 1 };
   }
 
   @Post('sources/:id/toggle')

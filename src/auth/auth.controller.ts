@@ -5,10 +5,9 @@ import {
   UseGuards,
   Req,
   Res,
-  Get,
-  Query,
   HttpCode,
   HttpStatus,
+  HttpException,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
@@ -30,6 +29,26 @@ import type { AuthenticatedRequest } from '@/common/interfaces/request.interface
 import type { Response } from 'express';
 
 const AUTH_THROTTLE_LIMIT = Number(process.env.AUTH_THROTTLE_LIMIT ?? 5);
+
+/** Throttle por email p/ envio de emails (resend/forgot) — anti inbox bombing.
+ *  Em-memória (janela deslizante); suficiente p/ abuso de volume. */
+const EMAIL_SEND_LIMIT = Number(process.env.EMAIL_SEND_LIMIT ?? 3);
+const EMAIL_SEND_WINDOW_MS = 60 * 60_000;
+const emailSendLog = new Map<string, number[]>();
+
+function emailSendAllowed(email: string): boolean {
+  const now = Date.now();
+  const hits = (emailSendLog.get(email) ?? []).filter(
+    (t) => now - t < EMAIL_SEND_WINDOW_MS,
+  );
+  if (hits.length >= EMAIL_SEND_LIMIT) {
+    emailSendLog.set(email, hits);
+    return false;
+  }
+  hits.push(now);
+  emailSendLog.set(email, hits);
+  return true;
+}
 
 @ApiTags('auth')
 @Controller('auth')
@@ -54,6 +73,14 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { limit: 3, ttl: 60_000 } })
   async resendVerification(@Body('email') email: string) {
+    if (!emailSendAllowed(email)) {
+      // @nestjs/common não exporta TooManyRequestsException — usa HttpException
+      // com status 429 (mesma semântica do throttle do Nest).
+      throw new HttpException(
+        'Muitas solicitações para este email. Tente novamente mais tarde.',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
     return this.authService.resendVerificationCode(email);
   }
 
@@ -114,6 +141,12 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { limit: AUTH_THROTTLE_LIMIT, ttl: 60_000 } })
   async forgotPassword(@Body() dto: ForgotPasswordDto) {
+    if (!emailSendAllowed(dto.email)) {
+      // Resposta genérica (mesma do fluxo normal) p/ não diferenciar por 429.
+      return {
+        message: 'Se o email existir, um link de redefinição foi enviado.',
+      };
+    }
     return this.authService.forgotPassword(dto.email);
   }
 
@@ -137,12 +170,6 @@ export class AuthController {
       dto.newEmail,
       dto.password,
     );
-  }
-
-  @Get('confirm-email')
-  @HttpCode(HttpStatus.OK)
-  async confirmEmailChange(@Query('token') token: string) {
-    return this.authService.confirmEmailChange(token);
   }
 
   @Post('confirm-email')

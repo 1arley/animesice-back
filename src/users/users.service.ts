@@ -10,7 +10,25 @@ import { ReportReason } from '@prisma/client';
 export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
 
+  /** Carrega preferências de privacidade do usuário (defaults p/ ausente). */
+  private async getPrivacy(userId: string) {
+    const p = await this.prisma.privacySettings.findUnique({
+      where: { userId },
+    });
+    return {
+      profilePublic: p?.profilePublic ?? true,
+      showActivity: p?.showActivity ?? true,
+      showFavorites: p?.showFavorites ?? true,
+      showRatings: p?.showRatings ?? true,
+    };
+  }
+
   async getPublicProfile(id: string) {
+    const privacy = await this.getPrivacy(id);
+    if (!privacy.profilePublic) {
+      throw new NotFoundException('Usuário não encontrado.');
+    }
+
     const user = await this.prisma.user.findUnique({
       where: { id },
       select: {
@@ -22,10 +40,10 @@ export class UsersService {
         createdAt: true,
         _count: {
           select: {
-            comments: true,
-            ratings: true,
-            favorites: true,
-            watchHistories: true,
+            comments: privacy.showActivity,
+            ratings: privacy.showRatings,
+            favorites: privacy.showFavorites,
+            watchHistories: privacy.showActivity,
           },
         },
       },
@@ -39,6 +57,10 @@ export class UsersService {
   }
 
   async getUserComments(id: string, page: number = 1, limit: number = 20) {
+    const privacy = await this.getPrivacy(id);
+    if (!privacy.showActivity) {
+      return { data: [], meta: { total: 0, page, limit, totalPages: 0 } };
+    }
     const safeLimit = Math.min(Math.max(limit, 1), 100);
     const skip = (page - 1) * safeLimit;
 
@@ -71,6 +93,10 @@ export class UsersService {
   }
 
   async getUserRatings(id: string, page: number = 1, limit: number = 20) {
+    const privacy = await this.getPrivacy(id);
+    if (!privacy.showRatings) {
+      return { data: [], meta: { total: 0, page, limit, totalPages: 0 } };
+    }
     const safeLimit = Math.min(Math.max(limit, 1), 100);
     const skip = (page - 1) * safeLimit;
 
@@ -101,6 +127,10 @@ export class UsersService {
   }
 
   async getUserFavorites(id: string, page: number = 1, limit: number = 20) {
+    const privacy = await this.getPrivacy(id);
+    if (!privacy.showFavorites) {
+      return { data: [], meta: { total: 0, page, limit, totalPages: 0 } };
+    }
     const safeLimit = Math.min(Math.max(limit, 1), 100);
     const skip = (page - 1) * safeLimit;
 
@@ -130,16 +160,21 @@ export class UsersService {
   }
 
   async getUserStats(id: string) {
+    const privacy = await this.getPrivacy(id);
+    if (!privacy.profilePublic) {
+      throw new NotFoundException('Usuário não encontrado.');
+    }
+
     const user = await this.prisma.user.findUnique({
       where: { id },
       select: {
         id: true,
         _count: {
           select: {
-            comments: true,
-            ratings: true,
-            favorites: true,
-            watchHistories: true,
+            comments: privacy.showActivity,
+            ratings: privacy.showRatings,
+            favorites: privacy.showFavorites,
+            watchHistories: privacy.showActivity,
           },
         },
       },

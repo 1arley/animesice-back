@@ -33,6 +33,9 @@ const ALLOWED_OUTBOUND_HOSTS = (process.env.EMBED_ALLOWED_HOSTS ?? '')
 /** Máximo de redirecionamentos seguidos no fetch (anti-SSRF/anti-loops). */
 const MAX_REDIRECTS = 5;
 
+/** Teto de bytes p/ corpo de HTML proxyado (anti memory-bloat). */
+const MAX_HTML_BYTES = 5 * 1024 * 1024;
+
 /** Mensagem de erro p/ destinos de rede interna. */
 const BLOCKED_MESSAGE =
   'Destino bloqueado: não é permitido proxy para redes internas/metadata.';
@@ -138,7 +141,7 @@ export class EmbedService {
     const contentType =
       response.headers.get('content-type') ?? 'text/html; charset=utf-8';
 
-    let body = await response.text();
+    let body = await this.readHtmlCapped(response.body, MAX_HTML_BYTES);
 
     const origin = this.originOf(validated);
 
@@ -269,6 +272,37 @@ export class EmbedService {
   /** Cria um Readable a partir de string (mensagens de erro upstream). */
   private readableFrom(text: string): Readable {
     return Readable.from(text);
+  }
+
+  /**
+   * Lê o corpo como texto com teto de bytes (anti memory-bloat por upstream
+   * lento/ilimitado). Aborta se exceder o limite.
+   */
+  private async readHtmlCapped(
+    body: ReadableStream<Uint8Array> | null,
+    maxBytes: number,
+  ): Promise<string> {
+    if (!body) return '';
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let out = '';
+    let total = 0;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > maxBytes) {
+          await reader.cancel().catch(() => undefined);
+          throw new BadGatewayException('Página destino muito grande.');
+        }
+        out += decoder.decode(value, { stream: true });
+      }
+      out += decoder.decode();
+    } finally {
+      reader.releaseLock();
+    }
+    return out;
   }
 
   /** Guess simples de content-type pela extensao. */

@@ -2,6 +2,16 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Resend } from 'resend';
 
+/** Escapa valores dinâmicos antes de interpolar em HTML (anti template injection). */
+function escapeHtml(v: string): string {
+  return v
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 export interface MailPayload {
   to: string;
   subject: string;
@@ -72,8 +82,8 @@ export class MailService {
       <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 24px;">
         <h2 style="color: #6366f1;">AnimesIce</h2>
         <p>Seu código de verificação é:</p>
-        <div style="font-size: 32px; font-weight: bold; letter-spacing: 4px; background: #f3f4f6; padding: 16px; text-align: center; border-radius: 8px; margin: 16px 0;">
-          ${code}
+          <div style="font-size: 32px; font-weight: bold; letter-spacing: 4px; background: #f3f4f6; padding: 16px; text-align: center; border-radius: 8px; margin: 16px 0;">
+          ${escapeHtml(code)}
         </div>
         <p style="color: #6b7280; font-size: 14px;">
           Este código expira em 15 minutos. Se você não criou uma conta, ignore este email.
@@ -96,7 +106,7 @@ export class MailService {
         <h2 style="color: #6366f1;">AnimesIce</h2>
         <p>Recebemos um pedido para redefinir sua senha.</p>
         <p style="margin: 20px 0;">
-          <a href="${resetUrl}"
+          <a href="${escapeHtml(resetUrl)}"
              style="display: inline-block; background: #6366f1; color: #ffffff; padding: 12px 20px; border-radius: 8px; text-decoration: none; font-weight: bold;">
             Redefinir senha
           </a>
@@ -120,9 +130,9 @@ export class MailService {
     const html = `
       <div style="font-family: sans-serif; max-width: 480px; margin: 0 auto; padding: 24px;">
         <h2 style="color: #6366f1;">AnimesIce</h2>
-        <p>Você solicitou a troca do email da sua conta para <strong>${to}</strong>.</p>
+        <p>Você solicitou a troca do email da sua conta para <strong>${escapeHtml(to)}</strong>.</p>
         <p style="margin: 20px 0;">
-          <a href="${confirmUrl}"
+          <a href="${escapeHtml(confirmUrl)}"
              style="display: inline-block; background: #6366f1; color: #ffffff; padding: 12px 20px; border-radius: 8px; text-decoration: none; font-weight: bold;">
             Confirmar novo email
           </a>

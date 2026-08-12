@@ -1,10 +1,10 @@
 import {
   Injectable,
+  Logger,
   UnauthorizedException,
   ConflictException,
   NotFoundException,
   BadRequestException,
-  ForbiddenException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
@@ -13,6 +13,7 @@ import { PrismaService } from '@/prisma/prisma.service';
 import { LoginDto } from '@/auth/dto/login.dto';
 import { RegisterDto } from '@/auth/dto/register.dto';
 import { ConfigService } from '@nestjs/config';
+import ms from 'ms';
 import type { StringValue } from 'ms';
 import { Response } from 'express';
 import { BCRYPT_ROUNDS } from '@/common/constants';
@@ -21,6 +22,11 @@ import { TurnstileService } from '@/auth/turnstile/turnstile.service';
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
+  /** Evita repetir o warning de captcha a cada login/registro. */
+  private static captchaMisconfiguredWarned = false;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
@@ -34,14 +40,7 @@ export class AuthService {
   private getCookieOptions() {
     const expiresIn =
       this.configService.get<string>('JWT_ACCESS_EXPIRES_IN') || '7d';
-    let maxAge = 7 * 24 * 60 * 60 * 1000;
-    if (expiresIn.endsWith('d')) {
-      maxAge = parseInt(expiresIn.slice(0, -1)) * 24 * 60 * 60 * 1000;
-    } else if (expiresIn.endsWith('h')) {
-      maxAge = parseInt(expiresIn.slice(0, -1)) * 60 * 60 * 1000;
-    } else if (expiresIn.endsWith('m')) {
-      maxAge = parseInt(expiresIn.slice(0, -1)) * 60 * 1000;
-    }
+    const maxAge = this.parseDuration(expiresIn, 7 * 24 * 60 * 60 * 1000);
 
     const explicit = this.configService.get<string>('JWT_COOKIE_SECURE');
     const secure =
@@ -63,13 +62,22 @@ export class AuthService {
     const opts = this.getCookieOptions();
     const refreshExpiresIn =
       this.configService.get<string>('JWT_REFRESH_EXPIRES_IN') || '30d';
-    let maxAge = 30 * 24 * 60 * 60 * 1000;
-    if (refreshExpiresIn.endsWith('d')) {
-      maxAge = parseInt(refreshExpiresIn.slice(0, -1)) * 24 * 60 * 60 * 1000;
-    } else if (refreshExpiresIn.endsWith('h')) {
-      maxAge = parseInt(refreshExpiresIn.slice(0, -1)) * 60 * 60 * 1000;
-    }
+    const maxAge = this.parseDuration(
+      refreshExpiresIn,
+      30 * 24 * 60 * 60 * 1000,
+    );
     return { ...opts, maxAge };
+  }
+
+  /** Parseia duração (ex: "7d", "12h", "30m", "900s") via ms(); fallback seguro. */
+  private parseDuration(value: string, fallbackMs: number): number {
+    try {
+      const parsed = ms(value as ms.StringValue);
+      if (typeof parsed === 'number' && parsed > 0) return parsed;
+    } catch {
+      /* valor inválido — usa fallback */
+    }
+    return fallbackMs;
   }
 
   setAuthCookies(
@@ -94,7 +102,8 @@ export class AuthService {
   // ── Auth flows ──────────────────────────────────────────────────────
 
   async register(registerDto: RegisterDto) {
-    const { name, userName, email, password } = registerDto;
+    const { name, userName, password } = registerDto;
+    const email = this.normalizeEmail(registerDto.email);
 
     if (this.shouldVerifyCaptcha()) {
       await this.turnstileService.verify(registerDto.turnstileToken);
@@ -110,31 +119,29 @@ export class AuthService {
     });
 
     if (userExists) {
-      if (userExists.isVerified) {
-        throw new ConflictException(
-          'Não foi possível concluir o cadastro com esses dados.',
-        );
+      // Unverified user re-registering — update password/name and resend code.
+      // Response genérica p/ não vazar se o email está registrado (enumeração).
+      if (!userExists.isVerified) {
+        const hashedPassword = await bcrypt.hash(password, BCRYPT_ROUNDS);
+        await this.prisma.user.update({
+          where: { id: userExists.id },
+          data: {
+            password: hashedPassword,
+            name,
+            ...(normalizedUserName ? { userName: normalizedUserName } : {}),
+          },
+        });
+
+        await this.prisma.emailVerificationCode.deleteMany({
+          where: { userId: userExists.id },
+        });
+        const code = await this.createVerificationCode(userExists.id);
+        await this.mailService.sendVerificationCode(email, code);
       }
 
-      // Unverified user re-registering — update password/name and resend code.
-      const hashedPassword = await bcrypt.hash(password, BCRYPT_ROUNDS);
-      await this.prisma.user.update({
-        where: { id: userExists.id },
-        data: {
-          password: hashedPassword,
-          name,
-          ...(normalizedUserName ? { userName: normalizedUserName } : {}),
-        },
-      });
-
-      await this.prisma.emailVerificationCode.deleteMany({
-        where: { userId: userExists.id },
-      });
-      const code = await this.createVerificationCode(userExists.id);
-      await this.mailService.sendVerificationCode(email, code);
-
       return {
-        message: 'Código de verificação reenviado. Verifique seu email.',
+        message:
+          'Conta criada. Verifique seu email para o código de verificação.',
       };
     }
 
@@ -168,7 +175,8 @@ export class AuthService {
   }
 
   async login(loginDto: LoginDto) {
-    const { email, password } = loginDto;
+    const { password } = loginDto;
+    const email = this.normalizeEmail(loginDto.email);
 
     if (this.shouldVerifyCaptcha()) {
       await this.turnstileService.verify(loginDto.turnstileToken);
@@ -189,9 +197,7 @@ export class AuthService {
     }
 
     if (!user.isVerified) {
-      throw new ForbiddenException(
-        'Conta não verificada. Verifique seu email para continuar.',
-      );
+      throw new UnauthorizedException('Credenciais inválidas.');
     }
 
     const tokens = await this.getTokens(user.id, user.email, user.role);
@@ -249,12 +255,14 @@ export class AuthService {
       throw new BadRequestException('Senha atual incorreta.');
     }
 
-    if (user.email === newEmail) {
+    const normalizedNewEmail = this.normalizeEmail(newEmail);
+
+    if (user.email.toLowerCase() === normalizedNewEmail) {
       throw new BadRequestException('O novo email é igual ao atual.');
     }
 
     const emailTaken = await this.prisma.user.findUnique({
-      where: { email: newEmail },
+      where: { email: normalizedNewEmail },
     });
 
     if (emailTaken) {
@@ -273,19 +281,21 @@ export class AuthService {
       data: {
         token: tokenHash,
         userId,
-        newEmail,
+        newEmail: normalizedNewEmail,
         expiresAt,
       },
     });
 
     const confirmUrl = `${this.configService.get<string>('FRONTEND_URL') || 'http://localhost:3000'}/settings/confirm-email?token=${token}`;
 
-    await this.mailService.sendEmailChangeConfirm(newEmail, confirmUrl);
+    await this.mailService.sendEmailChangeConfirm(
+      normalizedNewEmail,
+      confirmUrl,
+    );
 
     return {
       message:
         'Email de confirmação enviado. Verifique sua caixa de entrada para confirmar a troca.',
-      token,
     };
   }
 
@@ -322,6 +332,9 @@ export class AuthService {
     await this.prisma.emailChangeToken.delete({
       where: { id: record.id },
     });
+
+    // Identidade trocada — derruba sessões existentes.
+    await this.revokeAllUserRefreshTokens(record.userId);
 
     return { message: 'Email alterado com sucesso.' };
   }
@@ -393,7 +406,7 @@ export class AuthService {
 
   async forgotPassword(email: string) {
     const user = await this.prisma.user.findUnique({
-      where: { email },
+      where: { email: this.normalizeEmail(email) },
     });
 
     if (!user) {
@@ -420,11 +433,10 @@ export class AuthService {
 
     const resetUrl = `${this.configService.get<string>('FRONTEND_URL') || 'http://localhost:3000'}/redefinir-senha?token=${token}`;
 
-    await this.mailService.sendPasswordResetEmail(email, resetUrl);
+    await this.mailService.sendPasswordResetEmail(user.email, resetUrl);
 
     return {
       message: 'Se o email existir, um link de redefinição foi enviado.',
-      token,
     };
   }
 
@@ -462,7 +474,7 @@ export class AuthService {
 
   async verifyEmail(email: string, code: string) {
     const user = await this.prisma.user.findUnique({
-      where: { email },
+      where: { email: this.normalizeEmail(email) },
     });
 
     if (!user) {
@@ -524,7 +536,9 @@ export class AuthService {
   }
 
   async resendVerificationCode(email: string) {
-    const user = await this.prisma.user.findUnique({ where: { email } });
+    const user = await this.prisma.user.findUnique({
+      where: { email: this.normalizeEmail(email) },
+    });
 
     if (!user) {
       // Don't leak whether email exists.
@@ -540,15 +554,15 @@ export class AuthService {
     });
 
     const code = await this.createVerificationCode(user.id);
-    await this.mailService.sendVerificationCode(email, code);
+    await this.mailService.sendVerificationCode(user.email, code);
 
     return { message: 'Código de verificação reenviado.' };
   }
 
   private async createVerificationCode(userId: string): Promise<string> {
-    const code = Array.from({ length: 8 }, () =>
-      Math.floor(Math.random() * 10),
-    ).join('');
+    const code = Array.from({ length: 8 }, () => crypto.randomInt(0, 10)).join(
+      '',
+    );
 
     const codeHash = this.hashToken(code);
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
@@ -645,6 +659,10 @@ export class AuthService {
     return normalized || undefined;
   }
 
+  private normalizeEmail(email: string): string {
+    return email.trim().toLowerCase();
+  }
+
   private async ensureUserNameUnique(
     userName: string,
     excludeUserId?: string,
@@ -666,10 +684,30 @@ export class AuthService {
   }
 
   private shouldVerifyCaptcha(): boolean {
+    const flag = process.env.TURNSTILE_ENABLED;
+    if (flag === 'true') return true;
+    if (flag === 'false') return false;
+
     const secret = process.env.TURNSTILE_SECRET;
-    if (!secret || secret.startsWith('0x4AAAAA')) {
-      return false;
+    if (!secret) return false;
+
+    // Chaves de TESTE do Cloudflare começam com `1x0000...` (verificação
+    // simulada que sempre passa) — não há o que validar no siteverify.
+    if (secret.startsWith('1x')) return false;
+
+    // Chaves de PRODUÇÃO têm formato 0x4AAAAAAA... (40 chars). Chaves fora
+    // desse formato são config quebrada: degrada para "sem captcha" com
+    // warning (evita derrubar login/registro inteiro) até a chave ser
+    // corrigida. Obs: o check anterior usava 0x4AAAAA como prefixo de teste,
+    // o que desligava o captcha até com chave real de produção.
+    if (/^0x4[A-Za-z0-9_-]{37}$/.test(secret)) return true;
+
+    if (!AuthService.captchaMisconfiguredWarned) {
+      AuthService.captchaMisconfiguredWarned = true;
+      this.logger.warn(
+        '[turnstile] TURNSTILE_SECRET não segue o formato de chave de produção (esperado 0x4... com 40 chars) — verificação de captcha desativada até corrigir a chave.',
+      );
     }
-    return true;
+    return false;
   }
 }

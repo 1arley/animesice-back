@@ -12,6 +12,10 @@
  * problema transitório.
  */
 
+import { assertHostResolvesSafely, isBlockedHostname } from '@/common/ssrf';
+
+const MAX_REDIRECTS = 5;
+
 /** Referer anti-hotlink por host de CDN (mesma regra do proxy de mídia). */
 export function refererForMediaUrl(mediaUrl: string): string {
   try {
@@ -94,27 +98,49 @@ export async function probeMediaUrlDead(url: string): Promise<boolean> {
   const timer = setTimeout(() => controller.abort(), 5000);
   try {
     const referer = refererForMediaUrl(url);
-    const res = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'user-agent':
-          'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        referer,
-        origin: referer.replace(/\/$/, ''),
-        accept: '*/*',
-        'accept-language': 'pt-BR,pt;q=0.9,en;q=0.5',
-        Range: 'bytes=0-0',
-      },
-      redirect: 'follow',
-      signal: controller.signal,
-    });
-    await res.body?.cancel();
-    return (
-      res.status === 401 ||
-      res.status === 403 ||
-      res.status === 404 ||
-      res.status === 410
-    );
+
+    let current = url;
+    for (let i = 0; i <= MAX_REDIRECTS; i++) {
+      const u = new URL(current);
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') return true;
+      if (isBlockedHostname(u.hostname)) return true;
+      await assertHostResolvesSafely(current);
+
+      const res = await fetch(current, {
+        method: 'GET',
+        headers: {
+          'user-agent':
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          referer,
+          origin: referer.replace(/\/$/, ''),
+          accept: '*/*',
+          'accept-language': 'pt-BR,pt;q=0.9,en;q=0.5',
+          Range: 'bytes=0-0',
+        },
+        redirect: 'manual',
+        signal: controller.signal,
+      });
+
+      const location = res.headers.get('location');
+      const isRedirect = res.status >= 300 && res.status < 400 && !!location;
+      if (isRedirect) {
+        try {
+          current = new URL(location, current).toString();
+          continue;
+        } catch {
+          return true;
+        }
+      }
+
+      await res.body?.cancel();
+      return (
+        res.status === 401 ||
+        res.status === 403 ||
+        res.status === 404 ||
+        res.status === 410
+      );
+    }
+    return true;
   } catch {
     return false;
   } finally {

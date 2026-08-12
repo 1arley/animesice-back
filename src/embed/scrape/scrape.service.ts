@@ -302,39 +302,35 @@ export class ScrapeService {
       }
     }
 
-    let browser: Browser;
+    let browser: Browser | null = null;
+    let context: BrowserContext | null = null;
     try {
       browser = await chromium.launch({
         headless: true,
         chromiumSandbox: false,
       });
-    } catch (err) {
-      this.activeScrapes -= 1;
-      throw err;
-    }
-    const context = await browser.newContext({
-      userAgent: UA_DESKTOP,
-      locale: 'pt-BR',
-      viewport: { width: 1366, height: 768 },
-    });
-    const page = await context.newPage();
+      context = await browser.newContext({
+        userAgent: UA_DESKTOP,
+        locale: 'pt-BR',
+        viewport: { width: 1366, height: 768 },
+      });
+      const page = await context.newPage();
 
-    // Listener de requests ANTES do goto: captura stream gerado por qualquer
-    // JS que rodar, mesmo antes de tentarmos clicar (alguns clones disparan o
-    // videoplayback no load). Diagnostico: logar todos os hosts de midia vistos.
-    const allMediaRequests: string[] = [];
-    page.on('request', (req) => {
-      const u = req.url();
-      if (
-        /videoplayback|googlevideo|\.m3u8|\.mp4($|\?|#)|blogger\.com\/video/i.test(
-          u,
-        )
-      ) {
-        allMediaRequests.push(u);
-      }
-    });
+      // Listener de requests ANTES do goto: captura stream gerado por qualquer
+      // JS que rodar, mesmo antes de tentarmos clicar (alguns clones disparan o
+      // videoplayback no load). Diagnostico: logar todos os hosts de midia vistos.
+      const allMediaRequests: string[] = [];
+      page.on('request', (req) => {
+        const u = req.url();
+        if (
+          /videoplayback|googlevideo|\.m3u8|\.mp4($|\?|#)|blogger\.com\/video/i.test(
+            u,
+          )
+        ) {
+          allMediaRequests.push(u);
+        }
+      });
 
-    try {
       await page.goto(episodeUrl, {
         waitUntil: 'domcontentloaded',
         timeout: 45000,
@@ -455,8 +451,10 @@ export class ScrapeService {
         cloudflare: false,
       };
     } finally {
-      await context.close().catch(() => undefined);
-      await browser.close().catch(() => undefined);
+      // Garante liberação mesmo se newContext/newPage falharem (sem leak de
+      // processo chromium nem de contador de concorrência).
+      if (context) await context.close().catch(() => undefined);
+      if (browser) await browser.close().catch(() => undefined);
       this.activeScrapes -= 1;
     }
   }

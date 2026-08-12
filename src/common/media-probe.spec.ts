@@ -1,5 +1,10 @@
 import { signedExpiryDead, probeMediaUrlDead } from '@/common/media-probe';
 
+jest.mock('@/common/ssrf', () => ({
+  assertHostResolvesSafely: jest.fn().mockResolvedValue(undefined),
+  isBlockedHostname: jest.fn().mockReturnValue(false),
+}));
+
 describe('signedExpiryDead', () => {
   it('retorna true para expire (unix) no passado', () => {
     const past = Math.floor(Date.now() / 1000) - 60;
@@ -55,6 +60,7 @@ describe('probeMediaUrlDead', () => {
     for (const status of [403, 404, 410]) {
       global.fetch = jest.fn(async () => ({
         status,
+        headers: { get: () => null },
         body: { cancel: jest.fn() },
       })) as any;
       expect(await probeMediaUrlDead('https://cdn.test/v.mp4')).toBe(true);
@@ -64,6 +70,7 @@ describe('probeMediaUrlDead', () => {
   it('considera 200/206 como viva', async () => {
     global.fetch = jest.fn(async () => ({
       status: 206,
+      headers: { get: () => null },
       body: { cancel: jest.fn() },
     })) as any;
     expect(await probeMediaUrlDead('https://cdn.test/v.mp4')).toBe(false);

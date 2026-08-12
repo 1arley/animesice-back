@@ -3,7 +3,7 @@ import { AuthService } from '@/auth/auth.service';
 import { PrismaService } from '@/prisma/prisma.service';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import { ConflictException, UnauthorizedException } from '@nestjs/common';
+import { UnauthorizedException } from '@nestjs/common';
 import { MailService } from '@/mail/mail.service';
 import { TurnstileService } from '@/auth/turnstile/turnstile.service';
 import * as bcrypt from 'bcrypt';
@@ -105,17 +105,42 @@ describe('AuthService', () => {
       expect(prisma.user.create).toHaveBeenCalled();
     });
 
-    it('deve lançar ConflictException se email verificado já existir', async () => {
+    it('não vaza existência de email registrado (verificado) — resposta genérica', async () => {
       mockPrismaService.user.findUnique.mockResolvedValue({
         id: '1',
         email: registerDto.email,
         isVerified: true,
       });
 
-      await expect(service.register(registerDto)).rejects.toThrow(
-        ConflictException,
+      const result = await service.register(registerDto);
+
+      expect(result).toHaveProperty(
+        'message',
+        'Conta criada. Verifique seu email para o código de verificação.',
       );
       expect(prisma.user.create).not.toHaveBeenCalled();
+      expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(mockMailService.sendVerificationCode).not.toHaveBeenCalled();
+    });
+
+    it('re-registro de email não verificado atualiza credenciais e reenvia código', async () => {
+      mockPrismaService.user.findUnique.mockResolvedValue({
+        id: '1',
+        email: registerDto.email,
+        isVerified: false,
+      });
+      mockPrismaService.user.update.mockResolvedValue({});
+      mockPrismaService.emailVerificationCode.deleteMany.mockResolvedValue({});
+      mockPrismaService.emailVerificationCode.create.mockResolvedValue({});
+
+      const result = await service.register(registerDto);
+
+      expect(result).toHaveProperty(
+        'message',
+        'Conta criada. Verifique seu email para o código de verificação.',
+      );
+      expect(prisma.user.update).toHaveBeenCalled();
+      expect(mockMailService.sendVerificationCode).toHaveBeenCalled();
     });
   });
 

@@ -29,10 +29,10 @@ const FORBIDDEN_RESPONSE_HEADERS: ReadonlySet<string> = new Set([
 /**
  * CSP p/ HTML proxyado: sandbox sem allow-same-origin => origem opaca no
  * navegador, sem acesso a cookies/localStorage da API nem a fetch() same-origin.
- * allow-scripts preserva o player (video.js) funcionando.
+ * allow-scripts preserva o player (video.js) funcionando. allow-forms removido
+ * (evita CSRF same-site contra a própria API).
  */
-const PROXY_CSP_SANDBOX =
-  'sandbox allow-scripts allow-forms allow-popups allow-modals';
+const PROXY_CSP_SANDBOX = 'sandbox allow-scripts allow-popups allow-modals';
 
 @ApiTags('embed')
 @Controller('embed')

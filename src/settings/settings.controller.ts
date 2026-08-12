@@ -22,7 +22,11 @@ import {
   UpdatePrivacyDto,
   UpdateNotificationPrefDto,
   UpdateSiteSettingsDto,
+  ConfirmEmailChangeDto,
 } from './dto/settings.dto';
+import { ChangeEmailDto } from '@/auth/dto/change-email.dto';
+import { ChangePasswordDto } from '@/auth/dto/change-password.dto';
+import { UpdateProfileDto } from '@/auth/dto/update-profile.dto';
 import { JwtAuthGuard } from '@/auth/jwt-auth.guard';
 import { RolesGuard } from '@/auth/roles.guard';
 import { Roles } from '@/auth/roles.decorators';
@@ -49,20 +53,20 @@ export class SettingsController {
   @ApiOperation({ summary: 'Solicitar troca de email' })
   requestEmailChange(
     @Req() req: AuthenticatedRequest,
-    @Body() body: { newEmail: string; password: string },
+    @Body() dto: ChangeEmailDto,
   ) {
     return this.settingsService.changeEmail(
       req.user.id,
-      body.newEmail,
-      body.password,
+      dto.newEmail,
+      dto.password,
     );
   }
 
   @Post('account/confirm-email')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Confirmar troca de email via token' })
-  confirmEmailChange(@Body('token') token: string) {
-    return this.settingsService.confirmEmailChange(token);
+  confirmEmailChange(@Body() dto: ConfirmEmailChangeDto) {
+    return this.settingsService.confirmEmailChange(dto.token);
   }
 
   @Post('account/change-password')
@@ -70,12 +74,12 @@ export class SettingsController {
   @ApiOperation({ summary: 'Alterar senha' })
   changePassword(
     @Req() req: AuthenticatedRequest,
-    @Body() body: { currentPassword: string; newPassword: string },
+    @Body() dto: ChangePasswordDto,
   ) {
     return this.settingsService.changePassword(
       req.user.id,
-      body.currentPassword,
-      body.newPassword,
+      dto.currentPassword,
+      dto.newPassword,
     );
   }
 
@@ -84,12 +88,12 @@ export class SettingsController {
   @ApiOperation({ summary: 'Atualizar nome e apelido' })
   updateProfile(
     @Req() req: AuthenticatedRequest,
-    @Body() body: { name?: string; userName?: string },
+    @Body() dto: UpdateProfileDto,
   ) {
     return this.settingsService.updateProfile(
       req.user.id,
-      body.name,
-      body.userName,
+      dto.name,
+      dto.userName,
     );
   }
 
@@ -106,9 +110,9 @@ export class SettingsController {
   @ApiOperation({ summary: 'Atualizar configurações de privacidade' })
   updatePrivacySettings(
     @Req() req: AuthenticatedRequest,
-    @Body() _dto: UpdatePrivacyDto,
+    @Body() dto: UpdatePrivacyDto,
   ) {
-    return this.settingsService.getPrivacySettings(req.user.id);
+    return this.settingsService.updatePrivacySettings(req.user.id, dto);
   }
 
   // ── Personal settings: notifications ──────────────────────────────────

@@ -1,5 +1,10 @@
 import { Validator } from '@/watchtower/validator.service';
 
+jest.mock('@/common/ssrf', () => ({
+  assertHostResolvesSafely: jest.fn().mockResolvedValue(undefined),
+  isBlockedHostname: jest.fn().mockReturnValue(false),
+}));
+
 function makeMockPrisma(
   coverImage: string | null = 'https://img.test/cover.jpg',
 ) {
@@ -51,6 +56,7 @@ describe('Validator', () => {
   it('pickValid retorna null quando probe detecta URL morta (403)', async () => {
     global.fetch = jest.fn(async () => ({
       status: 403,
+      headers: { get: () => null },
       body: { cancel: jest.fn() },
     })) as any;
     const url = 'https://cdn.test/dead.mp4';

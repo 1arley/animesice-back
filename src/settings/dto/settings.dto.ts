@@ -1,6 +1,13 @@
-import { IsString, IsOptional, IsBoolean } from 'class-validator';
+import { IsString, IsOptional, IsBoolean, IsNotEmpty } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { NotificationType, NotificationChannel } from '@prisma/client';
+
+export class ConfirmEmailChangeDto {
+  @ApiProperty({ example: 'abc123token' })
+  @IsString()
+  @IsNotEmpty()
+  token!: string;
+}
 
 export class UpdatePrivacyDto {
   @ApiProperty({ required: false })

@@ -140,6 +140,24 @@ model User {
   animeRequests          AnimeRequest[]  @relation("AnimeRequestUser")
   animeRequestVotes     AnimeRequestVote[] @relation("AnimeRequestVoteUser")
   siteFeedbacks         SiteFeedback[]  @relation("SiteFeedbackUser")
+  privacySettings       PrivacySettings?
+}
+
+/// Configuração global do site (chave-valor) — persistida no DB, com
+/// fallback para env vars quando a chave não foi gravada.
+model SiteSetting {
+  key   String  @id
+  value String?
+}
+
+/// Preferências de privacidade por usuário.
+model PrivacySettings {
+  userId        String   @id
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  profilePublic Boolean  @default(true)
+  showActivity  Boolean  @default(true)
+  showFavorites Boolean  @default(true)
+  showRatings   Boolean  @default(true)
 }
 
 model EmailVerificationCode {

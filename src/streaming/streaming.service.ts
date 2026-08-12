@@ -3,6 +3,7 @@ import {
   NotFoundException,
   ForbiddenException,
 } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '@/prisma/prisma.service';
 import { EmbedService } from '@/embed/embed.service';
 import { ScrapeService } from '@/embed/scrape/scrape.service';
@@ -79,11 +80,41 @@ export interface StreamSourceResponse {
 
 @Injectable()
 export class StreamingService {
+  /** Single-flight + cache curto p/ re-extrações (anti thundering herd no
+   *  scraper de chromium, que é caro e concorrencia-limitado). */
+  private readonly scrapeInflight = new Map<
+    string,
+    Promise<{ videoUrl: string | null; youtubeEmbed: string | null }>
+  >();
+  private readonly scrapeCache = new Map<
+    string,
+    {
+      result: { videoUrl: string | null; youtubeEmbed: string | null };
+      at: number;
+    }
+  >();
+  private readonly reextractInflight = new Map<
+    string,
+    Promise<string | null>
+  >();
+  private readonly SCRAPE_CACHE_TTL_MS = 5 * 60_000;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly embedService: EmbedService,
     private readonly scrapeService: ScrapeService,
   ) {}
+
+  /** Purga tokens de streaming expirados (a cada 6h) p/ evitar crescimento. */
+  @Cron('0 */6 * * *')
+  async purgeExpiredTokens(): Promise<void> {
+    const r = await this.prisma.streamingToken.deleteMany({
+      where: { expiresAt: { lt: new Date() } },
+    });
+    if (r.count > 0) {
+      console.log(`[STREAM] purge: ${r.count} tokens expirados removidos`);
+    }
+  }
 
   async generateToken(
     episodeSlug: string,
@@ -99,12 +130,16 @@ export class StreamingService {
       throw new NotFoundException('Anime não encontrado.');
     }
 
+    const episodeNumber = /^\d+$/.test(episodeSlug)
+      ? parseInt(episodeSlug, 10)
+      : NaN;
+
     const episode = await this.prisma.episode.findUnique({
       where: {
         animeId_season_number: {
           animeId: anime.id,
           season: 1,
-          number: parseInt(episodeSlug, 10),
+          number: episodeNumber,
         },
       },
     });
@@ -143,6 +178,147 @@ export class StreamingService {
       ip: clientIp,
       episode,
     };
+  }
+
+  /**
+   * Resolve o videoUrl de um episódio com single-flight + cache TTL na parte
+   * cara (scrape via chromium). Fluxo: unwrap legado -> probe de liveness ->
+   * re-extração (embrulhada no single-flight).
+   */
+  private async resolveVideo(
+    episode: {
+      id: string;
+      videoUrl: string | null;
+      embedUrl: string | null;
+    },
+    animeSlug: string,
+    episodeNumber: number,
+    season: number,
+  ): Promise<{
+    videoUrl: string | null;
+    youtubeEmbed: string | null;
+    reextracted: boolean;
+  }> {
+    let rawVideoUrl: string | null = episode.videoUrl;
+
+    dbg(
+      `[STREAM] getSource animeSlug=${animeSlug} ep=${episodeNumber} embedUrl=${episode.embedUrl ?? 'null'} videoUrl=${episode.videoUrl?.slice(0, 80) ?? 'null'}`,
+    );
+
+    // videoUrl pode estar no formato legado "http://localhost:3001/embed/media?url=..."
+    // (wrap que quebra em deploy). Tenta recuperar a URL CRU do parâmetro `url`.
+    if (rawVideoUrl && /\/embed\/media\?url=/i.test(rawVideoUrl)) {
+      try {
+        const u = new URL(rawVideoUrl);
+        const inner = u.searchParams.get('url');
+        if (inner) rawVideoUrl = inner;
+      } catch {
+        /* mantém */
+      }
+    }
+
+    // videoUrl guardada pode estar morta (token CDN/IP-URL expirado). Probe
+    // leve e, se morta, zera para o fluxo de re-extração abaixo recompor.
+    if (rawVideoUrl && /^https?:\/\//i.test(rawVideoUrl)) {
+      const dead = await probeMediaUrlDead(rawVideoUrl);
+      dbg(`[STREAM] probe videoUrl=${rawVideoUrl.slice(0, 80)} dead=${dead}`);
+      if (dead) {
+        dbg(
+          `[STREAM] videoUrl morta — forçando re-extração p/ ${animeSlug}/${episodeNumber}`,
+        );
+        rawVideoUrl = null;
+      }
+    }
+
+    if (rawVideoUrl && /^https?:\/\//i.test(rawVideoUrl)) {
+      return { videoUrl: rawVideoUrl, youtubeEmbed: null, reextracted: false };
+    }
+
+    // Sem videoUrl utilizável -> re-extração (single-flight + cache curto).
+    const key = `${animeSlug}:${season}:${episodeNumber}`;
+    const cached = this.scrapeCache.get(key);
+    if (cached && Date.now() - cached.at < this.SCRAPE_CACHE_TTL_MS) {
+      dbg(`[STREAM] scrape cache hit p/ ${key}`);
+      return { ...cached.result, reextracted: false };
+    }
+
+    let inflight = this.scrapeInflight.get(key);
+    if (!inflight) {
+      inflight = this.doSingleScrape(episode, animeSlug, episodeNumber, season)
+        .then((result) => {
+          this.scrapeCache.set(key, { result, at: Date.now() });
+          return result;
+        })
+        .finally(() => {
+          this.scrapeInflight.delete(key);
+        });
+      this.scrapeInflight.set(key, inflight);
+    }
+
+    const result = await inflight;
+    return { ...result, reextracted: true };
+  }
+
+  /** Scrape real (fora do single-flight): fonte original + fallback meusanimes. */
+  private async doSingleScrape(
+    episode: { id: string; embedUrl: string | null },
+    animeSlug: string,
+    episodeNumber: number,
+    season: number,
+  ): Promise<{ videoUrl: string | null; youtubeEmbed: string | null }> {
+    let rawVideoUrl: string | null = null;
+    let youtubeEmbed: string | null = null;
+
+    // Tentativa 1: fonte original (embedUrl)
+    if (episode.embedUrl) {
+      dbg(
+        `[STREAM] tentativa 1: scrapeEpisodeVideo(embedUrl=${episode.embedUrl.slice(0, 80)})`,
+      );
+      try {
+        const result = await this.scrapeService.scrapeEpisodeVideo(
+          episode.embedUrl,
+          undefined,
+          false,
+        );
+        rawVideoUrl = result.videos[0] ?? null;
+        youtubeEmbed =
+          (result.playerTokens ?? []).find((t) => youtubeEmbedUrl(t)) ?? null;
+        dbg(
+          `[STREAM] tentativa 1 resultado: videos=${result.videos.length} rawVideoUrl=${rawVideoUrl?.slice(0, 80) ?? 'null'} youtubeEmbed=${youtubeEmbed?.slice(0, 60) ?? 'null'}`,
+        );
+      } catch (err) {
+        dbg(
+          `[STREAM] tentativa 1 FALHOU: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
+    // Tentativa 2: fallback meusanimes.blog
+    if (!rawVideoUrl) {
+      dbg(
+        `[STREAM] tentativa 2: scrapeFromMeusanimes(${animeSlug}, ${episodeNumber}, s${season})`,
+      );
+      rawVideoUrl = await this.scrapeService.scrapeFromMeusanimes(
+        animeSlug,
+        episodeNumber,
+        season,
+      );
+      dbg(
+        `[STREAM] tentativa 2 resultado: ${rawVideoUrl?.slice(0, 80) ?? 'null'}`,
+      );
+    }
+
+    // Persiste RAW (sem wrap) p/ próximas chamadas.
+    if (rawVideoUrl) {
+      await this.prisma.episode
+        .update({
+          where: { id: episode.id },
+          data: { videoUrl: rawVideoUrl },
+        })
+        .catch(() => undefined);
+    }
+
+    return { videoUrl: rawVideoUrl, youtubeEmbed };
   }
 
   /**
@@ -198,97 +374,16 @@ export class StreamingService {
       throw new NotFoundException('Episódio não encontrado.');
     }
 
-    let rawVideoUrl: string | null = episode.videoUrl;
-    let reextracted = false;
+    const {
+      videoUrl: rawVideoUrl,
+      youtubeEmbed,
+      reextracted,
+    } = await this.resolveVideo(episode, anime.slug, episodeNumber, season);
 
-    dbg(
-      `[STREAM] getSource animeSlug=${animeSlug} ep=${episodeNumber} embedUrl=${episode.embedUrl ?? 'null'} videoUrl=${episode.videoUrl?.slice(0, 80) ?? 'null'}`,
-    );
-
-    // videoUrl pode estar no formato legado "http://localhost:3001/embed/media?url=..."
-    // (wrap que quebra em deploy). Tenta recuperar a URL CRU do parâmetro `url`.
-    if (rawVideoUrl && /\/embed\/media\?url=/i.test(rawVideoUrl)) {
-      try {
-        const u = new URL(rawVideoUrl);
-        const inner = u.searchParams.get('url');
-        if (inner) rawVideoUrl = inner;
-      } catch {
-        /* mantém */
-      }
-    }
-
-    // videoUrl guardada pode estar morta (token CDN/IP-URL expirado). Probe
-    // leve e, se morta, zera para o fluxo de re-extração abaixo recompor.
-    if (rawVideoUrl && /^https?:\/\//i.test(rawVideoUrl)) {
-      const dead = await probeMediaUrlDead(rawVideoUrl);
-      dbg(`[STREAM] probe videoUrl=${rawVideoUrl.slice(0, 80)} dead=${dead}`);
-      if (dead) {
-        dbg(
-          `[STREAM] videoUrl morta — forçando re-extração p/ ${animeSlug}/${episodeNumber}`,
-        );
-        rawVideoUrl = null;
-      }
-    }
-
-    // Sem videoUrl utilizável -> tenta re-extração.
-    // 1ª tentativa: embedUrl do episódio (geralmente animefire.io).
-    // 2ª tentativa (fallback): meusanimes.blog se animefire bloquear (403 CF).
-    let youtubeEmbed: string | null = null;
-    if (!rawVideoUrl || !/^https?:\/\//i.test(rawVideoUrl)) {
-      // Tentativa 1: fonte original (embedUrl)
-      if (episode.embedUrl) {
-        dbg(
-          `[STREAM] tentativa 1: scrapeEpisodeVideo(embedUrl=${episode.embedUrl.slice(0, 80)})`,
-        );
-        try {
-          const result = await this.scrapeService.scrapeEpisodeVideo(
-            episode.embedUrl,
-            undefined,
-            false,
-          );
-          rawVideoUrl = result.videos[0] ?? null;
-          youtubeEmbed =
-            (result.playerTokens ?? []).find((t) => youtubeEmbedUrl(t)) ?? null;
-          dbg(
-            `[STREAM] tentativa 1 resultado: videos=${result.videos.length} rawVideoUrl=${rawVideoUrl?.slice(0, 80) ?? 'null'} youtubeEmbed=${youtubeEmbed?.slice(0, 60) ?? 'null'}`,
-          );
-        } catch (err) {
-          dbg(
-            `[STREAM] tentativa 1 FALHOU: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        }
-      }
-
-      // Tentativa 2: fallback meusanimes.blog
-      if (!rawVideoUrl) {
-        dbg(
-          `[STREAM] tentativa 2: scrapeFromMeusanimes(${animeSlug}, ${episodeNumber}, s${season})`,
-        );
-        rawVideoUrl = await this.scrapeService.scrapeFromMeusanimes(
-          animeSlug,
-          episodeNumber,
-          season,
-        );
-        dbg(
-          `[STREAM] tentativa 2 resultado: ${rawVideoUrl?.slice(0, 80) ?? 'null'}`,
-        );
-      }
-
-      if (!rawVideoUrl && !youtubeEmbed) {
-        dbg(`[STREAM] ambas tentativas falharam — 404`);
-        throw new NotFoundException(
-          'Vídeo não disponível: re-extração falhou em todas as fontes.',
-        );
-      }
-
-      // Persiste RAW (sem wrap) p/ próximas chamadas.
-      if (rawVideoUrl) {
-        await this.prisma.episode.update({
-          where: { id: episode.id },
-          data: { videoUrl: rawVideoUrl },
-        });
-        reextracted = true;
-      }
+    if (!rawVideoUrl && !youtubeEmbed) {
+      throw new NotFoundException(
+        'Vídeo não disponível: re-extração falhou em todas as fontes.',
+      );
     }
 
     // Fonte é player do YouTube (embed): não há .mp4 server-side extraível
@@ -416,20 +511,33 @@ export class StreamingService {
       console.log(
         `[STREAM] 403 p/ ${animeSlug}/s${season}/${episodeNumber}, re-extraindo...`,
       );
-      // Tenta re-extração da fonte original.
-      let fresh = await this.scrapeService.reextractEpisodeVideo(
-        animeSlug,
-        episodeNumber,
-        season,
-      );
-      // Fallback meusanimes.
-      if (!fresh) {
-        fresh = await this.scrapeService.scrapeFromMeusanimes(
-          animeSlug,
-          episodeNumber,
-          season,
-        );
+      // Single-flight: N viewers com 403 compartilham UMA re-extração (o
+      // scraper é caro e concorrencia-limitado).
+      const key = `${animeSlug}:${season}:${episodeNumber}`;
+      let inflight = this.reextractInflight.get(key);
+      if (!inflight) {
+        inflight = (async () => {
+          // Tenta re-extração da fonte original.
+          let fresh = await this.scrapeService.reextractEpisodeVideo(
+            animeSlug,
+            episodeNumber,
+            season,
+          );
+          // Fallback meusanimes.
+          if (!fresh) {
+            fresh = await this.scrapeService.scrapeFromMeusanimes(
+              animeSlug,
+              episodeNumber,
+              season,
+            );
+          }
+          return fresh;
+        })().finally(() => {
+          this.reextractInflight.delete(key);
+        });
+        this.reextractInflight.set(key, inflight);
       }
+      const fresh = await inflight;
       if (fresh) {
         const freshOrigin = refererForMediaUrl(fresh);
         result = await this.embedService.proxyMedia(

@@ -108,7 +108,7 @@ export class WatchtowerScheduler implements OnModuleInit {
         payload: {},
         priority: PRIORITY.DISCOVER_SEASON,
       });
-      await this.catalog.scanAll().catch((e) => {
+      await this.catalog.scanAll(true).catch((e) => {
         console.error(
           '[WATCHTOWER] scanAll falhou:',
           e instanceof Error ? e.message : String(e),

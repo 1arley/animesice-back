@@ -18,8 +18,10 @@ import express from 'express';
 import { StreamingService } from '@/streaming/streaming.service';
 import { JwtAuthGuard } from '@/auth/jwt-auth.guard';
 import { ConfigService } from '@nestjs/config';
+import { Throttle } from '@nestjs/throttler';
 
 const HOSTNAME_RE = /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$/i;
+const EPISODE_NUM_RE = /^\d+$/;
 
 /**
  * Extrai o IP real do cliente do request server-side (nunca do query param).
@@ -42,7 +44,10 @@ function clientIpFromRequest(
 /**
  * Origem pública do backend (scheme + host) usada p/ montar URLs absolutas de
  * proxy de mídia `/embed/media` no caminho `/stream/source`. Em prod, use
- * PUBLIC_BACKEND_URL; x-forwarded-* só é aceito com TRUST_PROXY e host válido.
+ * PUBLIC_BACKEND_URL. Headers x-forwarded-* só são aceitos com TRUST_PROXY;
+ * o host (forwarded ou direto) é validado contra PUBLIC_BACKEND_HOSTS quando
+ * configurado, e em produção exige allowlist — evita entregar o token de mídia
+ * assinado a uma origem atacante via Host header poisoning.
  */
 function backendOrigin(
   req: express.Request,
@@ -52,21 +57,44 @@ function backendOrigin(
   const configured = config.get<string>('PUBLIC_BACKEND_URL');
   if (configured) return configured.replace(/\/$/, '');
 
+  const allowedHosts = (config.get<string>('PUBLIC_BACKEND_HOSTS') ?? '')
+    .split(',')
+    .map((h) => h.trim().toLowerCase())
+    .filter(Boolean);
+
+  let host: string | undefined;
   if (trustProxy) {
-    const proto = req.headers['x-forwarded-proto'];
-    const host = req.headers['x-forwarded-host'];
-    if (typeof host === 'string' && HOSTNAME_RE.test(host)) {
-      const scheme =
-        typeof proto === 'string' && /^https?$/i.test(proto)
-          ? proto.toLowerCase()
-          : 'https';
-      return `${scheme}://${host}`;
+    const forwarded = req.headers['x-forwarded-host'];
+    if (typeof forwarded === 'string') host = forwarded;
+  }
+  if (!host) {
+    const direct = req.headers['host'];
+    if (typeof direct === 'string') host = direct;
+  }
+
+  if (host && HOSTNAME_RE.test(host)) {
+    const hostOnly = host.replace(/:\d+$/, '').toLowerCase();
+    if (allowedHosts.length > 0) {
+      if (allowedHosts.includes(host) || allowedHosts.includes(hostOnly)) {
+        const scheme =
+          trustProxy &&
+          typeof req.headers['x-forwarded-proto'] === 'string' &&
+          /^https?$/i.test(req.headers['x-forwarded-proto'])
+            ? String(req.headers['x-forwarded-proto']).toLowerCase()
+            : 'https';
+        return `${scheme}://${host}`;
+      }
+    } else {
+      if (process.env.NODE_ENV !== 'production') {
+        return `${req.protocol}://${host}`;
+      }
     }
   }
 
-  const host = req.headers['host'];
-  if (typeof host === 'string' && HOSTNAME_RE.test(host)) {
-    return `${req.protocol}://${host}`;
+  if (process.env.NODE_ENV === 'production') {
+    throw new ForbiddenException(
+      'PUBLIC_BACKEND_URL ou PUBLIC_BACKEND_HOSTS não configurados.',
+    );
   }
   return 'http://localhost';
 }
@@ -96,6 +124,7 @@ export class StreamingController {
    * backend compartilha o IP de saída com a CDN.
    */
   @Get('source')
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @ApiOperation({
     summary:
       'Origem do player (público): resolve videoUrl, re-extrai da fonte se necessário, devolve src do proxy de mídia.',
@@ -125,7 +154,9 @@ export class StreamingController {
     @Query('episode') episodeSlug: string,
     @Req() req: express.Request,
   ) {
-    const episodeNumber = parseInt(episodeSlug, 10);
+    const episodeNumber = EPISODE_NUM_RE.test(episodeSlug)
+      ? parseInt(episodeSlug, 10)
+      : NaN;
     if (!animeSlug || Number.isNaN(episodeNumber)) {
       throw new NotFoundException(
         'Parâmetros `anime` e `episode` são obrigatórios.',

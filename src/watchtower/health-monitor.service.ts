@@ -23,46 +23,50 @@ export class HealthMonitor {
   constructor(private readonly prisma: PrismaService) {}
 
   async recordSuccess(sourceId: string, latencyMs: number): Promise<void> {
-    const row = await this.prisma.watchtowerSourceHealth.upsert({
-      where: { sourceId },
-      update: {},
-      create: { sourceId },
-    });
-    const total = row.successCount + 1;
-    const oldAvg = row.avgLatencyMs;
-    const newAvg =
-      oldAvg === 0
-        ? latencyMs
-        : Math.round((oldAvg * row.successCount + latencyMs) / total);
-    await this.prisma.watchtowerSourceHealth.update({
-      where: { sourceId },
-      data: {
-        successCount: total,
-        consecutiveFailures: 0,
-        avgLatencyMs: newAvg,
-        lastSuccessAt: new Date(),
-        disabled: false,
-      },
-    });
+    await this.prisma.watchtowerSourceHealth
+      .upsert({
+        where: { sourceId },
+        update: {},
+        create: { sourceId },
+      })
+      .catch(() => undefined);
+    // Update atômico em 1 statement (sem read-modify-write => sem lost update
+    // sob concorrência entre workers/instâncias).
+    await this.prisma.$executeRaw`
+      UPDATE "WatchtowerSourceHealth"
+      SET
+        "successCount" = "successCount" + 1,
+        "consecutiveFailures" = 0,
+        "avgLatencyMs" = CASE
+          WHEN "successCount" = 0 THEN ${Math.round(latencyMs)}
+          ELSE ROUND(("avgLatencyMs" * "successCount" + ${Math.round(latencyMs)}) / ("successCount" + 1))
+        END,
+        "lastSuccessAt" = NOW(),
+        "disabled" = false
+      WHERE "sourceId" = ${sourceId}
+    `;
   }
 
   async recordFailure(sourceId: string): Promise<void> {
-    const row = await this.prisma.watchtowerSourceHealth.upsert({
-      where: { sourceId },
-      update: {},
-      create: { sourceId },
-    });
-    const newConsec = row.consecutiveFailures + 1;
-    const shouldDisable = newConsec >= DISABLE_THRESHOLD;
-    await this.prisma.watchtowerSourceHealth.update({
-      where: { sourceId },
-      data: {
-        failureCount: row.failureCount + 1,
-        consecutiveFailures: newConsec,
-        lastFailureAt: new Date(),
-        ...(shouldDisable ? { disabled: true } : {}),
-      },
-    });
+    await this.prisma.watchtowerSourceHealth
+      .upsert({
+        where: { sourceId },
+        update: {},
+        create: { sourceId },
+      })
+      .catch(() => undefined);
+    await this.prisma.$executeRaw`
+      UPDATE "WatchtowerSourceHealth"
+      SET
+        "failureCount" = "failureCount" + 1,
+        "consecutiveFailures" = "consecutiveFailures" + 1,
+        "lastFailureAt" = NOW(),
+        "disabled" = CASE
+          WHEN "consecutiveFailures" + 1 >= ${DISABLE_THRESHOLD} THEN true
+          ELSE "disabled"
+        END
+      WHERE "sourceId" = ${sourceId}
+    `;
   }
 
   /** Fontes ativas, ordenadas por score (saudável 1º). meusanimes = base prioritária. */

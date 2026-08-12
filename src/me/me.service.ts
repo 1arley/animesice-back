@@ -79,7 +79,7 @@ export class MeService {
     const safeLimit = Math.min(Math.max(limit, 1), 100);
     const skip = (page - 1) * safeLimit;
 
-    const [comments, ratings, favorites, total] =
+    const [comments, ratings, favorites, commentCount, ratingCount, favCount] =
       await this.prisma.$transaction([
         this.prisma.comment.findMany({
           where: { userId },
@@ -122,6 +122,8 @@ export class MeService {
           },
         }),
         this.prisma.comment.count({ where: { userId } }),
+        this.prisma.rating.count({ where: { userId } }),
+        this.prisma.favorite.count({ where: { userId } }),
       ]);
 
     const interleaved = [
@@ -129,6 +131,8 @@ export class MeService {
       ...ratings.map((r) => ({ type: 'rating' as const, ...r })),
       ...favorites.map((f) => ({ type: 'favorite' as const, ...f })),
     ].sort((a, b) => (b.createdAt > a.createdAt ? 1 : -1));
+
+    const total = commentCount + ratingCount + favCount;
 
     return {
       data: interleaved.slice(0, safeLimit),

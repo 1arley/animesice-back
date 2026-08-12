@@ -65,7 +65,14 @@ function makeMockPrisma() {
       updateMany: jest.fn(async (args: any) => {
         let count = 0;
         for (const [_id, job] of store) {
-          if (job.status === args.where?.status) {
+          const idOk = args.where?.id === undefined || job.id === args.where.id;
+          const lockedByOk =
+            args.where?.lockedBy === undefined ||
+            job.lockedBy === args.where.lockedBy;
+          const statusOk =
+            args.where?.status === undefined ||
+            job.status === args.where.status;
+          if (idOk && lockedByOk && statusOk) {
             Object.assign(job, args.data);
             count++;
           }
@@ -131,7 +138,8 @@ describe('JobsService', () => {
     });
     const claimed = await svc.claimBatch(1);
     const jobId = claimed[0]!.id;
-    await svc.complete(jobId);
+    const lockedBy = claimed[0]!.lockedBy!;
+    await svc.complete(jobId, lockedBy);
     const row = mock.store.get(jobId)!;
     expect(row.status).toBe('DONE');
 
@@ -182,7 +190,8 @@ describe('JobsService', () => {
     });
     const claimed = await svc.claimBatch(1);
     const jobId = claimed[0]!.id;
-    await svc.complete(jobId);
+    const lockedBy = claimed[0]!.lockedBy!;
+    await svc.complete(jobId, lockedBy);
     const row = mock.store.get(jobId)!;
     expect(row.status).toBe('DONE');
     expect(row.lockedBy).toBeNull();
@@ -197,7 +206,8 @@ describe('JobsService', () => {
     });
     const claimed = await svc.claimBatch(1);
     const jobId = claimed[0]!.id;
-    await svc.fail(jobId, 'timeout');
+    const lockedBy = claimed[0]!.lockedBy!;
+    await svc.fail(jobId, lockedBy, 'timeout');
     const row = mock.store.get(jobId)!;
     expect(row.attempts).toBe(1);
     expect(row.status).toBe('PENDING');
@@ -214,16 +224,20 @@ describe('JobsService', () => {
     });
     const claimed = await svc.claimBatch(1);
     const jobId = claimed[0]!.id;
-    await svc.fail(jobId, 'err1');
+    const lockedBy = claimed[0]!.lockedBy!;
+    await svc.fail(jobId, lockedBy, 'err1');
     const row1 = mock.store.get(jobId)!;
     expect(row1.status).toBe('PENDING');
-    await svc.fail(jobId, 'err2');
+    // re-claim para obter novo lockedBy após re-enfileiramento
+    const claimed2 = await svc.claimBatch(1);
+    const lockedBy2 = claimed2[0]!.lockedBy!;
+    await svc.fail(jobId, lockedBy2, 'err2');
     const row2 = mock.store.get(jobId)!;
     expect(row2.status).toBe('DEAD');
     expect(row2.attempts).toBe(2);
   });
 
-  it('reapStale reenfileira jobs RUNNING presos', async () => {
+  it('reapStale reenfileira jobs RUNNING presos (incrementa attempts)', async () => {
     await svc.enqueue({
       type: 'EXTRACT_EPISODE',
       dedupeKey: 'extract:stale:1',
@@ -237,6 +251,27 @@ describe('JobsService', () => {
     expect(count).toBeGreaterThanOrEqual(1);
     expect(row.status).toBe('PENDING');
     expect(row.lockedBy).toBeNull();
+    expect(row.attempts).toBe(1);
+    expect(row.lastError).toBe('stale reap (worker crashed/timeout)');
+    expect(row.nextRunAt.getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it('reapStale marca DEAD ao esgotar maxAttempts', async () => {
+    await svc.enqueue({
+      type: 'EXTRACT_EPISODE',
+      dedupeKey: 'extract:stale:dead',
+      payload: {},
+      maxAttempts: 1,
+    });
+    const claimed = await svc.claimBatch(1);
+    const jobId = claimed[0]!.id;
+    const row = mock.store.get(jobId)!;
+    row.lockedAt = new Date(Date.now() - 20 * 60_000);
+    const count = await svc.reapStale(10 * 60_000);
+    expect(count).toBeGreaterThanOrEqual(1);
+    expect(row.status).toBe('DEAD');
+    expect(row.attempts).toBe(1);
+    expect(row.lastError).toBe('stale reap (worker crashed/timeout)');
   });
 
   it('stats retorna agregação por status', async () => {

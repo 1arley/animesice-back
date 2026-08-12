@@ -40,6 +40,44 @@ function makeMockPrisma() {
         return [...store.values()].find((r) => r.disabled === want) ?? null;
       }),
     },
+    // Simula a semântica dos UPDATEs atômicos em SQL bruto.
+    $executeRaw: jest.fn(async (...args: any[]) => {
+      const [strings, ...values] = args;
+      const sql = strings.join('?');
+      const sourceId = String(values[values.length - 1]);
+      const existing = store.get(sourceId) ?? {
+        sourceId,
+        successCount: 0,
+        failureCount: 0,
+        consecutiveFailures: 0,
+        avgLatencyMs: 0,
+        disabled: false,
+        lastSuccessAt: null,
+        lastFailureAt: null,
+      };
+      if (sql.includes('"successCount"')) {
+        const latency = Number(values[0]);
+        existing.successCount += 1;
+        existing.consecutiveFailures = 0;
+        existing.avgLatencyMs =
+          existing.successCount === 1
+            ? latency
+            : Math.round(
+                (existing.avgLatencyMs * (existing.successCount - 1) +
+                  latency) /
+                  existing.successCount,
+              );
+        existing.lastSuccessAt = new Date();
+        existing.disabled = false;
+      } else {
+        existing.failureCount += 1;
+        existing.consecutiveFailures += 1;
+        existing.lastFailureAt = new Date();
+        if (existing.consecutiveFailures >= 5) existing.disabled = true;
+      }
+      store.set(sourceId, existing);
+      return 1;
+    }),
   };
 }
 

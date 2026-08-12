@@ -92,10 +92,10 @@ export class WorkerService {
         default:
           throw new Error(`Tipo de job desconhecido: ${job.type}`);
       }
-      await this.jobs.complete(job.id);
+      await this.jobs.complete(job.id, job.lockedBy ?? '');
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      await this.jobs.fail(job.id, msg);
+      await this.jobs.fail(job.id, job.lockedBy ?? '', msg);
     }
   }
 
@@ -114,6 +114,7 @@ export class WorkerService {
       p.episodeUrl,
     );
     if (candidates.length === 0) {
+      await this.markEpisodeBrokenIfAny(anime.id, season, p.episodeNumber);
       throw new Error(
         `Nenhuma fonte resolveu ${anime.slug}/s${season}/${p.episodeNumber}`,
       );
@@ -122,6 +123,9 @@ export class WorkerService {
     const valid = await this.validator.pickValid(candidates, anime.id);
     if (!valid) {
       for (const c of candidates) await this.health.recordFailure(c.sourceId);
+      // Marca episódio existente como quebrado p/ CHECK_RELEASES parar de
+      // re-enfileirar repetidamente (repair sweep controla a cadência).
+      await this.markEpisodeBrokenIfAny(anime.id, season, p.episodeNumber);
       throw new Error(
         `Validação falhou p/ ${anime.slug}/s${season}/${p.episodeNumber} (vídeos mortos)`,
       );
@@ -253,7 +257,7 @@ export class WorkerService {
         SELECT
           "animeId",
           number,
-          number - LAG(number) OVER (PARTITION BY "animeId" ORDER BY number) AS gap_size
+          number - LAG(number) OVER (PARTITION BY "animeId", "season" ORDER BY number) AS gap_size
         FROM "Episode"
       )
       SELECT
@@ -305,6 +309,24 @@ export class WorkerService {
     console.error(
       `[GAP_CHECK] ${gaps.length} animes com gaps, ${incomplete.filter((a) => a._count.episodes < (a.episodeCount ?? 0)).length} incompletos, ${enqueued} jobs enfileirados`,
     );
+  }
+
+  private async markEpisodeBrokenIfAny(
+    animeId: string,
+    season: number,
+    episodeNumber: number,
+  ): Promise<void> {
+    await this.prisma.episode
+      .updateMany({
+        where: {
+          animeId,
+          season,
+          number: episodeNumber,
+          videoBroken: false,
+        },
+        data: { videoBroken: true, videoCheckedAt: new Date() },
+      })
+      .catch(() => undefined);
   }
 
   private embedUrlForSource(

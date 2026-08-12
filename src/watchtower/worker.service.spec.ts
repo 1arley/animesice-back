@@ -21,6 +21,7 @@ function makeMocks() {
           videoUrl: 'old.mp4',
         })),
         update: jest.fn(async () => undefined),
+        updateMany: jest.fn(async () => ({ count: 0 })),
       },
     },
     jobs: {
@@ -144,7 +145,7 @@ describe('WorkerService', () => {
         embedUrl: 'https://meusanimes.blog/e/solo/',
       }),
     );
-    expect(m.jobs.complete).toHaveBeenCalledWith('job-1');
+    expect(m.jobs.complete).toHaveBeenCalledWith('job-1', '');
   });
 
   it('process EXTRACT_EPISODE falha quando extractor não acha fonte', async () => {
@@ -174,6 +175,7 @@ describe('WorkerService', () => {
     );
     expect(m.jobs.fail).toHaveBeenCalledWith(
       'job-2',
+      '',
       expect.stringContaining('Nenhuma fonte'),
     );
   });
@@ -200,7 +202,7 @@ describe('WorkerService', () => {
       }),
     );
     expect(m.release.checkAll).toHaveBeenCalledTimes(1);
-    expect(m.jobs.complete).toHaveBeenCalledWith('job-3');
+    expect(m.jobs.complete).toHaveBeenCalledWith('job-3', '');
   });
 
   it('process DISCOVER_SEASON delega para season.discover', async () => {
@@ -250,6 +252,7 @@ describe('WorkerService', () => {
     );
     expect(m.jobs.fail).toHaveBeenCalledWith(
       'job-x',
+      '',
       expect.stringContaining('desconhecido'),
     );
   });
@@ -276,6 +279,6 @@ describe('WorkerService', () => {
         payload: { animeId: 'anime-1', slug: 'solo', episodeNumber: 1 },
       }),
     );
-    expect(m.jobs.fail).toHaveBeenCalledWith('job-5', 'crash');
+    expect(m.jobs.fail).toHaveBeenCalledWith('job-5', '', 'crash');
   });
 });

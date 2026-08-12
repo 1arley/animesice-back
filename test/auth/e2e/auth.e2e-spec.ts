@@ -91,7 +91,7 @@ describe('AuthController (e2e)', () => {
       expect(userInDb?.isVerified).toBe(false);
     });
 
-    it('should return 409 Conflict when email already exists', async () => {
+    it('should not leak existing verified email (generic 201 response)', async () => {
       await createTestUser(
         'existing@example.com',
         'Password123!',
@@ -109,12 +109,10 @@ describe('AuthController (e2e)', () => {
       const response = await request(getHttpServer())
         .post('/auth/register')
         .send(registerDto)
-        .expect(409);
+        .expect(201);
 
-      const body = response.body as ErrorResponse;
-      expect(body.message).toContain(
-        'Não foi possível concluir o cadastro com esses dados.',
-      );
+      const body = response.body as { message?: string };
+      expect(body.message).toContain('Verifique seu email');
     });
 
     it('should return 400 when name is missing', async () => {

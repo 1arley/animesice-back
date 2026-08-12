@@ -79,9 +79,12 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   handleDisconnect(client: Socket) {
+    const userId = this.userMap.get(client.id);
     this.userMap.delete(client.id);
-    this.messageTimestamps.delete(client.id);
-    this.lastMessage.delete(client.id);
+    if (userId) {
+      this.messageTimestamps.delete(userId);
+      this.lastMessage.delete(userId);
+    }
     for (const room of client.rooms) {
       if (room.startsWith('room:')) {
         void client.leave(room);
@@ -95,15 +98,15 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() data: { slug: string },
   ) {
     const userId = this.userMap.get(client.id);
-    if (!userId) return;
+    if (!userId || typeof data?.slug !== 'string') return;
 
     try {
       const room = await this.roomService.getRoomBySlug(data.slug);
 
       if (!client.rooms.has(`room:${room.id}`)) {
-        const participantCount = await this.roomService.getParticipantCount(
-          room.id,
-        );
+        // Conta conexões VIVAS na sala (não histórico de mensagens).
+        const sockets = await this.server.in(`room:${room.id}`).fetchSockets();
+        const participantCount = sockets.length;
         if (participantCount >= room.maxParticipants) {
           client.emit('roomFull', {
             message: 'Sala cheia.',
@@ -113,7 +116,10 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
       }
 
       void client.join(`room:${room.id}`);
-      await this.roomService.touchActivity(room.id);
+      // Só o criador renova atividade no join; demais só via mensagem.
+      if (room.creatorId === userId) {
+        await this.roomService.touchActivity(room.id);
+      }
       client.emit('joinedRoom', {
         roomId: room.id,
         slug: room.slug,
@@ -147,7 +153,8 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() data: { slug: string; content: string },
   ) {
     const userId = this.userMap.get(client.id);
-    if (!userId || !data.content?.trim()) return;
+    if (!userId || typeof data?.content !== 'string') return;
+    if (typeof data?.slug !== 'string') return;
 
     const isSuspended = await this.moderationService.isUserSuspended(userId);
     if (isSuspended) {
@@ -157,7 +164,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return;
     }
 
-    if (!this.checkRateLimit(client.id)) {
+    if (!this.checkRateLimit(userId)) {
       client.emit('rateLimited', {
         message: 'Muitas mensagens. Aguarde um momento.',
       });
@@ -167,7 +174,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const trimmed = data.content.trim().slice(0, MAX_MESSAGE_LENGTH);
     if (!trimmed) return;
 
-    if (this.isDuplicate(client.id, trimmed)) {
+    if (this.isDuplicate(userId, trimmed)) {
       client.emit('duplicate', { message: 'Mensagem duplicada.' });
       return;
     }
@@ -194,6 +201,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { slug: string },
   ) {
+    if (typeof data?.slug !== 'string') return;
     try {
       const room = await this.roomService.getRoomBySlug(data.slug);
       const messages = await this.roomService.getMessages(room.id);
