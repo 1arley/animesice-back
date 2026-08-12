@@ -135,12 +135,14 @@ jobs:
             DEPLOY_APP_DIR
             DOCKERHUB_USERNAME
             DOCKERHUB_TOKEN
+            DATABASE_URL
           script: |
             set -euo pipefail
             export DEPLOY_APP_DIR="${{ secrets.DEPLOY_APP_DIR }}"
             export DOCKERHUB_USERNAME="${{ secrets.DOCKERHUB_USERNAME }}"
             export DOCKERHUB_TOKEN="${{ secrets.DOCKERHUB_TOKEN }}"
             export DEPLOY_TAG="${{ steps.tag.outputs.tag }}"
+            export DATABASE_URL="${{ secrets.DATABASE_URL }}"
 
             cd "$DEPLOY_APP_DIR"
 
@@ -150,24 +152,14 @@ jobs:
             # Pull the exact tag and recreate the app container (DB stays up).
             docker compose pull app
 
-            # Schema sync (additivo e idempotente) ANTES de subir o app.
-            # O banco de produção é sincronizado via db push, não via migrate
-            # deploy (_prisma_migrations não é a fonte da verdade aqui) — aplicar
-            # migrações do repo por migrate deploy falharia. Este passo roda DDL
-            # das tabelas novas; se falhar, o deploy para (app não sobe sem schema).
-            docker compose run --rm --no-deps app node -e '
-              const { PrismaClient } = require("@prisma/client");
-              const { PrismaPg } = require("@prisma/adapter-pg");
-              (async () => {
-                const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
-                const p = new PrismaClient({ adapter });
-                await p.$executeRawUnsafe("CREATE TABLE IF NOT EXISTS \"SiteSetting\" (\"key\" TEXT NOT NULL, \"value\" TEXT, CONSTRAINT \"SiteSetting_pkey\" PRIMARY KEY (\"key\"))");
-                await p.$executeRawUnsafe("CREATE TABLE IF NOT EXISTS \"PrivacySettings\" (\"userId\" TEXT NOT NULL, \"profilePublic\" BOOLEAN NOT NULL DEFAULT true, \"showActivity\" BOOLEAN NOT NULL DEFAULT true, \"showFavorites\" BOOLEAN NOT NULL DEFAULT true, \"showRatings\" BOOLEAN NOT NULL DEFAULT true, CONSTRAINT \"PrivacySettings_pkey\" PRIMARY KEY (\"userId\"))");
-                await p.$executeRawUnsafe("ALTER TABLE \"PrivacySettings\" DROP CONSTRAINT IF EXISTS \"PrivacySettings_userId_fkey\"");
-                await p.$executeRawUnsafe("ALTER TABLE \"PrivacySettings\" ADD CONSTRAINT \"PrivacySettings_userId_fkey\" FOREIGN KEY (\"userId\") REFERENCES \"User\"(\"id\") ON DELETE CASCADE ON UPDATE CASCADE");
-                await p.$disconnect();
-              })().catch((e) => { console.error("schema sync FAILED:", e); process.exit(1); });
-            '
+            # Migrações ANTES de subir o app. _prisma_migrations é a fonte da
+            # verdade do schema; deploy falha (script_stop) se alguma migration
+            # pendente falhar — o app não sobe com schema incompatível.
+            # IMPORTANTE: DATABASE_URL (secret) precisa apontar para a MESMA
+            # conexão do .env da VPS (session mode 5432, não o transaction
+            # pooler 6543 — Prisma Migrate exige conexão direta/session).
+            docker compose run --rm --no-deps -e DATABASE_URL="$DATABASE_URL" \
+              app npx prisma migrate deploy
 
             docker compose up -d --no-deps app
 
