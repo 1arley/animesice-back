@@ -1,3 +1,15 @@
+# [1.13.0](https://github.com/1arley/animesice-back/compare/v1.12.1...v1.13.0) (2026-08-12)
+
+
+### Bug Fixes
+
+* **lint:** limpando warnings do eslint ([917d34c](https://github.com/1arley/animesice-back/commit/917d34c0b9e9b4bf1f08880ec82a866ea8833351))
+
+
+### Features
+
+* **social:** posts, follow e feed da comunidade ([621eac1](https://github.com/1arley/animesice-back/commit/621eac181f63c6f61114fa5016160643142dbeb2))
+
 ## [1.12.1](https://github.com/1arley/animesice-back/compare/v1.12.0...v1.12.1) (2026-08-12)
 
 
