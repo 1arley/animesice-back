@@ -26,6 +26,7 @@ function makePrisma() {
     favorite,
     rating,
     $transaction: jest.fn(async (ops: Promise<unknown>[]) => Promise.all(ops)),
+    $queryRaw: jest.fn(async () => []),
   };
   return prisma;
 }
@@ -255,6 +256,59 @@ describe('AnimeService (busca/filtros/paginação)', () => {
     expect(prisma.anime.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ orderBy: { rating: 'desc' } }),
     );
+  });
+
+  it('busca fuzzy: ranking por similaridade substitui o OR e reordena por relevância', async () => {
+    const { svc, prisma } = build();
+    prisma.$queryRaw.mockResolvedValue([{ id: 'a2' }, { id: 'a1' }]);
+    prisma.anime.findMany.mockResolvedValue([
+      { id: 'a1', genres: [] },
+      { id: 'a2', genres: [] },
+    ]);
+    const res = await svc.findAll({ search: 'kaguy' });
+    expect(res.data.map((a: { id: string }) => a.id)).toEqual(['a2', 'a1']);
+    const arg = prisma.anime.findMany.mock.calls[0][0];
+    expect(arg.where.id).toEqual({ in: ['a2', 'a1'] });
+    expect(arg.where.OR).toBeUndefined();
+  });
+
+  it('busca fuzzy com sort explícito honra o sort (sem reordenar)', async () => {
+    const { svc, prisma } = build();
+    prisma.$queryRaw.mockResolvedValue([{ id: 'a2' }, { id: 'a1' }]);
+    prisma.anime.findMany.mockResolvedValue([
+      { id: 'a1', genres: [] },
+      { id: 'a2', genres: [] },
+    ]);
+    const res = await svc.findAll({ search: 'kaguy', sort: 'rating' });
+    expect(res.data.map((a: { id: string }) => a.id)).toEqual(['a1', 'a2']);
+    expect(prisma.anime.findMany.mock.calls[0][0].orderBy).toEqual({
+      rating: 'desc',
+    });
+  });
+
+  it('fuzzy sem candidatos acima do limiar cai no contains (OR presente)', async () => {
+    const { svc, prisma } = build();
+    prisma.$queryRaw.mockResolvedValue([]);
+    await svc.findAll({ search: 'kaguya' });
+    const arg = prisma.anime.findMany.mock.calls[0][0];
+    expect(arg.where.id).toBeUndefined();
+    expect(arg.where.OR).toBeDefined();
+  });
+
+  it('fuzzy indisponível (extensão ausente) degrada p/ contains sem quebrar', async () => {
+    const { svc, prisma } = build();
+    prisma.$queryRaw.mockRejectedValue(
+      new Error('function similarity(text,text) does not exist'),
+    );
+    const res = await svc.findAll({ search: 'kaguya' });
+    expect(res.data).toEqual([]);
+    expect(prisma.anime.findMany.mock.calls[0][0].where.OR).toBeDefined();
+  });
+
+  it('queries curtas (<3 chars) pulam a fuzzy e usam contains', async () => {
+    const { svc, prisma } = build();
+    await svc.findAll({ search: 'ka' });
+    expect(prisma.$queryRaw).not.toHaveBeenCalled();
   });
 
   it('findCalendar agrupa por dia da semana e separa não-agendados', async () => {

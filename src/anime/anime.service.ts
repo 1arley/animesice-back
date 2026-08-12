@@ -7,6 +7,13 @@ import {
   parsePageParam,
 } from '@/common/constants';
 
+/** Limiar de similaridade p/ entrar na busca fuzzy (0–1) — pg_trgm. */
+const FUZZY_THRESHOLD = Number(process.env.SEARCH_FUZZY_THRESHOLD ?? 0.35);
+/** Query menor que isso usa a busca contains atual (fuzzy é ruído p/ strings curtas). */
+const FUZZY_MIN_QUERY_LENGTH = 3;
+/** Teto de candidatos retornados pelo ranking fuzzy. */
+const FUZZY_MAX_CANDIDATES = 500;
+
 export type SortMode = 'recentlyAdded' | 'rating' | 'views' | 'year' | 'title';
 
 export interface AnimeFilterDto {
@@ -98,6 +105,28 @@ export class AnimeService {
     const where = buildWhere(filters);
     const orderBy = buildOrderBy(filters.sort);
 
+    // Busca fuzzy (pg_trgm): ranking por similaridade (tolera typos e ordem
+    // de palavras) com fallback p/ o contains atual quando a extensão não
+    // existe ou nada passa do limiar. Nunca quebra a busca — degrada.
+    const query = filters.search?.trim();
+    let fuzzyIds: string[] | null = null;
+    if (query && query.length >= FUZZY_MIN_QUERY_LENGTH) {
+      try {
+        fuzzyIds = await this.fuzzyRankedIds(query);
+      } catch (err) {
+        console.error(
+          '[SEARCH] fuzzy indisponível, usando contains:',
+          err instanceof Error ? err.message : String(err),
+        );
+        fuzzyIds = null;
+      }
+    }
+
+    if (fuzzyIds && fuzzyIds.length > 0) {
+      where.id = { in: fuzzyIds };
+      delete where.OR; // a fuzzy substitui o OR contains (recall maior)
+    }
+
     const [animes, total] = await this.prisma.$transaction([
       this.prisma.anime.findMany({
         skip,
@@ -109,6 +138,24 @@ export class AnimeService {
       this.prisma.anime.count({ where }),
     ]);
 
+    // Restaura a ordem de relevância da fuzzy (Prisma não ordena por lista).
+    // Com sort explícito do usuário, honra o sort (a fuzzy só ampliou o recall).
+    if (fuzzyIds && fuzzyIds.length > 0 && !filters.sort) {
+      const byId = new Map(animes.map((a) => [a.id, a]));
+      const ranked = fuzzyIds
+        .map((id) => byId.get(id))
+        .filter((a): a is NonNullable<typeof a> => Boolean(a));
+      return {
+        data: ranked,
+        meta: {
+          total,
+          page: pageNumber,
+          limit: limitNumber,
+          totalPages: Math.ceil(total / limitNumber),
+        },
+      };
+    }
+
     return {
       data: animes,
       meta: {
@@ -118,6 +165,36 @@ export class AnimeService {
         totalPages: Math.ceil(total / limitNumber),
       },
     };
+  }
+
+  /**
+   * Ranking fuzzy via pg_trgm (word_similarity): a query é tokenizada em
+   * palavras e cada palavra é comparada com a MELHOR palavra do título
+   * (title/japaneseTitle/alternativeTitles, minúsculas). Isso tolera typos
+   * dentro de palavras ("kagua" → Kaguya) e ordem diferente das palavras
+   * ("love war kaguya"), onde o similarity() de string inteira falharia
+   * (o union de trigramas é dominado pelo título longo).
+   * Só candidatos acima do limiar, ordenados pelo maior score.
+   */
+  private async fuzzyRankedIds(query: string): Promise<string[]> {
+    const rows = await this.prisma.$queryRaw<Array<{ id: string }>>`
+      SELECT id, ROUND(MAX(ws)::numeric, 3) AS score
+      FROM (
+        SELECT a.id, GREATEST(
+            word_similarity(w, LOWER(a.title)),
+            COALESCE(word_similarity(w, LOWER(a."japaneseTitle")), 0),
+            COALESCE(word_similarity(w, LOWER(array_to_string(a."alternativeTitles", ' '))), 0)
+          ) AS ws
+        FROM "Anime" a
+        CROSS JOIN LATERAL unnest(string_to_array(LOWER(${query}), ' ')) AS w
+        WHERE a.published = true
+      ) t
+      GROUP BY t.id
+      HAVING MAX(t.ws) > ${FUZZY_THRESHOLD}
+      ORDER BY MAX(t.ws) DESC
+      LIMIT ${FUZZY_MAX_CANDIDATES}
+    `;
+    return rows.map((r) => r.id);
   }
 
   async findBySlug(slug: string) {
