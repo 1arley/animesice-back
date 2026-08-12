@@ -1,4 +1,7 @@
--- Busca fuzzy no catálogo: similaridade de trigramas (pg_trgm) + índices GIN.
+-- Busca fuzzy no catálogo: similaridade de trigramas (pg_trgm) + índices GIN
+-- em lower(title)/lower(japaneseTitle) p/ acelerar lookups futuros por palavra
+-- isolada. A query atual do serviço tokeniza via unnest (seq scan no catálogo,
+-- sub-ms na escala atual) — os índices são margem de segurança p/ crescimento.
 --
 -- A extensão é habilitada se disponível; se o papel do banco não puder criar
 -- extensões, a migration continua (RAISE NOTICE) e a busca degrada para a

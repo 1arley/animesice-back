@@ -311,6 +311,20 @@ describe('AnimeService (busca/filtros/paginação)', () => {
     expect(prisma.$queryRaw).not.toHaveBeenCalled();
   });
 
+  it('fuzzy compõe com outros filtros (id in + gêneros coexistindo)', async () => {
+    const { svc, prisma } = build();
+    prisma.$queryRaw.mockResolvedValue([{ id: 'a1' }, { id: 'a2' }]);
+    prisma.anime.findMany.mockResolvedValue([
+      { id: 'a1', genres: [] },
+      { id: 'a2', genres: [] },
+    ]);
+    await svc.findAll({ search: 'kaguya', genres: 'comedia' });
+    const arg = prisma.anime.findMany.mock.calls[0][0];
+    expect(arg.where.id).toEqual({ in: ['a1', 'a2'] });
+    expect(arg.where.genres).toEqual({ some: { slug: { in: ['comedia'] } } });
+    expect(arg.where.OR).toBeUndefined();
+  });
+
   it('findCalendar agrupa por dia da semana e separa não-agendados', async () => {
     const { svc, prisma } = build();
     prisma.anime.findMany.mockResolvedValue([

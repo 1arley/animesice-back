@@ -108,7 +108,13 @@ export class AnimeService {
     // Busca fuzzy (pg_trgm): ranking por similaridade (tolera typos e ordem
     // de palavras) com fallback p/ o contains atual quando a extensão não
     // existe ou nada passa do limiar. Nunca quebra a busca — degrada.
-    const query = filters.search?.trim();
+    // Pontuação vira espaço antes de tokenizar ("one-piece" vira "one piece");
+    // letras/acentos/japonês (\p{L}) são preservados.
+    const query = filters.search
+      ?.trim()
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+      .trim();
     let fuzzyIds: string[] | null = null;
     if (query && query.length >= FUZZY_MIN_QUERY_LENGTH) {
       try {
@@ -178,7 +184,7 @@ export class AnimeService {
    */
   private async fuzzyRankedIds(query: string): Promise<string[]> {
     const rows = await this.prisma.$queryRaw<Array<{ id: string }>>`
-      SELECT id, ROUND(MAX(ws)::numeric, 3) AS score
+      SELECT id
       FROM (
         SELECT a.id, GREATEST(
             word_similarity(w, LOWER(a.title)),
