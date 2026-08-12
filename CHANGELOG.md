@@ -1,3 +1,15 @@
+# [1.8.0](https://github.com/1arley/animesice-back/compare/v1.7.6...v1.8.0) (2026-08-12)
+
+
+### Bug Fixes
+
+* **security:** close SSRF/token-exposure vectors, persist settings in DB, harden watchtower queue ([c18a6db](https://github.com/1arley/animesice-back/commit/c18a6dbd35bdce3d888e60a7e1161796f51d702a))
+
+
+### Features
+
+* **me,settings,users:** register me, settings, and users modules in app.module.ts ([6877a90](https://github.com/1arley/animesice-back/commit/6877a907de6b3dd5172b5dfef82698d493d22863))
+
 ## [1.7.6](https://github.com/1arley/animesice-back/compare/v1.7.5...v1.7.6) (2026-08-11)
 
 
