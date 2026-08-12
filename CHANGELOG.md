@@ -1,3 +1,10 @@
+# [1.9.0](https://github.com/1arley/animesice-back/compare/v1.8.0...v1.9.0) (2026-08-12)
+
+
+### Features
+
+* **back:** public user profiles under /users, privacy settings and myAnimeList ([fab7e97](https://github.com/1arley/animesice-back/commit/fab7e971d9555796345afe23ff6362f981ed2024))
+
 # [1.8.0](https://github.com/1arley/animesice-back/compare/v1.7.6...v1.8.0) (2026-08-12)
 
 
