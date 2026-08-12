@@ -1,3 +1,10 @@
+## [1.12.1](https://github.com/1arley/animesice-back/compare/v1.12.0...v1.12.1) (2026-08-12)
+
+
+### Bug Fixes
+
+* **watchtower:** prioridades, timeout por job e scanAll sem force ([24b058c](https://github.com/1arley/animesice-back/commit/24b058ca59c0f4c0fbb0d38c2e64912703c43a28))
+
 # [1.12.0](https://github.com/1arley/animesice-back/compare/v1.11.0...v1.12.0) (2026-08-12)
 
 
