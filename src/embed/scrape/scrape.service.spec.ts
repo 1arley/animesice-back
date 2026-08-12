@@ -39,6 +39,17 @@ function makeHealth() {
   };
 }
 
+function makeMetrics() {
+  return {
+    recordCacheHit: jest.fn(),
+    recordCacheMiss: jest.fn(),
+    recordDegradedServe: jest.fn(),
+    recordExtraction: jest.fn(),
+    recordExtractionFailure: jest.fn(),
+    recordReextract: jest.fn(),
+  };
+}
+
 function makePrisma() {
   return {
     anime: {
@@ -82,14 +93,16 @@ describe('ScrapeService (orquestração + cache SWR)', () => {
     const ms = makeSource('meusanimes', ['meusanimes.blog']);
     const prisma = makePrisma();
     const health = makeHealth();
+    const metrics = makeMetrics();
     const svc = new ScrapeService(
       af as any,
       aocc as any,
       ms as any,
       prisma as any,
       health as any,
+      metrics as any,
     );
-    return { svc, af, aocc, ms, prisma, health };
+    return { svc, af, aocc, ms, prisma, health, metrics };
   }
 
   it('usa a ordem do HealthMonitor quando múltiplas fontes suportam a URL', async () => {

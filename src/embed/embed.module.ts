@@ -7,6 +7,7 @@ import { AnimesonlineccScrapeSource } from '@/embed/scrape/animesonlinecc.source
 import { MeusanimesScrapeSource } from '@/embed/scrape/meusanimes.source';
 import { PrismaModule } from '@/prisma/prisma.module';
 import { WatchtowerModule } from '@/watchtower/watchtower.module';
+import { MetricsService } from '@/metrics/metrics.service';
 
 /**
  * EmbedModule — proxy de mídia/HTML + orquestração de scraping multi-fonte.
@@ -24,7 +25,8 @@ import { WatchtowerModule } from '@/watchtower/watchtower.module';
     AnimesonlineccScrapeSource,
     MeusanimesScrapeSource,
     ScrapeService,
+    MetricsService,
   ],
-  exports: [EmbedService, ScrapeService],
+  exports: [EmbedService, ScrapeService, MetricsService],
 })
 export class EmbedModule {}

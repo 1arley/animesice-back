@@ -14,6 +14,7 @@ import { MeusanimesScrapeSource } from './meusanimes.source';
 import { youtubeEmbedUrl } from './extract';
 import { PrismaService } from '@/prisma/prisma.service';
 import { HealthMonitor } from '@/watchtower/health-monitor.service';
+import { MetricsService } from '@/metrics/metrics.service';
 import { SOURCE_IDS } from '@/watchtower/watchtower.types';
 import { ensureXvfb } from './xvfb.helper';
 /** Remove quebras de linha/separadores Unicode de dados externos antes de logar. */
@@ -176,6 +177,7 @@ export class ScrapeService {
     private readonly prisma: PrismaService,
     @Inject(forwardRef(() => HealthMonitor))
     private readonly health: HealthMonitor,
+    private readonly metrics: MetricsService,
   ) {
     this.sources = [animefire, animesonlinecc, meusanimes];
     const ttl = Number(process.env.SCRAPE_CACHE_TTL_MS ?? 10 * 60_000);
@@ -213,6 +215,7 @@ export class ScrapeService {
       dbg(
         `[SCRAPE] cache HIT (fresco) source=${source.id} url=${sanitizeLog(episodeUrl.slice(0, 80))}`,
       );
+      this.metrics.recordCacheHit('fresh');
       return this.wrapResult(entry.result, episodeUrl, wrap);
     }
 
@@ -222,6 +225,7 @@ export class ScrapeService {
       dbg(
         `[SCRAPE] cache STALE (servindo + revalidando) source=${source.id} url=${sanitizeLog(episodeUrl.slice(0, 80))}`,
       );
+      this.metrics.recordCacheHit('stale');
       void this.startOrJoinFetch(cacheKey, episodeUrl, source).catch((err) =>
         dbg(
           `[SCRAPE] revalidação em background falhou: ${err instanceof Error ? err.message : String(err)}`,
@@ -234,6 +238,7 @@ export class ScrapeService {
     dbg(
       `[SCRAPE] cache MISS source=${source.id} url=${sanitizeLog(episodeUrl.slice(0, 80))}`,
     );
+    this.metrics.recordCacheMiss();
     try {
       const result = await this.startOrJoinFetch(cacheKey, episodeUrl, source);
       return this.wrapResult(result, episodeUrl, wrap);
@@ -244,6 +249,9 @@ export class ScrapeService {
         dbg(
           `[SCRAPE] fetch falhou — servindo stale em degradação (${err instanceof Error ? err.message : String(err)})`,
         );
+        // failure = tentativa de fetch; degraded = resultado do serve (o
+        // fetchAndCache já registrou recordExtractionFailure no catch).
+        this.metrics.recordDegradedServe();
         return this.wrapResult(entry.result, episodeUrl, wrap);
       }
       throw err;
@@ -301,6 +309,7 @@ export class ScrapeService {
         result.videos.length > 0 || (result.playerTokens?.length ?? 0) > 0;
       if (ok) {
         await this.recordSuccess(source.id, Date.now() - t0);
+        this.metrics.recordExtraction(source.id, Date.now() - t0);
         this.cache.set(cacheKey, {
           result,
           fetchedAt: Date.now(),
@@ -309,10 +318,12 @@ export class ScrapeService {
         this.evictIfNeeded();
       } else {
         await this.recordFailure(source.id);
+        this.metrics.recordExtractionFailure(source.id);
       }
       return result;
     } catch (err) {
       await this.recordFailure(source.id);
+      this.metrics.recordExtractionFailure(source.id);
       throw err;
     } finally {
       this.activeScrapes -= 1;
@@ -656,18 +667,6 @@ export class ScrapeService {
   }
 
   /**
-   * Encontra um adapter que (1) suporta a URL e (2) implementa `extractHttp`.
-   * Exposto p/ outros serviços (StreamingService) re-extraírem vídeo sem
-   * subir o Playwright. Retorna null se nenhum adapter HTTP puro servir.
-   */
-  findHttpSource(url: string): ScrapeSource | null {
-    const s = this.sources.find(
-      (src) => typeof src.extractHttp === 'function' && src.supports(url),
-    );
-    return s ?? null;
-  }
-
-  /**
    * Re-extração lazy: quando o stream de um episódio recebe 403 da CDN
    * (token .mp4 expirado), refaz a extração HTTP pura da fonte mais saudável
    * e persiste o NOVO videoUrl RAW em Episode.videoUrl. Em sucesso, invalida
@@ -713,6 +712,7 @@ export class ScrapeService {
       rawMp4 = result.videos[0] ?? null;
     } catch (err) {
       await this.recordFailure(source.id);
+      this.metrics.recordReextract(source.id, false);
       console.error(
         `[REEXTRACT] falhou p/ ${sanitizeLog(animeSlug)}/${episodeNumber}:`,
         sanitizeLog(err instanceof Error ? err.message : String(err)),
@@ -721,6 +721,7 @@ export class ScrapeService {
     }
     if (!rawMp4) {
       await this.recordFailure(source.id);
+      this.metrics.recordReextract(source.id, false);
       return null;
     }
 
@@ -730,6 +731,7 @@ export class ScrapeService {
     });
 
     await this.recordSuccess(source.id, Date.now() - t0);
+    this.metrics.recordReextract(source.id, true, Date.now() - t0);
     this.invalidateEpisode(episode.embedUrl);
     this.seedCache(source.id, episode.embedUrl, rawMp4);
 
