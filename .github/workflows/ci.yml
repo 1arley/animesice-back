@@ -106,10 +106,11 @@ jobs:
       - name: Setup Node.js & dependencies
         uses: ./.github/actions/node-setup
 
-      # Push the Prisma schema to the ephemeral test DB (no migration files
-      # required; db push --force-reset gives a clean, deterministic schema).
-      - name: Push schema to test database
-        run: npx dotenv-cli -e .env.test -- npx prisma db push --force-reset
+      # Apply the migration chain to the ephemeral test DB (same path as prod
+      # deploy). Inclui 20260812120000_add_fuzzy_search (pg_trgm) — exigida
+      # pelo e2e de busca fuzzy; db push não criaria a extensão.
+      - name: Apply migrations to test database
+        run: npx dotenv-cli -e .env.test -- npx prisma migrate deploy
 
       - name: Run E2E tests
         run: npx dotenv-cli -e .env.test -- npx jest --config ./test/jest-e2e.json --runInBand --forceExit

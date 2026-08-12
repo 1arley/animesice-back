@@ -402,13 +402,13 @@ export class AnimeService {
 
     return {
       byDay: [
-        { day: 0, label: 'Domingo', animes: byDay[0] },
-        { day: 1, label: 'Segunda', animes: byDay[1] },
-        { day: 2, label: 'Terça', animes: byDay[2] },
-        { day: 3, label: 'Quarta', animes: byDay[3] },
-        { day: 4, label: 'Quinta', animes: byDay[4] },
-        { day: 5, label: 'Sexta', animes: byDay[5] },
-        { day: 6, label: 'Sábado', animes: byDay[6] },
+        { day: 0, label: 'Domingo', animes: byDay[0]! },
+        { day: 1, label: 'Segunda', animes: byDay[1]! },
+        { day: 2, label: 'Terça', animes: byDay[2]! },
+        { day: 3, label: 'Quarta', animes: byDay[3]! },
+        { day: 4, label: 'Quinta', animes: byDay[4]! },
+        { day: 5, label: 'Sexta', animes: byDay[5]! },
+        { day: 6, label: 'Sábado', animes: byDay[6]! },
       ],
       unscheduled,
     };

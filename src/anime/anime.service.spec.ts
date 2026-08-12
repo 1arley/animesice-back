@@ -3,22 +3,25 @@ import { AnimeService } from '@/anime/anime.service';
 import { DEFAULT_PAGE_SIZE } from '@/common/constants';
 
 function makePrisma() {
+  // Mocks tipados como jest.Mock (não como fn de aridade 0): o tsconfig é
+  // strict + noUncheckedIndexedAccess, então acessos a mock.calls[0][0]
+  // precisam de um calls tipado como any[][].
   const anime = {
-    findMany: jest.fn(async () => []),
-    count: jest.fn(async () => 0),
-    findUnique: jest.fn(async () => null),
+    findMany: jest.fn(async () => []) as jest.Mock,
+    count: jest.fn(async () => 0) as jest.Mock,
+    findUnique: jest.fn(async () => null) as jest.Mock,
   };
   const episode = {
-    findMany: jest.fn(async () => []),
+    findMany: jest.fn(async () => []) as jest.Mock,
   };
-  const favorite = { count: jest.fn(async () => 0) };
+  const favorite = { count: jest.fn(async () => 0) as jest.Mock };
   const rating = {
     aggregate: jest.fn(async () => ({
       _avg: { score: 5 },
       _min: { score: 1 },
       _max: { score: 10 },
-    })),
-    count: jest.fn(async () => 1),
+    })) as jest.Mock,
+    count: jest.fn(async () => 1) as jest.Mock,
   };
   const prisma = {
     anime,
@@ -26,7 +29,7 @@ function makePrisma() {
     favorite,
     rating,
     $transaction: jest.fn(async (ops: Promise<unknown>[]) => Promise.all(ops)),
-    $queryRaw: jest.fn(async () => []),
+    $queryRaw: jest.fn(async () => []) as jest.Mock,
   };
   return prisma;
 }
@@ -336,7 +339,7 @@ describe('AnimeService (busca/filtros/paginação)', () => {
       { id: 'a2', animeSchedules: [], genres: [] },
     ]);
     const res = await svc.findCalendar('WINTER', '2024');
-    expect(res.byDay[1].animes.map((a: { id: string }) => a.id)).toEqual([
+    expect(res.byDay[1]!.animes.map((a: { id: string }) => a.id)).toEqual([
       'a1',
     ]);
     expect(res.unscheduled.map((a: { id: string }) => a.id)).toEqual(['a2']);

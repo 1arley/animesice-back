@@ -13,7 +13,7 @@ jest.mock('dns/promises', () => ({
   lookup: jest.fn(),
 }));
 
-const mockedLookup = lookup as jest.MockedFunction<typeof lookup>;
+const mockedLookup = lookup as jest.Mock;
 
 /** IP público de exemplo (não bloqueado por isBlockedIp). */
 const PUBLIC_IP = '93.184.216.34';
