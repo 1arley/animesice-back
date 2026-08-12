@@ -25,6 +25,7 @@ import { UserAnimeListModule } from '@/user-anime-list/user-anime-list.module';
 import { ModerationModule } from '@/moderation/moderation.module';
 import { RecommendationModule } from '@/recommendation/recommendation.module';
 import { CommunityModule } from '@/community/community.module';
+import { SocialModule } from '@/social/social.module';
 import { WatchtowerModule } from '@/watchtower/watchtower.module';
 import { MeModule } from '@/me/me.module';
 import { UsersModule } from '@/users/users.module';
@@ -68,6 +69,7 @@ import { AuditInterceptor } from '@/common/interceptors/audit.interceptor';
     ModerationModule,
     RecommendationModule,
     CommunityModule,
+    SocialModule,
     ScheduleModule.forRoot(),
     WatchtowerModule,
     MeModule,

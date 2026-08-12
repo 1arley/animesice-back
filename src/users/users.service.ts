@@ -4,7 +4,8 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { PrismaService } from '@/prisma/prisma.service';
-import { ReportReason } from '@prisma/client';
+import { Prisma, ReportReason } from '@prisma/client';
+import { PROFILE_PUBLIC_OR_EMPTY } from '@/common/prisma-filters';
 
 @Injectable()
 export class UsersService {
@@ -62,6 +63,11 @@ export class UsersService {
             ratings: privacy.showRatings,
             favorites: privacy.showFavorites,
             watchHistories: privacy.showActivity,
+            // Relações de follow — contadores públicos do perfil, alinhados
+            // com as listas de /social/followers e /social/following/:id
+            // (só contam perfis públicos; privacidade ausente = público).
+            followers: { where: { follower: PROFILE_PUBLIC_OR_EMPTY } },
+            following: { where: { followee: PROFILE_PUBLIC_OR_EMPTY } },
           },
         },
       },
@@ -72,6 +78,112 @@ export class UsersService {
     }
 
     return user;
+  }
+
+  /**
+   * Diretório de usuários da comunidade — apenas perfis públicos
+   * (privacidade ausente = público). Suporta busca e ordenações:
+   *  - new: recém-chegados (createdAt desc)
+   *  - active: mais ativos (comentários + avaliações + histórico)
+   *  - recommended (padrão): seguidores + atividade
+   */
+  async searchUsers(
+    currentUserId: string | null,
+    search?: string,
+    sort?: string,
+    page: number = 1,
+    limit: number = 24,
+  ) {
+    const safeLimit = Math.min(Math.max(limit, 1), 100);
+    const skip = (page - 1) * safeLimit;
+
+    const publicIds = await this.getPublicUserIds();
+
+    const where: Prisma.UserWhereInput = { id: { in: publicIds } };
+    if (search && search.trim()) {
+      where.OR = [
+        { name: { contains: search.trim(), mode: 'insensitive' } },
+        { userName: { contains: search.trim(), mode: 'insensitive' } },
+      ];
+    }
+
+    const effectiveSort =
+      sort ?? (search && search.trim() ? 'new' : 'recommended');
+
+    const orderBy: Prisma.UserOrderByWithRelationInput[] =
+      effectiveSort === 'new'
+        ? [{ createdAt: 'desc' }]
+        : effectiveSort === 'active'
+          ? [
+              { comments: { _count: 'desc' } },
+              { ratings: { _count: 'desc' } },
+              { watchHistories: { _count: 'desc' } },
+              { createdAt: 'desc' },
+            ]
+          : [
+              { followers: { _count: 'desc' } },
+              { comments: { _count: 'desc' } },
+              { createdAt: 'desc' },
+            ];
+
+    const [users, total] = await this.prisma.$transaction([
+      this.prisma.user.findMany({
+        where,
+        orderBy,
+        skip,
+        take: safeLimit,
+        select: {
+          id: true,
+          name: true,
+          userName: true,
+          avatar: true,
+          bio: true,
+          createdAt: true,
+          _count: {
+            select: {
+              comments: true,
+              ratings: true,
+              favorites: true,
+              watchHistories: true,
+            },
+          },
+        },
+      }),
+      this.prisma.user.count({ where }),
+    ]);
+
+    // isFollowing para o usuário logado — marca os que eu já sigo.
+    let followingIds = new Set<string>();
+    if (currentUserId && users.length > 0) {
+      const follows = await this.prisma.follow.findMany({
+        where: {
+          followerId: currentUserId,
+          followeeId: { in: users.map((u) => u.id) },
+        },
+        select: { followeeId: true },
+      });
+      followingIds = new Set(follows.map((f) => f.followeeId));
+    }
+
+    return {
+      data: users.map((u) => ({ ...u, isFollowing: followingIds.has(u.id) })),
+      meta: {
+        total,
+        page,
+        limit: safeLimit,
+        totalPages: Math.ceil(total / safeLimit),
+      },
+    };
+  }
+
+  /** IDs de usuários com perfil público (privacidade ausente = público). */
+  private async getPublicUserIds(): Promise<string[]> {
+    const rows = await this.prisma.$queryRaw<{ id: string }[]>`
+      SELECT u.id FROM "User" u
+      LEFT JOIN "PrivacySettings" p ON p."userId" = u.id
+      WHERE COALESCE(p."profilePublic", true) = true
+    `;
+    return rows.map((r) => r.id);
   }
 
   async getUserComments(

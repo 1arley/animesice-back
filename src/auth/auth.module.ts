@@ -7,6 +7,7 @@ import { AuthController } from '@/auth/auth.controller';
 import { JwtStrategy } from '@/auth/jwt.strategy';
 import { JwtRefreshStrategy } from '@/auth/jwt-refresh.strategy';
 import { JwtAuthGuard } from '@/auth/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from '@/auth/optional-jwt-auth.guard';
 import { RolesGuard } from '@/auth/roles.guard';
 import { VerifiedGuard } from '@/auth/verified.guard';
 import { TurnstileService } from '@/auth/turnstile/turnstile.service';
@@ -21,9 +22,16 @@ import { MailModule } from '@/mail/mail.module';
     JwtStrategy,
     JwtRefreshStrategy,
     JwtAuthGuard,
+    OptionalJwtAuthGuard,
     RolesGuard,
     VerifiedGuard,
   ],
-  exports: [AuthService, JwtAuthGuard, RolesGuard, VerifiedGuard],
+  exports: [
+    AuthService,
+    JwtAuthGuard,
+    OptionalJwtAuthGuard,
+    RolesGuard,
+    VerifiedGuard,
+  ],
 })
 export class AuthModule {}

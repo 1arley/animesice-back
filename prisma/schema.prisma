@@ -47,6 +47,9 @@ enum NotificationType {
   COMMENT_LIKE
   MODERATION_ACTION
   SYSTEM
+  POST_LIKE
+  POST_COMMENT
+  NEW_FOLLOW
 }
 
 enum NotificationChannel {
@@ -59,6 +62,8 @@ enum ReportTargetType {
   ROOM_MESSAGE
   USER
   ANIME
+  POST
+  POST_COMMENT
 }
 
 enum ReportReason {
@@ -142,6 +147,11 @@ model User {
   animeRequestVotes     AnimeRequestVote[] @relation("AnimeRequestVoteUser")
   siteFeedbacks         SiteFeedback[]  @relation("SiteFeedbackUser")
   privacySettings       PrivacySettings?
+  posts                 Post[]
+  postLikes             PostLike[]
+  postComments          PostComment[]
+  following             Follow[]        @relation("Follower")
+  followers             Follow[]        @relation("Followee")
 }
 
 /// Configuração global do site (chave-valor) — persistida no DB, com
@@ -242,6 +252,7 @@ model Anime {
   favorites         Favorite[]
   animeSchedules    AnimeSchedule[]
   animeList         UserAnimeList[]
+  posts             Post[]
   createdAt          DateTime     @default(now())
   updatedAt          DateTime     @updatedAt
 
@@ -552,6 +563,64 @@ model SiteFeedback {
 
   @@index([type, status, createdAt])
   @@index([userId])
+}
+
+/// Post de texto livre do feed social (comunidade).
+model Post {
+  id         String        @id @default(uuid())
+  userId     String
+  user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  content    String
+  animeId    String?
+  anime      Anime?        @relation(fields: [animeId], references: [id], onDelete: SetNull)
+  shareCount Int           @default(0)
+  status     ContentStatus @default(VISIBLE)
+  likes      PostLike[]
+  comments   PostComment[]
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+}
+
+model PostLike {
+  userId    String
+  postId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([userId, postId])
+  @@index([postId])
+}
+
+model PostComment {
+  id        String        @id @default(uuid())
+  postId    String
+  post      Post          @relation(fields: [postId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  content   String
+  status    ContentStatus @default(VISIBLE)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  @@index([postId, createdAt])
+  @@index([userId])
+}
+
+/// Seguir usuários — direção: follower segue followee.
+model Follow {
+  followerId String
+  followeeId String
+  follower   User     @relation("Follower", fields: [followerId], references: [id], onDelete: Cascade)
+  followee   User     @relation("Followee", fields: [followeeId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+
+  @@id([followerId, followeeId])
+  @@index([followeeId])
+  @@index([followerId])
 }
 
 /// Job da fila do Anime Watchtower. Cada job representa uma tarefa isolada

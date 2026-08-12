@@ -204,6 +204,18 @@ export class ModerationService {
           select: { id: true },
         }));
         break;
+      case 'POST':
+        exists = !!(await this.prisma.post.findUnique({
+          where: { id: targetId },
+          select: { id: true },
+        }));
+        break;
+      case 'POST_COMMENT':
+        exists = !!(await this.prisma.postComment.findUnique({
+          where: { id: targetId },
+          select: { id: true },
+        }));
+        break;
     }
     if (!exists) {
       throw new BadRequestException('Alvo da denúncia não encontrado.');
