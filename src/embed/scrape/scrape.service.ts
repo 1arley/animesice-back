@@ -1,5 +1,10 @@
 // src/embed/scrape/scrape.service.ts
-import { Injectable, ServiceUnavailableException } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  ServiceUnavailableException,
+  forwardRef,
+} from '@nestjs/common';
 import { chromium } from 'playwright';
 import type { Page, BrowserContext, Browser } from 'playwright';
 import { ScrapeSource, ScrapeEpisodeResult } from './scrape-source.interface';
@@ -8,6 +13,8 @@ import { AnimesonlineccScrapeSource } from './animesonlinecc.source';
 import { MeusanimesScrapeSource } from './meusanimes.source';
 import { youtubeEmbedUrl } from './extract';
 import { PrismaService } from '@/prisma/prisma.service';
+import { HealthMonitor } from '@/watchtower/health-monitor.service';
+import { SOURCE_IDS } from '@/watchtower/watchtower.types';
 import { ensureXvfb } from './xvfb.helper';
 /** Remove quebras de linha/separadores Unicode de dados externos antes de logar. */
 function sanitizeLog(v: string): string {
@@ -110,12 +117,32 @@ const PLAYER_SELECTORS = [
   '[data-video]',
 ].join(', ');
 
+/** Entrada do cache SWR de resultados de extração (sempre RAW, sem wrap). */
+interface ScrapeCacheEntry {
+  result: ScrapeEpisodeResult;
+  fetchedAt: number;
+  expiresAt: number;
+}
+
 /**
- * ScrapeService — extração técnica de URL .mp4/.m3u8 + iframes de episódio,
- * multi-fonte via Playwright (chromium headless).
+ * ScrapeService — orquestrador de providers (Provider Orchestration Layer).
  *
- * Reusa a logica do `scrape_animefire/scrape.js` em TypeScript/Nest,
- * generalizada p/ animefire / animesonlinecc / meusanimes.
+ * Responsável por:
+ *  - Escolher dinamicamente o melhor provider: consulta o HealthMonitor
+ *    (watchtower) p/ pular fontes disabled e priorizar as mais saudáveis
+ *    (score = taxaSucesso × 1/(1+latência)).
+ *  - Registrar success/failure + latência de cada extração no HealthMonitor
+ *    (fonte única de verdade p/ o ranking — o Extractor do watchtower não
+ *    registra mais).
+ *  - Cachear resultados RAW por (sourceId, episodeUrl) com stale-while-revalidate:
+ *    TTL fresco serve direto; na janela stale serve imediatamente e revalida em
+ *    background (com single-flight por chave p/ não derrubar o scraper de
+ *    chromium em thundering herd); se a revalidação falhar, degrada servindo o
+ *    stale (o fluxo de 403 do streaming re-extrai depois).
+ *
+ * Extração técnica de URL .mp4/.m3u8 + iframes de episódio, multi-fonte via
+ * Playwright (chromium headless) e caminho HTTP puro (extractHttp) quando a
+ * fonte permite (animefire, meusanimes).
  *
  * AVISO DE IP-VINCULO (CRITICO):
  *   Tokens .mp4 de CDNs pirates frequentemente VINCULAM ao IP. O IP que abriu
@@ -134,20 +161,39 @@ export class ScrapeService {
   private activeScrapes = 0;
   private readonly MAX_CONCURRENT_SCRAPES = 2;
 
+  /** Cache SWR em memória (single-instance). Chave: `scrape:<sourceId>:<url>`. */
+  private readonly cache = new Map<string, ScrapeCacheEntry>();
+  /** Single-flight por chave: evita N chromium concorrentes p/ a mesma URL. */
+  private readonly inflight = new Map<string, Promise<ScrapeEpisodeResult>>();
+  private readonly CACHE_TTL_MS: number;
+  private readonly CACHE_STALE_MS: number;
+  private readonly CACHE_MAX_ENTRIES = 200;
+
   constructor(
     animefire: AnimefireScrapeSource,
     animesonlinecc: AnimesonlineccScrapeSource,
     meusanimes: MeusanimesScrapeSource,
     private readonly prisma: PrismaService,
+    @Inject(forwardRef(() => HealthMonitor))
+    private readonly health: HealthMonitor,
   ) {
     this.sources = [animefire, animesonlinecc, meusanimes];
+    const ttl = Number(process.env.SCRAPE_CACHE_TTL_MS ?? 10 * 60_000);
+    const stale = Number(process.env.SCRAPE_CACHE_STALE_MS ?? 60 * 60_000);
+    this.CACHE_TTL_MS = Number.isFinite(ttl) && ttl > 0 ? ttl : 10 * 60_000;
+    this.CACHE_STALE_MS =
+      Number.isFinite(stale) && stale > 0 ? stale : 60 * 60_000;
   }
 
   /**
-   * Abre a pagina de um episodio no chromium headless e extrai URLs de video.
+   * Abre a página de um episodio no chromium headless e extrai URLs de video.
+   * Orquestra: resolve provider (health-aware) -> cache SWR -> extração com
+   * single-flight -> wrap no proxy de mídia.
+   *
    * @param episodeUrl URL absoluta do episodio.
    * @param sourceId opcional força um adapter (animefire/animesonlinecc/meusanimes);
-   *                 sem source, auto-detecta pelo host.
+   *                 sem source, escolhe dinamicamente o provider mais saudável
+   *                 que suporta a URL (pula disabled do HealthMonitor).
    * @param wrap se true (default), URLs externas sao embrulhadas no proxy de
    *             midia interno (/api/embed/media?url=...). Use false p/ obter
    *             RAW (re-extração de streaming precisa do RAW).
@@ -157,149 +203,248 @@ export class ScrapeService {
     sourceId?: string,
     wrap = false,
   ): Promise<ScrapeEpisodeResult> {
-    dbg(
-      `[SCRAPE] scrapeEpisodeVideo url=${episodeUrl} sourceId=${sourceId ?? 'auto'} wrap=${wrap}`,
-    );
-    const source = this.resolveSource(episodeUrl, sourceId);
-    dbg(
-      `[SCRAPE] resolved source=${source.id} supports=${source.supports(episodeUrl)}`,
-    );
+    const source = await this.resolveSource(episodeUrl, sourceId);
+    const cacheKey = this.cacheKey(source.id, episodeUrl);
+    const now = Date.now();
+    const entry = this.cache.get(cacheKey);
 
-    // Limita a concorrência de chromium headless (memória/CPU do host).
+    // Hit fresco: serve direto (sem consumir slot de chromium, sem health).
+    if (entry && now < entry.expiresAt) {
+      dbg(
+        `[SCRAPE] cache HIT (fresco) source=${source.id} url=${sanitizeLog(episodeUrl.slice(0, 80))}`,
+      );
+      return this.wrapResult(entry.result, episodeUrl, wrap);
+    }
+
+    // Janela stale-while-revalidate: serve stale imediatamente e revalida em
+    // background (single-flight compartilhado — nunca 2 fetches p/ a mesma URL).
+    if (entry && now < entry.fetchedAt + this.CACHE_STALE_MS) {
+      dbg(
+        `[SCRAPE] cache STALE (servindo + revalidando) source=${source.id} url=${sanitizeLog(episodeUrl.slice(0, 80))}`,
+      );
+      void this.startOrJoinFetch(cacheKey, episodeUrl, source).catch((err) =>
+        dbg(
+          `[SCRAPE] revalidação em background falhou: ${err instanceof Error ? err.message : String(err)}`,
+        ),
+      );
+      return this.wrapResult(entry.result, episodeUrl, wrap);
+    }
+
+    // Miss (ou stale além da janela): extração real com single-flight por chave.
+    dbg(
+      `[SCRAPE] cache MISS source=${source.id} url=${sanitizeLog(episodeUrl.slice(0, 80))}`,
+    );
+    try {
+      const result = await this.startOrJoinFetch(cacheKey, episodeUrl, source);
+      return this.wrapResult(result, episodeUrl, wrap);
+    } catch (err) {
+      // Provider falhou mas temos resultado stale: degrada servindo o stale
+      // (URLs podem ter expirado — o fluxo de 403 do streaming re-extrai).
+      if (entry) {
+        dbg(
+          `[SCRAPE] fetch falhou — servindo stale em degradação (${err instanceof Error ? err.message : String(err)})`,
+        );
+        return this.wrapResult(entry.result, episodeUrl, wrap);
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Single-flight por chave: retorna o fetch em andamento p/ (cacheKey) ou
+   * inicia um novo. Chamado tanto pelo caminho de miss quanto pela revalidação
+   * em background — garante no máximo 1 extração simultânea por URL.
+   */
+  private startOrJoinFetch(
+    cacheKey: string,
+    episodeUrl: string,
+    source: ScrapeSource,
+  ): Promise<ScrapeEpisodeResult> {
+    let inflight = this.inflight.get(cacheKey);
+    if (!inflight) {
+      inflight = this.fetchAndCache(episodeUrl, source, cacheKey).finally(
+        () => {
+          if (this.inflight.get(cacheKey) === inflight) {
+            this.inflight.delete(cacheKey);
+          }
+        },
+      );
+      this.inflight.set(cacheKey, inflight);
+    }
+    return inflight;
+  }
+
+  /**
+   * Extração real (RAW) + registro de health + atualização do cache.
+   * Controla o slot de concorrência do chromium (único lugar que o consome).
+   */
+  private async fetchAndCache(
+    episodeUrl: string,
+    source: ScrapeSource,
+    cacheKey: string,
+  ): Promise<ScrapeEpisodeResult> {
     if (this.activeScrapes >= this.MAX_CONCURRENT_SCRAPES) {
       throw new ServiceUnavailableException(
         'Muitas extrações simultâneas. Tente novamente em instantes.',
       );
     }
     this.activeScrapes += 1;
+    const t0 = Date.now();
+    try {
+      dbg(
+        `[SCRAPE] extraindo source=${source.id} url=${sanitizeLog(episodeUrl.slice(0, 120))}`,
+      );
+      const result = await this.fetchRawVideos(episodeUrl, source);
+      // Só cacheia resultados úteis (vídeo OU player token). Resultado vazio
+      // vira failure p/ demover o provider (página mudou/foi bloqueada).
+      const ok =
+        result.videos.length > 0 || (result.playerTokens?.length ?? 0) > 0;
+      if (ok) {
+        await this.recordSuccess(source.id, Date.now() - t0);
+        this.cache.set(cacheKey, {
+          result,
+          fetchedAt: Date.now(),
+          expiresAt: Date.now() + this.CACHE_TTL_MS,
+        });
+        this.evictIfNeeded();
+      } else {
+        await this.recordFailure(source.id);
+      }
+      return result;
+    } catch (err) {
+      await this.recordFailure(source.id);
+      throw err;
+    } finally {
+      this.activeScrapes -= 1;
+    }
+  }
 
+  /**
+   * Extração RAW em si (sem wrap, sem cache, sem health): caminho HTTP puro
+   * (extractHttp) com fallback Playwright p/ player tokens, ou caminho
+   * Playwright completo. Extraído de scrapeEpisodeVideo p/ permitir cache SWR.
+   */
+  private async fetchRawVideos(
+    episodeUrl: string,
+    source: ScrapeSource,
+  ): Promise<ScrapeEpisodeResult> {
     // Caminho HTTP puro: se o adapter implementa extractHttp, pula o Playwright.
     // Relevante p/ animefire (extraível por fetch, sem Cloudflare/browser em prod)
     // e meusanimes (get-video.php). Se o adapter devolver playerTokens (player
     // Blogger/YouTube), ainda precisa do chromium p/ virar .mp4 googlevideo.
     if (typeof source.extractHttp === 'function') {
-      try {
-        dbg(`[SCRAPE] calling extractHttp on ${source.id}...`);
-        const raw = await source.extractHttp({ episodeUrl, ua: UA_DESKTOP });
+      dbg(`[SCRAPE] calling extractHttp on ${source.id}...`);
+      const raw = await source.extractHttp({ episodeUrl, ua: UA_DESKTOP });
+      dbg(
+        `[SCRAPE] extractHttp OK: videos=${raw.videos.length} playerTokens=${(raw.playerTokens ?? []).length}`,
+      );
+
+      let videos = raw.videos;
+      const playerTokens = raw.playerTokens ?? [];
+      // Embeds do YouTube não são resolvíveis p/ .mp4 server-side (YouTube
+      // bloqueia IPs datacenter com LOGIN_REQUIRED). Ficam no retorno p/ o
+      // streaming servir como iframe no browser do usuário.
+      const resolvableTokens = playerTokens.filter((t) => !youtubeEmbedUrl(t));
+      const youtubeEmbeds = playerTokens.filter((t) => youtubeEmbedUrl(t));
+      if (videos.length === 0 && resolvableTokens.length > 0) {
         dbg(
-          `[SCRAPE] extractHttp OK: videos=${raw.videos.length} playerTokens=${(raw.playerTokens ?? []).length}`,
+          `[SCRAPE] ${resolvableTokens.length} player tokens, resolving via chromium...`,
         );
+        // Blogger token resolve via googlevideo videoplayback interceptado
+        // pelo chromium. headless:true funciona no chrome moderno (validado).
+        // Fallback: Xvfb + headless:false se headless falhar.
+        let browser: Browser | null = null;
+        let resolved = false;
 
-        let videos = raw.videos;
-        const playerTokens = raw.playerTokens ?? [];
-        // Embeds do YouTube não são resolvíveis p/ .mp4 server-side (YouTube
-        // bloqueia IPs datacenter com LOGIN_REQUIRED). Ficam no retorno p/ o
-        // streaming servir como iframe no browser do usuário.
-        const resolvableTokens = playerTokens.filter(
-          (t) => !youtubeEmbedUrl(t),
-        );
-        const youtubeEmbeds = playerTokens.filter((t) => youtubeEmbedUrl(t));
-        if (videos.length === 0 && resolvableTokens.length > 0) {
-          dbg(
-            `[SCRAPE] ${resolvableTokens.length} player tokens, resolving via chromium...`,
-          );
-          // Blogger token resolve via googlevideo videoplayback interceptado
-          // pelo chromium. headless:true funciona no chrome moderno (validado).
-          // Fallback: Xvfb + headless:false se headless falhar.
-          let browser: Browser | null = null;
-          let resolved = false;
-
-          // Tentativa 1: headless:true (preferido — funciona em containers sem X).
-          try {
-            browser = await chromium.launch({
-              headless: true,
-              chromiumSandbox: false,
-              args: [],
-            });
-            const context = await browser.newContext({
-              userAgent: UA_DESKTOP,
-              locale: 'pt-BR',
-              viewport: { width: 1366, height: 768 },
-            });
-            for (const token of resolvableTokens) {
-              const bv = await this.extractPlayerVideo(
-                context,
-                token,
-                episodeUrl,
-              );
-              if (bv.length > 0) {
-                videos = bv;
-                resolved = true;
-                break;
-              }
-            }
-            await context.close().catch(() => undefined);
-          } catch (err) {
-            dbg(
-              `[SCRAPE] headless:true falhou p/ Blogger: ${err instanceof Error ? err.message : String(err)}`,
+        // Tentativa 1: headless:true (preferido — funciona em containers sem X).
+        try {
+          browser = await chromium.launch({
+            headless: true,
+            chromiumSandbox: false,
+            args: [],
+          });
+          const context = await browser.newContext({
+            userAgent: UA_DESKTOP,
+            locale: 'pt-BR',
+            viewport: { width: 1366, height: 768 },
+          });
+          for (const token of resolvableTokens) {
+            const bv = await this.extractPlayerVideo(
+              context,
+              token,
+              episodeUrl,
             );
-          } finally {
-            if (browser) await browser.close().catch(() => undefined);
-            browser = null;
-          }
-
-          // Tentativa 2: Xvfb + headless:false (fallback se headless falhou).
-          if (!resolved) {
-            const display = await ensureXvfb();
-            if (display) {
-              dbg(
-                `[SCRAPE] tentando Xvfb (${display}) + headless:false para Blogger...`,
-              );
-              try {
-                browser = await chromium.launch({
-                  headless: false,
-                  chromiumSandbox: false,
-                  args: ['--no-sandbox', '--disable-gpu'],
-                });
-                await new Promise((r) => setTimeout(r, 1000));
-                const context = await browser.newContext({
-                  userAgent: UA_DESKTOP,
-                  locale: 'pt-BR',
-                  viewport: { width: 1366, height: 768 },
-                });
-                for (const token of resolvableTokens) {
-                  const bv = await this.extractPlayerVideo(
-                    context,
-                    token,
-                    episodeUrl,
-                  );
-                  if (bv.length > 0) {
-                    videos = bv;
-                    break;
-                  }
-                }
-                await context.close().catch(() => undefined);
-              } catch (err) {
-                dbg(
-                  `[SCRAPE] headless:false (Xvfb) também falhou: ${err instanceof Error ? err.message : String(err)}`,
-                );
-              } finally {
-                if (browser) await browser.close().catch(() => undefined);
-              }
-            } else {
-              dbg(
-                `[SCRAPE] Xvfb indisponível e headless:true não resolveu Blogger.`,
-              );
+            if (bv.length > 0) {
+              videos = bv;
+              resolved = true;
+              break;
             }
           }
+          await context.close().catch(() => undefined);
+        } catch (err) {
+          dbg(
+            `[SCRAPE] headless:true falhou p/ Blogger: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        } finally {
+          if (browser) await browser.close().catch(() => undefined);
+          browser = null;
         }
 
-        dbg(
-          `[SCRAPE] extractHttp returning: videos=${videos.length} wrap=${wrap}`,
-        );
-        return {
-          videos: wrap
-            ? videos.map((v) => wrapMediaUrl(v, episodeUrl))
-            : videos,
-          iframes: [],
-          cloudflare: false,
-          // Expõe tokens de player não resolvíveis por HTTP (YouTube embeds
-          // bloqueados p/ IP datacenter, etc.) p/ o chamador decidir fallback.
-          playerTokens: youtubeEmbeds,
-        };
-      } finally {
-        this.activeScrapes -= 1;
+        // Tentativa 2: Xvfb + headless:false (fallback se headless falhou).
+        if (!resolved) {
+          const display = await ensureXvfb();
+          if (display) {
+            dbg(
+              `[SCRAPE] tentando Xvfb (${display}) + headless:false para Blogger...`,
+            );
+            try {
+              browser = await chromium.launch({
+                headless: false,
+                chromiumSandbox: false,
+                args: ['--no-sandbox', '--disable-gpu'],
+              });
+              await new Promise((r) => setTimeout(r, 1000));
+              const context = await browser.newContext({
+                userAgent: UA_DESKTOP,
+                locale: 'pt-BR',
+                viewport: { width: 1366, height: 768 },
+              });
+              for (const token of resolvableTokens) {
+                const bv = await this.extractPlayerVideo(
+                  context,
+                  token,
+                  episodeUrl,
+                );
+                if (bv.length > 0) {
+                  videos = bv;
+                  break;
+                }
+              }
+              await context.close().catch(() => undefined);
+            } catch (err) {
+              dbg(
+                `[SCRAPE] headless:false (Xvfb) também falhou: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            } finally {
+              if (browser) await browser.close().catch(() => undefined);
+            }
+          } else {
+            dbg(
+              `[SCRAPE] Xvfb indisponível e headless:true não resolveu Blogger.`,
+            );
+          }
+        }
       }
+
+      dbg(`[SCRAPE] extractHttp returning: videos=${videos.length} (RAW)`);
+      return {
+        videos,
+        iframes: [],
+        cloudflare: false,
+        // Expõe tokens de player não resolvíveis por HTTP (YouTube embeds
+        // bloqueados p/ IP datacenter, etc.) p/ o chamador decidir fallback.
+        playerTokens: youtubeEmbeds,
+      };
     }
 
     let browser: Browser | null = null;
@@ -443,10 +588,10 @@ export class ScrapeService {
         sanitizeLog(JSON.stringify(videos.slice(0, 2))),
       );
 
-      // Wrap das URLs externas via proxy de midia; descarta iframes (anuncios
-      // + embed de sites de terceiros que nao interessam ao player proprio).
+      // RAW: o wrap é aplicado em wrapResult (cache guarda sempre RAW;
+      // iframes descartados — anuncios + embeds de terceiros não interessam).
       return {
-        videos: videos.map((v) => wrapMediaUrl(v, episodeUrl)),
+        videos,
         iframes: [],
         cloudflare: false,
       };
@@ -455,24 +600,59 @@ export class ScrapeService {
       // processo chromium nem de contador de concorrência).
       if (context) await context.close().catch(() => undefined);
       if (browser) await browser.close().catch(() => undefined);
-      this.activeScrapes -= 1;
     }
   }
 
-  /** Resolve o adapter: explícito por id, senão auto-detecta pelo host. */
-  private resolveSource(url: string, sourceId?: string): ScrapeSource {
+  /**
+   * Resolve o adapter: explícito por id (honra sempre), senão auto-detecta
+   * pelo host usando a ordem de saúde do HealthMonitor (disabled ficam de fora
+   * do rankedSources; fontes fora de SOURCE_IDS entram no fim). Se nenhuma
+   * fonte suporta a URL, usa o adapter genérico default (animefire-like).
+   */
+  private async resolveSource(
+    url: string,
+    sourceId?: string,
+  ): Promise<ScrapeSource> {
     if (sourceId) {
       const found = this.sources.find((s) => s.id === sourceId);
       if (found) return found;
       // sourceId desconhecido: cai p/ auto-detect (nao falha).
     }
-    const auto = this.sources.find((s) => s.supports(url));
-    if (auto) return auto;
-
-    // URL de fonte nao mapeada: usa o adapter genérico default (animefire-like),
-    // que extrai <video>/<source>/iframes — funciona p/ varios players.
-    // sources é populado estaticamente no constructor (sempre >= 3 itens).
+    const ordered = await this.healthOrderedSources();
+    const hit = ordered.find((s) => s.supports(url));
+    if (hit) return hit;
     return this.sources[0]!;
+  }
+
+  /**
+   * Primeira fonte HTTP pura que suporta a URL, na ordem de saúde (ranked).
+   * Usado por reextractEpisodeVideo p/ preferir providers saudáveis.
+   */
+  private async firstHttpSource(url: string): Promise<ScrapeSource | null> {
+    const ordered = await this.healthOrderedSources();
+    return (
+      ordered.find(
+        (s) => typeof s.extractHttp === 'function' && s.supports(url),
+      ) ?? null
+    );
+  }
+
+  /** Fontes ordenadas por saúde (rankedSources) com fontes não-rastreadas no fim. */
+  private async healthOrderedSources(): Promise<ScrapeSource[]> {
+    let order: string[] = [];
+    try {
+      order = await this.health.rankedSources();
+    } catch (err) {
+      dbg(
+        `[SCRAPE] rankedSources falhou, usando ordem base: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    return [
+      ...order
+        .map((id) => this.sources.find((s) => s.id === id))
+        .filter((s): s is ScrapeSource => Boolean(s)),
+      ...this.sources.filter((s) => !order.includes(s.id)),
+    ];
   }
 
   /**
@@ -489,9 +669,10 @@ export class ScrapeService {
 
   /**
    * Re-extração lazy: quando o stream de um episódio recebe 403 da CDN
-   * (token .mp4 expirado), refaz a extração HTTP pura da fonte e persiste o
-   * NOVO videoUrl RAW em Episode.videoUrl. Retorna a URL RAW atualizada, ou
-   * null se não houver fonte HTTP/re-extração falhar.
+   * (token .mp4 expirado), refaz a extração HTTP pura da fonte mais saudável
+   * e persiste o NOVO videoUrl RAW em Episode.videoUrl. Em sucesso, invalida
+   * o cache de scrape do episódio e o semeia com o resultado fresco.
+   * Retorna a URL RAW atualizada, ou null se não houver fonte HTTP/extração falhar.
    *
    * Pressupõe `episode.embedUrl` guarda a URL da página do episódio na fonte
    * (ex: https://animefire.io/animes/<slug>/<ep>).
@@ -519,12 +700,10 @@ export class ScrapeService {
     });
     if (!episode || !episode.embedUrl) return null;
 
-    const source = this.sources.find(
-      (s) =>
-        typeof s.extractHttp === 'function' && s.supports(episode.embedUrl!),
-    );
+    const source = await this.firstHttpSource(episode.embedUrl);
     if (!source || !source.extractHttp) return null;
 
+    const t0 = Date.now();
     let rawMp4: string | null;
     try {
       const result = await source.extractHttp({
@@ -533,18 +712,26 @@ export class ScrapeService {
       });
       rawMp4 = result.videos[0] ?? null;
     } catch (err) {
+      await this.recordFailure(source.id);
       console.error(
         `[REEXTRACT] falhou p/ ${sanitizeLog(animeSlug)}/${episodeNumber}:`,
         sanitizeLog(err instanceof Error ? err.message : String(err)),
       );
       return null;
     }
-    if (!rawMp4) return null;
+    if (!rawMp4) {
+      await this.recordFailure(source.id);
+      return null;
+    }
 
     await this.prisma.episode.update({
       where: { id: episode.id },
       data: { videoUrl: rawMp4 },
     });
+
+    await this.recordSuccess(source.id, Date.now() - t0);
+    this.invalidateEpisode(episode.embedUrl);
+    this.seedCache(source.id, episode.embedUrl, rawMp4);
 
     console.error(
       `[REEXTRACT] atualizado ${sanitizeLog(animeSlug)}/${episodeNumber} ->`,
@@ -744,5 +931,77 @@ export class ScrapeService {
         // ignora: extraimos mesmo assim o que existir
       }
     }
+  }
+
+  /** Aplica o wrap do proxy de mídia sobre um resultado RAW (cache ou fetch). */
+  private wrapResult(
+    result: ScrapeEpisodeResult,
+    episodeUrl: string,
+    wrap: boolean,
+  ): ScrapeEpisodeResult {
+    return {
+      videos: wrap
+        ? result.videos.map((v) => wrapMediaUrl(v, episodeUrl))
+        : result.videos,
+      iframes: [],
+      cloudflare: result.cloudflare ?? false,
+      playerTokens: result.playerTokens,
+    };
+  }
+
+  private cacheKey(sourceId: string, episodeUrl: string): string {
+    return `scrape:${sourceId}:${episodeUrl}`;
+  }
+
+  /** Invalida entradas de cache de um episódio (após re-extração bem-sucedida). */
+  invalidateEpisode(episodeUrl: string): void {
+    const suffix = `:${episodeUrl}`;
+    for (const key of this.cache.keys()) {
+      if (key.endsWith(suffix)) this.cache.delete(key);
+    }
+  }
+
+  /** Semeia o cache com um resultado recém re-extraído (evita re-scrape). */
+  private seedCache(
+    sourceId: string,
+    episodeUrl: string,
+    rawMp4: string,
+  ): void {
+    const now = Date.now();
+    this.cache.set(this.cacheKey(sourceId, episodeUrl), {
+      result: { videos: [rawMp4], iframes: [], cloudflare: false },
+      fetchedAt: now,
+      expiresAt: now + this.CACHE_TTL_MS,
+    });
+    this.evictIfNeeded();
+  }
+
+  /** Evita crescimento sem teto do cache (evicta o entry mais antigo). */
+  private evictIfNeeded(): void {
+    if (this.cache.size <= this.CACHE_MAX_ENTRIES) return;
+    let oldestKey: string | null = null;
+    let oldestAt = Infinity;
+    for (const [k, v] of this.cache) {
+      if (v.fetchedAt < oldestAt) {
+        oldestAt = v.fetchedAt;
+        oldestKey = k;
+      }
+    }
+    if (oldestKey) this.cache.delete(oldestKey);
+  }
+
+  /** Registra success no HealthMonitor (só p/ fontes rastreadas em SOURCE_IDS). */
+  private async recordSuccess(
+    sourceId: string,
+    latencyMs: number,
+  ): Promise<void> {
+    if (!(SOURCE_IDS as readonly string[]).includes(sourceId)) return;
+    await this.health.recordSuccess(sourceId, latencyMs).catch(() => undefined);
+  }
+
+  /** Registra failure no HealthMonitor (só p/ fontes rastreadas em SOURCE_IDS). */
+  private async recordFailure(sourceId: string): Promise<void> {
+    if (!(SOURCE_IDS as readonly string[]).includes(sourceId)) return;
+    await this.health.recordFailure(sourceId).catch(() => undefined);
   }
 }

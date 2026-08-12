@@ -35,3 +35,47 @@ Browser ──> /api/stream/source?anime=X&episode=Y (público)
 ```
 
 Pontos-chave: vídeos não são baixados, é proxy sob demanda. IP-vínculo da CDN resolved pelo IP de saída do backend.
+
+## Provider Orchestration Layer (scraping/embed)
+
+O `ScrapeService` (src/embed/scrape/) é o orquestrador de providers: ele escolhe
+dinamicamente a fonte mais saudável em vez de depender de um scraper específico.
+
+```
+/api/embed/scrape ─┐
+/stream/source    ──┤
+watchtower        ──┤
+                    ▼
+           ScrapeService (orquestrador)
+             │ resolveSource: health-aware
+             ▼
+      HealthMonitor (watchtower)
+        • rankedSources() → ordem por score (sucesso × 1/(1+latência))
+        • recordSuccess/recordFailure → desabilita após 5 falhas consecutivas
+        • canário reviveOne() p/ recuperação
+             │
+             ▼
+   [meusanimes] [animefire] [animesonlinecc] (+ genérico)
+             │ extractHttp (HTTP puro) ou extract (Playwright)
+             ▼
+   Cache SWR em memória (por sourceId + URL do episódio)
+     • TTL fresco → serve direto (sem consumir slot de chromium)
+     • janela stale → serve imediatamente + revalida em background (single-flight)
+     • fetch falha + stale disponível → degrada servindo o stale
+```
+
+Regras:
+
+- **Escolha dinâmica**: `resolveSource()` consulta `HealthMonitor.rankedSources()`
+  (que exclui sources `disabled`) e escolhe a fonte mais saudável que `supports(url)`.
+  Fonte explicitamente forçada (`sourceId`) é sempre honrada.
+- **Health centralizado**: o registro de success/failure/latência é feito pelo
+  `ScrapeService` no hot path (cache hit não registra). O `Extractor` do watchtower
+  apenas consome resultados — não registra mais (evita dupla contagem).
+- **Cache**: single-instance (Map em memória), RAW (wrap aplicado na saída),
+  single-flight por chave, teto de 200 entradas. Tune via `SCRAPE_CACHE_TTL_MS`
+  e `SCRAPE_CACHE_STALE_MS` (ver environment-variables.md).
+- **Re-extração (403 da CDN)**: `reextractEpisodeVideo` escolhe a fonte HTTP mais
+  saudável, invalida o cache do episódio e o semeia com o resultado fresco.
+- **Módulos**: EmbedModule ↔ WatchtowerModule são circulares de propósito
+  (embed consome health; watchtower consome scrape) — resolvidos com `forwardRef`.

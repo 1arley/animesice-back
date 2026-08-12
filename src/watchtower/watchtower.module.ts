@@ -4,7 +4,7 @@
  * Imports: PrismaModule, EmbedModule (ScrapeService), NotificationModule.
  *.scheduleModule.forRoot() movido p/ AppModule (evita singleton duplicado).
  */
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { PrismaModule } from '@/prisma/prisma.module';
 import { EmbedModule } from '@/embed/embed.module';
 import { NotificationModule } from '@/notification/notification.module';
@@ -24,7 +24,7 @@ import { CatalogScanner } from './catalog-scanner.service';
 import { WatchtowerController } from './watchtower.controller';
 
 @Module({
-  imports: [PrismaModule, EmbedModule, NotificationModule],
+  imports: [PrismaModule, forwardRef(() => EmbedModule), NotificationModule],
   controllers: [WatchtowerController],
   providers: [
     JobsService,

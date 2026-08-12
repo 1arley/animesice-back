@@ -1,14 +1,14 @@
 /**
- * Extractor — itera fontes candidatas, chama ScrapeService p/ extrair vídeo RAW,
- * registra outcome no HealthMonitor. Retorna primeira sequência válida ( campaigners) ou
- * lista de falhas p/ retry.
+ * Extractor — itera fontes candidatas e chama ScrapeService p/ extrair vídeo RAW.
+ * Retorna a primeira sequência válida (candidates) ou lista de falhas p/ retry.
  *
  * Reusa ScrapeService.scrapeEpisodeVideo(url, sourceId, wrap=false) que já faz
- * extractHttp → Playwright fallback. Concurrence limitada pelo Prisma.
+ * extractHttp → Playwright fallback e CACHE SWR. O registro de health
+ * (success/failure/latência) é centralizado no ScrapeService — este serviço
+ * apenas consome o resultado. Concorrência limitada pelo Prisma.
  */
 import { Injectable } from '@nestjs/common';
 import { ScrapeService } from '@/embed/scrape/scrape.service';
-import { HealthMonitor } from './health-monitor.service';
 import { SourceDiscovery } from './source-discovery.service';
 import type { EpisodeCandidate } from './validator.service';
 
@@ -21,7 +21,6 @@ export interface ExtractResult {
 export class Extractor {
   constructor(
     private readonly scrape: ScrapeService,
-    private readonly health: HealthMonitor,
     private readonly discovery: SourceDiscovery,
   ) {}
 
@@ -47,7 +46,6 @@ export class Extractor {
 
     for (const c of candidates) {
       tried.push(c.sourceId);
-      const t0 = Date.now();
       try {
         const result = await this.scrape.scrapeEpisodeVideo(
           c.url,
@@ -55,12 +53,7 @@ export class Extractor {
           false,
         );
         const videoUrl = result.videos[0];
-        if (!videoUrl) {
-          await this.health.recordFailure(c.sourceId);
-          continue;
-        }
-        const latency = Date.now() - t0;
-        await this.health.recordSuccess(c.sourceId, latency);
+        if (!videoUrl) continue;
 
         out.push({
           videoUrl,
@@ -71,7 +64,6 @@ export class Extractor {
           duration: null,
         });
       } catch (err) {
-        await this.health.recordFailure(c.sourceId);
         console.error(
           `[WATCHTOWER] extract falhou ${c.sourceId}:`,
           err instanceof Error ? err.message : String(err),
