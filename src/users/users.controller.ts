@@ -96,6 +96,23 @@ export class UsersController {
     );
   }
 
+  @Get(':id/activity')
+  @ApiOperation({
+    summary: 'Atividade pública recente de um usuário (feed cronológico)',
+  })
+  @ApiResponse({ status: 200, description: 'Feed de atividade pública' })
+  getUserActivity(
+    @Param('id') id: string,
+    @Query('page') page: string,
+    @Query('limit') limit: string,
+  ) {
+    return this.usersService.getUserActivity(
+      id,
+      parseInt(page ?? '1', 10) || 1,
+      parseInt(limit ?? '20', 10) || 20,
+    );
+  }
+
   @Get(':id/stats')
   @ApiOperation({ summary: 'Estatísticas públicas de um usuário' })
   @ApiResponse({ status: 200, description: 'Estatísticas do perfil' })

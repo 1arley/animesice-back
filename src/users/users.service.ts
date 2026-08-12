@@ -237,6 +237,7 @@ export class UsersService {
               year: true,
               format: true,
               genres: true,
+              episodeCount: true,
             },
           },
         },
@@ -246,6 +247,141 @@ export class UsersService {
 
     return {
       data: items,
+      meta: {
+        total,
+        page,
+        limit: safeLimit,
+        totalPages: Math.ceil(total / safeLimit),
+      },
+    };
+  }
+
+  /**
+   * Atividade pública recente — feed cronológico mesclando assistidos,
+   * avaliações, favoritos e comentários (gatado por showActivity).
+   *
+   * Paginação por janela deslocada por fonte (skip/take): cada página é
+   * internamente cronológica e não repete eventos entre páginas — o mesmo
+   * padrão já usado por /me/activity para o feed do próprio usuário.
+   */
+  async getUserActivity(
+    identifier: string,
+    page: number = 1,
+    limit: number = 20,
+  ) {
+    const userId = await this.resolveUser(identifier);
+    const privacy = await this.getPrivacy(userId);
+    if (!privacy.showActivity) {
+      return { data: [], meta: { total: 0, page, limit, totalPages: 0 } };
+    }
+    const safeLimit = Math.min(Math.max(limit, 1), 100);
+    const skip = (page - 1) * safeLimit;
+
+    const [
+      watches,
+      ratings,
+      favorites,
+      comments,
+      watchCount,
+      ratingCount,
+      favCount,
+      commentCount,
+    ] = await this.prisma.$transaction([
+      this.prisma.watchHistory.findMany({
+        where: { userId },
+        skip,
+        take: safeLimit,
+        orderBy: { watchedAt: 'desc' },
+        select: {
+          watchedAt: true,
+          episode: {
+            select: {
+              number: true,
+              anime: {
+                select: { slug: true, title: true, coverImage: true },
+              },
+            },
+          },
+        },
+      }),
+      this.prisma.rating.findMany({
+        where: { userId },
+        skip,
+        take: safeLimit,
+        orderBy: { createdAt: 'desc' },
+        select: {
+          score: true,
+          createdAt: true,
+          anime: {
+            select: { slug: true, title: true, coverImage: true },
+          },
+        },
+      }),
+      this.prisma.favorite.findMany({
+        where: { userId },
+        skip,
+        take: safeLimit,
+        orderBy: { createdAt: 'desc' },
+        select: {
+          createdAt: true,
+          anime: {
+            select: { slug: true, title: true, coverImage: true },
+          },
+        },
+      }),
+      this.prisma.comment.findMany({
+        where: { userId, status: 'VISIBLE' },
+        skip,
+        take: safeLimit,
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          content: true,
+          edited: true,
+          createdAt: true,
+          anime: { select: { slug: true, title: true } },
+          _count: { select: { likes: true } },
+        },
+      }),
+      this.prisma.watchHistory.count({ where: { userId } }),
+      this.prisma.rating.count({ where: { userId } }),
+      this.prisma.favorite.count({ where: { userId } }),
+      this.prisma.comment.count({ where: { userId, status: 'VISIBLE' } }),
+    ]);
+
+    const events = [
+      ...watches.map((w) => ({
+        type: 'watch' as const,
+        episodeNumber: w.episode.number,
+        anime: w.episode.anime,
+        createdAt: w.watchedAt.toISOString(),
+      })),
+      ...ratings.map((r) => ({
+        type: 'rating' as const,
+        score: r.score,
+        anime: r.anime,
+        createdAt: r.createdAt.toISOString(),
+      })),
+      ...favorites.map((f) => ({
+        type: 'favorite' as const,
+        anime: f.anime,
+        createdAt: f.createdAt.toISOString(),
+      })),
+      ...comments.map((c) => ({
+        type: 'comment' as const,
+        id: c.id,
+        content: c.content,
+        edited: c.edited,
+        likeCount: c._count.likes,
+        anime: c.anime,
+        createdAt: c.createdAt.toISOString(),
+      })),
+    ].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+
+    const total = watchCount + ratingCount + favCount + commentCount;
+
+    return {
+      data: events.slice(0, safeLimit),
       meta: {
         total,
         page,
