@@ -1,12 +1,12 @@
-# Continuous Deployment (production).
-# Builds the Docker image, pushes to Docker Hub, then SSHes to the VPS
-# to pull and recreate the container. Watchtower auto-updates are disabled
-# for this flow — explicit deploy ensures deterministic tags.
+# Continuous Delivery (production): build & push da imagem para o Docker Hub.
+# O deploy em si é feito pela Watchtower na VPS, configurada no compose da VPS
+# (/srv/animesice/animesice-back/docker-compose.yml, não versionado): label
+# `com.centurylinklabs.watchtower.enable=true` + `prisma migrate deploy` no
+# boot do container — então um push de `latest` é aplicado automaticamente,
+# sem SSH.
 #
 # SAFETY:
 #   - Only runs from a tag/release (never from a raw PR). PRs cannot deploy.
-#   - Uses the `production` GitHub Environment so protection rules
-#     (required reviewers, wait timer) apply before any server change.
 #   - Rollback: re-run this workflow manually and select a previous tag.
 #
 # NOTE on triggers: semantic-release creates tags/releases with the default
@@ -14,7 +14,7 @@
 # runs — so a bare `release: [published]` trigger would never fire here.
 # The `workflow_run` trigger on the Release workflow is the reliable path
 # (workflow_run events are delivered regardless of token provenance).
-name: Deploy
+name: Build & push image
 
 on:
   release:
@@ -26,13 +26,12 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Git tag to deploy (for rollback). Defaults to the tag on the running workflow_dispatch ref.'
+        description: 'Git tag to build & push (for rollback). Defaults to the tag on the running workflow_dispatch ref.'
         required: false
         default: ''
 
 concurrency:
-  # Only one deployment at a time; new deploys wait for the previous to finish
-  # (do not cancel mid-deploy).
+  # Only one build at a time; new runs wait for the previous to finish.
   group: deploy-production
   cancel-in-progress: false
 
@@ -41,16 +40,12 @@ permissions:
 
 jobs:
   deploy:
-    name: Deploy to production
+    name: Build & push Docker image
     runs-on: ubuntu-latest
-    # The `production` Environment must be created in repo settings; add
-    # protection rules (required reviewers, deployment branch = main, wait
-    # timer) so nothing reaches the server without human approval.
-    environment: production
 
     # Safety gates:
     # - never from a PR
-    # - automatic deploy only for stable releases (not prereleases from `dev`)
+    # - automatic build only for stable releases (not prereleases from `dev`)
     # - after the Release workflow succeeds on main (semantic-release tag)
     # - workflow_dispatch always allowed (explicit rollback / hotfixes)
     if: >
@@ -112,58 +107,10 @@ jobs:
         with:
           context: .
           push: true
-          # Tag with the release tag (e.g. v1.2.3) and `latest` for the
-          # server's `docker compose pull` to pick up by default.
+          # Tag with the release tag (e.g. v1.2.3) and `latest` — a Watchtower
+          # na VPS detecta o novo `latest` e atualiza o container (com migração
+          # no boot), então nenhum passo remoto é necessário aqui.
           tags: |
             ${{ secrets.DOCKERHUB_REPO }}:${{ steps.tag.outputs.tag }}
             ${{ secrets.DOCKERHUB_REPO }}:latest
           provenance: false
-
-      # Remote deploy over SSH. The server has docker compose and the compose
-      # file at DEPLOY_APP_DIR that references the Docker Hub image.
-      # Secrets are never logged.
-      - name: Deploy over SSH
-        uses: appleboy/ssh-action@v1.2.5
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          port: ${{ secrets.DEPLOY_PORT }}
-          username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          script_stop: true
-          envs: |
-            DEPLOY_TAG
-            DEPLOY_APP_DIR
-            DOCKERHUB_USERNAME
-            DOCKERHUB_TOKEN
-            DATABASE_URL
-          script: |
-            set -euo pipefail
-            export DEPLOY_APP_DIR="${{ secrets.DEPLOY_APP_DIR }}"
-            export DOCKERHUB_USERNAME="${{ secrets.DOCKERHUB_USERNAME }}"
-            export DOCKERHUB_TOKEN="${{ secrets.DOCKERHUB_TOKEN }}"
-            export DEPLOY_TAG="${{ steps.tag.outputs.tag }}"
-            export DATABASE_URL="${{ secrets.DATABASE_URL }}"
-
-            cd "$DEPLOY_APP_DIR"
-
-            # Authenticate to Docker Hub (private repos or rate-limit).
-            echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
-
-            # Pull the exact tag and recreate the app container (DB stays up).
-            docker compose pull app
-
-            # Migrações ANTES de subir o app. _prisma_migrations é a fonte da
-            # verdade do schema; deploy falha (script_stop) se alguma migration
-            # pendente falhar — o app não sobe com schema incompatível.
-            # IMPORTANTE: DATABASE_URL (secret) precisa apontar para a MESMA
-            # conexão do .env da VPS (session mode 5432, não o transaction
-            # pooler 6543 — Prisma Migrate exige conexão direta/session).
-            docker compose run --rm --no-deps -e DATABASE_URL="$DATABASE_URL" \
-              app npx prisma migrate deploy
-
-            docker compose up -d --no-deps app
-
-            # Optional rollback safety: keep recent images around for ~7 days.
-            docker image prune -f --filter "until=168h" || true
-
-            echo "Deployed $DEPLOY_TAG to $DEPLOY_APP_DIR"
