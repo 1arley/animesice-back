@@ -77,6 +77,25 @@ export class UsersController {
     );
   }
 
+  @Get(':id/anime-list')
+  @ApiOperation({
+    summary: 'Lista de animes (biblioteca) pública de um usuário',
+  })
+  @ApiResponse({ status: 200, description: 'Lista pública da biblioteca' })
+  getUserAnimeList(
+    @Param('id') id: string,
+    @Query('page') page: string,
+    @Query('limit') limit: string,
+    @Query('status') status?: string,
+  ) {
+    return this.usersService.getUserAnimeList(
+      id,
+      parseInt(page ?? '1', 10) || 1,
+      parseInt(limit ?? '24', 10) || 24,
+      status,
+    );
+  }
+
   @Get(':id/stats')
   @ApiOperation({ summary: 'Estatísticas públicas de um usuário' })
   @ApiResponse({ status: 200, description: 'Estatísticas do perfil' })

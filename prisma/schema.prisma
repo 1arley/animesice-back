@@ -114,6 +114,7 @@ model User {
   isVerified             Boolean                 @default(false)
   avatar                 String?
   bio                    String?
+  myAnimeList            String?
   suspendedUntil         DateTime?
   suspendedReason        String?
   createdAt               DateTime                @default(now())

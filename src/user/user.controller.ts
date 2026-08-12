@@ -56,6 +56,14 @@ class UpdateProfileMetaDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(200)
+  @Matches(/^[a-zA-Z0-9_@/.:-]*$/, {
+    message: 'MyAnimeList inválido: use apenas letras, números, _ ou -.',
+  })
+  myAnimeList?: string;
+
+  @IsOptional()
+  @IsString()
   @Matches(/^[a-z0-9_-]{3,20}$/, {
     message:
       'Apelido deve ter entre 3 e 20 caracteres e usar apenas letras minúsculas, números, _ ou -.',

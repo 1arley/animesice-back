@@ -122,6 +122,7 @@ export class UserService {
         userName: true,
         avatar: true,
         bio: true,
+        myAnimeList: true,
         createdAt: true,
         _count: {
           select: {
@@ -143,7 +144,12 @@ export class UserService {
 
   async updateProfileMeta(
     userId: string,
-    dto: { avatar?: string; bio?: string; userName?: string },
+    dto: {
+      avatar?: string;
+      bio?: string;
+      userName?: string;
+      myAnimeList?: string;
+    },
   ) {
     const data: Record<string, string | null> = {};
     if (dto.avatar !== undefined) data.avatar = dto.avatar;
@@ -162,6 +168,17 @@ export class UserService {
       }
     }
 
+    if (dto.myAnimeList !== undefined) {
+      // Aceita username puro, @user ou URL completa; guarda só o username.
+      const raw = (dto.myAnimeList ?? '').trim();
+      let username = raw.replace(
+        /^https?:\/\/(www\.)?myanimelist\.net\/profile\//i,
+        '',
+      );
+      username = username.replace(/^@/, '').trim().toLowerCase();
+      data.myAnimeList = username || null;
+    }
+
     if (Object.keys(data).length === 0) {
       throw new NotFoundException('Nada para atualizar.');
     }
@@ -177,6 +194,7 @@ export class UserService {
         role: true,
         avatar: true,
         bio: true,
+        myAnimeList: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -197,6 +215,7 @@ export class UserService {
         role: true,
         avatar: true,
         bio: true,
+        myAnimeList: true,
         createdAt: true,
         updatedAt: true,
       },
