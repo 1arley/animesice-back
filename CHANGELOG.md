@@ -1,3 +1,10 @@
+# [1.10.0](https://github.com/1arley/animesice-back/compare/v1.9.0...v1.10.0) (2026-08-12)
+
+
+### Features
+
+* **back:** public activity feed and episodeCount in public collection ([66e759d](https://github.com/1arley/animesice-back/commit/66e759d4592591229e02ca7c32ffe21d3ffcc9c7))
+
 # [1.9.0](https://github.com/1arley/animesice-back/compare/v1.8.0...v1.9.0) (2026-08-12)
 
 

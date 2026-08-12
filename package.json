@@ -1,6 +1,6 @@
 {
   "name": "animesice-back",
-  "version": "1.9.0",
+  "version": "1.10.0",
   "description": "AnimesIce backend - API de catálogo de animes com streaming, auth, Prisma e Docker",
   "author": "Arthur Iarley",
   "private": true,
