@@ -48,7 +48,8 @@ export class ReleaseMonitor {
                 slug: anime.slug,
                 episodeNumber: ep.episode,
               },
-              priority: PRIORITY.EXTRACT,
+              // Episódio novo fura a fila de backfill (EXTRACT)
+              priority: PRIORITY.EXTRACT_NEW,
             });
             enqueued++;
           }
@@ -89,7 +90,8 @@ export class ReleaseMonitor {
             slug: anime.slug,
             episodeNumber: ep.episode,
           },
-          priority: PRIORITY.EXTRACT,
+          // Episódio novo fura a fila de backfill (EXTRACT)
+          priority: PRIORITY.EXTRACT_NEW,
         });
         enqueued++;
       }

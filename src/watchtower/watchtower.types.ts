@@ -37,16 +37,25 @@ export const JOB_STATUS = {
 
 export type JobStatus = (typeof JOB_STATUS)[keyof typeof JOB_STATUS];
 
-/** Prioridades (menor = mais urgente). */
+/** Prioridades (menor = mais urgente).
+ *
+ * Jobs de controle (CHECK_RELEASES, DISCOVER_SEASON, SYNC_AIRING) ficam ACIMA
+ * do backfill (EXTRACT/SCAN_CATALOG) para nunca serem famintos por uma fila
+ * cheia de extrações de catálogo. Episódios NOVOS (ReleaseMonitor) usam
+ * EXTRACT_NEW, que fura a fila de backfill (EXTRACT).
+ */
 export const PRIORITY = {
+  /** Novo episódio de anime em lançamento — o mais urgente */
+  CHECK_RELEASES: 40,
   REPAIR: 50,
-  EXTRACT: 100,
-  VALIDATE: 90,
-  CHECK_RELEASES: 200,
-  DISCOVER_SEASON: 300,
-  SCAN_CATALOG: 280,
-  SYNC_AIRING: 250,
   GAP_CHECK: 60,
+  /** Extração de episódio NOVO vinda do ReleaseMonitor (fura o backfill) */
+  EXTRACT_NEW: 80,
+  VALIDATE: 90,
+  EXTRACT: 100,
+  SYNC_AIRING: 150,
+  DISCOVER_SEASON: 160,
+  SCAN_CATALOG: 280,
 } as const;
 
 /** Backoff exponencial: [15min, 1h, 6h, 24h, 48h]. */

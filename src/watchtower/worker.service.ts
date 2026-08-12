@@ -276,7 +276,9 @@ export class WorkerService {
         type: JOB_TYPE.SCAN_CATALOG,
         dedupeKey: `scan-catalog:${gap.animeId}`,
         payload: { animeId: gap.animeId, slug: gap.slug },
-        priority: PRIORITY.GAP_CHECK,
+        // SCAN_CATALOG (não GAP_CHECK): varredura de catálogo é backfill —
+        // fica atrás de episódios novos (EXTRACT_NEW) e extrações (EXTRACT).
+        priority: PRIORITY.SCAN_CATALOG,
       });
       enqueued++;
     }
@@ -301,7 +303,9 @@ export class WorkerService {
         type: JOB_TYPE.SCAN_CATALOG,
         dedupeKey: `scan-catalog:${anime.id}`,
         payload: { animeId: anime.id, slug: anime.slug },
-        priority: PRIORITY.GAP_CHECK,
+        // SCAN_CATALOG (não GAP_CHECK): varredura de catálogo é backfill —
+        // fica atrás de episódios novos (EXTRACT_NEW) e extrações (EXTRACT).
+        priority: PRIORITY.SCAN_CATALOG,
       });
       enqueued++;
     }

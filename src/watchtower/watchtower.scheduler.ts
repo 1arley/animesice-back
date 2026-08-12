@@ -2,18 +2,24 @@
  * WatchtowerScheduler — dispatcher de cron do NestJS.
  *
  *Ticks:
- *  - a cada 1 min: processa batch de jobs devidos (cap env WT_TICK_BATCH=20)
+ *  - a cada 1 min: processa batch de jobs devidos (cap env WT_TICK_BATCH=20),
+ *    cada job com timeout rígido (env WT_JOB_TIMEOUT_MS=180000) p/ um scrape
+ *    travado nunca congelar a fila
  *  - a cada 15 min: enfileira CHECK_RELEASES + reapStale
  *  - a cada 6h: enfileira GAP_CHECK (detecta gaps de episódios e enfileira SCAN_CATALOG)
- *  - 1x/dia (03:00): DISCOVER_SEASON + repair sweep + canário revive + scanAll force
+ *  - 1x/dia (03:00): DISCOVER_SEASON + repair sweep + canário revive + scanAll (gaps only)
  *
  * Guarda se WATCHTOWER_ENABLED != 'true' — feature flag total.
  * Sub-flags: WT_SEASON_DISCOVERY_ENABLED, WT_REPAIR_ENABLED.
+ *
+ * NOTA: scanAll roda SEM force — o force=true varre o catálogo INTEIRO e
+ * afoga a fila com milhares de EXTRACT_EPISODE (backfill), faminto o
+ * CHECK_RELEASES (episódios novos).
  */
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '@/prisma/prisma.service';
-import { JobsService } from './jobs.service';
+import { JobsService, WatchtowerJobRow } from './jobs.service';
 import { WorkerService } from './worker.service';
 import { RepairWorker } from './repair-worker.service';
 import { HealthMonitor } from './health-monitor.service';
@@ -22,6 +28,25 @@ import { JOB_TYPE, PRIORITY } from './watchtower.types';
 
 const TICK_BATCH = Number(process.env.WT_TICK_BATCH ?? 20);
 const STALE_MS = 10 * 60_000;
+/** Timeout rígido por job de extração/varredura: um scrape travado (ex:
+ * resolução de player via chromium) não pode congelar a fila inteira. O job
+ * fica RUNNING e é reapado pelo reapStale com backoff; maxAttempts o converte
+ * em DEAD.
+ */
+const JOB_TIMEOUT_MS = Number(process.env.WT_JOB_TIMEOUT_MS ?? 180_000);
+/** Timeout folgado p/ jobs de controle: checkAll varre TODOS os animes em
+ * lançamento via AniList e legitmamente leva >3min (observado ~3.5min em prod).
+ */
+const CONTROL_TIMEOUT_MS = Number(
+  process.env.WT_CONTROL_TIMEOUT_MS ?? 15 * 60_000,
+);
+/** Jobs de controle (raros, sem risco de hang de chromium) — timeout generoso. */
+const CONTROL_JOB_TYPES = new Set<string>([
+  JOB_TYPE.CHECK_RELEASES,
+  JOB_TYPE.DISCOVER_SEASON,
+  JOB_TYPE.SYNC_AIRING,
+  JOB_TYPE.GAP_CHECK,
+]);
 
 @Injectable()
 export class WatchtowerScheduler implements OnModuleInit {
@@ -55,10 +80,53 @@ export class WatchtowerScheduler implements OnModuleInit {
     try {
       const batch = await this.jobs.claimBatch(TICK_BATCH);
       for (const job of batch) {
-        await this.worker.process(job).catch(() => undefined);
+        await this.processWithTimeout(job);
       }
     } finally {
       this.running = false;
+    }
+  }
+
+  /**
+   * Processa um job com timeout rígido. Se estourar, loga e segue p/ o
+   * próximo — a promise original continua em background e, ao terminar,
+   * completa/falha o job via guards de lockedBy (sem clobber). Garante que
+   * um único job travado nunca congele o pipeline inteiro.
+   */
+  private async processWithTimeout(job: WatchtowerJobRow): Promise<void> {
+    const timeoutMs = CONTROL_JOB_TYPES.has(job.type)
+      ? CONTROL_TIMEOUT_MS
+      : JOB_TIMEOUT_MS;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const proc = this.worker.process(job).catch((e) => {
+        console.error(
+          '[WATCHTOWER] job falhou fora do tick:',
+          job.type,
+          e instanceof Error ? e.message : String(e),
+        );
+      });
+      await Promise.race([
+        proc,
+        new Promise((_, reject) => {
+          timer = setTimeout(
+            () =>
+              reject(
+                new Error(`job ${job.type} excedeu ${timeoutMs}ms (pulado)`),
+              ),
+            timeoutMs,
+          );
+        }),
+      ]);
+    } catch (err) {
+      console.error(
+        '[WATCHTOWER] tick skip (timeout):',
+        job.type,
+        job.id,
+        err instanceof Error ? err.message : String(err),
+      );
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
 
@@ -108,7 +176,7 @@ export class WatchtowerScheduler implements OnModuleInit {
         payload: {},
         priority: PRIORITY.DISCOVER_SEASON,
       });
-      await this.catalog.scanAll(true).catch((e) => {
+      await this.catalog.scanAll(false).catch((e) => {
         console.error(
           '[WATCHTOWER] scanAll falhou:',
           e instanceof Error ? e.message : String(e),
