@@ -1,3 +1,12 @@
+# [1.12.0](https://github.com/1arley/animesice-back/compare/v1.11.0...v1.12.0) (2026-08-12)
+
+
+### Features
+
+* **observability:** add MetricsService counters with periodic log and cover embed/anime with specs ([e4e5d30](https://github.com/1arley/animesice-back/commit/e4e5d303b05c963b0034cc7c83dbe4cfddd6cdcc))
+* **observability:** metrics endpoint + fuzzy e2e + CI migrate deploy ([4e6b9ee](https://github.com/1arley/animesice-back/commit/4e6b9ee332ace6622b3ed67775a0c460852a82db))
+* **search:** fuzzy ranking via pg_trgm word_similarity with dry-run tool ([656072b](https://github.com/1arley/animesice-back/commit/656072b793e218ac5b6fa02db15e08e53a2c7fe4))
+
 # [1.11.0](https://github.com/1arley/animesice-back/compare/v1.10.0...v1.11.0) (2026-08-12)
 
 
