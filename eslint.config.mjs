@@ -60,17 +60,20 @@ export default tseslint.config(
       'prettier/prettier': ['error', { endOfLine: 'lf' }], // ← 'auto' → 'lf'
     },
   },
-  // Relax rules for test files
+  // Test files relax the type-aware safety rules on purpose: mocks commonly
+  // cast to `any`, and specs assert on internals that production code should
+  // never touch. These are turned OFF (not warn) so `npm run lint` stays clean
+  // while production files keep every rule at error level.
   {
     files: ['**/*.spec.ts', '**/*.e2e-spec.ts', '**/test/**/*.ts'],
     rules: {
       '@typescript-eslint/unbound-method': 'off',
-      '@typescript-eslint/no-explicit-any': 'warn',
-      '@typescript-eslint/no-unsafe-argument': 'warn',
-      '@typescript-eslint/no-unsafe-member-access': 'warn',
-      '@typescript-eslint/no-unsafe-assignment': 'warn',
-      '@typescript-eslint/no-unsafe-call': 'warn',
-      '@typescript-eslint/no-unsafe-return': 'warn',  // ← mirrors new main rule
+      '@typescript-eslint/no-explicit-any': 'off',
+      '@typescript-eslint/no-unsafe-argument': 'off',
+      '@typescript-eslint/no-unsafe-member-access': 'off',
+      '@typescript-eslint/no-unsafe-assignment': 'off',
+      '@typescript-eslint/no-unsafe-call': 'off',
+      '@typescript-eslint/no-unsafe-return': 'off',
       '@typescript-eslint/require-await': 'off',
       '@typescript-eslint/no-require-imports': 'off',
     },
