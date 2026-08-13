@@ -1,3 +1,10 @@
+## [1.16.1](https://github.com/1arley/animesice-back/compare/v1.16.0...v1.16.1) (2026-08-13)
+
+
+### Bug Fixes
+
+* **watchtower:** reextrair com embedUrl real no repair de episódios ([7e4bae1](https://github.com/1arley/animesice-back/commit/7e4bae115d20b04f63a547178a0c2deffb2b336d))
+
 # [1.16.0](https://github.com/1arley/animesice-back/compare/v1.15.0...v1.16.0) (2026-08-13)
 
 
