@@ -70,6 +70,44 @@ export const PRIORITY = {
   SCAN_CATALOG: 280,
 } as const;
 
+/* ---------------------------------------------------------------------------
+ * TEMPORÁRIO — backfill prioritário manual.
+ * Slugs-base das franquias: casa o anime exato e todas as temporadas-irmãs
+ * (slug-2, slug-3, ...) e versões dubladas. Usado p/ forçar a colocação de
+ * TODOS os episódios desses animes antes do resto da fila.
+ * Quando a lista estiver zerada, o fluxo volta ao normal sem outra mudança.
+ * ------------------------------------------------------------------------- */
+export const PRIORITY_SLUGS: string[] = [
+  'kaguya-sama-love-is-war',
+  'kaguya-sama-wa-kokurasetai-otona-e-no-kaidan',
+  'mushoku-tensei-isekai-ittara-honki-dasu',
+  'mushoku-tensei-iii-isekai-ittara-honki-dasu',
+];
+
+/** Prioridade urgente p/ jobs desses slugs (acima de todo backfill, mas
+ * abaixo do CHECK_RELEASES de controle p/ não famintar releases novos). */
+export const PRIORITY_BOOST = 45;
+
+/** true se o slug pertence a um anime da lista prioritária (ou sibling/dublado). */
+export function isBoostedSlug(slug: string | null | undefined): boolean {
+  if (!slug) return false;
+  const s = slug.toLowerCase();
+  return PRIORITY_SLUGS.some((base) => {
+    const b = base.toLowerCase();
+    return s === b || s.startsWith(`${b}-`);
+  });
+}
+
+/** Prioridade efetiva p/ o enqueue: boostada se o slug for da lista. */
+export function priorityForSlug(
+  slug: string | null | undefined,
+  basePriority: number,
+): number {
+  return isBoostedSlug(slug)
+    ? Math.min(basePriority, PRIORITY_BOOST)
+    : basePriority;
+}
+
 /** Backoff exponencial: [15min, 1h, 6h, 24h, 48h]. */
 export const BACKOFF_MS: number[] = [
   15 * 60_000,

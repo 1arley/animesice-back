@@ -9,7 +9,7 @@
  */
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '@/prisma/prisma.service';
-import { nextBackoffMs } from './watchtower.types';
+import { nextBackoffMs, priorityForSlug } from './watchtower.types';
 
 interface EnqueueInput {
   type: string;
@@ -26,6 +26,11 @@ export class JobsService {
 
   async enqueue(input: EnqueueInput): Promise<void> {
     const nextRunAt = new Date();
+    // Backfill priorizado: se o payload referencia um anime da lista
+    // PRIORITY_SLUGS, o job entra com prioridade urgente (PRIORITY_BOOST).
+    const slug = (input.payload as { slug?: string } | null)?.slug ?? null;
+    const priority = priorityForSlug(slug, input.priority ?? 100);
+
     const existing = await this.prisma.watchtowerJob.findUnique({
       where: {
         type_dedupeKey: { type: input.type, dedupeKey: input.dedupeKey },
@@ -45,7 +50,7 @@ export class JobsService {
             lockedBy: null,
             lockedAt: null,
             payload: input.payload as object,
-            priority: input.priority ?? 100,
+            priority,
           },
         });
       } else {
@@ -56,10 +61,7 @@ export class JobsService {
             where: { id: existing.id },
             data: {
               payload: input.payload as object,
-              priority: Math.min(
-                existing.priority ?? 100,
-                input.priority ?? 100,
-              ),
+              priority: Math.min(existing.priority ?? 100, priority),
             },
           })
           .catch(() => undefined);
@@ -73,7 +75,7 @@ export class JobsService {
           type: input.type,
           dedupeKey: input.dedupeKey,
           payload: input.payload as object,
-          priority: input.priority ?? 100,
+          priority,
           maxAttempts: input.maxAttempts ?? 5,
           nextRunAt,
         },
