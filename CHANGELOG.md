@@ -1,3 +1,10 @@
+# [1.16.0](https://github.com/1arley/animesice-back/compare/v1.15.0...v1.16.0) (2026-08-13)
+
+
+### Features
+
+* **watchtower:** boost temporário de prioridade p/ animes selecionados ([4f861c0](https://github.com/1arley/animesice-back/commit/4f861c0afcfeff334158a4ecba9a21f62450279e))
+
 # [1.15.0](https://github.com/1arley/animesice-back/compare/v1.14.0...v1.15.0) (2026-08-13)
 
 
