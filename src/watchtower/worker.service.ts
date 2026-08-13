@@ -170,7 +170,7 @@ export class WorkerService {
           number: p.episodeNumber,
         },
       },
-      select: { id: true, animeId: true, number: true },
+      select: { id: true, animeId: true, number: true, embedUrl: true },
     });
     if (!episode) {
       await this.handleExtract({
@@ -220,6 +220,7 @@ export class WorkerService {
       anime.slug,
       p.episodeNumber,
       p.season ?? 1,
+      episode.embedUrl ?? undefined,
     );
     if (candidates.length === 0)
       throw new Error(`Repair: sem fonte p/ ${anime.slug}/${p.episodeNumber}`);

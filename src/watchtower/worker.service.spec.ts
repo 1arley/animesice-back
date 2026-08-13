@@ -14,12 +14,27 @@ function makeMocks() {
         }),
       },
       episode: {
-        findUnique: jest.fn(async () => ({
-          id: 'ep1',
-          animeId: 'anime-1',
-          number: 1,
-          videoUrl: 'old.mp4',
-        })),
+        findUnique: jest.fn(async (args: any) => {
+          // Segundo lookup por id (só videoUrl) simula vídeo morto p/ forçar re-extração.
+          if (args?.where?.id) {
+            return { id: 'ep3', videoUrl: null };
+          }
+          if (args?.where?.animeId_season_number?.number === 3) {
+            return {
+              id: 'ep3',
+              animeId: 'anime-1',
+              number: 3,
+              embedUrl: 'https://meusanimes.blog/e/solo-2-episodio-3/',
+            };
+          }
+          return {
+            id: 'ep1',
+            animeId: 'anime-1',
+            number: 1,
+            videoUrl: 'old.mp4',
+            embedUrl: 'https://meusanimes.blog/e/solo/',
+          };
+        }),
         update: jest.fn(async () => undefined),
         updateMany: jest.fn(async () => ({ count: 0 })),
       },
@@ -342,5 +357,44 @@ describe('WorkerService', () => {
       }),
     );
     expect(m.jobs.fail).toHaveBeenCalledWith('job-5', '', 'crash');
+  });
+
+  it('process REPAIR_EPISODE reextrai usando o embedUrl existente do episódio', async () => {
+    const worker = new WorkerService(
+      m.prisma as any,
+      m.jobs as any,
+      m.extractor as any,
+      m.validator as any,
+      m.publisher as any,
+      m.release as any,
+      m.season as any,
+      m.repair as any,
+      m.health as any,
+      m.catalog as any,
+      m.schedule as any,
+    );
+    await worker.process(
+      job({
+        id: 'job-repair',
+        type: 'REPAIR_EPISODE',
+        dedupeKey: 'repair:anime-1:1:3',
+        payload: { animeId: 'anime-1', episodeNumber: 3 },
+      }),
+    );
+    // O repair deve passar o embedUrl real do episódio (não o template por slug base)
+    expect(m.extractor.extract).toHaveBeenCalledWith(
+      'solo',
+      3,
+      1,
+      'https://meusanimes.blog/e/solo-2-episodio-3/',
+    );
+    expect(m.publisher.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        animeId: 'anime-1',
+        episodeNumber: 3,
+        videoUrl: 'new.mp4',
+      }),
+    );
+    expect(m.jobs.complete).toHaveBeenCalledWith('job-repair', '');
   });
 });
