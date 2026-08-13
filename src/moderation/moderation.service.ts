@@ -164,6 +164,75 @@ export class ModerationService {
     });
   }
 
+  async adminListPosts(page = 1, limit = 20, status?: string) {
+    const safeLimit = Math.min(Math.max(limit, 1), 100);
+    const skip = (page - 1) * safeLimit;
+
+    const where: Record<string, unknown> = {};
+    if (status) where.status = status;
+
+    const [posts, total] = await this.prisma.$transaction([
+      this.prisma.post.findMany({
+        where,
+        skip,
+        take: safeLimit,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          user: {
+            select: { id: true, name: true, userName: true, avatar: true },
+          },
+          anime: {
+            select: { id: true, slug: true, title: true },
+          },
+          _count: {
+            select: { likes: true, comments: true },
+          },
+        },
+      }),
+      this.prisma.post.count({ where }),
+    ]);
+
+    return {
+      data: posts,
+      meta: {
+        total,
+        page,
+        limit: safeLimit,
+        totalPages: Math.ceil(total / safeLimit),
+      },
+    };
+  }
+
+  async adminHidePost(postId: string) {
+    const post = await this.prisma.post.findUnique({
+      where: { id: postId },
+      select: { id: true, status: true },
+    });
+
+    if (!post) {
+      throw new NotFoundException('Post não encontrado.');
+    }
+
+    return this.prisma.post.update({
+      where: { id: postId },
+      data: { status: ContentStatus.HIDDEN_BY_MOD },
+    });
+  }
+
+  async adminDeletePost(postId: string) {
+    const post = await this.prisma.post.findUnique({
+      where: { id: postId },
+      select: { id: true },
+    });
+
+    if (!post) {
+      throw new NotFoundException('Post não encontrado.');
+    }
+
+    await this.prisma.post.delete({ where: { id: postId } });
+    return { message: 'Post removido permanentemente.' };
+  }
+
   async isUserSuspended(userId: string): Promise<boolean> {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },

@@ -115,4 +115,36 @@ export class ModerationController {
   deleteComment(@Param('id') id: string) {
     return this.moderationService.deleteComment(id, '');
   }
+
+  @Get('admin/posts')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  @ApiOperation({ summary: 'Listar posts do feed (admin, moderação)' })
+  listPostsForAdmin(
+    @Query('page') page: string,
+    @Query('limit') limit: string,
+    @Query('status') status?: string,
+  ) {
+    return this.moderationService.adminListPosts(
+      parseInt(page ?? '1', 10) || 1,
+      parseInt(limit ?? '20', 10) || 20,
+      status,
+    );
+  }
+
+  @Patch('admin/posts/:id/hide')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  @ApiOperation({ summary: 'Ocultar post do feed (moderação)' })
+  hidePost(@Param('id') id: string) {
+    return this.moderationService.adminHidePost(id);
+  }
+
+  @Delete('admin/posts/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  @ApiOperation({ summary: 'Excluir post permanentemente (admin)' })
+  deletePost(@Param('id') id: string) {
+    return this.moderationService.adminDeletePost(id);
+  }
 }

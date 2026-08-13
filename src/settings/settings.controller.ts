@@ -3,6 +3,7 @@ import {
   Get,
   Patch,
   Post,
+  Delete,
   Body,
   Param,
   Query,
@@ -24,6 +25,7 @@ import {
   UpdateSiteSettingsDto,
   ConfirmEmailChangeDto,
 } from './dto/settings.dto';
+import { Role } from '@prisma/client';
 import { ChangeEmailDto } from '@/auth/dto/change-email.dto';
 import { ChangePasswordDto } from '@/auth/dto/change-password.dto';
 import { UpdateProfileDto } from '@/auth/dto/update-profile.dto';
@@ -166,10 +168,12 @@ export class SettingsController {
   listUsersForAdmin(
     @Query('page') page: string,
     @Query('limit') limit: string,
+    @Query('search') search?: string,
   ) {
     return this.settingsService.listUsersForAdmin(
       parseInt(page ?? '1', 10) || 1,
       parseInt(limit ?? '20', 10) || 20,
+      search,
     );
   }
 
@@ -181,5 +185,34 @@ export class SettingsController {
   })
   getUserDetailForAdmin(@Param('id') id: string) {
     return this.settingsService.getUserDetailForAdmin(id);
+  }
+
+  @Delete('admin/users/:id')
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  @ApiOperation({ summary: 'Excluir usuário (cascade delete)' })
+  deleteUser(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.settingsService.deleteUser(id, req.user.id);
+  }
+
+  @Patch('admin/users/:id/role')
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Alterar cargo de usuário' })
+  updateUserRole(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() body: { role: Role },
+  ) {
+    return this.settingsService.updateUserRole(id, body.role, req.user.id);
+  }
+
+  @Get('admin/dashboard')
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  @ApiOperation({ summary: 'Estatísticas gerais do site (dashboard admin)' })
+  getDashboardStats() {
+    return this.settingsService.getDashboardStats();
   }
 }

@@ -1,7 +1,11 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { PrismaService } from '@/prisma/prisma.service';
 import { NotificationService } from '@/notification/notification.service';
-import { NotificationType, NotificationChannel } from '@prisma/client';
+import { NotificationType, NotificationChannel, Role } from '@prisma/client';
 import { AuthService } from '@/auth/auth.service';
 import { UpdateSiteSettingsDto, UpdatePrivacyDto } from './dto/settings.dto';
 
@@ -185,12 +189,26 @@ export class SettingsService {
 
   // ── Admin settings: user management (ADMIN, SUPERADMIN) ──────────────
 
-  async listUsersForAdmin(page: number = 1, limit: number = 20) {
+  async listUsersForAdmin(
+    page: number = 1,
+    limit: number = 20,
+    search?: string,
+  ) {
     const safeLimit = Math.min(Math.max(limit, 1), 100);
     const skip = (page - 1) * safeLimit;
 
+    const where: Record<string, unknown> = {};
+    if (search) {
+      where.OR = [
+        { email: { contains: search, mode: 'insensitive' } },
+        { name: { contains: search, mode: 'insensitive' } },
+        { userName: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+
     const [users, total] = await this.prisma.$transaction([
       this.prisma.user.findMany({
+        where,
         skip,
         take: safeLimit,
         orderBy: { createdAt: 'desc' },
@@ -207,7 +225,7 @@ export class SettingsService {
           updatedAt: true,
         },
       }),
-      this.prisma.user.count(),
+      this.prisma.user.count({ where }),
     ]);
 
     return {
@@ -254,5 +272,136 @@ export class SettingsService {
     }
 
     return user;
+  }
+
+  async deleteUser(userId: string, adminId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, role: true },
+    });
+
+    if (!user) {
+      throw new NotFoundException('Usuário não encontrado.');
+    }
+
+    if (user.id === adminId) {
+      throw new ForbiddenException('Você não pode excluir a si mesmo.');
+    }
+
+    if (user.role === 'SUPERADMIN') {
+      throw new ForbiddenException(
+        'Não é possível excluir um SUPERADMIN. Remova o cargo primeiro.',
+      );
+    }
+
+    await this.prisma.user.delete({ where: { id: userId } });
+    return { message: 'Usuário excluído com sucesso.' };
+  }
+
+  async updateUserRole(userId: string, role: Role, adminId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, role: true },
+    });
+
+    if (!user) {
+      throw new NotFoundException('Usuário não encontrado.');
+    }
+
+    if (user.id === adminId) {
+      throw new ForbiddenException('Você não pode alterar seu próprio cargo.');
+    }
+
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: { role },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        userName: true,
+        role: true,
+      },
+    });
+  }
+
+  async getDashboardStats() {
+    const [
+      totalUsers,
+      totalAnimes,
+      totalEpisodes,
+      totalComments,
+      totalPosts,
+      pendingReports,
+      totalRatings,
+      totalFavorites,
+      pendingFeedbacks,
+      pendingAnimeRequests,
+      totalWatchHistories,
+    ] = await Promise.all([
+      this.prisma.user.count(),
+      this.prisma.anime.count(),
+      this.prisma.episode.count(),
+      this.prisma.comment.count(),
+      this.prisma.post.count(),
+      this.prisma.report.count({ where: { status: 'PENDING' } }),
+      this.prisma.rating.count(),
+      this.prisma.favorite.count(),
+      this.prisma.siteFeedback.count({
+        where: { status: { in: ['OPEN', 'ACKNOWLEDGED'] } },
+      }),
+      this.prisma.animeRequest.count({
+        where: { status: { in: ['OPEN', 'ACKNOWLEDGED'] } },
+      }),
+      this.prisma.watchHistory.count(),
+    ]);
+
+    const now = new Date();
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+    const [newUsersThisWeek, newPostsThisWeek, newCommentsThisWeek] =
+      await Promise.all([
+        this.prisma.user.count({ where: { createdAt: { gte: sevenDaysAgo } } }),
+        this.prisma.post.count({ where: { createdAt: { gte: sevenDaysAgo } } }),
+        this.prisma.comment.count({
+          where: { createdAt: { gte: sevenDaysAgo } },
+        }),
+      ]);
+
+    const [suspendedUsers, adminUsers] = await Promise.all([
+      this.prisma.user.count({
+        where: {
+          suspendedUntil: { gt: now },
+        },
+      }),
+      this.prisma.user.count({
+        where: { role: { in: ['ADMIN', 'SUPERADMIN'] } },
+      }),
+    ]);
+
+    return {
+      totals: {
+        users: totalUsers,
+        animes: totalAnimes,
+        episodes: totalEpisodes,
+        comments: totalComments,
+        posts: totalPosts,
+        ratings: totalRatings,
+        favorites: totalFavorites,
+        watchHistories: totalWatchHistories,
+      },
+      moderation: {
+        pendingReports,
+        suspendedUsers,
+        pendingFeedbacks,
+        pendingAnimeRequests,
+      },
+      weekly: {
+        newUsers: newUsersThisWeek,
+        newPosts: newPostsThisWeek,
+        newComments: newCommentsThisWeek,
+      },
+      admins: adminUsers,
+    };
   }
 }
