@@ -72,6 +72,10 @@ function makeMocks() {
       scanAll: jest.fn(async () => ({ scanned: 0, enqueued: 0 })),
       processScanCatalog: jest.fn(async () => ({ found: 0, missing: 0 })),
     },
+    schedule: {
+      backfillAnilist: jest.fn(async () => 0),
+      syncSchedules: jest.fn(async () => 0),
+    },
   };
 }
 
@@ -118,6 +122,7 @@ describe('WorkerService', () => {
       m.repair as any,
       m.health as any,
       m.catalog as any,
+      m.schedule as any,
     );
     await worker.process(
       job({
@@ -164,6 +169,7 @@ describe('WorkerService', () => {
       m.repair as any,
       m.health as any,
       m.catalog as any,
+      m.schedule as any,
     );
     await worker.process(
       job({
@@ -192,6 +198,7 @@ describe('WorkerService', () => {
       m.repair as any,
       m.health as any,
       m.catalog as any,
+      m.schedule as any,
     );
     await worker.process(
       job({
@@ -217,6 +224,7 @@ describe('WorkerService', () => {
       m.repair as any,
       m.health as any,
       m.catalog as any,
+      m.schedule as any,
     );
     await worker.process(
       job({
@@ -241,6 +249,7 @@ describe('WorkerService', () => {
       m.repair as any,
       m.health as any,
       m.catalog as any,
+      m.schedule as any,
     );
     await worker.process(
       job({
@@ -257,6 +266,58 @@ describe('WorkerService', () => {
     );
   });
 
+  it('process BACKFILL_ANILIST delega para schedule.backfillAnilist', async () => {
+    const worker = new WorkerService(
+      m.prisma as any,
+      m.jobs as any,
+      m.extractor as any,
+      m.validator as any,
+      m.publisher as any,
+      m.release as any,
+      m.season as any,
+      m.repair as any,
+      m.health as any,
+      m.catalog as any,
+      m.schedule as any,
+    );
+    await worker.process(
+      job({
+        id: 'job-ba',
+        type: 'BACKFILL_ANILIST',
+        dedupeKey: 'backfill-anilist',
+        payload: {},
+      }),
+    );
+    expect(m.schedule.backfillAnilist).toHaveBeenCalledTimes(1);
+    expect(m.jobs.complete).toHaveBeenCalledWith('job-ba', '');
+  });
+
+  it('process SYNC_SCHEDULES delega para schedule.syncSchedules', async () => {
+    const worker = new WorkerService(
+      m.prisma as any,
+      m.jobs as any,
+      m.extractor as any,
+      m.validator as any,
+      m.publisher as any,
+      m.release as any,
+      m.season as any,
+      m.repair as any,
+      m.health as any,
+      m.catalog as any,
+      m.schedule as any,
+    );
+    await worker.process(
+      job({
+        id: 'job-ss',
+        type: 'SYNC_SCHEDULES',
+        dedupeKey: 'sync-schedules',
+        payload: {},
+      }),
+    );
+    expect(m.schedule.syncSchedules).toHaveBeenCalledTimes(1);
+    expect(m.jobs.complete).toHaveBeenCalledWith('job-ss', '');
+  });
+
   it('lançamento de erro em extract → jobs.fail', async () => {
     m.extractor.extract.mockRejectedValueOnce(new Error('crash'));
     const worker = new WorkerService(
@@ -270,6 +331,7 @@ describe('WorkerService', () => {
       m.repair as any,
       m.health as any,
       m.catalog as any,
+      m.schedule as any,
     );
     await worker.process(
       job({

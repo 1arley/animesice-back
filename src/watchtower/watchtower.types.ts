@@ -23,6 +23,12 @@ export const JOB_TYPE = {
   SYNC_AIRING: 'SYNC_AIRING',
   /** Detecta gaps nos episódios (ex: pulou do ep 110 → 1037) e enfileira SCAN_CATALOG */
   GAP_CHECK: 'GAP_CHECK',
+  /** Backfill: casa animes sem anilistId com AniList (título/slug) e grava
+   * anilistId + year/season/format/episodeCount/studios */
+  BACKFILL_ANILIST: 'BACKFILL_ANILIST',
+  /** Deriva o horário fixo de exibição (dia da semana + hora) do airingSchedule
+   *  e grava em AnimeSchedule — alimenta o calendário semanal */
+  SYNC_SCHEDULES: 'SYNC_SCHEDULES',
 } as const;
 
 export type JobType = (typeof JOB_TYPE)[keyof typeof JOB_TYPE];
@@ -39,7 +45,8 @@ export type JobStatus = (typeof JOB_STATUS)[keyof typeof JOB_STATUS];
 
 /** Prioridades (menor = mais urgente).
  *
- * Jobs de controle (CHECK_RELEASES, DISCOVER_SEASON, SYNC_AIRING) ficam ACIMA
+ * Jobs de controle (CHECK_RELEASES, DISCOVER_SEASON, SYNC_AIRING, SYNC_SCHEDULES,
+ * BACKFILL_ANILIST) ficam ACIMA
  * do backfill (EXTRACT/SCAN_CATALOG) para nunca serem famintos por uma fila
  * cheia de extrações de catálogo. Episódios NOVOS (ReleaseMonitor) usam
  * EXTRACT_NEW, que fura a fila de backfill (EXTRACT).
@@ -55,6 +62,11 @@ export const PRIORITY = {
   EXTRACT: 100,
   SYNC_AIRING: 150,
   DISCOVER_SEASON: 160,
+  /** Sync de horários de exibição (SYNC_SCHEDULES) — backfill leve, atrás de
+   * descobertas e releases (episódios novos têm prioridade de fila). */
+  SYNC_SCHEDULES: 170,
+  /** Backfill de anilistId/metadados — ainda menos urgente (só enriquece catálogo). */
+  BACKFILL_ANILIST: 180,
   SCAN_CATALOG: 280,
 } as const;
 

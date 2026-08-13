@@ -22,6 +22,7 @@ import { SeasonDiscovery } from './season-discovery.service';
 import { RepairWorker } from './repair-worker.service';
 import { HealthMonitor } from './health-monitor.service';
 import { CatalogScanner } from './catalog-scanner.service';
+import { ScheduleSync } from './schedule-sync.service';
 import { JOB_TYPE, PRIORITY } from './watchtower.types';
 
 interface ExtractPayload {
@@ -57,6 +58,7 @@ export class WorkerService {
     private readonly repair: RepairWorker,
     private readonly health: HealthMonitor,
     private readonly catalog: CatalogScanner,
+    private readonly schedule: ScheduleSync,
   ) {}
 
   async process(job: WatchtowerJobRow): Promise<void> {
@@ -85,6 +87,12 @@ export class WorkerService {
         }
         case JOB_TYPE.SYNC_AIRING:
           await this.release.checkAll();
+          break;
+        case JOB_TYPE.BACKFILL_ANILIST:
+          await this.schedule.backfillAnilist();
+          break;
+        case JOB_TYPE.SYNC_SCHEDULES:
+          await this.schedule.syncSchedules();
           break;
         case JOB_TYPE.GAP_CHECK:
           await this.handleGapCheck();

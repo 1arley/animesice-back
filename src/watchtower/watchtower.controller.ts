@@ -20,6 +20,7 @@ import { ReleaseMonitor } from './release-monitor.service';
 import { SeasonDiscovery } from './season-discovery.service';
 import { RepairWorker } from './repair-worker.service';
 import { CatalogScanner } from './catalog-scanner.service';
+import { ScheduleSync } from './schedule-sync.service';
 
 @ApiTags('Watchtower')
 @ApiBearerAuth()
@@ -34,6 +35,7 @@ export class WatchtowerController {
     private readonly season: SeasonDiscovery,
     private readonly repair: RepairWorker,
     private readonly catalog: CatalogScanner,
+    private readonly schedule: ScheduleSync,
   ) {}
 
   @Get('status')
@@ -107,5 +109,19 @@ export class WatchtowerController {
   async scanAll(@Body() body?: { force?: boolean }) {
     const res = await this.catalog.scanAll(body?.force ?? false);
     return res;
+  }
+
+  @Post('backfill-anilist')
+  @ApiOperation({ summary: 'Força backfill de anilistId/metadados (batch)' })
+  async backfillAnilist() {
+    const matched = await this.schedule.backfillAnilist();
+    return { matched };
+  }
+
+  @Post('sync-schedules')
+  @ApiOperation({ summary: 'Força sync de horários fixos (AnimeSchedule)' })
+  async syncSchedules() {
+    const synced = await this.schedule.syncSchedules();
+    return { synced };
   }
 }

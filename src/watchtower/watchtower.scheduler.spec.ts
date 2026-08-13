@@ -34,6 +34,8 @@ describe('WatchtowerScheduler', () => {
   const origEnabled = process.env.WATCHTOWER_ENABLED;
   const origRepair = process.env.WT_REPAIR_ENABLED;
   const origDiscover = process.env.WT_SEASON_DISCOVERY_ENABLED;
+  const origBackfill = process.env.WT_BACKFILL_ENABLED;
+  const origScheduleSync = process.env.WT_SCHEDULE_SYNC_ENABLED;
 
   beforeEach(() => {
     m = makeMocks();
@@ -58,6 +60,13 @@ describe('WatchtowerScheduler', () => {
     if (origDiscover === undefined)
       delete process.env.WT_SEASON_DISCOVERY_ENABLED;
     else process.env.WT_SEASON_DISCOVERY_ENABLED = origDiscover;
+
+    if (origBackfill === undefined) delete process.env.WT_BACKFILL_ENABLED;
+    else process.env.WT_BACKFILL_ENABLED = origBackfill;
+
+    if (origScheduleSync === undefined)
+      delete process.env.WT_SCHEDULE_SYNC_ENABLED;
+    else process.env.WT_SCHEDULE_SYNC_ENABLED = origScheduleSync;
   });
 
   it('tick não processa quando WATCHTOWER_ENABLED != true', async () => {
@@ -128,6 +137,48 @@ describe('WatchtowerScheduler', () => {
     await scheduler.dailyTasks();
     expect(m.jobs.enqueue).not.toHaveBeenCalledWith(
       expect.objectContaining({ type: 'DISCOVER_SEASON' }),
+    );
+  });
+
+  it('dailyTasks enfileira backfill + sync de horários só com flags opt-in=true', async () => {
+    process.env.WATCHTOWER_ENABLED = 'true';
+    process.env.WT_BACKFILL_ENABLED = 'true';
+    process.env.WT_SCHEDULE_SYNC_ENABLED = 'true';
+    await scheduler.dailyTasks();
+    expect(m.jobs.enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'BACKFILL_ANILIST' }),
+    );
+    expect(m.jobs.enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'SYNC_SCHEDULES' }),
+    );
+  });
+
+  it('dailyTasks NÃO enfileira backfill/sync sem flags (opt-in — nunca roda sozinho)', async () => {
+    process.env.WATCHTOWER_ENABLED = 'true';
+    await scheduler.dailyTasks();
+    expect(m.jobs.enqueue).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'BACKFILL_ANILIST' }),
+    );
+    expect(m.jobs.enqueue).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'SYNC_SCHEDULES' }),
+    );
+  });
+
+  it('dailyTasks pula backfill quando WT_BACKFILL_ENABLED=false', async () => {
+    process.env.WATCHTOWER_ENABLED = 'true';
+    process.env.WT_BACKFILL_ENABLED = 'false';
+    await scheduler.dailyTasks();
+    expect(m.jobs.enqueue).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'BACKFILL_ANILIST' }),
+    );
+  });
+
+  it('dailyTasks pula sync de horários quando WT_SCHEDULE_SYNC_ENABLED=false', async () => {
+    process.env.WATCHTOWER_ENABLED = 'true';
+    process.env.WT_SCHEDULE_SYNC_ENABLED = 'false';
+    await scheduler.dailyTasks();
+    expect(m.jobs.enqueue).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'SYNC_SCHEDULES' }),
     );
   });
 });

@@ -46,6 +46,8 @@ const CONTROL_JOB_TYPES = new Set<string>([
   JOB_TYPE.DISCOVER_SEASON,
   JOB_TYPE.SYNC_AIRING,
   JOB_TYPE.GAP_CHECK,
+  JOB_TYPE.BACKFILL_ANILIST,
+  JOB_TYPE.SYNC_SCHEDULES,
 ]);
 
 @Injectable()
@@ -181,6 +183,28 @@ export class WatchtowerScheduler implements OnModuleInit {
           '[WATCHTOWER] scanAll falhou:',
           e instanceof Error ? e.message : String(e),
         );
+      });
+    }
+    // Backfill de metadados (anilistId/season/year) + horários fixos (AnimeSchedule).
+    // O backfill auto-enfileira continua até zerar; o sync de horários é
+    // idempotente e atualiza o calendário semanal.
+    // OPT-IN: só rodam com WT_BACKFILL_ENABLED=true / WT_SCHEDULE_SYNC_ENABLED=true.
+    // O matcher de título é heurístico — nunca rodar sobre o catálogo inteiro
+    // sem supervisão (falsa positivos poluem anilistId/year/season/studios).
+    if (process.env.WT_BACKFILL_ENABLED === 'true') {
+      await this.jobs.enqueue({
+        type: JOB_TYPE.BACKFILL_ANILIST,
+        dedupeKey: 'backfill-anilist',
+        payload: {},
+        priority: PRIORITY.BACKFILL_ANILIST,
+      });
+    }
+    if (process.env.WT_SCHEDULE_SYNC_ENABLED === 'true') {
+      await this.jobs.enqueue({
+        type: JOB_TYPE.SYNC_SCHEDULES,
+        dedupeKey: 'sync-schedules',
+        payload: {},
+        priority: PRIORITY.SYNC_SCHEDULES,
       });
     }
   }
