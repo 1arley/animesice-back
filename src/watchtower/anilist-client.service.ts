@@ -20,6 +20,21 @@ export interface AiringEpisode {
   episode: number;
 }
 
+export interface MediaScheduleSummary {
+  status?: string | null;
+  startDate?: {
+    year?: number | null;
+    month?: number | null;
+    day?: number | null;
+  } | null;
+  endDate?: {
+    year?: number | null;
+    month?: number | null;
+    day?: number | null;
+  } | null;
+  schedule: AiringEpisode[];
+}
+
 export interface AniListMediaSummary {
   id: number;
   title: {
@@ -106,6 +121,45 @@ export class AniListClient {
       JSON.stringify({ query, variables: { id: mediaId, notYetAired: false } }),
     );
     return data.Media.airingSchedule.nodes;
+  }
+
+  /** Status + datas + AiringSchedule num request só — p/ sync de status e horário. */
+  async mediaSchedule(mediaId: number): Promise<MediaScheduleSummary> {
+    const query = `
+      query ($id: Int, $notYetAired: Boolean) {
+        Media(id: $id) {
+          status
+          startDate { year month day }
+          endDate { year month day }
+          airingSchedule(notYetAired: $notYetAired) {
+            nodes { airingAt episode }
+          }
+        }
+      }`;
+    const data = await this.request<{
+      Media: {
+        status?: string | null;
+        startDate?: {
+          year?: number | null;
+          month?: number | null;
+          day?: number | null;
+        } | null;
+        endDate?: {
+          year?: number | null;
+          month?: number | null;
+          day?: number | null;
+        } | null;
+        airingSchedule: { nodes: AiringEpisode[] };
+      };
+    }>(
+      JSON.stringify({ query, variables: { id: mediaId, notYetAired: false } }),
+    );
+    return {
+      status: data.Media.status,
+      startDate: data.Media.startDate,
+      endDate: data.Media.endDate,
+      schedule: data.Media.airingSchedule.nodes,
+    };
   }
 
   /** Busca media por título (sort: SEARCH_MATCH). */

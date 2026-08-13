@@ -3,14 +3,18 @@
  *
  * Duas responsabilidades complementares:
  *  - backfillAnilist(): animes sem anilistId são casados com AniList pelo
- *    título/slug e recebem anilistId + year/season/format/episodeCount/studios.
- *    Auto-enfileira continuar quando ainda há animes pendentes (batch limitado).
- *  - syncSchedules(): p/ animes com anilistId, deriva o horário FIXO de
- *    exibição (dia da semana + hora) do airingSchedule (AniList) e grava em
- *    AnimeSchedule — alimenta o calendário semanal. Um anime que sai toda
- *    segunda às 18h vira AnimeSchedule{dayOfWeek:1, time:"18:00"}.
+ *    título/slug e recebem anilistId + status/endDate + year/season/format/
+ *    episodeCount/studios. Auto-enfileira continuar quando ainda há animes
+ *    pendentes (batch limitado).
+ *  - syncSchedules(): p/ animes com anilistId, sincroniza status + endDate
+ *    reais do mediaSchedule (AniList) e deriva o horário FIXO de exibição
+ *    (dia da semana + hora) gravando em AnimeSchedule — alimenta o calendário
+ *    semanal e mantém o catálogo fiel ao status real (ex.: FINISHED vira
+ *    CONCLUIDO, encerra o excesso de "No ar"). Um anime que sai toda segunda
+ *    às 18h vira AnimeSchedule{dayOfWeek:1, time:"18:00"}.
  */
 import { Injectable } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '@/prisma/prisma.service';
 import { AniListClient } from './anilist-client.service';
 import { JobsService } from './jobs.service';
@@ -66,6 +70,8 @@ export class ScheduleSync {
           where: { id: anime.id },
           data: {
             anilistId: media.id,
+            status: mapStatus(media.status) ?? undefined,
+            endDate: fuzzyDate(media.endDate) ?? undefined,
             year: media.seasonYear ?? null,
             season: validSeason(media.season),
             format: validFormat(media.format),
@@ -104,33 +110,50 @@ export class ScheduleSync {
   }
 
   /**
-   * Deriva o horário fixo de exibição (dia da semana + hora) do airingSchedule
-   * de cada anime e sincroniza AnimeSchedule. Retorna qtd de animes sincronizados.
+   * Sincroniza status + datas de exibição e deriva o horário fixo (dia da
+   * semana + hora) do mediaSchedule (AniList) de cada anime, gravando em
+   * AnimeSchedule — alimenta o calendário semanal e mantém o catálogo
+   * fiel ao status real (ex.: FINISHED vira CONCLUIDO, encerra o excesso
+   * de "No ar"). Retorna qtd de animes sincronizados.
    */
   async syncSchedules(): Promise<number> {
     const animes = await this.prisma.anime.findMany({
       where: { anilistId: { not: null } },
-      select: { id: true, anilistId: true },
+      select: { id: true, anilistId: true, status: true },
     });
 
     let synced = 0;
     for (const anime of animes) {
       if (!anime.anilistId) continue;
       try {
-        const schedule = await this.anilist.airingSchedule(anime.anilistId);
-        const slot = deriveFixedSlot(schedule);
-        if (!slot) continue;
+        const summary = await this.anilist.mediaSchedule(anime.anilistId);
+        const status = mapStatus(summary.status);
+        const endDate = fuzzyDate(summary.endDate);
 
-        await this.prisma.animeSchedule.deleteMany({
-          where: { animeId: anime.id },
-        });
-        await this.prisma.animeSchedule.create({
-          data: {
-            animeId: anime.id,
-            dayOfWeek: slot.dayOfWeek,
-            time: slot.time,
-          },
-        });
+        const data: Prisma.AnimeUpdateInput = {};
+        if (status && status !== anime.status) data.status = status;
+        if (endDate) data.endDate = endDate;
+
+        const slot = deriveFixedSlot(summary.schedule);
+        if (slot) {
+          await this.prisma.animeSchedule.deleteMany({
+            where: { animeId: anime.id },
+          });
+          await this.prisma.animeSchedule.create({
+            data: {
+              animeId: anime.id,
+              dayOfWeek: slot.dayOfWeek,
+              time: slot.time,
+            },
+          });
+        }
+
+        if (Object.keys(data).length > 0) {
+          await this.prisma.anime.update({
+            where: { id: anime.id },
+            data,
+          });
+        }
         synced++;
       } catch (err) {
         console.error(
@@ -141,10 +164,41 @@ export class ScheduleSync {
     }
 
     console.error(
-      `[WATCHTOWER] syncSchedules: ${animes.length} animes, ${synced} com horário`,
+      `[WATCHTOWER] syncSchedules: ${animes.length} animes, ${synced} sincronizados`,
     );
     return synced;
   }
+}
+
+/** Mapeia status AniList para o vocabulário do catálogo. */
+function mapStatus(raw?: string | null): string | null {
+  switch (raw?.toUpperCase()) {
+    case 'RELEASING':
+    case 'NOT_YET_RELEASED':
+      return 'LANCAMENTO';
+    case 'FINISHED':
+      return 'CONCLUIDO';
+    case 'CANCELLED':
+      return 'CANCELADO';
+    case 'HIATUS':
+      return 'HIATUS';
+    default:
+      return null;
+  }
+}
+
+/** Converte {year, month, day} AniList em Date (null-safe, UTC ao meio-dia). */
+function fuzzyDate(
+  parts?: {
+    year?: number | null;
+    month?: number | null;
+    day?: number | null;
+  } | null,
+): Date | null {
+  if (!parts?.year) return null;
+  const month = parts.month ?? 1;
+  const day = parts.day ?? 1;
+  return new Date(Date.UTC(parts.year, month - 1, day, 12));
 }
 
 /** Similaridade de título (mesma régua do scripts/backfill-anilist-id.ts). */
