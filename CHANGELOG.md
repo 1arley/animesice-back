@@ -1,3 +1,10 @@
+# [1.14.0](https://github.com/1arley/animesice-back/compare/v1.13.0...v1.14.0) (2026-08-13)
+
+
+### Features
+
+* **admin:** endpoints de dashboard, gestão de usuários e moderação de posts ([2747b1d](https://github.com/1arley/animesice-back/commit/2747b1dee69e305550f628058314bdfe4de513a5))
+
 # [1.13.0](https://github.com/1arley/animesice-back/compare/v1.12.1...v1.13.0) (2026-08-12)
 
 
