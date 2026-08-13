@@ -1,3 +1,16 @@
+# [1.15.0](https://github.com/1arley/animesice-back/compare/v1.14.0...v1.15.0) (2026-08-13)
+
+
+### Bug Fixes
+
+* **watchtower:** sincroniza status/endDate reais no sync de horários ([486975b](https://github.com/1arley/animesice-back/commit/486975b91e1ae8a5913bb807aec51bcc54191c72))
+
+
+### Features
+
+* **scripts:** backfill de status AniList p/ corrigir o catálogo ([4704fa5](https://github.com/1arley/animesice-back/commit/4704fa54103d83a5541b168f5e5a11574f5d5f33))
+* **watchtower:** backfill anilistId/metadados + sync de horários fixos do calendário ([78f5709](https://github.com/1arley/animesice-back/commit/78f5709d5ddc94135b1346f0841483f9bb2b62eb))
+
 # [1.14.0](https://github.com/1arley/animesice-back/compare/v1.13.0...v1.14.0) (2026-08-13)
 
 
