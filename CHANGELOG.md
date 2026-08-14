@@ -1,3 +1,10 @@
+# [1.17.0](https://github.com/1arley/animesice-back/compare/v1.16.1...v1.17.0) (2026-08-14)
+
+
+### Features
+
+* **room:** sync de player em tempo real via socket.io ([e8dacdd](https://github.com/1arley/animesice-back/commit/e8dacddc16c37d2e344bc084b8c9798de3122b74))
+
 ## [1.16.1](https://github.com/1arley/animesice-back/compare/v1.16.0...v1.16.1) (2026-08-13)
 
 
