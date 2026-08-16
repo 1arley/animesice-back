@@ -1,3 +1,10 @@
+# [1.18.0](https://github.com/1arley/animesice-back/compare/v1.17.0...v1.18.0) (2026-08-16)
+
+
+### Features
+
+* **scripts:** backfill enriquecer catalogo com dados do AniList ([8fc5e97](https://github.com/1arley/animesice-back/commit/8fc5e9765ae8643b55158a870e2c418174b00e04))
+
 # [1.17.0](https://github.com/1arley/animesice-back/compare/v1.16.1...v1.17.0) (2026-08-14)
 
 
