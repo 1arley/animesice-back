@@ -1,4 +1,4 @@
-# 🚀 AnimesIce Backend
+# 🧊 AnimesIce Backend
 
 <div align="center">
 
