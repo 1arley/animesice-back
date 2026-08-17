@@ -1,3 +1,21 @@
+# [1.20.0](https://github.com/1arley/animesice-back/compare/v1.19.0...v1.20.0) (2026-08-17)
+
+
+### Bug Fixes
+
+* **ssrf:** pin DNS resolution to close TOCTOU rebinding window ([070e0d7](https://github.com/1arley/animesice-back/commit/070e0d7f4971dfec6965ace585fb8ff2838e0cbb))
+* type cast ssrf.spec.ts and CodeQL suppression embed.service.ts ([74e008d](https://github.com/1arley/animesice-back/commit/74e008d94396d09dd3ecff659f06525211739cad))
+
+
+### Features
+
+* batch query optimizations and performance indexes for Issue [#34](https://github.com/1arley/animesice-back/issues/34) ([211d042](https://github.com/1arley/animesice-back/commit/211d04285c7fcd5fdfe6886392269f7e7ab1454b))
+
+
+### Performance Improvements
+
+* **streaming:** cache de liveness com TTL e limpeza periódica de caches ([1a077a1](https://github.com/1arley/animesice-back/commit/1a077a1b94cc190d3e71acc73d0d72f0ce753aa9))
+
 # [1.19.0](https://github.com/1arley/animesice-back/compare/v1.18.0...v1.19.0) (2026-08-17)
 
 
