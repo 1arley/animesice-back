@@ -3,12 +3,15 @@ import {
   NotFoundException,
   ForbiddenException,
 } from '@nestjs/common';
-import { Cron } from '@nestjs/schedule';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '@/prisma/prisma.service';
 import { EmbedService } from '@/embed/embed.service';
 import { ScrapeService } from '@/embed/scrape/scrape.service';
 import { youtubeEmbedUrl } from '@/embed/scrape/extract';
-import { probeMediaUrlDead } from '@/common/media-probe';
+import {
+  probeMediaUrlDead,
+  purgeExpiredLivenessCache,
+} from '@/common/media-probe';
 import { Readable } from 'stream';
 
 function dbg(msg: string): void {
@@ -114,6 +117,18 @@ export class StreamingService {
     if (r.count > 0) {
       console.log(`[STREAM] purge: ${r.count} tokens expirados removidos`);
     }
+  }
+
+  /** Expiração física dos caches em memória, inclusive sem novos acessos. */
+  @Cron(CronExpression.EVERY_MINUTE)
+  cleanupMemoryCaches(): void {
+    const now = Date.now();
+    for (const [key, entry] of this.scrapeCache) {
+      if (entry.at + this.SCRAPE_CACHE_TTL_MS <= now) {
+        this.scrapeCache.delete(key);
+      }
+    }
+    purgeExpiredLivenessCache(now);
   }
 
   async generateToken(
@@ -241,6 +256,7 @@ export class StreamingService {
       dbg(`[STREAM] scrape cache hit p/ ${key}`);
       return { ...cached.result, reextracted: false };
     }
+    if (cached) this.scrapeCache.delete(key);
 
     let inflight = this.scrapeInflight.get(key);
     if (!inflight) {
