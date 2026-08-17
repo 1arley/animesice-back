@@ -9,6 +9,7 @@
  */
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '@/prisma/prisma.service';
+import { Prisma } from '@prisma/client';
 import { nextBackoffMs, priorityForSlug } from './watchtower.types';
 
 interface EnqueueInput {
@@ -90,35 +91,76 @@ export class JobsService {
     }
   }
 
-  /** Claim N jobs devidos (status=PENDING, nextRunAt<=agora), mais urgentes 1º. */
-  async claimBatch(limit: number): Promise<WatchtowerJobRow[]> {
-    const candidates = await this.prisma.watchtowerJob.findMany({
-      where: {
-        status: 'PENDING',
-        nextRunAt: { lte: new Date() },
-      },
-      orderBy: [{ priority: 'asc' }, { nextRunAt: 'asc' }],
-      take: limit,
+  /** Insere/atualiza vários jobs em uma única ida ao PostgreSQL. */
+  async enqueueMany(inputs: EnqueueInput[]): Promise<void> {
+    if (inputs.length === 0) return;
+    const rows = inputs.map((input) => {
+      const slug = (input.payload as { slug?: string } | null)?.slug ?? null;
+      return Prisma.sql`(
+        ${input.type}, ${input.dedupeKey},
+        CAST(${JSON.stringify(input.payload ?? {})} AS jsonb),
+        ${priorityForSlug(slug, input.priority ?? 100)},
+        ${input.maxAttempts ?? 5}, NOW()
+      )`;
     });
 
-    const claimed: WatchtowerJobRow[] = [];
+    await this.prisma.$executeRaw`
+      INSERT INTO "WatchtowerJob"
+        ("id", "type", "dedupeKey", "payload", "priority", "maxAttempts",
+         "nextRunAt", "createdAt", "updatedAt")
+      SELECT gen_random_uuid()::text, v.type, v.dedupe_key, v.payload,
+             v.priority, v.max_attempts, v.next_run_at, NOW(), NOW()
+      FROM (VALUES ${Prisma.join(rows)})
+        AS v(type, dedupe_key, payload, priority, max_attempts, next_run_at)
+      ON CONFLICT ("type", "dedupeKey") DO UPDATE SET
+        "payload" = EXCLUDED."payload",
+        "priority" = LEAST("WatchtowerJob"."priority", EXCLUDED."priority"),
+        "status" = CASE
+          WHEN "WatchtowerJob"."status" IN ('DONE', 'DEAD') THEN 'PENDING'
+          ELSE "WatchtowerJob"."status"
+        END,
+        "attempts" = CASE
+          WHEN "WatchtowerJob"."status" IN ('DONE', 'DEAD') THEN 0
+          ELSE "WatchtowerJob"."attempts"
+        END,
+        "nextRunAt" = CASE
+          WHEN "WatchtowerJob"."status" IN ('DONE', 'DEAD') THEN NOW()
+          ELSE "WatchtowerJob"."nextRunAt"
+        END,
+        "lastError" = CASE
+          WHEN "WatchtowerJob"."status" IN ('DONE', 'DEAD') THEN NULL
+          ELSE "WatchtowerJob"."lastError"
+        END,
+        "lockedBy" = CASE
+          WHEN "WatchtowerJob"."status" IN ('DONE', 'DEAD') THEN NULL
+          ELSE "WatchtowerJob"."lockedBy"
+        END,
+        "lockedAt" = CASE
+          WHEN "WatchtowerJob"."status" IN ('DONE', 'DEAD') THEN NULL
+          ELSE "WatchtowerJob"."lockedAt"
+        END,
+        "updatedAt" = NOW()
+    `;
+  }
+
+  /** Claim N jobs devidos (status=PENDING, nextRunAt<=agora), mais urgentes 1º. */
+  async claimBatch(limit: number): Promise<WatchtowerJobRow[]> {
     const lockId = crypto.randomUUID();
-    for (const job of candidates) {
-      try {
-        const updated = await this.prisma.watchtowerJob.update({
-          where: { id: job.id, status: 'PENDING' },
-          data: {
-            status: 'RUNNING',
-            lockedBy: lockId,
-            lockedAt: new Date(),
-          },
-        });
-        claimed.push(updated);
-      } catch {
-        // já foi claimado por outra instância — skip
-      }
-    }
-    return claimed;
+    return this.prisma.$queryRaw<WatchtowerJobRow[]>`
+      WITH candidates AS (
+        SELECT "id" FROM "WatchtowerJob"
+        WHERE "status" = 'PENDING' AND "nextRunAt" <= NOW()
+        ORDER BY "priority" ASC, "nextRunAt" ASC
+        FOR UPDATE SKIP LOCKED
+        LIMIT ${Math.max(0, limit)}
+      )
+      UPDATE "WatchtowerJob" AS job
+      SET "status" = 'RUNNING', "lockedBy" = ${lockId},
+          "lockedAt" = NOW(), "updatedAt" = NOW()
+      FROM candidates
+      WHERE job."id" = candidates."id"
+      RETURNING job.*
+    `;
   }
 
   /** Marca job como DONE, limpa lock. Guarda lockedBy p/ checar ownership. */
@@ -182,38 +224,32 @@ export class JobsService {
    * marca DEAD se esgotou maxAttempts (evita loop infinito de restart). */
   async reapStale(maxAgeMs: number): Promise<number> {
     const cutoff = new Date(Date.now() - maxAgeMs);
-    const stale = await this.prisma.watchtowerJob.findMany({
-      where: { status: 'RUNNING', lockedAt: { lt: cutoff } },
-      select: { id: true, attempts: true, maxAttempts: true },
-    });
-    if (stale.length === 0) return 0;
-
-    let dead = 0;
-    let pending = 0;
-    for (const j of stale) {
-      const newAttempts = (j.attempts ?? 0) + 1;
-      const isDead = newAttempts >= (j.maxAttempts ?? 5);
-      const backoff = this.backoffMs(j.attempts);
-      await this.prisma.watchtowerJob
-        .update({
-          where: { id: j.id },
-          data: {
-            status: isDead ? 'DEAD' : 'PENDING',
-            attempts: newAttempts,
-            nextRunAt: isDead ? undefined : new Date(Date.now() + backoff),
-            lockedBy: null,
-            lockedAt: null,
-            lastError: 'stale reap (worker crashed/timeout)',
-          },
-        })
-        .catch(() => undefined);
-      if (isDead) dead++;
-      else pending++;
-    }
+    const rows = await this.prisma.$queryRaw<Array<{ status: string }>>`
+      UPDATE "WatchtowerJob"
+      SET "attempts" = "attempts" + 1,
+          "status" = CASE
+            WHEN "attempts" + 1 >= "maxAttempts" THEN 'DEAD'
+            ELSE 'PENDING'
+          END,
+          "nextRunAt" = CASE
+            WHEN "attempts" + 1 >= "maxAttempts" THEN "nextRunAt"
+            ELSE NOW() + (
+              LEAST(3600000, 30000 * POWER(2, "attempts"))::text ||
+              ' milliseconds'
+            )::interval
+          END,
+          "lockedBy" = NULL, "lockedAt" = NULL,
+          "lastError" = 'stale reap (worker crashed/timeout)',
+          "updatedAt" = NOW()
+      WHERE "status" = 'RUNNING' AND "lockedAt" < ${cutoff}
+      RETURNING "status"
+    `;
+    const dead = rows.filter(({ status }) => status === 'DEAD').length;
+    const pending = rows.length - dead;
     this.logger.log(
-      `reapStale: ${stale.length} resetados (${pending} -> PENDING, ${dead} -> DEAD)`,
+      `reapStale: ${rows.length} resetados (${pending} -> PENDING, ${dead} -> DEAD)`,
     );
-    return stale.length;
+    return rows.length;
   }
 
   /** Backoff exponencial (fonte única em watchtower.types). */

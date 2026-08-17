@@ -122,22 +122,36 @@ export class NotificationService {
         animeId,
         status: 'WATCHING',
       },
-      select: { userId: true },
+      select: {
+        userId: true,
+        user: {
+          select: {
+            notificationPreferences: {
+              where: {
+                typeId: NotificationType.NEW_EPISODE,
+                channel: NotificationChannel.IN_APP,
+              },
+              select: { enabled: true },
+            },
+          },
+        },
+      },
     });
 
-    const notifications = await Promise.all(
-      watchers.map((w) =>
-        this.create({
-          userId: w.userId,
-          type: NotificationType.NEW_EPISODE,
-          title: `Novo episódio: ${animeTitle} #${episodeNumber}`,
-          body: `O episódio ${episodeNumber} de ${animeTitle} está disponível!`,
-          linkUrl: `/animes/${animeSlug}/${episodeNumber}`,
-        }),
-      ),
+    const enabledWatchers = watchers.filter(
+      (watcher) => watcher.user.notificationPreferences[0]?.enabled !== false,
     );
+    if (enabledWatchers.length === 0) return { count: 0 };
 
-    return notifications.filter((n) => n !== null);
+    return this.prisma.notification.createMany({
+      data: enabledWatchers.map(({ userId }) => ({
+        userId,
+        type: NotificationType.NEW_EPISODE,
+        title: `Novo episódio: ${animeTitle} #${episodeNumber}`,
+        body: `O episódio ${episodeNumber} de ${animeTitle} está disponível!`,
+        linkUrl: `/animes/${animeSlug}/${episodeNumber}`,
+      })),
+    });
   }
 
   async notifyCommentReply(
@@ -222,20 +236,11 @@ export class NotificationService {
     const types = Object.values(NotificationType);
     const channels = Object.values(NotificationChannel);
 
-    await Promise.all(
-      types.map((typeId) =>
-        Promise.all(
-          channels.map((channel) =>
-            this.prisma.notificationPreference.upsert({
-              where: {
-                userId_typeId_channel: { userId, typeId, channel },
-              },
-              update: {},
-              create: { userId, typeId, channel, enabled: true },
-            }),
-          ),
-        ),
+    await this.prisma.notificationPreference.createMany({
+      data: types.flatMap((typeId) =>
+        channels.map((channel) => ({ userId, typeId, channel, enabled: true })),
       ),
-    );
+      skipDuplicates: true,
+    });
   }
 }

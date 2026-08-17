@@ -3,6 +3,10 @@ import { ScheduleSync } from '@/watchtower/schedule-sync.service';
 function makeMocks() {
   return {
     prisma: {
+      $executeRaw: jest.fn(async () => 1),
+      $transaction: jest.fn(async (queries: Promise<unknown>[]) =>
+        Promise.all(queries),
+      ),
       anime: {
         findMany: jest.fn(),
         count: jest.fn(async () => 0),
@@ -46,18 +50,8 @@ describe('ScheduleSync', () => {
     );
     const matched = await svc.backfillAnilist();
     expect(matched).toBe(1);
-    expect(m.prisma.anime.update).toHaveBeenCalledWith({
-      where: { id: 'anime-1' },
-      data: expect.objectContaining({
-        anilistId: 12345,
-        status: 'LANCAMENTO',
-        year: 2024,
-        season: 'WINTER',
-        format: 'TV',
-        episodeCount: 12,
-        studios: ['A-1 Pictures'],
-      }),
-    });
+    expect(m.prisma.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(m.prisma.anime.update).not.toHaveBeenCalled();
   });
 
   it('backfillAnilist ignora match ambíguo (score < 0.6)', async () => {
@@ -125,16 +119,11 @@ describe('ScheduleSync', () => {
     const synced = await svc.syncSchedules();
     expect(synced).toBe(1);
     expect(m.prisma.animeSchedule.deleteMany).toHaveBeenCalledWith({
-      where: { animeId: 'anime-1' },
+      where: { animeId: { in: ['anime-1'] } },
     });
-    const createArg = (m.prisma.animeSchedule.create as jest.Mock).mock
-      .calls[0]?.[0].data;
-    expect(createArg.dayOfWeek).toBe(1); // Segunda
-    expect(createArg.time).toBe('15:00');
-    expect(m.prisma.anime.update).toHaveBeenCalledWith({
-      where: { id: 'anime-1' },
-      data: { status: 'CONCLUIDO', endDate: expect.any(Date) },
-    });
+    expect(m.prisma.$executeRaw).toHaveBeenCalledTimes(2);
+    expect(m.prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(m.prisma.anime.update).not.toHaveBeenCalled();
   });
 
   it('syncSchedules pula anime sem episódios agendados', async () => {

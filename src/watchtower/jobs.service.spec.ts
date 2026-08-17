@@ -3,7 +3,7 @@ import { JobsService } from '@/watchtower/jobs.service';
 function makeMockPrisma() {
   const store = new Map<string, any>(); // key = id
 
-  return {
+  const prisma = {
     store,
     watchtowerJob: {
       findMany: jest.fn(async (args: any) => {
@@ -80,7 +80,47 @@ function makeMockPrisma() {
         return { count };
       }),
     },
+    $queryRaw: jest.fn(
+      async (strings: TemplateStringsArray, ...values: any[]) => {
+        const sql = strings.join(' ');
+        if (sql.includes('WITH candidates')) {
+          const lockId = values[1];
+          const limit = values[0];
+          const candidates = [...store.values()]
+            .filter((job) => job.status === 'PENDING')
+            .slice(0, limit);
+          for (const job of candidates) {
+            job.status = 'RUNNING';
+            job.lockedBy = lockId;
+            job.lockedAt = new Date();
+          }
+          return candidates;
+        }
+        const cutoff = values[0] as Date;
+        const rows: Array<{ status: string }> = [];
+        for (const job of store.values()) {
+          if (
+            job.status !== 'RUNNING' ||
+            !job.lockedAt ||
+            job.lockedAt >= cutoff
+          )
+            continue;
+          job.attempts++;
+          job.status = job.attempts >= job.maxAttempts ? 'DEAD' : 'PENDING';
+          job.nextRunAt =
+            job.status === 'DEAD'
+              ? job.nextRunAt
+              : new Date(Date.now() + 30_000 * 2 ** (job.attempts - 1));
+          job.lockedBy = null;
+          job.lockedAt = null;
+          job.lastError = 'stale reap (worker crashed/timeout)';
+          rows.push({ status: job.status });
+        }
+        return rows;
+      },
+    ),
   };
+  return prisma;
 }
 
 describe('JobsService', () => {

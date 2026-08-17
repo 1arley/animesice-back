@@ -7,6 +7,7 @@
  * anilistId) vão p/ job de revisão admin.
  */
 import { Injectable } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '@/prisma/prisma.service';
 import { AniListClient, AniListMediaSummary } from './anilist-client.service';
 import { JobsService } from './jobs.service';
@@ -93,27 +94,42 @@ export class SeasonDiscovery {
         break;
       }
 
-      for (const media of batch) {
-        const exists = await this.prisma.anime.findUnique({
-          where: { anilistId: media.id },
-          select: { id: true },
-        });
-        if (exists) continue;
-
-        const title =
-          media.title?.romaji ||
-          media.title?.english ||
-          media.title?.native ||
-          `anime-${media.id}`;
-        const slug = slugify(title);
-        const slugCollide = await this.prisma.anime.findUnique({
-          where: { slug },
-          select: { id: true },
-        });
-        const finalSlug = slugCollide ? `${slug}-${media.id}` : slug;
-
-        try {
-          const anime = await this.prisma.anime.create({
+      const existing = await this.prisma.anime.findMany({
+        where: {
+          OR: [
+            { anilistId: { in: batch.map(({ id }) => id) } },
+            {
+              slug: {
+                in: batch.map((media) =>
+                  slugify(
+                    media.title?.romaji ||
+                      media.title?.english ||
+                      media.title?.native ||
+                      `anime-${media.id}`,
+                  ),
+                ),
+              },
+            },
+          ],
+        },
+        select: { anilistId: true, slug: true },
+      });
+      const existingIds = new Set(existing.map(({ anilistId }) => anilistId));
+      const usedSlugs = new Set(existing.map(({ slug }) => slug));
+      const candidates = batch
+        .filter((media) => !existingIds.has(media.id))
+        .map((media) => {
+          const title =
+            media.title?.romaji ||
+            media.title?.english ||
+            media.title?.native ||
+            `anime-${media.id}`;
+          const slug = slugify(title);
+          const finalSlug = usedSlugs.has(slug) ? `${slug}-${media.id}` : slug;
+          usedSlugs.add(finalSlug);
+          return {
+            media,
+            finalSlug,
             data: {
               slug: finalSlug,
               title,
@@ -127,7 +143,7 @@ export class SeasonDiscovery {
               bannerImage: media.bannerImage ?? null,
               rating: media.averageScore ? media.averageScore / 10 : 0,
               status: media.status === 'FINISHED' ? 'COMPLETO' : 'LANCAMENTO',
-              audio: 'LEGENDADO',
+              audio: 'LEGENDADO' as const,
               ageRating: media.isAdult ? 'A18' : 'A14',
               anilistId: media.id,
               year: media.seasonYear ?? null,
@@ -140,57 +156,87 @@ export class SeasonDiscovery {
                 media.studios?.nodes
                   ?.map((n) => n.name)
                   .filter((n): n is string => Boolean(n)) ?? [],
-              genres: undefined,
             },
+          };
+        });
+
+      const inserted = await this.prisma.anime.createMany({
+        data: candidates.map(({ data }) => data),
+        skipDuplicates: true,
+      });
+      created += inserted.count;
+      if (inserted.count > 0) {
+        const animes = await this.prisma.anime.findMany({
+          where: { anilistId: { in: candidates.map(({ media }) => media.id) } },
+          select: { id: true, anilistId: true },
+        });
+        const animeByAniList = new Map(
+          animes.map((anime) => [anime.anilistId, anime.id]),
+        );
+        const genreData = candidates.flatMap(({ media }) =>
+          (media.genres ?? [])
+            .filter((name): name is string => Boolean(name && slugify(name)))
+            .map((name) => ({ name, slug: slugify(name) })),
+        );
+        if (genreData.length > 0) {
+          await this.prisma.genre.createMany({
+            data: genreData,
+            skipDuplicates: true,
           });
-
-          if (media.genres?.length) {
-            for (const g of media.genres) {
-              if (!g) continue;
-              const gSlug = slugify(g);
-              if (!gSlug) continue;
-              const genre = await this.prisma.genre.upsert({
-                where: { slug: gSlug },
-                update: { name: g },
-                create: { slug: gSlug, name: g },
-              });
-              await this.prisma.anime
-                .update({
-                  where: { id: anime.id },
-                  data: { genres: { connect: { id: genre.id } } },
-                })
-                .catch(() => undefined);
-            }
-          }
-
-          try {
-            const schedule = await this.anilist.airingSchedule(media.id);
-            const aired = schedule.filter(
-              (s) => s.airingAt * 1000 <= Date.now(),
-            );
-            for (const ep of aired) {
-              await this.jobs.enqueue({
-                type: JOB_TYPE.EXTRACT_EPISODE,
-                dedupeKey: `extract:${anime.id}:${ep.episode}`,
-                payload: {
-                  animeId: anime.id,
-                  slug: finalSlug,
-                  episodeNumber: ep.episode,
-                },
-                priority: PRIORITY.EXTRACT,
-              });
-            }
-          } catch {
-            // sem airingSchedule — não enfileira extract, será pego no próximo CHECK_RELEASES
-          }
-
-          created++;
-        } catch (err) {
-          console.error(
-            `[WATCHTOWER] create anime falhou (${finalSlug}):`,
-            err instanceof Error ? err.message : String(err),
+          const genres = await this.prisma.genre.findMany({
+            where: { slug: { in: genreData.map(({ slug }) => slug) } },
+            select: { id: true, slug: true },
+          });
+          const genreBySlug = new Map(
+            genres.map((genre) => [genre.slug, genre.id]),
           );
+          const links = candidates.flatMap(({ media }) => {
+            const animeId = animeByAniList.get(media.id);
+            if (!animeId) return [];
+            return (media.genres ?? []).flatMap((name) => {
+              const genreId = name ? genreBySlug.get(slugify(name)) : undefined;
+              return genreId ? [{ animeId, genreId }] : [];
+            });
+          });
+          if (links.length > 0) {
+            const values = Prisma.join(
+              links.map(
+                ({ animeId, genreId }) => Prisma.sql`(${animeId}, ${genreId})`,
+              ),
+            );
+            await this.prisma.$executeRaw`
+              INSERT INTO "_AnimeToGenre" ("A", "B") VALUES ${values}
+              ON CONFLICT DO NOTHING
+            `;
+          }
         }
+
+        const jobInputs = (
+          await Promise.all(
+            candidates.map(async ({ media, finalSlug }) => {
+              const animeId = animeByAniList.get(media.id);
+              if (!animeId) return [];
+              try {
+                const schedule = await this.anilist.airingSchedule(media.id);
+                return schedule
+                  .filter((item) => item.airingAt * 1000 <= Date.now())
+                  .map((ep) => ({
+                    type: JOB_TYPE.EXTRACT_EPISODE,
+                    dedupeKey: `extract:${animeId}:${ep.episode}`,
+                    payload: {
+                      animeId,
+                      slug: finalSlug,
+                      episodeNumber: ep.episode,
+                    },
+                    priority: PRIORITY.EXTRACT,
+                  }));
+              } catch {
+                return [];
+              }
+            }),
+          )
+        ).flat();
+        await this.jobs.enqueueMany(jobInputs);
       }
       page++;
     }
