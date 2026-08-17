@@ -48,6 +48,17 @@ export class ScheduleSync {
     });
 
     let matched = 0;
+    const updates: Array<{
+      id: string;
+      anilistId: number;
+      status: string | null;
+      endDate: Date | null;
+      year: number | null;
+      season: string | null;
+      format: string | null;
+      episodeCount: number | null;
+      studios: string[];
+    }> = [];
     for (const anime of pending) {
       try {
         const searchQuery = anime.title || anime.slug.replace(/-/g, ' ');
@@ -66,21 +77,19 @@ export class ScheduleSync {
           continue; // ambíguo — deixa p/ revisão manual
         }
 
-        await this.prisma.anime.update({
-          where: { id: anime.id },
-          data: {
-            anilistId: media.id,
-            status: mapStatus(media.status) ?? undefined,
-            endDate: fuzzyDate(media.endDate) ?? undefined,
-            year: media.seasonYear ?? null,
-            season: validSeason(media.season),
-            format: validFormat(media.format),
-            episodeCount: media.episodes ?? null,
-            studios:
-              media.studios?.nodes
-                ?.map((n) => n.name)
-                .filter((n): n is string => Boolean(n)) ?? [],
-          },
+        updates.push({
+          id: anime.id,
+          anilistId: media.id,
+          status: mapStatus(media.status),
+          endDate: fuzzyDate(media.endDate),
+          year: media.seasonYear ?? null,
+          season: validSeason(media.season),
+          format: validFormat(media.format),
+          episodeCount: media.episodes ?? null,
+          studios:
+            media.studios?.nodes
+              ?.map((n) => n.name)
+              .filter((n): n is string => Boolean(n)) ?? [],
         });
         matched++;
       } catch (err) {
@@ -89,6 +98,35 @@ export class ScheduleSync {
           err instanceof Error ? err.message : String(err),
         );
       }
+    }
+
+    if (updates.length > 0) {
+      const values = Prisma.join(
+        updates.map(
+          (row) => Prisma.sql`(
+            ${row.id}, ${row.anilistId}, ${row.status}, ${row.endDate},
+            ${row.year}, ${row.season}, ${row.format}, ${row.episodeCount},
+            ${row.studios}::text[]
+          )`,
+        ),
+      );
+      await this.prisma.$executeRaw`
+        UPDATE "Anime" AS a SET
+          "anilistId" = v.anilist_id,
+          "status" = COALESCE(v.status, a."status"),
+          "endDate" = COALESCE(v.end_date, a."endDate"),
+          "year" = v.year,
+          "season" = v.season::"AnimeSeason",
+          "format" = v.format::"AnimeFormat",
+          "episodeCount" = v.episode_count,
+          "studios" = v.studios,
+          "updatedAt" = NOW()
+        FROM (VALUES ${values}) AS v(
+          id, anilist_id, status, end_date, year, season, format,
+          episode_count, studios
+        )
+        WHERE a.id = v.id
+      `;
     }
 
     const remaining = await this.prisma.anime.count({
@@ -123,6 +161,13 @@ export class ScheduleSync {
     });
 
     let synced = 0;
+    const metadataUpdates: Array<{
+      id: string;
+      status: string | null;
+      endDate: Date | null;
+    }> = [];
+    const slots: Array<{ animeId: string; dayOfWeek: number; time: string }> =
+      [];
     for (const anime of animes) {
       if (!anime.anilistId) continue;
       try {
@@ -130,29 +175,13 @@ export class ScheduleSync {
         const status = mapStatus(summary.status);
         const endDate = fuzzyDate(summary.endDate);
 
-        const data: Prisma.AnimeUpdateInput = {};
-        if (status && status !== anime.status) data.status = status;
-        if (endDate) data.endDate = endDate;
+        if ((status && status !== anime.status) || endDate) {
+          metadataUpdates.push({ id: anime.id, status, endDate });
+        }
 
         const slot = deriveFixedSlot(summary.schedule);
         if (slot) {
-          await this.prisma.animeSchedule.deleteMany({
-            where: { animeId: anime.id },
-          });
-          await this.prisma.animeSchedule.create({
-            data: {
-              animeId: anime.id,
-              dayOfWeek: slot.dayOfWeek,
-              time: slot.time,
-            },
-          });
-        }
-
-        if (Object.keys(data).length > 0) {
-          await this.prisma.anime.update({
-            where: { id: anime.id },
-            data,
-          });
+          slots.push({ animeId: anime.id, ...slot });
         }
         synced++;
       } catch (err) {
@@ -162,6 +191,45 @@ export class ScheduleSync {
         );
       }
     }
+
+    const writes: Prisma.PrismaPromise<unknown>[] = [];
+    if (metadataUpdates.length > 0) {
+      const values = Prisma.join(
+        metadataUpdates.map(
+          (row) => Prisma.sql`(${row.id}, ${row.status}, ${row.endDate})`,
+        ),
+      );
+      writes.push(this.prisma.$executeRaw`
+        UPDATE "Anime" AS a SET
+          "status" = COALESCE(v.status, a."status"),
+          "endDate" = COALESCE(v.end_date, a."endDate"),
+          "updatedAt" = NOW()
+        FROM (VALUES ${values}) AS v(id, status, end_date)
+        WHERE a.id = v.id
+      `);
+    }
+    if (slots.length > 0) {
+      const animeIds = slots.map(({ animeId }) => animeId);
+      const values = Prisma.join(
+        slots.map(
+          (slot) =>
+            Prisma.sql`(${slot.animeId}, ${slot.dayOfWeek}, ${slot.time})`,
+        ),
+      );
+      writes.push(
+        this.prisma.animeSchedule.deleteMany({
+          where: { animeId: { in: animeIds } },
+        }),
+        this.prisma.$executeRaw`
+          INSERT INTO "AnimeSchedule"
+            ("id", "animeId", "dayOfWeek", "time", "createdAt", "updatedAt")
+          SELECT gen_random_uuid()::text, v.anime_id, v.day_of_week, v.time,
+                 NOW(), NOW()
+          FROM (VALUES ${values}) AS v(anime_id, day_of_week, time)
+        `,
+      );
+    }
+    if (writes.length > 0) await this.prisma.$transaction(writes);
 
     console.error(
       `[WATCHTOWER] syncSchedules: ${animes.length} animes, ${synced} sincronizados`,

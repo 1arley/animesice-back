@@ -110,48 +110,48 @@ enum FeedbackStatus {
 }
 
 model User {
-  id                     String                  @id @default(uuid())
-  email                  String                  @unique
-  password               String
-  name                   String?
-  userName               String?                 @unique
-  role                   Role                    @default(USER)
-  isVerified             Boolean                 @default(false)
-  avatar                 String?
-  bio                    String?
-  myAnimeList            String?
-  suspendedUntil         DateTime?
-  suspendedReason        String?
-  createdAt               DateTime                @default(now())
-  updatedAt              DateTime                @updatedAt
-  refreshTokens          RefreshToken[]
-  emailChangeTokens      EmailChangeToken[]
-  passwordResetTokens    PasswordResetToken[]
-  emailVerificationCodes EmailVerificationCode[]
-  comments               Comment[]
-  adminAuditLogs         AdminAuditLog[]         @relation("AdminActions")
-  ratings                Rating[]
-  favorites              Favorite[]
-  watchHistories         WatchHistory[]
-  notifications          Notification[]
-  commentLikes           CommentLike[]
-  rooms                  Room[]
-  roomMessages           RoomMessage[]
-  animeList              UserAnimeList[]
+  id                      String                   @id @default(uuid())
+  email                   String                   @unique
+  password                String
+  name                    String?
+  userName                String?                  @unique
+  role                    Role                     @default(USER)
+  isVerified              Boolean                  @default(false)
+  avatar                  String?
+  bio                     String?
+  myAnimeList             String?
+  suspendedUntil          DateTime?
+  suspendedReason         String?
+  createdAt               DateTime                 @default(now())
+  updatedAt               DateTime                 @updatedAt
+  refreshTokens           RefreshToken[]
+  emailChangeTokens       EmailChangeToken[]
+  passwordResetTokens     PasswordResetToken[]
+  emailVerificationCodes  EmailVerificationCode[]
+  comments                Comment[]
+  adminAuditLogs          AdminAuditLog[]          @relation("AdminActions")
+  ratings                 Rating[]
+  favorites               Favorite[]
+  watchHistories          WatchHistory[]
+  notifications           Notification[]
+  commentLikes            CommentLike[]
+  rooms                   Room[]
+  roomMessages            RoomMessage[]
+  animeList               UserAnimeList[]
   notificationPreferences NotificationPreference[]
-  reportsFiled           Report[]       @relation("ReportReporter")
-  moderationActions      ModerationAction[]
-  moderatedReports       Report[]       @relation("ReportModerator")
-  moderationActionsGiven ModerationAction[] @relation("ModerationModerator")
-  animeRequests          AnimeRequest[]  @relation("AnimeRequestUser")
-  animeRequestVotes     AnimeRequestVote[] @relation("AnimeRequestVoteUser")
-  siteFeedbacks         SiteFeedback[]  @relation("SiteFeedbackUser")
-  privacySettings       PrivacySettings?
-  posts                 Post[]
-  postLikes             PostLike[]
-  postComments          PostComment[]
-  following             Follow[]        @relation("Follower")
-  followers             Follow[]        @relation("Followee")
+  reportsFiled            Report[]                 @relation("ReportReporter")
+  moderationActions       ModerationAction[]
+  moderatedReports        Report[]                 @relation("ReportModerator")
+  moderationActionsGiven  ModerationAction[]       @relation("ModerationModerator")
+  animeRequests           AnimeRequest[]           @relation("AnimeRequestUser")
+  animeRequestVotes       AnimeRequestVote[]       @relation("AnimeRequestVoteUser")
+  siteFeedbacks           SiteFeedback[]           @relation("SiteFeedbackUser")
+  privacySettings         PrivacySettings?
+  posts                   Post[]
+  postLikes               PostLike[]
+  postComments            PostComment[]
+  following               Follow[]                 @relation("Follower")
+  followers               Follow[]                 @relation("Followee")
 }
 
 /// Configuração global do site (chave-valor) — persistida no DB, com
@@ -163,12 +163,12 @@ model SiteSetting {
 
 /// Preferências de privacidade por usuário.
 model PrivacySettings {
-  userId        String   @id
-  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  profilePublic Boolean  @default(true)
-  showActivity  Boolean  @default(true)
-  showFavorites Boolean  @default(true)
-  showRatings   Boolean  @default(true)
+  userId        String  @id
+  user          User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  profilePublic Boolean @default(true)
+  showActivity  Boolean @default(true)
+  showFavorites Boolean @default(true)
+  showRatings   Boolean @default(true)
 }
 
 model EmailVerificationCode {
@@ -222,29 +222,29 @@ model PasswordResetToken {
 }
 
 model Anime {
-  id                 String       @id @default(uuid())
-  slug               String       @unique
-  title              String
-  synopsis           String?
-  coverImage         String?
-  bannerImage        String?
-  rating             Float?       @default(0)
-  ageRating          String?      @default("A14")
-  status             String       @default("LANCAMENTO")
-  audio              AudioType    @default(LEGENDADO)
-  format             AnimeFormat? @default(TV)
-  year               Int?
-  season             AnimeSeason?
-  studios            String[]
-  themes             String[]
-  alternativeTitles  String[]
-  japaneseTitle      String?
-  source             String?
-  releaseDate        DateTime?
-  endDate            DateTime?
-  episodeCount       Int?
-  anilistId          Int?         @unique
-  published          Boolean      @default(true)
+  id                String          @id @default(uuid())
+  slug              String          @unique
+  title             String
+  synopsis          String?
+  coverImage        String?
+  bannerImage       String?
+  rating            Float?          @default(0)
+  ageRating         String?         @default("A14")
+  status            String          @default("LANCAMENTO")
+  audio             AudioType       @default(LEGENDADO)
+  format            AnimeFormat?    @default(TV)
+  year              Int?
+  season            AnimeSeason?
+  studios           String[]
+  themes            String[]
+  alternativeTitles String[]
+  japaneseTitle     String?
+  source            String?
+  releaseDate       DateTime?
+  endDate           DateTime?
+  episodeCount      Int?
+  anilistId         Int?            @unique
+  published         Boolean         @default(true)
   episodes          Episode[]
   genres            Genre[]
   comments          Comment[]
@@ -253,8 +253,8 @@ model Anime {
   animeSchedules    AnimeSchedule[]
   animeList         UserAnimeList[]
   posts             Post[]
-  createdAt          DateTime     @default(now())
-  updatedAt          DateTime     @updatedAt
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
 
   @@index([slug])
   @@index([rating])
@@ -264,16 +264,18 @@ model Anime {
   @@index([audio])
   @@index([published])
   @@index([createdAt])
+  @@index([published, createdAt(sort: Desc)])
+  @@index([published, rating(sort: Desc)])
 }
 
 model AnimeSchedule {
-  id        String    @id @default(uuid())
+  id        String   @id @default(uuid())
   animeId   String
-  anime     Anime     @relation(fields: [animeId], references: [id], onDelete: Cascade)
+  anime     Anime    @relation(fields: [animeId], references: [id], onDelete: Cascade)
   dayOfWeek Int
   time      String?
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([animeId, dayOfWeek])
   @@index([dayOfWeek])
@@ -304,6 +306,7 @@ model Episode {
   @@unique([animeId, season, number])
   @@index([animeId])
   @@index([animeId, season])
+  @@index([animeId, number, season])
   @@index([dateModified])
 }
 
@@ -364,34 +367,35 @@ model Rating {
 }
 
 model UserAnimeList {
-  userId           String
-  animeId          String
-  user             User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  anime            Anime      @relation(fields: [animeId], references: [id], onDelete: Cascade)
-  status           WatchStatus @default(PLANNING)
-  episodesWatched  Int        @default(0)
-  score            Int?
-  notes            String?
-  rewatchCount     Int        @default(0)
-  private          Boolean    @default(false)
-  startedAt        DateTime?
-  completedAt      DateTime?
-  createdAt        DateTime   @default(now())
-  updatedAt        DateTime   @updatedAt
+  userId          String
+  animeId         String
+  user            User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  anime           Anime       @relation(fields: [animeId], references: [id], onDelete: Cascade)
+  status          WatchStatus @default(PLANNING)
+  episodesWatched Int         @default(0)
+  score           Int?
+  notes           String?
+  rewatchCount    Int         @default(0)
+  private         Boolean     @default(false)
+  startedAt       DateTime?
+  completedAt     DateTime?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
 
   @@id([userId, animeId])
   @@index([animeId])
+  @@index([animeId, status])
   @@index([userId, status])
   @@index([userId, updatedAt])
 }
 
 model NotificationPreference {
-  id        String              @id @default(uuid())
-  userId    String
-  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-  typeId    NotificationType
-  channel   NotificationChannel
-  enabled   Boolean             @default(true)
+  id      String              @id @default(uuid())
+  userId  String
+  user    User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  typeId  NotificationType
+  channel NotificationChannel
+  enabled Boolean             @default(true)
 
   @@unique([userId, typeId, channel])
   @@index([userId])
@@ -421,6 +425,7 @@ model WatchHistory {
 
   @@id([userId, episodeId])
   @@index([userId, watchedAt])
+  @@index([userId, completed, watchedAt(sort: Desc)])
 }
 
 model Notification {
@@ -436,21 +441,22 @@ model Notification {
 
   @@index([userId, read])
   @@index([userId, createdAt])
+  @@index([userId, read, createdAt(sort: Desc)])
 }
 
 model Room {
-  id            String        @id @default(uuid())
-  slug          String        @unique
-  creatorId     String
-  creator       User          @relation(fields: [creatorId], references: [id], onDelete: Cascade)
-  animeSlug     String
-  episodeNumber Int
-  maxParticipants Int        @default(20)
-  expiresAt     DateTime
-  lastActivityAt DateTime    @default(now())
-  createdAt     DateTime      @default(now())
+  id              String   @id @default(uuid())
+  slug            String   @unique
+  creatorId       String
+  creator         User     @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  animeSlug       String
+  episodeNumber   Int
+  maxParticipants Int      @default(20)
+  expiresAt       DateTime
+  lastActivityAt  DateTime @default(now())
+  createdAt       DateTime @default(now())
 
-  messages      RoomMessage[]
+  messages RoomMessage[]
 
   @@index([creatorId])
   @@index([animeSlug, episodeNumber])
@@ -471,19 +477,19 @@ model RoomMessage {
 }
 
 model Report {
-  id            String           @id @default(uuid())
-  reporterId    String
-  reporter      User             @relation("ReportReporter", fields: [reporterId], references: [id], onDelete: Cascade)
-  targetType    ReportTargetType
-  targetId      String
-  reason        ReportReason
-  notes         String?
-  status        ReportStatus     @default(PENDING)
-  moderatorId   String?
-  moderator     User?            @relation("ReportModerator", fields: [moderatorId], references: [id], onDelete: SetNull)
+  id             String           @id @default(uuid())
+  reporterId     String
+  reporter       User             @relation("ReportReporter", fields: [reporterId], references: [id], onDelete: Cascade)
+  targetType     ReportTargetType
+  targetId       String
+  reason         ReportReason
+  notes          String?
+  status         ReportStatus     @default(PENDING)
+  moderatorId    String?
+  moderator      User?            @relation("ReportModerator", fields: [moderatorId], references: [id], onDelete: SetNull)
   moderationNote String?
-  createdAt     DateTime         @default(now())
-  resolvedAt    DateTime?
+  createdAt      DateTime         @default(now())
+  resolvedAt     DateTime?
 
   @@index([status, createdAt])
   @@index([reporterId])
@@ -491,15 +497,15 @@ model Report {
 }
 
 model ModerationAction {
-  id          String              @id @default(uuid())
+  id          String               @id @default(uuid())
   userId      String
-  user        User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user        User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
   actionType  ModerationActionType
   reason      String?
   moderatorId String
-  moderator   User                @relation("ModerationModerator", fields: [moderatorId], references: [id], onDelete: Cascade)
+  moderator   User                 @relation("ModerationModerator", fields: [moderatorId], references: [id], onDelete: Cascade)
   expiresAt   DateTime?
-  createdAt   DateTime            @default(now())
+  createdAt   DateTime             @default(now())
 
   @@index([userId, createdAt])
   @@index([actionType])
@@ -519,17 +525,17 @@ model StreamingToken {
 }
 
 model AnimeRequest {
-  id               String          @id @default(uuid())
+  id               String             @id @default(uuid())
   userId           String
-  user             User            @relation("AnimeRequestUser", fields: [userId], references: [id], onDelete: Cascade)
+  user             User               @relation("AnimeRequestUser", fields: [userId], references: [id], onDelete: Cascade)
   title            String
   alternativeTitle String?
   notes            String?
-  status           FeedbackStatus  @default(OPEN)
-  voteCount        Int             @default(0)
+  status           FeedbackStatus     @default(OPEN)
+  voteCount        Int                @default(0)
   adminNote        String?
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
   votes            AnimeRequestVote[]
 
   @@index([status, createdAt])
@@ -541,25 +547,25 @@ model AnimeRequestVote {
   requestId String
   userId    String
   request   AnimeRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
-  user      User          @relation("AnimeRequestVoteUser", fields: [userId], references: [id], onDelete: Cascade)
-  createdAt DateTime      @default(now())
+  user      User         @relation("AnimeRequestVoteUser", fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime     @default(now())
 
   @@id([requestId, userId])
   @@index([userId])
 }
 
 model SiteFeedback {
-  id          String          @id @default(uuid())
+  id          String         @id @default(uuid())
   userId      String
-  user        User            @relation("SiteFeedbackUser", fields: [userId], references: [id], onDelete: Cascade)
+  user        User           @relation("SiteFeedbackUser", fields: [userId], references: [id], onDelete: Cascade)
   type        FeedbackType
   title       String
   description String
-  status      FeedbackStatus  @default(OPEN)
+  status      FeedbackStatus @default(OPEN)
   adminNote   String?
-  upvotes     Int             @default(0)
-  createdAt   DateTime        @default(now())
-  updatedAt   DateTime        @updatedAt
+  upvotes     Int            @default(0)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
 
   @@index([type, status, createdAt])
   @@index([userId])
@@ -607,6 +613,7 @@ model PostComment {
   updatedAt DateTime      @updatedAt
 
   @@index([postId, createdAt])
+  @@index([postId, status, createdAt])
   @@index([userId])
 }
 
@@ -628,20 +635,20 @@ model Follow {
 /// Anti-duplicação via @@unique([type, dedupeKey]) — ex: "extract:<animeId>:7".
 /// Backoff exponencial via nextRunAt; DEAD após maxAttempts.
 model WatchtowerJob {
-  id          String   @id @default(uuid())
+  id          String    @id @default(uuid())
   type        String
   dedupeKey   String
   payload     Json
-  status      String   @default("PENDING")
-  priority    Int      @default(100)
-  attempts    Int      @default(0)
-  maxAttempts Int      @default(5)
-  nextRunAt   DateTime @default(now())
+  status      String    @default("PENDING")
+  priority    Int       @default(100)
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(5)
+  nextRunAt   DateTime  @default(now())
   lastError   String?
   lockedBy    String?
   lockedAt    DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   @@unique([type, dedupeKey])
   @@index([status, nextRunAt, priority])
@@ -666,18 +673,18 @@ model WatchtowerSourceHealth {
 
 /// Auditoria de ações administrativas - rastreia acessos a dados sensíveis
 model AdminAuditLog {
-  id             String   @id @default(uuid())
-  adminId        String
-  admin          User     @relation("AdminActions", fields: [adminId], references: [id], onDelete: Cascade)
-  action         String   // "LIST_USERS", "VIEW_USER", "DELETE_USER", etc
-  resourceType   String   // "User", "Comment", "Report"
-  resourceId     String?
-  ipAddress      String
-  userAgent      String?
-  status         String   @default("SUCCESS") // "SUCCESS", "FAILED"
-  errorMessage   String?
-  dataAccessed   Int?     // Quantos registros foram acessados
-  createdAt      DateTime @default(now())
+  id           String   @id @default(uuid())
+  adminId      String
+  admin        User     @relation("AdminActions", fields: [adminId], references: [id], onDelete: Cascade)
+  action       String // "LIST_USERS", "VIEW_USER", "DELETE_USER", etc
+  resourceType String // "User", "Comment", "Report"
+  resourceId   String?
+  ipAddress    String
+  userAgent    String?
+  status       String   @default("SUCCESS") // "SUCCESS", "FAILED"
+  errorMessage String?
+  dataAccessed Int? // Quantos registros foram acessados
+  createdAt    DateTime @default(now())
 
   @@index([adminId, createdAt])
   @@index([action, createdAt])

@@ -5,7 +5,12 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '@/prisma/prisma.service';
 import { NotificationService } from '@/notification/notification.service';
-import { NotificationType, NotificationChannel, Role } from '@prisma/client';
+import {
+  NotificationType,
+  NotificationChannel,
+  Prisma,
+  Role,
+} from '@prisma/client';
 import { AuthService } from '@/auth/auth.service';
 import { UpdateSiteSettingsDto, UpdatePrivacyDto } from './dto/settings.dto';
 
@@ -176,12 +181,15 @@ export class SettingsService {
         dto.maintenanceMode ? 'true' : 'false',
       ]);
 
-    for (const [key, value] of entries) {
-      await this.prisma.siteSetting.upsert({
-        where: { key },
-        update: { value },
-        create: { key, value },
-      });
+    if (entries.length > 0) {
+      const values = Prisma.join(
+        entries.map(([key, value]) => Prisma.sql`(${key}, ${value})`),
+      );
+      await this.prisma.$executeRaw`
+        INSERT INTO "SiteSetting" ("key", "value")
+        VALUES ${values}
+        ON CONFLICT ("key") DO UPDATE SET "value" = EXCLUDED."value"
+      `;
     }
 
     return this.getSiteSettings();
