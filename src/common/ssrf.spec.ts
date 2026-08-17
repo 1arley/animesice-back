@@ -11,8 +11,8 @@ describe('SSRF DNS pinning', () => {
 
   it('usa no connect apenas o IP público validado, mesmo após rebinding', async () => {
     mockedLookup
-      .mockResolvedValueOnce([{ address: '8.8.8.8', family: 4 }])
-      .mockResolvedValueOnce([{ address: '127.0.0.1', family: 4 }]);
+      .mockResolvedValueOnce([{ address: '8.8.8.8', family: 4 }] as any)
+      .mockResolvedValueOnce([{ address: '127.0.0.1', family: 4 }] as any);
 
     const resolution = await resolveSafeUrl('https://cdn.example/video.mp4');
     const connected = await new Promise<{ address: string; family: number }>(
@@ -36,7 +36,7 @@ describe('SSRF DNS pinning', () => {
     mockedLookup.mockResolvedValueOnce([
       { address: '8.8.8.8', family: 4 },
       { address: '10.0.0.7', family: 4 },
-    ]);
+    ] as any);
     await expect(
       resolveSafeUrl('https://cdn.example/video.mp4'),
     ).rejects.toBeInstanceOf(BadRequestException);
@@ -45,14 +45,16 @@ describe('SSRF DNS pinning', () => {
   it('bloqueia IPv4 privado mapeado em IPv6 hexadecimal', async () => {
     mockedLookup.mockResolvedValueOnce([
       { address: '::ffff:7f00:1', family: 6 },
-    ]);
+    ] as any);
     await expect(
       resolveSafeUrl('https://cdn.example/video.mp4'),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('lookup pinado recusa hostname diferente do validado', async () => {
-    mockedLookup.mockResolvedValueOnce([{ address: '8.8.8.8', family: 4 }]);
+    mockedLookup.mockResolvedValueOnce([
+      { address: '8.8.8.8', family: 4 },
+    ] as any);
     const resolution = await resolveSafeUrl('https://cdn.example/video.mp4');
 
     await expect(

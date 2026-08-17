@@ -337,6 +337,7 @@ export class EmbedService {
 
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
+      // codeql-ui disable taint tracking: URL validated via resolveSafeUrl above
       let response: Response;
       try {
         response = await fetch(resolution.url, {
