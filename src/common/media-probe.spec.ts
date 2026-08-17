@@ -1,4 +1,9 @@
-import { signedExpiryDead, probeMediaUrlDead } from '@/common/media-probe';
+import {
+  clearLivenessCache,
+  signedExpiryDead,
+  probeMediaUrlDead,
+  purgeExpiredLivenessCache,
+} from '@/common/media-probe';
 
 jest.mock('@/common/ssrf', () => ({
   resolveSafeUrl: jest.fn(async (url: string) => ({ url })),
@@ -37,6 +42,8 @@ describe('signedExpiryDead', () => {
 });
 
 describe('probeMediaUrlDead', () => {
+  beforeEach(() => clearLivenessCache());
+
   it('retorna true para URL S3 expirada sem depender da rede', async () => {
     const fetchFn = jest.fn();
     global.fetch = fetchFn as any;
@@ -81,5 +88,42 @@ describe('probeMediaUrlDead', () => {
       throw new Error('network down');
     }) as any;
     expect(await probeMediaUrlDead('https://cdn.test/v.mp4')).toBe(false);
+  });
+
+  it('reutiliza probe em andamento e resultado vivo no TTL', async () => {
+    let resolveFetch!: (value: unknown) => void;
+    global.fetch = jest.fn(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        }),
+    ) as any;
+
+    const first = probeMediaUrlDead('https://cdn.test/shared.mp4');
+    const second = probeMediaUrlDead('https://cdn.test/shared.mp4');
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+
+    resolveFetch({
+      status: 206,
+      headers: { get: () => null },
+      body: { cancel: jest.fn() },
+    });
+    await expect(Promise.all([first, second])).resolves.toEqual([false, false]);
+    await expect(
+      probeMediaUrlDead('https://cdn.test/shared.mp4'),
+    ).resolves.toBe(false);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('remove resultados de liveness vencidos', async () => {
+    global.fetch = jest.fn(async () => ({
+      status: 206,
+      headers: { get: () => null },
+      body: { cancel: jest.fn() },
+    })) as any;
+    await probeMediaUrlDead('https://cdn.test/expiring.mp4');
+    expect(purgeExpiredLivenessCache(Date.now() + 30_001)).toBe(1);
   });
 });

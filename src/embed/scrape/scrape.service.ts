@@ -5,6 +5,7 @@ import {
   ServiceUnavailableException,
   forwardRef,
 } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { chromium } from 'playwright';
 import type { Page, BrowserContext, Browser } from 'playwright';
 import { ScrapeSource, ScrapeEpisodeResult } from './scrape-source.interface';
@@ -185,6 +186,17 @@ export class ScrapeService {
     this.CACHE_TTL_MS = Number.isFinite(ttl) && ttl > 0 ? ttl : 10 * 60_000;
     this.CACHE_STALE_MS =
       Number.isFinite(stale) && stale > 0 ? stale : 60 * 60_000;
+  }
+
+  /** Remove entradas depois da janela SWR, mesmo quando não são acessadas. */
+  @Cron(CronExpression.EVERY_MINUTE)
+  cleanupExpiredCache(): void {
+    const now = Date.now();
+    for (const [key, entry] of this.cache) {
+      if (entry.fetchedAt + this.CACHE_STALE_MS <= now) {
+        this.cache.delete(key);
+      }
+    }
   }
 
   /**

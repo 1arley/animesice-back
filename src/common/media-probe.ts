@@ -15,6 +15,33 @@
 import { pinnedDispatcher, resolveSafeUrl } from '@/common/ssrf';
 
 const MAX_REDIRECTS = 5;
+const LIVENESS_CACHE_TTL_MS = 30_000;
+
+interface LivenessCacheEntry {
+  dead: boolean;
+  expiresAt: number;
+}
+
+const livenessCache = new Map<string, LivenessCacheEntry>();
+const livenessInflight = new Map<string, Promise<boolean>>();
+
+/** Remove resultados vencidos; chamado periodicamente pelo scheduler. */
+export function purgeExpiredLivenessCache(now = Date.now()): number {
+  let removed = 0;
+  for (const [url, entry] of livenessCache) {
+    if (entry.expiresAt <= now) {
+      livenessCache.delete(url);
+      removed += 1;
+    }
+  }
+  return removed;
+}
+
+/** Visível para testes, evitando estado global entre casos. */
+export function clearLivenessCache(): void {
+  livenessCache.clear();
+  livenessInflight.clear();
+}
 
 /** Referer anti-hotlink por host de CDN (mesma regra do proxy de mídia). */
 export function refererForMediaUrl(mediaUrl: string): string {
@@ -87,7 +114,7 @@ function unixExpiry(url: URL): number | null {
 }
 
 /** true = URL morta (precisa re-extração); false = viva ou inconclusivo. */
-export async function probeMediaUrlDead(url: string): Promise<boolean> {
+async function performMediaUrlProbe(url: string): Promise<boolean> {
   try {
     const parsed = new URL(url);
     const expire = unixExpiry(parsed);
@@ -156,4 +183,34 @@ export async function probeMediaUrlDead(url: string): Promise<boolean> {
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Probe com cache curto e single-flight por URL. Resoluções que compartilham a
+ * mesma URL reutilizam tanto o resultado recente quanto um probe em andamento.
+ */
+export function probeMediaUrlDead(url: string): Promise<boolean> {
+  const now = Date.now();
+  const cached = livenessCache.get(url);
+  if (cached) {
+    if (cached.expiresAt > now) return Promise.resolve(cached.dead);
+    livenessCache.delete(url);
+  }
+
+  const existing = livenessInflight.get(url);
+  if (existing) return existing;
+
+  const probe = performMediaUrlProbe(url)
+    .then((dead) => {
+      livenessCache.set(url, {
+        dead,
+        expiresAt: Date.now() + LIVENESS_CACHE_TTL_MS,
+      });
+      return dead;
+    })
+    .finally(() => {
+      if (livenessInflight.get(url) === probe) livenessInflight.delete(url);
+    });
+  livenessInflight.set(url, probe);
+  return probe;
 }
