@@ -2,6 +2,7 @@ import {
   Controller,
   Post,
   Get,
+  Delete,
   Body,
   Param,
   UseGuards,
@@ -63,5 +64,15 @@ export class WatchHistoryController {
       parseInt(page ?? '1', 10) || DEFAULT_PAGE,
       parseInt(limit ?? '24', 10) || 24,
     );
+  }
+
+  @Delete(':slug/:number')
+  @ApiOperation({ summary: 'Remover item do histórico de visualização' })
+  deleteHistory(
+    @Req() req: AuthenticatedRequest,
+    @Param('slug') slug: string,
+    @Param('number', ParseIntPipe) number: number,
+  ) {
+    return this.watchHistoryService.deleteHistory(req.user.id, slug, number);
   }
 }

@@ -6,6 +6,17 @@ import { UpdateProgressDto } from '@/watch-history/dto/update-progress.dto';
 export class WatchHistoryService {
   constructor(private readonly prisma: PrismaService) {}
 
+  private async findEpisode(animeId: string, episodeNumber: number) {
+    return this.prisma.episode.findFirst({
+      where: {
+        animeId,
+        number: episodeNumber,
+      },
+      orderBy: { season: 'asc' },
+      select: { id: true, duration: true },
+    });
+  }
+
   async updateProgress(
     userId: string,
     animeSlug: string,
@@ -21,16 +32,7 @@ export class WatchHistoryService {
       throw new NotFoundException('Anime não encontrado.');
     }
 
-    const episode = await this.prisma.episode.findUnique({
-      where: {
-        animeId_season_number: {
-          animeId: anime.id,
-          season: 1,
-          number: episodeNumber,
-        },
-      },
-      select: { id: true, duration: true },
-    });
+    const episode = await this.findEpisode(anime.id, episodeNumber);
 
     if (!episode) {
       throw new NotFoundException('Episódio não encontrado.');
@@ -139,6 +141,36 @@ export class WatchHistoryService {
         totalPages: Math.ceil(total / safeLimit),
       },
     };
+  }
+
+  async deleteHistory(
+    userId: string,
+    animeSlug: string,
+    episodeNumber: number,
+  ): Promise<{ message: string }> {
+    const anime = await this.prisma.anime.findUnique({
+      where: { slug: animeSlug },
+      select: { id: true },
+    });
+
+    if (!anime) {
+      throw new NotFoundException('Anime não encontrado.');
+    }
+
+    const episode = await this.findEpisode(anime.id, episodeNumber);
+
+    if (!episode) {
+      throw new NotFoundException('Episódio não encontrado.');
+    }
+
+    await this.prisma.watchHistory.deleteMany({
+      where: {
+        userId,
+        episodeId: episode.id,
+      },
+    });
+
+    return { message: 'Removido do histórico.' };
   }
 
   private checkCompleted(progress: number, duration?: number): boolean {
