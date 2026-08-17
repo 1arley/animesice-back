@@ -1,3 +1,10 @@
+# [1.19.0](https://github.com/1arley/animesice-back/compare/v1.18.0...v1.19.0) (2026-08-17)
+
+
+### Features
+
+* add watch-history deletion endpoint ([e9fed89](https://github.com/1arley/animesice-back/commit/e9fed89f3adf77dcddde68c2b2435a01eee3c59d))
+
 # [1.18.0](https://github.com/1arley/animesice-back/compare/v1.17.0...v1.18.0) (2026-08-16)
 
 
