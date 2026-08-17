@@ -12,7 +12,7 @@
  * problema transitório.
  */
 
-import { assertHostResolvesSafely, isBlockedHostname } from '@/common/ssrf';
+import { pinnedDispatcher, resolveSafeUrl } from '@/common/ssrf';
 
 const MAX_REDIRECTS = 5;
 
@@ -48,8 +48,8 @@ export function signedExpiryDead(url: string): boolean | null {
   try {
     const u = new URL(url);
 
-    const expire = parseInt(u.searchParams.get('expire') ?? '', 10);
-    if (Number.isFinite(expire) && expire > 0) {
+    const expire = unixExpiry(u);
+    if (expire !== null) {
       return Date.now() / 1000 > expire;
     }
 
@@ -78,12 +78,20 @@ export function signedExpiryDead(url: string): boolean | null {
   return null;
 }
 
+/** `expire` unix válido; null para ausente, inválido ou não positivo. */
+function unixExpiry(url: URL): number | null {
+  const raw = url.searchParams.get('expire');
+  if (!raw || !/^\d+$/.test(raw)) return null;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) && value > 0 ? value : null;
+}
+
 /** true = URL morta (precisa re-extração); false = viva ou inconclusivo. */
 export async function probeMediaUrlDead(url: string): Promise<boolean> {
   try {
     const parsed = new URL(url);
-    const expire = parseInt(parsed.searchParams.get('expire') ?? '', 10);
-    if (Number.isFinite(expire) && expire - Date.now() / 1000 > 1800) {
+    const expire = unixExpiry(parsed);
+    if (expire !== null && expire - Date.now() / 1000 > 1800) {
       return false;
     }
   } catch {
@@ -101,12 +109,10 @@ export async function probeMediaUrlDead(url: string): Promise<boolean> {
 
     let current = url;
     for (let i = 0; i <= MAX_REDIRECTS; i++) {
-      const u = new URL(current);
-      if (u.protocol !== 'http:' && u.protocol !== 'https:') return true;
-      if (isBlockedHostname(u.hostname)) return true;
-      await assertHostResolvesSafely(current);
+      const resolution = await resolveSafeUrl(current);
+      const dispatcher = pinnedDispatcher(resolution);
 
-      const res = await fetch(current, {
+      const res = await fetch(resolution.url, {
         method: 'GET',
         headers: {
           'user-agent':
@@ -119,11 +125,14 @@ export async function probeMediaUrlDead(url: string): Promise<boolean> {
         },
         redirect: 'manual',
         signal: controller.signal,
+        dispatcher,
       });
 
       const location = res.headers.get('location');
       const isRedirect = res.status >= 300 && res.status < 400 && !!location;
       if (isRedirect) {
+        await res.body?.cancel();
+        await dispatcher.close();
         try {
           current = new URL(location, current).toString();
           continue;
@@ -133,6 +142,7 @@ export async function probeMediaUrlDead(url: string): Promise<boolean> {
       }
 
       await res.body?.cancel();
+      await dispatcher.close();
       return (
         res.status === 401 ||
         res.status === 403 ||
