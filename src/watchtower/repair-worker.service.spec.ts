@@ -1,8 +1,8 @@
 import { RepairWorker } from '@/watchtower/repair-worker.service';
 
 jest.mock('@/common/ssrf', () => ({
-  assertHostResolvesSafely: jest.fn().mockResolvedValue(undefined),
-  isBlockedHostname: jest.fn().mockReturnValue(false),
+  resolveSafeUrl: jest.fn(async (url: string) => ({ url })),
+  pinnedDispatcher: jest.fn(() => ({ close: jest.fn() })),
 }));
 
 function makeMocks() {

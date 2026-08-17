@@ -1,8 +1,8 @@
 import { signedExpiryDead, probeMediaUrlDead } from '@/common/media-probe';
 
 jest.mock('@/common/ssrf', () => ({
-  assertHostResolvesSafely: jest.fn().mockResolvedValue(undefined),
-  isBlockedHostname: jest.fn().mockReturnValue(false),
+  resolveSafeUrl: jest.fn(async (url: string) => ({ url })),
+  pinnedDispatcher: jest.fn(() => ({ close: jest.fn() })),
 }));
 
 describe('signedExpiryDead', () => {

@@ -8,6 +8,8 @@ import { EnvHttpProxyAgent, setGlobalDispatcher } from 'undici';
  *   NO_PROXY                  ex: localhost,127.0.0.1,*.internal
  *
  * Sem proxy configurado, nada muda (fetch direto).
+ * Requests com proteção SSRF usam dispatcher próprio com DNS pinado e, por
+ * segurança, não passam por este proxy (o proxy re-resolveria o hostname).
  *
  * POR QUE: CDNs/Cloudflare de fontes piratas bloqueiam IPs de datacenter
  * (403). Com um proxy residencial configurado, o egress do backend sai pelo
