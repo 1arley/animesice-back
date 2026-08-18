@@ -6,8 +6,8 @@ export class EpisodeService {
   constructor(private readonly prisma: PrismaService) {}
 
   async findByAnimeSlug(slug: string) {
-    const anime = await this.prisma.anime.findUnique({
-      where: { slug },
+    const anime = await this.prisma.anime.findFirst({
+      where: { slug, published: true },
       select: { id: true },
     });
 
@@ -26,8 +26,8 @@ export class EpisodeService {
     number: number,
     season: number = 1,
   ) {
-    const anime = await this.prisma.anime.findUnique({
-      where: { slug },
+    const anime = await this.prisma.anime.findFirst({
+      where: { slug, published: true },
       select: { id: true },
     });
 

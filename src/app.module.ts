@@ -1,8 +1,9 @@
 import { Module } from '@nestjs/common';
 import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
-import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { ThrottlerModule } from '@nestjs/throttler';
 import { ScheduleModule } from '@nestjs/schedule';
+import { ThrottlerBehindProxyGuard } from '@/common/guards/throttler-behind-proxy.guard';
 import { AppController } from '@/app.controller';
 import { AppService } from '@/app.service';
 import { MetricsController } from '@/metrics/metrics.controller';
@@ -47,7 +48,7 @@ import { AuditInterceptor } from '@/common/interceptors/audit.interceptor';
       {
         name: 'default',
         ttl: Number(process.env.THROTTLE_TTL ?? 60_000),
-        limit: Number(process.env.THROTTLE_LIMIT ?? 120),
+        limit: Number(process.env.THROTTLE_LIMIT ?? 600),
       },
     ]),
     PrismaModule,
@@ -82,7 +83,7 @@ import { AuditInterceptor } from '@/common/interceptors/audit.interceptor';
     AuditService,
     {
       provide: APP_GUARD,
-      useClass: ThrottlerGuard,
+      useClass: ThrottlerBehindProxyGuard,
     },
     {
       provide: APP_INTERCEPTOR,

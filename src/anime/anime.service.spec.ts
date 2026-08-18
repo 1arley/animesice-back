@@ -10,6 +10,7 @@ function makePrisma() {
     findMany: jest.fn(async () => []) as jest.Mock,
     count: jest.fn(async () => 0) as jest.Mock,
     findUnique: jest.fn(async () => null) as jest.Mock,
+    findFirst: jest.fn(async () => null) as jest.Mock,
   };
   const episode = {
     findMany: jest.fn(async () => []) as jest.Mock,
@@ -138,17 +139,17 @@ describe('AnimeService (busca/filtros/paginação)', () => {
     });
   });
 
-  it('findBySlug inclui genres/episodes (asc)/schedules', async () => {
+  it('findBySlug inclui genres/episodes (asc)/schedules e filtra published', async () => {
     const { svc, prisma } = build();
-    prisma.anime.findUnique.mockResolvedValue({
+    prisma.anime.findFirst.mockResolvedValue({
       id: 'a1',
       genres: [],
       episodes: [],
       animeSchedules: [],
     });
     await svc.findBySlug('x');
-    const arg = prisma.anime.findUnique.mock.calls[0][0];
-    expect(arg.where).toEqual({ slug: 'x' });
+    const arg = prisma.anime.findFirst.mock.calls[0][0];
+    expect(arg.where).toEqual({ slug: 'x', published: true });
     expect(arg.include.episodes.orderBy).toEqual({ number: 'asc' });
   });
 
@@ -159,15 +160,21 @@ describe('AnimeService (busca/filtros/paginação)', () => {
     );
   });
 
-  it('findEpisodesBySlug ordena desc e lança 404', async () => {
+  it('findBySlug lança 404 quando o anime não está publicado', async () => {
     const { svc, prisma } = build();
-    prisma.anime.findUnique.mockResolvedValue({ id: 'a1', episodes: [] });
-    await svc.findEpisodesBySlug('x');
-    expect(
-      prisma.anime.findUnique.mock.calls[0][0].include.episodes.orderBy,
-    ).toEqual({ number: 'desc' });
+    prisma.anime.findFirst.mockResolvedValue(null);
+    await expect(svc.findBySlug('rascunho')).rejects.toThrow(NotFoundException);
+  });
 
-    prisma.anime.findUnique.mockResolvedValue(null);
+  it('findEpisodesBySlug ordena desc, filtra published e lança 404', async () => {
+    const { svc, prisma } = build();
+    prisma.anime.findFirst.mockResolvedValue({ id: 'a1', episodes: [] });
+    await svc.findEpisodesBySlug('x');
+    const arg = prisma.anime.findFirst.mock.calls[0][0];
+    expect(arg.where).toEqual({ slug: 'x', published: true });
+    expect(arg.include.episodes.orderBy).toEqual({ number: 'desc' });
+
+    prisma.anime.findFirst.mockResolvedValue(null);
     await expect(svc.findEpisodesBySlug('x')).rejects.toThrow(
       NotFoundException,
     );

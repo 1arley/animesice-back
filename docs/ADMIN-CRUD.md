@@ -84,7 +84,7 @@ Todas as rotas `/admin/*` exigem JWT + role `ADMIN` ou `SUPERADMIN`.
 
 ### Seeding
 ```bash
-# Seed básico: top animes do Jikan/MAL + episódios placeholder + embedUrl animefire
+# Seed básico: top animes do MAL + episódios placeholder + embedUrl animefire
 npm run seed
 
 # Seed completo do catálogo animefire (sitemap + AniList enriquecimento)

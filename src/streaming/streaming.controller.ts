@@ -124,7 +124,7 @@ export class StreamingController {
    * backend compartilha o IP de saída com a CDN.
    */
   @Get('source')
-  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
   @ApiOperation({
     summary:
       'Origem do player (público): resolve videoUrl, re-extrai da fonte se necessário, devolve src do proxy de mídia.',

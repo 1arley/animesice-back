@@ -20,7 +20,7 @@ StreamingToken id, token(unique), ip, expiresAt, episodeId
 ## Seed
 
 `npm run seed`:
-- Busca top animes na Jikan (MyAnimeList), fallback offline se Jikan cair.
+- Busca top animes no MyAnimeList, fallback offline se a API cair.
 - Cria 12 animes com gêneros.
 - Cria N episódios placeholder por anime (`videoUrl: null`, `embedUrl: null`).
 - Cria admin (`admin@example.com` / `Admin123!`) e user (`user@example.com` / `User123!`).
