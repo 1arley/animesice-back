@@ -10,6 +10,7 @@ import {
   pinnedDispatcher,
   resolveSafeUrl,
 } from '@/common/ssrf';
+import type { Dispatcher } from 'undici';
 
 /** Regex p/ validar scheme: somente http/https. */
 const VALID_SCHEME = /^https?:\/\//i;
@@ -99,6 +100,11 @@ export interface ProxyMediaResult {
   body: Readable;
 }
 
+interface SafeFetchResult {
+  response: Response;
+  dispatcher: Dispatcher;
+}
+
 @Injectable()
 export class EmbedService {
   /** Timeout do fetch upstream (anti-abuso). */
@@ -115,8 +121,9 @@ export class EmbedService {
     const validated = this.validateAndNormalizeUrl(targetUrl);
 
     let response: Response;
+    let dispatcher: Dispatcher;
     try {
-      response = await this.fetchSafe(
+      ({ response, dispatcher } = await this.fetchSafe(
         validated,
         {
           headers: {
@@ -124,7 +131,7 @@ export class EmbedService {
           },
         },
         this.FETCH_TIMEOUT_MS,
-      );
+      ));
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
         throw new BadGatewayException(
@@ -137,35 +144,39 @@ export class EmbedService {
       );
     }
 
-    if (response.status === 404) {
-      throw new NotFoundException('Página destino não encontrada.');
+    try {
+      if (response.status === 404) {
+        throw new NotFoundException('Página destino não encontrada.');
+      }
+
+      const contentType =
+        response.headers.get('content-type') ?? 'text/html; charset=utf-8';
+
+      let body = await this.readHtmlCapped(response.body, MAX_HTML_BYTES);
+
+      const origin = this.originOf(validated);
+
+      body = this.injectBaseHref(body, origin);
+      body = this.rewriteResourceUrls(body, origin, validated);
+
+      const cleanHeaders: Record<string, string> = {
+        'content-type': contentType.startsWith('text/html')
+          ? contentType
+          : 'text/html; charset=utf-8',
+      };
+
+      this.copySafeHeader(response, cleanHeaders, 'cache-control');
+      this.copySafeHeader(response, cleanHeaders, 'last-modified');
+      this.copySafeHeader(response, cleanHeaders, 'etag');
+
+      return {
+        status: response.status,
+        headers: cleanHeaders,
+        body,
+      };
+    } finally {
+      await dispatcher.close();
     }
-
-    const contentType =
-      response.headers.get('content-type') ?? 'text/html; charset=utf-8';
-
-    let body = await this.readHtmlCapped(response.body, MAX_HTML_BYTES);
-
-    const origin = this.originOf(validated);
-
-    body = this.injectBaseHref(body, origin);
-    body = this.rewriteResourceUrls(body, origin, validated);
-
-    const cleanHeaders: Record<string, string> = {
-      'content-type': contentType.startsWith('text/html')
-        ? contentType
-        : 'text/html; charset=utf-8',
-    };
-
-    this.copySafeHeader(response, cleanHeaders, 'cache-control');
-    this.copySafeHeader(response, cleanHeaders, 'last-modified');
-    this.copySafeHeader(response, cleanHeaders, 'etag');
-
-    return {
-      status: response.status,
-      headers: cleanHeaders,
-      body,
-    };
   }
 
   /**
@@ -216,12 +227,13 @@ export class EmbedService {
     }
 
     let response: Response;
+    let dispatcher: Dispatcher;
     try {
-      response = await this.fetchSafe(
+      ({ response, dispatcher } = await this.fetchSafe(
         validated,
         { headers: upstreamHeaders },
         this.MEDIA_FETCH_TIMEOUT_MS,
-      );
+      ));
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
         throw new BadGatewayException(
@@ -238,6 +250,7 @@ export class EmbedService {
     // 403 = anti-hotlinking real; 404 = token/segmento expirado; 5xx = CDN fora.
     if (!response.ok) {
       const errorBody = await response.text().catch(() => '');
+      await dispatcher.close();
       return {
         status: response.status,
         headers: {
@@ -251,6 +264,7 @@ export class EmbedService {
 
     // Stream raw — nao usar .text()/.arrayBuffer() (midia grande).
     if (!response.body) {
+      await dispatcher.close();
       throw new BadGatewayException('Resposta da CDN sem corpo.');
     }
 
@@ -265,10 +279,22 @@ export class EmbedService {
       cleanHeaders['content-type'] = this.guessContentType(validated);
     }
 
+    // fetch() entrega um ReadableStream Web. O pipeline do Express espera um
+    // Readable do Node; um type-cast não faz essa conversão e pode encerrar a
+    // resposta na borda (Cloudflare reporta 502). O adapter também nos dá um
+    // ponto seguro para liberar o Agent pinado quando o stream terminar ou o
+    // cliente desconectar.
+    const body = Readable.fromWeb(
+      response.body as import('stream/web').ReadableStream<Uint8Array>,
+    );
+    body.once('close', () => {
+      void dispatcher.close().catch(() => undefined);
+    });
+
     return {
       status: response.status,
       headers: cleanHeaders,
-      body: response.body as unknown as Readable,
+      body,
     };
   }
 
@@ -327,7 +353,7 @@ export class EmbedService {
     url: string,
     init: RequestInit,
     timeoutMs: number,
-  ): Promise<Response> {
+  ): Promise<SafeFetchResult> {
     let current = url;
 
     for (let i = 0; i <= MAX_REDIRECTS; i++) {
@@ -346,6 +372,9 @@ export class EmbedService {
           redirect: 'manual',
           dispatcher,
         });
+      } catch (err) {
+        await dispatcher.close();
+        throw err;
       } finally {
         clearTimeout(timer);
       }
@@ -353,14 +382,14 @@ export class EmbedService {
       const location = response.headers.get('location');
       const isRedirect =
         response.status >= 300 && response.status < 400 && !!location;
-      if (!isRedirect) return response;
+      if (!isRedirect) return { response, dispatcher };
 
       await response.body?.cancel();
       await dispatcher.close();
       try {
         current = new URL(location, resolution.url).toString();
       } catch {
-        return response;
+        throw new BadGatewayException('Redirecionamento upstream inválido.');
       }
     }
 

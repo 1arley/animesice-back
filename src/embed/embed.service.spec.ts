@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { lookup } from 'dns/promises';
+import { Readable } from 'stream';
 import { EmbedService } from './embed.service';
 
 // Mock do DNS: o serviço resolve o host contra a blocklist de IPs internos
@@ -177,6 +178,11 @@ describe('EmbedService (proxy HTML/mídia + anti-SSRF)', () => {
     expect(res.headers['content-type']).toBe('video/mp4');
     expect(res.headers['content-range']).toBe('bytes 0-99/100');
     expect(res.headers['x-random']).toBeUndefined();
+    expect(res.body).toBeInstanceOf(Readable);
+
+    const chunks: Buffer[] = [];
+    for await (const chunk of res.body) chunks.push(Buffer.from(chunk));
+    expect(Buffer.concat(chunks).toString()).toBe('data');
 
     const [, init] = (global.fetch as jest.Mock).mock.calls[0];
     expect(init.headers.referer).toBe('https://animefire.io/');
