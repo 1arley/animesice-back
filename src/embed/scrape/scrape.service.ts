@@ -161,7 +161,13 @@ interface ScrapeCacheEntry {
 export class ScrapeService {
   private readonly sources: ScrapeSource[];
   private activeScrapes = 0;
-  private readonly MAX_CONCURRENT_SCRAPES = 2;
+  private readonly MAX_CONCURRENT_SCRAPES: number;
+  private readonly SCRAPE_QUEUE_TIMEOUT_MS: number;
+  private readonly scrapeWaiters: Array<{
+    resolve: () => void;
+    reject: (error: Error) => void;
+    timer: ReturnType<typeof setTimeout>;
+  }> = [];
 
   /** Cache SWR em memória (single-instance). Chave: `scrape:<sourceId>:<url>`. */
   private readonly cache = new Map<string, ScrapeCacheEntry>();
@@ -186,6 +192,12 @@ export class ScrapeService {
     this.CACHE_TTL_MS = Number.isFinite(ttl) && ttl > 0 ? ttl : 10 * 60_000;
     this.CACHE_STALE_MS =
       Number.isFinite(stale) && stale > 0 ? stale : 60 * 60_000;
+    const concurrency = Number(process.env.MAX_CONCURRENT_SCRAPES ?? 2);
+    this.MAX_CONCURRENT_SCRAPES =
+      Number.isInteger(concurrency) && concurrency > 0 ? concurrency : 2;
+    const queueTimeout = Number(process.env.SCRAPE_QUEUE_TIMEOUT_MS ?? 30_000);
+    this.SCRAPE_QUEUE_TIMEOUT_MS =
+      Number.isFinite(queueTimeout) && queueTimeout > 0 ? queueTimeout : 30_000;
   }
 
   /** Remove entradas depois da janela SWR, mesmo quando não são acessadas. */
@@ -303,12 +315,7 @@ export class ScrapeService {
     source: ScrapeSource,
     cacheKey: string,
   ): Promise<ScrapeEpisodeResult> {
-    if (this.activeScrapes >= this.MAX_CONCURRENT_SCRAPES) {
-      throw new ServiceUnavailableException(
-        'Muitas extrações simultâneas. Tente novamente em instantes.',
-      );
-    }
-    this.activeScrapes += 1;
+    await this.acquireScrapeSlot();
     const t0 = Date.now();
     try {
       dbg(
@@ -338,8 +345,49 @@ export class ScrapeService {
       this.metrics.recordExtractionFailure(source.id);
       throw err;
     } finally {
-      this.activeScrapes -= 1;
+      this.releaseScrapeSlot();
     }
+  }
+
+  /**
+   * Fila FIFO curta para absorver rajadas. Rejeitar imediatamente quando os
+   * dois Chromiums estão ocupados fazia fontes de fallback falharem em cascata.
+   * O limite continua baixo para proteger CPU/RAM; ele é configurável sem
+   * rebuild, mas aumentar concorrência deve ser uma decisão operacional.
+   */
+  private async acquireScrapeSlot(): Promise<void> {
+    if (this.activeScrapes < this.MAX_CONCURRENT_SCRAPES) {
+      this.activeScrapes += 1;
+      return;
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      const waiter = {
+        resolve,
+        reject,
+        timer: setTimeout(() => {
+          const index = this.scrapeWaiters.indexOf(waiter);
+          if (index >= 0) this.scrapeWaiters.splice(index, 1);
+          reject(
+            new ServiceUnavailableException(
+              'Fila de extração ocupada. Tente novamente em instantes.',
+            ),
+          );
+        }, this.SCRAPE_QUEUE_TIMEOUT_MS),
+      };
+      this.scrapeWaiters.push(waiter);
+    });
+  }
+
+  private releaseScrapeSlot(): void {
+    const waiter = this.scrapeWaiters.shift();
+    if (waiter) {
+      clearTimeout(waiter.timer);
+      // O slot é transferido diretamente; activeScrapes permanece constante.
+      waiter.resolve();
+      return;
+    }
+    this.activeScrapes = Math.max(0, this.activeScrapes - 1);
   }
 
   /**

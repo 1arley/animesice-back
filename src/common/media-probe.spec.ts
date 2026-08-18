@@ -55,12 +55,15 @@ describe('probeMediaUrlDead', () => {
   });
 
   it('retorna false para googlevideo com expire futuro (sem rede)', async () => {
-    const future = Math.floor(Date.now() / 1000) + 3600;
+    // Inclusive perto do vencimento: o timestamp ainda é determinístico e um
+    // probe remoto aqui só adicionaria latência ao /stream/source.
+    const future = Math.floor(Date.now() / 1000) + 60;
     global.fetch = jest.fn() as any;
     const dead = await probeMediaUrlDead(
       `https://rr2---sn.test.googlevideo.com/videoplayback?expire=${future}&cver=1`,
     );
     expect(dead).toBe(false);
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 
   it('considera 404/403/410 como morta', async () => {

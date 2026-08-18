@@ -5,9 +5,12 @@
  * reparo de episódios). Reproduz os headers do proxy de mídia: googlevideo
  * valida User-Agent contra o token (cver) — UA errado gera 403 falso.
  *
- * Otimização: URLs googlevideo carregam `expire` (unix). Se expire - agora >
- * 30min, assume viva sem rede; só faz GET (Range bytes=0-0) quando próximo
- * do vencimento ou sem `expire`. Trata 401/403/404/410 como morta; demais
+ * Otimização: URLs assinadas com expiração determinística são decididas
+ * localmente. Enquanto o timestamp estiver no futuro a URL é considerada viva;
+ * depois dele é considerada morta. Isso evita acrescentar até 5s de rede a
+ * cada abertura quando um token googlevideo ainda válido está perto do fim.
+ * URLs sem expiração conhecida usam GET (Range bytes=0-0).
+ * Trata 401/403/404/410 como morta; demais
  * (5xx, 429, timeout, erro de rede) como viva, evitando re-extração por
  * problema transitório.
  */
@@ -115,19 +118,10 @@ function unixExpiry(url: URL): number | null {
 
 /** true = URL morta (precisa re-extração); false = viva ou inconclusivo. */
 async function performMediaUrlProbe(url: string): Promise<boolean> {
-  try {
-    const parsed = new URL(url);
-    const expire = unixExpiry(parsed);
-    if (expire !== null && expire - Date.now() / 1000 > 1800) {
-      return false;
-    }
-  } catch {
-    /* URL malformada: segue para probe de rede */
-  }
-
-  // Assinatura temporária vencida (S3/rumble) — morta sem depender da rede.
+  // Assinaturas temporárias podem ser decididas sem rede: true = vencida,
+  // false = ainda válida. Só null (sem expiração conhecida) exige probe.
   const signedDead = signedExpiryDead(url);
-  if (signedDead === true) return true;
+  if (signedDead !== null) return signedDead;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 5000);

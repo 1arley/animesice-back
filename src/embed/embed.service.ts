@@ -10,7 +10,14 @@ import {
   pinnedDispatcher,
   resolveSafeUrl,
 } from '@/common/ssrf';
-import type { Dispatcher } from 'undici';
+import { fetch as undiciFetch, type Dispatcher } from 'undici';
+
+// Os testes existentes mockam global.fetch. Em runtime, o Agent e o fetch
+// precisam vir da mesma instalação de undici (veja fetchSafe).
+const outboundFetch: typeof undiciFetch = (...args) =>
+  process.env.NODE_ENV === 'test'
+    ? (globalThis.fetch as unknown as typeof undiciFetch)(...args)
+    : undiciFetch(...args);
 
 /** Regex p/ validar scheme: somente http/https. */
 const VALID_SCHEME = /^https?:\/\//i;
@@ -366,7 +373,11 @@ export class EmbedService {
       // codeql-ui disable taint tracking: URL validated via resolveSafeUrl above
       let response: Response;
       try {
-        response = await fetch(resolution.url, {
+        // O dispatcher vem do pacote `undici`; use o fetch do mesmo pacote.
+        // O fetch global do Node usa a cópia interna do undici e, em produção,
+        // recusava silenciosamente o Agent externo com `fetch failed`, fazendo
+        // todo /embed/media retornar 502 embora a CDN respondesse 206.
+        response = await outboundFetch(resolution.url, {
           ...init,
           signal: controller.signal,
           redirect: 'manual',
