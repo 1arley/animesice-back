@@ -1,3 +1,10 @@
+## [1.20.1](https://github.com/1arley/animesice-back/compare/v1.20.0...v1.20.1) (2026-08-18)
+
+
+### Bug Fixes
+
+* **embed:** converte ReadableStream web em Readable e libera agent DNS pinado ([5d07e0a](https://github.com/1arley/animesice-back/commit/5d07e0a20b08349b7f89f5cd07041126b37353f4))
+
 # [1.20.0](https://github.com/1arley/animesice-back/compare/v1.19.0...v1.20.0) (2026-08-17)
 
 
