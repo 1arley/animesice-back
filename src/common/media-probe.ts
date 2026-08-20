@@ -117,11 +117,14 @@ function unixExpiry(url: URL): number | null {
 }
 
 /** true = URL morta (precisa re-extração); false = viva ou inconclusivo. */
-async function performMediaUrlProbe(url: string): Promise<boolean> {
+async function performMediaUrlProbe(
+  url: string,
+  forceNetwork = false,
+): Promise<boolean> {
   // Assinaturas temporárias podem ser decididas sem rede: true = vencida,
   // false = ainda válida. Só null (sem expiração conhecida) exige probe.
   const signedDead = signedExpiryDead(url);
-  if (signedDead !== null) return signedDead;
+  if (!forceNetwork && signedDead !== null) return signedDead;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 5000);
@@ -183,28 +186,34 @@ async function performMediaUrlProbe(url: string): Promise<boolean> {
  * Probe com cache curto e single-flight por URL. Resoluções que compartilham a
  * mesma URL reutilizam tanto o resultado recente quanto um probe em andamento.
  */
-export function probeMediaUrlDead(url: string): Promise<boolean> {
+export function probeMediaUrlDead(
+  url: string,
+  forceNetwork = false,
+): Promise<boolean> {
   const now = Date.now();
-  const cached = livenessCache.get(url);
+  const cacheKey = forceNetwork ? `network:${url}` : url;
+  const cached = livenessCache.get(cacheKey);
   if (cached) {
     if (cached.expiresAt > now) return Promise.resolve(cached.dead);
-    livenessCache.delete(url);
+    livenessCache.delete(cacheKey);
   }
 
-  const existing = livenessInflight.get(url);
+  const existing = livenessInflight.get(cacheKey);
   if (existing) return existing;
 
-  const probe = performMediaUrlProbe(url)
+  const probe = performMediaUrlProbe(url, forceNetwork)
     .then((dead) => {
-      livenessCache.set(url, {
+      livenessCache.set(cacheKey, {
         dead,
         expiresAt: Date.now() + LIVENESS_CACHE_TTL_MS,
       });
       return dead;
     })
     .finally(() => {
-      if (livenessInflight.get(url) === probe) livenessInflight.delete(url);
+      if (livenessInflight.get(cacheKey) === probe) {
+        livenessInflight.delete(cacheKey);
+      }
     });
-  livenessInflight.set(url, probe);
+  livenessInflight.set(cacheKey, probe);
   return probe;
 }

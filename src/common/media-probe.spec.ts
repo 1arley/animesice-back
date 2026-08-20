@@ -66,6 +66,23 @@ describe('probeMediaUrlDead', () => {
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
+  it('probe forçado confirma na rede mesmo com expire futuro', async () => {
+    const future = Math.floor(Date.now() / 1000) + 3600;
+    global.fetch = jest.fn(async () => ({
+      status: 403,
+      headers: { get: () => null },
+      body: { cancel: jest.fn() },
+    })) as any;
+
+    const dead = await probeMediaUrlDead(
+      `https://rr2---sn.test.googlevideo.com/videoplayback?expire=${future}`,
+      true,
+    );
+
+    expect(dead).toBe(true);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
   it('considera 404/403/410 como morta', async () => {
     for (const status of [403, 404, 410]) {
       global.fetch = jest.fn(async () => ({
