@@ -23,8 +23,9 @@ export class ImportAnimeDto {
   @ApiProperty({
     required: false,
     enum: AudioType,
-    default: AudioType.LEGENDADO,
-    description: 'Tipo de áudio do anime importado',
+    deprecated: true,
+    description:
+      'Obsoleto: mantido para compatibilidade. O áudio é detectado pelo título.',
   })
   @IsOptional()
   @IsEnum(AudioType)

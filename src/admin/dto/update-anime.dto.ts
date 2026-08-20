@@ -50,7 +50,9 @@ export class CreateAnimeDto {
   @ApiProperty({
     required: false,
     enum: AudioType,
-    default: AudioType.LEGENDADO,
+    deprecated: true,
+    description:
+      'Obsoleto: mantido para compatibilidade. O áudio é detectado pelo título.',
   })
   @IsOptional()
   @IsEnum(AudioType)
