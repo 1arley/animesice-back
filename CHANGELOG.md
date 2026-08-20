@@ -1,3 +1,10 @@
+# [1.21.0](https://github.com/1arley/animesice-back/compare/v1.20.3...v1.21.0) (2026-08-20)
+
+
+### Features
+
+* **common:** deriva o áudio do título (dublado → DUBLADO) em vez de valor manual ([e9d1126](https://github.com/1arley/animesice-back/commit/e9d1126bf88fa6798174476508e9f48eb485aafb))
+
 ## [1.20.3](https://github.com/1arley/animesice-back/compare/v1.20.2...v1.20.3) (2026-08-18)
 
 
