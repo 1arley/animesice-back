@@ -228,6 +228,7 @@ export class ScrapeService {
     episodeUrl: string,
     sourceId?: string,
     wrap = false,
+    forceRefresh = false,
   ): Promise<ScrapeEpisodeResult> {
     const source = await this.resolveSource(episodeUrl, sourceId);
     const cacheKey = this.cacheKey(source.id, episodeUrl);
@@ -235,7 +236,7 @@ export class ScrapeService {
     const entry = this.cache.get(cacheKey);
 
     // Hit fresco: serve direto (sem consumir slot de chromium, sem health).
-    if (entry && now < entry.expiresAt) {
+    if (!forceRefresh && entry && now < entry.expiresAt) {
       dbg(
         `[SCRAPE] cache HIT (fresco) source=${source.id} url=${sanitizeLog(episodeUrl.slice(0, 80))}`,
       );
@@ -245,7 +246,7 @@ export class ScrapeService {
 
     // Janela stale-while-revalidate: serve stale imediatamente e revalida em
     // background (single-flight compartilhado — nunca 2 fetches p/ a mesma URL).
-    if (entry && now < entry.fetchedAt + this.CACHE_STALE_MS) {
+    if (!forceRefresh && entry && now < entry.fetchedAt + this.CACHE_STALE_MS) {
       dbg(
         `[SCRAPE] cache STALE (servindo + revalidando) source=${source.id} url=${sanitizeLog(episodeUrl.slice(0, 80))}`,
       );
@@ -260,7 +261,7 @@ export class ScrapeService {
 
     // Miss (ou stale além da janela): extração real com single-flight por chave.
     dbg(
-      `[SCRAPE] cache MISS source=${source.id} url=${sanitizeLog(episodeUrl.slice(0, 80))}`,
+      `[SCRAPE] ${forceRefresh ? 'refresh FORCADO' : 'cache MISS'} source=${source.id} url=${sanitizeLog(episodeUrl.slice(0, 80))}`,
     );
     this.metrics.recordCacheMiss();
     try {
@@ -269,7 +270,7 @@ export class ScrapeService {
     } catch (err) {
       // Provider falhou mas temos resultado stale: degrada servindo o stale
       // (URLs podem ter expirado — o fluxo de 403 do streaming re-extrai).
-      if (entry) {
+      if (entry && !forceRefresh) {
         dbg(
           `[SCRAPE] fetch falhou — servindo stale em degradação (${err instanceof Error ? err.message : String(err)})`,
         );

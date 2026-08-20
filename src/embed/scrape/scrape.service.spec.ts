@@ -269,6 +269,34 @@ describe('ScrapeService (orquestração + cache SWR)', () => {
     expect(health.recordSuccess).toHaveBeenCalledTimes(2);
   });
 
+  it('refresh forçado ignora cache fresco e aguarda uma URL nova', async () => {
+    const { svc, af } = build({ ttlMs: 60_000, staleMs: 120_000 });
+    const url = 'https://animefire.io/a/refresh';
+    const first = await svc.scrapeEpisodeVideo(url, undefined, false);
+
+    af.extractHttp.mockResolvedValueOnce({
+      videos: ['https://cdn.animefire/fresh.mp4'],
+      iframes: [],
+      cloudflare: false,
+    });
+    const refreshed = await svc.scrapeEpisodeVideo(url, undefined, false, true);
+
+    expect(refreshed.videos).not.toEqual(first.videos);
+    expect(refreshed.videos).toEqual(['https://cdn.animefire/fresh.mp4']);
+    expect(af.extractHttp).toHaveBeenCalledTimes(2);
+  });
+
+  it('refresh forçado não degrada para uma URL stale expirada', async () => {
+    const { svc, af } = build({ ttlMs: 60_000, staleMs: 120_000 });
+    const url = 'https://animefire.io/a/refresh-failure';
+    await svc.scrapeEpisodeVideo(url, undefined, false);
+    af.extractHttp.mockRejectedValueOnce(new Error('provider down'));
+
+    await expect(
+      svc.scrapeEpisodeVideo(url, undefined, false, true),
+    ).rejects.toThrow('provider down');
+  });
+
   it('degradação: fetch falha além da janela mas serve stale em vez de quebrar', async () => {
     const { svc, af, health } = build({ ttlMs: 30, staleMs: 60 });
     const first = await svc.scrapeEpisodeVideo(
