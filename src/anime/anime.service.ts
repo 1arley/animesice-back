@@ -204,8 +204,8 @@ export class AnimeService {
   }
 
   async findBySlug(slug: string) {
-    const anime = await this.prisma.anime.findUnique({
-      where: { slug },
+    const anime = await this.prisma.anime.findFirst({
+      where: { slug, published: true },
       include: {
         genres: true,
         episodes: { orderBy: { number: 'asc' } },
@@ -221,8 +221,8 @@ export class AnimeService {
   }
 
   async findEpisodesBySlug(slug: string) {
-    const anime = await this.prisma.anime.findUnique({
-      where: { slug },
+    const anime = await this.prisma.anime.findFirst({
+      where: { slug, published: true },
       include: {
         episodes: {
           orderBy: { number: 'desc' },

@@ -23,12 +23,12 @@ const userEmail = 'user@example.com';
 const adminPasswordClear = 'Admin123!';
 const userPasswordClear = 'User123!';
 
-// --- Jikan (MyAnimeList public API) ---
+// --- MyAnimeList public API ---
 
-const JIKAN_BASE = 'https://api.jikan.moe/v4';
-const JIKAN_PAGE_SIZE = 24;
+const MAL_BASE = 'https://api.jikan.moe/v4';
+const MAL_PAGE_SIZE = 24;
 
-interface JikanAnime {
+interface MALAnime {
   mal_id: number;
   title: string;
   title_english?: string | null;
@@ -68,9 +68,9 @@ function ageRatingFromMal(rating?: string | null): string {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function fetchJikan<T = any>(path: string, retries = 8): Promise<T> {
+async function fetchMAL<T = any>(path: string, retries = 8): Promise<T> {
   for (let attempt = 0; attempt < retries; attempt++) {
-    const res = await fetch(`${JIKAN_BASE}${path}`);
+    const res = await fetch(`${MAL_BASE}${path}`);
     if (res.status === 200) {
       const json = (await res.json()) as { data: T };
       return json.data;
@@ -84,13 +84,13 @@ async function fetchJikan<T = any>(path: string, retries = 8): Promise<T> {
       continue;
     }
     // 4xx (non-429): don't retry
-    throw new Error(`Jikan ${path} -> ${res.status}`);
+    throw new Error(`MAL ${path} -> ${res.status}`);
   }
-  throw new Error(`Jikan ${path} excedeu tentativas`);
+  throw new Error(`MAL ${path} excedeu tentativas`);
 }
 
-// Fallback offline (Jikan/MAL instável): capas em cdn.myanimelist.net.
-const FALLBACK_ANIMES: JikanAnime[] = [
+// Fallback offline (API/MAL instável): capas em cdn.myanimelist.net.
+const FALLBACK_ANIMES: MALAnime[] = [
   {
     mal_id: 21,
     title: 'One Piece',
@@ -289,23 +289,23 @@ const FALLBACK_ANIMES: JikanAnime[] = [
   },
 ];
 
-async function fetchTopAnimes(limit: number): Promise<JikanAnime[]> {
+async function fetchTopAnimes(limit: number): Promise<MALAnime[]> {
   try {
-    const out: JikanAnime[] = [];
+    const out: MALAnime[] = [];
     let page = 1;
     while (out.length < limit) {
-      const batch: JikanAnime[] = await fetchJikan<JikanAnime[]>(
-        `/top/animes?page=${page}&limit=${JIKAN_PAGE_SIZE}&filter=airing`,
+      const batch: MALAnime[] = await fetchMAL<MALAnime[]>(
+        `/top/animes?page=${page}&limit=${MAL_PAGE_SIZE}&filter=airing`,
       );
       if (!batch.length) break;
       out.push(...batch);
-      if (batch.length < JIKAN_PAGE_SIZE) break;
+      if (batch.length < MAL_PAGE_SIZE) break;
       page++;
-      await sleep(1100); // Jikan free ~3 req/s; keep conservative
+      await sleep(1100); // API free ~3 req/s; keep conservative
     }
     return out.slice(0, limit);
   } catch (e) {
-    console.warn('Jikan indisponível, usando fallback offline:', (e as Error).message);
+    console.warn('API indisponível, usando fallback offline:', (e as Error).message);
     return FALLBACK_ANIMES.slice(0, limit);
   }
 }
@@ -346,13 +346,13 @@ const ANIMEFIRE_BASE = 'https://animefire.io';
 const UA_DESKTOP = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
 async function main() {
-  console.log('Buscando catálogo da Jikan (MyAnimeList)...');
+  console.log('Buscando catálogo do MyAnimeList...');
   const target = parseInt(
     process.env.SEED_ANIME_COUNT || '12',
     10,
   );
-  const jikanAnimes = await fetchTopAnimes(target);
-  console.log(`Encontrados ${jikanAnimes.length} animes via Jikan.`);
+  const malAnimes = await fetchTopAnimes(target);
+  console.log(`Encontrados ${malAnimes.length} animes via MyAnimeList.`);
 
   const admin = await upsertUser(
     adminEmail,
@@ -371,7 +371,7 @@ async function main() {
   const slugCount = new Map<string, number>();
   const createdAtAnchor = new Date('2026-08-01T00:00:00Z');
 
-  for (const [i, ja] of jikanAnimes.entries()) {
+  for (const [i, ja] of malAnimes.entries()) {
     let slug = slugify(ja.title_english || ja.title);
     if (!slug) slug = `anime-${ja.mal_id}`;
 
@@ -483,7 +483,7 @@ async function main() {
       slug: firstSlug,
       episodeNumber: 1,
       authorEmail: adminEmail,
-      content: 'Catálogo populado via Jikan. Cadastre o videoUrl dos episódios no /admin.',
+      content: 'Catálogo populado automaticamente. Cadastre o videoUrl dos episódios no /admin.',
     },
   ];
   for (const c of comments) {
@@ -517,7 +517,7 @@ async function main() {
   console.log(`Admin: ${adminEmail} / ${adminPasswordClear}`);
   console.log(`User: ${userEmail} / ${userPasswordClear}`);
   console.log(
-    `Importados ${jikanAnimes.length} animes da Jikan com gêneros + episódios placeholder.`,
+    `Importados ${malAnimes.length} animes do MyAnimeList com gêneros + episódios placeholder.`,
   );
 }
 

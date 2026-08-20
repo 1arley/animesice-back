@@ -1,3 +1,17 @@
+## [1.20.3](https://github.com/1arley/animesice-back/compare/v1.20.2...v1.20.3) (2026-08-18)
+
+
+### Bug Fixes
+
+* **api:** published filter em busca, throttler atrás de proxy, rename Jikan para MAL no seed, script enrich-synopsis ([e9d8d73](https://github.com/1arley/animesice-back/commit/e9d8d73473f143ecc634bd61e1c9f9355adba303))
+
+## [1.20.2](https://github.com/1arley/animesice-back/compare/v1.20.1...v1.20.2) (2026-08-18)
+
+
+### Bug Fixes
+
+* **streaming:** restore media proxy and queue extraction bursts ([e551499](https://github.com/1arley/animesice-back/commit/e551499090c5994985f357ac6fcc13571af068c2))
+
 ## [1.20.1](https://github.com/1arley/animesice-back/compare/v1.20.0...v1.20.1) (2026-08-18)
 
 
