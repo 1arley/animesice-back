@@ -1,3 +1,18 @@
+# [1.22.0](https://github.com/1arley/animesice-back/compare/v1.21.0...v1.22.0) (2026-08-20)
+
+
+### Bug Fixes
+
+* **search:** prioriza match exato e pagina por relevância fuzzy ([b650cfa](https://github.com/1arley/animesice-back/commit/b650cfa7677fde45010bac1147751390c9f4c9ba))
+
+
+### Features
+
+* **back:** update admin DTOs for anime import and update ([d7f2053](https://github.com/1arley/animesice-back/commit/d7f2053a2c6bb80550871b2ba66a72185e00cb17))
+* **common:** probe de mídia aceita modo forçado de rede ([323325c](https://github.com/1arley/animesice-back/commit/323325c264a771e7066d6331cbf7b43a2478d449))
+* **embed:** scrape aceita refresh forçado que ignora cache ([0bb3d46](https://github.com/1arley/animesice-back/commit/0bb3d4685b33cd6ca5efb9d917f965c96997cf22))
+* **streaming:** endpoint aceita ?refresh=1 para re-extração do source ([bcd7f4a](https://github.com/1arley/animesice-back/commit/bcd7f4a7a19c48e49c7f03388df203f5550e593a))
+
 # [1.21.0](https://github.com/1arley/animesice-back/compare/v1.20.3...v1.21.0) (2026-08-20)
 
 
