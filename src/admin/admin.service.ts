@@ -15,6 +15,7 @@ import { CreateGenreDto } from '@/admin/dto/create-genre.dto';
 import { AniListService, AniListMedia } from '@/admin/anilist.service';
 import { ImportAnimeDto } from '@/admin/dto/import-anime.dto';
 import { AnimeFormat, AnimeSeason, AudioType } from '@prisma/client';
+import { audioTypeFromTitle } from '@/common/anime-audio';
 
 @Injectable()
 export class AdminService {
@@ -81,6 +82,7 @@ export class AdminService {
     return this.prisma.anime.create({
       data: {
         ...animeFields,
+        audio: audioTypeFromTitle(dto.title),
         genres: genreSlugs?.length
           ? { connect: genreSlugs.map((slug) => ({ slug })) }
           : undefined,
@@ -96,7 +98,10 @@ export class AdminService {
     }
 
     const { genreSlugs, ...fields } = dto;
-    const data: Prisma.AnimeUpdateInput = { ...fields };
+    const data: Prisma.AnimeUpdateInput = {
+      ...fields,
+      audio: audioTypeFromTitle(dto.title ?? anime.title),
+    };
     if (genreSlugs !== undefined) {
       data.genres = { set: genreSlugs.map((slug) => ({ slug })) };
     }

@@ -2,6 +2,7 @@ import { Injectable, OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '@/prisma/prisma.service';
 import { JobsService } from './jobs.service';
 import { JOB_TYPE, PRIORITY } from './watchtower.types';
+import { audioTypeFromTitle } from '@/common/anime-audio';
 
 const UA =
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
@@ -237,17 +238,18 @@ export class CatalogScanner implements OnModuleInit {
           }
           continue;
         } else {
+          const siblingTitle = `${baseAnime.title} ${seasonNum}`;
           const created = await this.prisma.anime.create({
             data: {
               slug: siblingSlug,
-              title: `${baseAnime.title} ${seasonNum}`,
+              title: siblingTitle,
               synopsis: baseAnime.synopsis,
               coverImage: baseAnime.coverImage,
               bannerImage: baseAnime.bannerImage,
               rating: 0,
               ageRating: baseAnime.ageRating,
               status: baseAnime.status,
-              audio: baseAnime.audio,
+              audio: audioTypeFromTitle(siblingTitle),
               format: baseAnime.format,
               year: baseAnime.year,
               season: baseAnime.season,

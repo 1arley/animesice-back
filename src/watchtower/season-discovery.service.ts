@@ -142,7 +142,7 @@ export class SeasonDiscovery {
                 media.coverImage?.large ?? media.coverImage?.extraLarge ?? null,
               bannerImage: media.bannerImage ?? null,
               rating: media.averageScore ? media.averageScore / 10 : 0,
-              status: media.status === 'FINISHED' ? 'COMPLETO' : 'LANCAMENTO',
+              status: media.status === 'FINISHED' ? 'FINALIZADO' : 'LANCAMENTO',
               audio: 'LEGENDADO' as const,
               ageRating: media.isAdult ? 'A18' : 'A14',
               anilistId: media.id,
