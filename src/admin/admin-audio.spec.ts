@@ -5,8 +5,11 @@ describe('AdminService (consistência de áudio)', () => {
   function build() {
     const anime = {
       findUnique: jest.fn(),
-      create: jest.fn(async ({ data }) => data),
-      update: jest.fn(async ({ data }) => data),
+      // Cast como jest.Mock (mesmo padrão de anime.service.spec): com
+      // noUncheckedIndexedAccess, um jest.fn tipado pelo argumento tem
+      // calls: Array<trunc>, e o spec indexa mock.calls[0][0].
+      create: jest.fn(async ({ data }) => data) as jest.Mock,
+      update: jest.fn(async ({ data }) => data) as jest.Mock,
     };
     const prisma = { anime };
     const service = new AdminService(prisma as any, {} as any, {} as any);
