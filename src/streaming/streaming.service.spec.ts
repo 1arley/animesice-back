@@ -123,4 +123,73 @@ describe('StreamingService.getSource', () => {
     expect(result.src).toContain('/api/embed/media');
     expect(scrapeService.scrapeEpisodeVideo).not.toHaveBeenCalled();
   });
+
+  it('refresh forçado ignora videoUrl salvo e exige extração nova', async () => {
+    const { prisma, scrapeService, svc } = makeMocks();
+    prisma.anime.findUnique.mockResolvedValue({
+      id: 'anime-1',
+      slug: 'anime-refresh',
+    });
+    prisma.episode.findUnique.mockResolvedValue({
+      id: 'ep-1',
+      number: 1,
+      videoUrl: 'https://rr1.googlevideo.com/videoplayback?expire=9999999999',
+      embedUrl: 'https://meusanimes.blog/e/anime-refresh-1/',
+      thumbnailUrl: null,
+    });
+    scrapeService.scrapeEpisodeVideo.mockResolvedValue({
+      videos: ['https://rr2.googlevideo.com/videoplayback?expire=9999999999'],
+      playerTokens: [],
+    });
+    prisma.episode.update.mockResolvedValue({});
+    probeSpy.mockResolvedValueOnce(true);
+
+    const result = await svc.getSource(
+      'anime-refresh',
+      1,
+      'https://api.animesice.app',
+      1,
+      true,
+    );
+
+    expect(result.reextracted).toBe(true);
+    expect(result.rawVideoUrl).toContain('rr2.googlevideo.com');
+    expect(scrapeService.scrapeEpisodeVideo).toHaveBeenCalledWith(
+      'https://meusanimes.blog/e/anime-refresh-1/',
+      undefined,
+      false,
+      true,
+    );
+  });
+
+  it('refresh solicitado mantém a URL atual quando o probe real confirma vida', async () => {
+    const { prisma, scrapeService, svc } = makeMocks();
+    const current =
+      'https://rr1.googlevideo.com/videoplayback?expire=9999999999';
+    prisma.anime.findUnique.mockResolvedValue({
+      id: 'anime-1',
+      slug: 'anime-alive',
+    });
+    prisma.episode.findUnique.mockResolvedValue({
+      id: 'ep-1',
+      number: 1,
+      videoUrl: current,
+      embedUrl: 'https://meusanimes.blog/e/anime-alive-1/',
+      thumbnailUrl: null,
+    });
+    probeSpy.mockResolvedValueOnce(false);
+
+    const result = await svc.getSource(
+      'anime-alive',
+      1,
+      'https://api.animesice.app',
+      1,
+      true,
+    );
+
+    expect(result.rawVideoUrl).toBe(current);
+    expect(result.reextracted).toBe(false);
+    expect(probeSpy).toHaveBeenCalledWith(current, true);
+    expect(scrapeService.scrapeEpisodeVideo).not.toHaveBeenCalled();
+  });
 });

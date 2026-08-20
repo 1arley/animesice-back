@@ -209,6 +209,7 @@ export class StreamingService {
     animeSlug: string,
     episodeNumber: number,
     season: number,
+    forceRefresh = false,
   ): Promise<{
     videoUrl: string | null;
     youtubeEmbed: string | null;
@@ -232,9 +233,27 @@ export class StreamingService {
       }
     }
 
+    // Em recuperação solicitada pelo player, confirma a falha com um GET de
+    // 1 byte antes de gastar um slot de scraper. O probe normal pode decidir
+    // URLs assinadas localmente; o forçado precisa confirmar a resposta CDN.
+    if (forceRefresh && rawVideoUrl && /^https?:\/\//i.test(rawVideoUrl)) {
+      const dead = await probeMediaUrlDead(rawVideoUrl, true);
+      dbg(
+        `[STREAM] probe forçado videoUrl=${rawVideoUrl.slice(0, 80)} dead=${dead}`,
+      );
+      if (!dead) {
+        return {
+          videoUrl: rawVideoUrl,
+          youtubeEmbed: null,
+          reextracted: false,
+        };
+      }
+      rawVideoUrl = null;
+    }
+
     // videoUrl guardada pode estar morta (token CDN/IP-URL expirado). Probe
     // leve e, se morta, zera para o fluxo de re-extração abaixo recompor.
-    if (rawVideoUrl && /^https?:\/\//i.test(rawVideoUrl)) {
+    if (!forceRefresh && rawVideoUrl && /^https?:\/\//i.test(rawVideoUrl)) {
       const dead = await probeMediaUrlDead(rawVideoUrl);
       dbg(`[STREAM] probe videoUrl=${rawVideoUrl.slice(0, 80)} dead=${dead}`);
       if (dead) {
@@ -245,14 +264,21 @@ export class StreamingService {
       }
     }
 
-    if (rawVideoUrl && /^https?:\/\//i.test(rawVideoUrl)) {
+    if (!forceRefresh && rawVideoUrl && /^https?:\/\//i.test(rawVideoUrl)) {
       return { videoUrl: rawVideoUrl, youtubeEmbed: null, reextracted: false };
     }
 
     // Sem videoUrl utilizável -> re-extração (single-flight + cache curto).
     const key = `${animeSlug}:${season}:${episodeNumber}`;
+    if (forceRefresh) {
+      this.scrapeCache.delete(key);
+    }
     const cached = this.scrapeCache.get(key);
-    if (cached && Date.now() - cached.at < this.SCRAPE_CACHE_TTL_MS) {
+    if (
+      !forceRefresh &&
+      cached &&
+      Date.now() - cached.at < this.SCRAPE_CACHE_TTL_MS
+    ) {
       dbg(`[STREAM] scrape cache hit p/ ${key}`);
       return { ...cached.result, reextracted: false };
     }
@@ -295,6 +321,7 @@ export class StreamingService {
           episode.embedUrl,
           undefined,
           false,
+          true,
         );
         rawVideoUrl = result.videos[0] ?? null;
         youtubeEmbed =
@@ -361,6 +388,7 @@ export class StreamingService {
     episodeNumber: number,
     apiOriginBackend: string,
     season: number = 1,
+    forceRefresh = false,
   ): Promise<StreamSourceResponse> {
     const anime = await this.prisma.anime.findUnique({
       where: { slug: animeSlug },
@@ -394,7 +422,13 @@ export class StreamingService {
       videoUrl: rawVideoUrl,
       youtubeEmbed,
       reextracted,
-    } = await this.resolveVideo(episode, anime.slug, episodeNumber, season);
+    } = await this.resolveVideo(
+      episode,
+      anime.slug,
+      episodeNumber,
+      season,
+      forceRefresh,
+    );
 
     if (!rawVideoUrl && !youtubeEmbed) {
       throw new NotFoundException(

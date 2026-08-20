@@ -152,6 +152,7 @@ export class StreamingController {
   async getSource(
     @Query('anime') animeSlug: string,
     @Query('episode') episodeSlug: string,
+    @Query('refresh') refresh: string | undefined,
     @Req() req: express.Request,
   ) {
     const episodeNumber = EPISODE_NUM_RE.test(episodeSlug)
@@ -166,6 +167,8 @@ export class StreamingController {
       animeSlug,
       episodeNumber,
       backendOrigin(req, this.trustProxy, this.configService),
+      1,
+      refresh === '1' || refresh === 'true',
     );
   }
 
