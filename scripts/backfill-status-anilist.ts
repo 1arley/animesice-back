@@ -47,7 +47,7 @@ interface AniListMedia {
 const STATUS_MAP: Record<string, string> = {
   RELEASING: 'LANCAMENTO',
   NOT_YET_RELEASED: 'LANCAMENTO',
-  FINISHED: 'CONCLUIDO',
+  FINISHED: 'FINALIZADO',
   CANCELLED: 'CANCELADO',
   HIATUS: 'HIATUS',
 };

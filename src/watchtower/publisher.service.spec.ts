@@ -136,7 +136,7 @@ describe('Publisher', () => {
     expect(m.prisma.anime.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 'anime-1' },
-        data: { status: 'COMPLETO' },
+        data: { status: 'FINALIZADO' },
       }),
     );
   });

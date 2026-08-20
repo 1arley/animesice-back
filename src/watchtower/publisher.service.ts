@@ -1,7 +1,7 @@
 /**
  * Publisher — upsert Episode no DB por (animeId, season, number), atualiza
  * sourceId, marca videoCheckedAt, dispara notificação NEW_EPISODE e atualiza
- * status do anime (COMPLETO quando AniList diz FINISHED).
+ * status do anime (FINALIZADO quando AniList diz FINISHED).
  *
  * Anti-duplicação: @@unique([animeId, season, number]) no Prisma garante 1
  * episódio por (temporada, número). Upsert idempotente.
@@ -96,12 +96,12 @@ export class Publisher {
     }
   }
 
-  /** Marca anime como COMPLETO quando airingSchedule indica fim. */
+  /** Marca anime como FINALIZADO quando airingSchedule indica fim. */
   async markAnimeComplete(animeId: string): Promise<void> {
     await this.prisma.anime
       .update({
         where: { id: animeId },
-        data: { status: 'COMPLETO' },
+        data: { status: 'FINALIZADO' },
       })
       .catch(() => undefined);
   }

@@ -10,7 +10,7 @@
  *    reais do mediaSchedule (AniList) e deriva o horário FIXO de exibição
  *    (dia da semana + hora) gravando em AnimeSchedule — alimenta o calendário
  *    semanal e mantém o catálogo fiel ao status real (ex.: FINISHED vira
- *    CONCLUIDO, encerra o excesso de "No ar"). Um anime que sai toda segunda
+ *    FINALIZADO, encerra o excesso de "No ar"). Um anime que sai toda segunda
  *    às 18h vira AnimeSchedule{dayOfWeek:1, time:"18:00"}.
  */
 import { Injectable } from '@nestjs/common';
@@ -151,7 +151,7 @@ export class ScheduleSync {
    * Sincroniza status + datas de exibição e deriva o horário fixo (dia da
    * semana + hora) do mediaSchedule (AniList) de cada anime, gravando em
    * AnimeSchedule — alimenta o calendário semanal e mantém o catálogo
-   * fiel ao status real (ex.: FINISHED vira CONCLUIDO, encerra o excesso
+   * fiel ao status real (ex.: FINISHED vira FINALIZADO, encerra o excesso
    * de "No ar"). Retorna qtd de animes sincronizados.
    */
   async syncSchedules(): Promise<number> {
@@ -245,7 +245,7 @@ function mapStatus(raw?: string | null): string | null {
     case 'NOT_YET_RELEASED':
       return 'LANCAMENTO';
     case 'FINISHED':
-      return 'CONCLUIDO';
+      return 'FINALIZADO';
     case 'CANCELLED':
       return 'CANCELADO';
     case 'HIATUS':
