@@ -88,7 +88,7 @@ async function main(): Promise<void> {
   const fuzzyRows = await prisma.$queryRaw<
     Array<{ id: string; slug: string; title: string; score: number }>
   >`
-    SELECT t.id, a.slug, a.title, ROUND(MAX(t.ws)::numeric, 3) AS score
+    SELECT t.id, a.slug, a.title, ROUND(SUM(t.ws)::numeric, 3) AS score
     FROM (
       SELECT a.id, GREATEST(
           word_similarity(w, LOWER(a.title)),
@@ -102,7 +102,7 @@ async function main(): Promise<void> {
     JOIN "Anime" a ON a.id = t.id
     GROUP BY t.id, a.slug, a.title
     HAVING MAX(t.ws) > ${threshold}
-    ORDER BY MAX(t.ws) DESC
+    ORDER BY SUM(t.ws) DESC
     LIMIT 20`;
 
   console.log(`--- Busca ANTIGA (contains) — ${oldRes.length} resultados ---`);

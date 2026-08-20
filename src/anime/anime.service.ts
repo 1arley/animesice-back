@@ -128,6 +128,44 @@ export class AnimeService {
       }
     }
 
+    // Sem sort explícito, a relevância fuzzy é a ordenação primária. Pagina
+    // sobre a lista rankeada (candidatos ∩ demais filtros) preservando a
+    // ordem de relevância — antes buscava 1 página por rating e só então
+    // reordenava, deixando o match exato (ex.: "Spy x Family") sumir na
+    // página 2 quando havia muitos candidatos com score empatado.
+    if (fuzzyIds && fuzzyIds.length > 0 && !filters.sort) {
+      const { OR: _searchOr, ...baseWhere } = where;
+      const filteredIds = await this.prisma.anime.findMany({
+        where: { ...baseWhere, id: { in: fuzzyIds } },
+        select: { id: true },
+      });
+      const filteredSet = new Set(filteredIds.map((a) => a.id));
+      const ranked = fuzzyIds.filter((id) => filteredSet.has(id));
+      const total = ranked.length;
+      const pageIds = ranked.slice(skip, skip + limitNumber);
+
+      const animes = pageIds.length
+        ? await this.prisma.anime.findMany({
+            where: { id: { in: pageIds } },
+            include: { genres: true },
+          })
+        : [];
+      const byId = new Map(animes.map((a) => [a.id, a]));
+      const data = pageIds
+        .map((id) => byId.get(id))
+        .filter((a): a is NonNullable<typeof a> => Boolean(a));
+
+      return {
+        data,
+        meta: {
+          total,
+          page: pageNumber,
+          limit: limitNumber,
+          totalPages: Math.ceil(total / limitNumber),
+        },
+      };
+    }
+
     if (fuzzyIds && fuzzyIds.length > 0) {
       where.id = { in: fuzzyIds };
       delete where.OR; // a fuzzy substitui o OR contains (recall maior)
@@ -143,24 +181,6 @@ export class AnimeService {
       }),
       this.prisma.anime.count({ where }),
     ]);
-
-    // Restaura a ordem de relevância da fuzzy (Prisma não ordena por lista).
-    // Com sort explícito do usuário, honra o sort (a fuzzy só ampliou o recall).
-    if (fuzzyIds && fuzzyIds.length > 0 && !filters.sort) {
-      const byId = new Map(animes.map((a) => [a.id, a]));
-      const ranked = fuzzyIds
-        .map((id) => byId.get(id))
-        .filter((a): a is NonNullable<typeof a> => Boolean(a));
-      return {
-        data: ranked,
-        meta: {
-          total,
-          page: pageNumber,
-          limit: limitNumber,
-          totalPages: Math.ceil(total / limitNumber),
-        },
-      };
-    }
 
     return {
       data: animes,
@@ -180,24 +200,34 @@ export class AnimeService {
    * dentro de palavras ("kagua" → Kaguya) e ordem diferente das palavras
    * ("love war kaguya"), onde o similarity() de string inteira falharia
    * (o union de trigramas é dominado pelo título longo).
-   * Só candidatos acima do limiar, ordenados pelo maior score.
+   *
+   * Só candidatos com ao menos uma palavra acima do limiar entram (recall),
+   * mas a ordem é por SOMA das similaridades: quem casa TODAS as palavras
+   * ("Spy x Family") fica à frente de quem casa só uma ("Triage X" no x).
+   * No empate, o similarity() da query inteira desempata — o título exato
+   * ("Spy x Family") vence das variantes ("Spy x Family Dublado").
    */
   private async fuzzyRankedIds(query: string): Promise<string[]> {
     const rows = await this.prisma.$queryRaw<Array<{ id: string }>>`
       SELECT id
       FROM (
-        SELECT a.id, GREATEST(
+        SELECT a.id,
+          GREATEST(
             word_similarity(w, LOWER(a.title)),
             COALESCE(word_similarity(w, LOWER(a."japaneseTitle")), 0),
             COALESCE(word_similarity(w, LOWER(array_to_string(a."alternativeTitles", ' '))), 0)
-          ) AS ws
+          ) AS ws,
+          GREATEST(
+            similarity(${query}, LOWER(a.title)),
+            COALESCE(similarity(${query}, LOWER(array_to_string(a."alternativeTitles", ' '))), 0)
+          ) AS full_sim
         FROM "Anime" a
         CROSS JOIN LATERAL unnest(string_to_array(LOWER(${query}), ' ')) AS w
         WHERE a.published = true
       ) t
       GROUP BY t.id
       HAVING MAX(t.ws) > ${FUZZY_THRESHOLD}
-      ORDER BY MAX(t.ws) DESC
+      ORDER BY SUM(t.ws) DESC, MAX(t.full_sim) DESC, MAX(t.ws) DESC
       LIMIT ${FUZZY_MAX_CANDIDATES}
     `;
     return rows.map((r) => r.id);

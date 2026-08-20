@@ -282,6 +282,38 @@ describe('AnimeService (busca/filtros/paginação)', () => {
     expect(arg.where.OR).toBeUndefined();
   });
 
+  it('busca fuzzy: pagina sobre o ranking de relevância, não por rating (match exato não some)', async () => {
+    const { svc, prisma } = build();
+    // Ranking fuzzy: match exato ('a3') em 1º; por rating a ordem seria
+    // 'a1','a2','a3' — a busca antiga pegava só os 2 primeiros por rating e
+    // o match exato escapava da página 1.
+    prisma.$queryRaw.mockResolvedValue([
+      { id: 'a3' },
+      { id: 'a1' },
+      { id: 'a2' },
+    ]);
+    prisma.anime.findMany.mockImplementation(async (args: any) => {
+      if (args.select) return [{ id: 'a3' }, { id: 'a1' }, { id: 'a2' }];
+      const ids: string[] = args.where.id.in;
+      return ids.map((id: string) => ({ id, genres: [] }));
+    });
+    const res = await svc.findAll({
+      search: 'spy x family',
+      page: '1',
+      limit: '2',
+    });
+    expect(res.data.map((a: { id: string }) => a.id)).toEqual(['a3', 'a1']);
+    expect(res.meta.total).toBe(3);
+    // A página 2 continua o ranking (não reinicia por rating).
+    const res2 = await svc.findAll({
+      search: 'spy x family',
+      page: '2',
+      limit: '2',
+    });
+    expect(res2.data.map((a: { id: string }) => a.id)).toEqual(['a2']);
+    expect(res2.meta.total).toBe(3);
+  });
+
   it('busca fuzzy com sort explícito honra o sort (sem reordenar)', async () => {
     const { svc, prisma } = build();
     prisma.$queryRaw.mockResolvedValue([{ id: 'a2' }, { id: 'a1' }]);
