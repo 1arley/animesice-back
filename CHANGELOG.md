@@ -1,3 +1,10 @@
+# [1.23.0](https://github.com/1arley/animesice-back/compare/v1.22.0...v1.23.0) (2026-08-22)
+
+
+### Features
+
+* **blog:** adiciona CMS editorial ([adbb92b](https://github.com/1arley/animesice-back/commit/adbb92bb30631262322c67553d54090c98172321))
+
 # [1.22.0](https://github.com/1arley/animesice-back/compare/v1.21.0...v1.22.0) (2026-08-20)
 
 
