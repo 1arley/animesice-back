@@ -139,6 +139,39 @@ export class CreateAnimeDto {
   @IsBoolean()
   published?: boolean;
 
+  @ApiProperty({
+    required: false,
+    description: 'Sinopse editorial própria (sobrescreve a sinopse automática)',
+  })
+  @IsOptional()
+  @IsString()
+  editorialSynopsis?: string;
+
+  @ApiProperty({
+    required: false,
+    description:
+      'Texto customizado para "Onde assistir" (default: Assista no AnimesIce)',
+  })
+  @IsOptional()
+  @IsString()
+  editorialWhereToWatch?: string;
+
+  @ApiProperty({
+    required: false,
+    description: 'Informação editorial sobre dublagem',
+  })
+  @IsOptional()
+  @IsString()
+  editorialDubbingInfo?: string;
+
+  @ApiProperty({
+    required: false,
+    description: 'Informação editorial sobre temporadas',
+  })
+  @IsOptional()
+  @IsString()
+  editorialSeasonsInfo?: string;
+
   @ApiProperty({ required: false, type: [String] })
   @IsOptional()
   @IsArray()

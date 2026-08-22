@@ -262,6 +262,10 @@ model Anime {
   episodeCount      Int?
   anilistId         Int?            @unique
   published         Boolean         @default(true)
+  editorialSynopsis      String?
+  editorialWhereToWatch  String?
+  editorialDubbingInfo   String?
+  editorialSeasonsInfo   String?
   episodes          Episode[]
   genres            Genre[]
   comments          Comment[]
