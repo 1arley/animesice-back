@@ -97,6 +97,7 @@ async function bootstrap() {
     .addTag('favorite', 'Favoritos do usuário')
     .addTag('watch-history', 'Histórico e progresso de visualização')
     .addTag('notification', 'Notificações do usuário')
+    .addTag('blog', 'Artigos públicos e CMS editorial')
     .addTag('room', 'Salas de watch party')
     .build();
 

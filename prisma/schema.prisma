@@ -161,6 +161,23 @@ model SiteSetting {
   value String?
 }
 
+/// Artigos editoriais gerenciados pelo CMS do painel administrativo.
+model BlogPost {
+  id          String   @id @default(uuid())
+  slug        String   @unique
+  title       String
+  description String
+  content     String
+  category    String
+  published   Boolean  @default(false)
+  publishedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([published, publishedAt(sort: Desc)])
+  @@index([createdAt(sort: Desc)])
+}
+
 /// Preferências de privacidade por usuário.
 model PrivacySettings {
   userId        String  @id

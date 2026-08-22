@@ -26,7 +26,7 @@
     "release": "semantic-release",
     "release:dry": "semantic-release --dry-run",
     "dev": "npm run start:dev",
-    "prisma:generate": "npx prisma generate --config-name=default",
+    "prisma:generate": "npx prisma generate",
     "prisma:migrate": "npx prisma migrate dev",
     "prisma:studio": "npx prisma studio",
     "prisma:reset": "npx prisma migrate reset --force",

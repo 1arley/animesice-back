@@ -33,6 +33,7 @@ import { UsersModule } from '@/users/users.module';
 import { SettingsModule } from '@/settings/settings.module';
 import { AuditService } from '@/common/services/audit.service';
 import { AuditInterceptor } from '@/common/interceptors/audit.interceptor';
+import { BlogModule } from '@/blog/blog.module';
 
 @Module({
   imports: [
@@ -76,6 +77,7 @@ import { AuditInterceptor } from '@/common/interceptors/audit.interceptor';
     MeModule,
     UsersModule,
     SettingsModule,
+    BlogModule,
   ],
   controllers: [AppController, MetricsController],
   providers: [
