@@ -1,3 +1,10 @@
+# [1.24.0](https://github.com/1arley/animesice-back/compare/v1.23.1...v1.24.0) (2026-08-22)
+
+
+### Features
+
+* add editorial fields to anime and update admin DTO ([d7a9ba6](https://github.com/1arley/animesice-back/commit/d7a9ba6543df39ae058b730e9d0c91c19dc3859a))
+
 ## [1.23.1](https://github.com/1arley/animesice-back/compare/v1.23.0...v1.23.1) (2026-08-22)
 
 
