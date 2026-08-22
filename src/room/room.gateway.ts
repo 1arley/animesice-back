@@ -17,9 +17,9 @@ import { PrismaService } from '@/prisma/prisma.service';
 const MAX_MESSAGES_PER_MINUTE = 15;
 const MAX_MESSAGE_LENGTH = 500;
 const DUPLICATE_WINDOW_MS = 3000;
-const SYNC_THRESHOLD_MS = 1500;
 
 interface RoomParticipant {
+  roomSlug: string;
   userId: string;
   socketId: string;
   userName: string | null;
@@ -105,12 +105,14 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.messageTimestamps.delete(userId);
       this.lastMessage.delete(userId);
     }
-    for (const room of client.rooms) {
-      if (room.startsWith('room:')) {
-        const roomId = room.slice(5);
-        this.removeParticipant(roomId, client.id);
-        this.broadcastParticipantList(roomId);
-      }
+    // Socket.IO já pode ter esvaziado client.rooms quando o callback de
+    // disconnect roda. A fonte confiável aqui é o nosso registro de presença.
+    for (const [roomId, participants] of this.roomParticipants) {
+      const participant = participants.get(client.id);
+      if (!participant) continue;
+      this.removeParticipant(roomId, client.id);
+      this.pauseIfLastHostLeft(roomId, participant);
+      this.broadcastParticipantList(roomId);
     }
   }
 
@@ -126,9 +128,14 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const room = await this.roomService.getRoomBySlug(data.slug);
 
       if (!client.rooms.has(`room:${room.id}`)) {
-        const sockets = await this.server.in(`room:${room.id}`).fetchSockets();
-        const participantCount = sockets.length;
-        if (participantCount >= room.maxParticipants) {
+        const participants = this.roomParticipants.get(room.id);
+        const uniqueUsers = new Set(
+          Array.from(participants?.values() ?? []).map((item) => item.userId),
+        );
+        if (
+          !uniqueUsers.has(userId) &&
+          uniqueUsers.size >= room.maxParticipants
+        ) {
           client.emit('roomFull', {
             message: 'Sala cheia.',
           });
@@ -136,7 +143,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
         }
       }
 
-      void client.join(`room:${room.id}`);
+      await client.join(`room:${room.id}`);
 
       const user = await this.prisma.user.findUnique({
         where: { id: userId },
@@ -144,6 +151,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
       });
 
       this.addParticipant(room.id, {
+        roomSlug: room.slug,
         userId,
         socketId: client.id,
         userName: user?.userName ?? null,
@@ -166,12 +174,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       const player = this.playerState.get(room.id);
       if (player) {
-        client.emit('playerSync', {
-          currentTime: player.currentTime,
-          isPlaying: player.isPlaying,
-          updatedAt: player.updatedAt,
-          origin: 'host',
-        });
+        client.emit('playerSync', this.serializePlayerState(player, 'host'));
       }
 
       this.broadcastParticipantList(room.id);
@@ -187,7 +190,12 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
   ) {
     for (const room of client.rooms) {
       if (room.startsWith('room:')) {
+        const roomId = room.slice(5);
+        const participant = this.roomParticipants.get(roomId)?.get(client.id);
+        this.removeParticipant(roomId, client.id);
         void client.leave(room);
+        if (participant) this.pauseIfLastHostLeft(roomId, participant);
+        this.broadcastParticipantList(roomId);
       }
     }
   }
@@ -226,6 +234,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     try {
       const room = await this.roomService.getRoomBySlug(data.slug);
+      if (!client.rooms.has(`room:${room.id}`)) return;
       const message = await this.roomService.createMessage(
         room.id,
         userId,
@@ -249,6 +258,7 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     if (typeof data?.slug !== 'string') return;
     try {
       const room = await this.roomService.getRoomBySlug(data.slug);
+      if (!client.rooms.has(`room:${room.id}`)) return;
       const messages = await this.roomService.getMessages(room.id);
       client.emit('messageHistory', messages);
     } catch {
@@ -265,28 +275,33 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const userId = this.userMap.get(client.id);
     if (!userId || typeof data?.slug !== 'string') return;
 
-    const now = Date.now();
-    const last = this.playerState.get(data.slug);
     if (
-      last &&
-      now - last.updatedAt < SYNC_THRESHOLD_MS &&
-      data.isPlaying === last.isPlaying
+      !Number.isFinite(data.currentTime) ||
+      data.currentTime < 0 ||
+      typeof data.isPlaying !== 'boolean'
     ) {
       return;
     }
 
-    this.playerState.set(data.slug, {
+    const membership = this.findMembership(client.id, data.slug);
+    if (!membership) return;
+    const { roomId, participant } = membership;
+    const channel = `room:${roomId}`;
+    if (!client.rooms.has(channel) || !participant?.isHost) return;
+
+    const now = Date.now();
+    this.playerState.set(roomId, {
       currentTime: data.currentTime,
       isPlaying: data.isPlaying,
       updatedAt: now,
     });
 
-    this.server.to(`room:${data.slug}`).emit('playerSync', {
-      currentTime: data.currentTime,
-      isPlaying: data.isPlaying,
-      updatedAt: now,
-      origin: userId,
-    });
+    this.server
+      .to(channel)
+      .emit(
+        'playerSync',
+        this.serializePlayerState(this.playerState.get(roomId)!, userId),
+      );
   }
 
   @SubscribeMessage('requestSync')
@@ -295,14 +310,11 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() data: { slug: string },
   ) {
     if (typeof data?.slug !== 'string') return;
-    const state = this.playerState.get(data.slug);
+    const membership = this.findMembership(client.id, data.slug);
+    if (!membership || !client.rooms.has(`room:${membership.roomId}`)) return;
+    const state = this.playerState.get(membership.roomId);
     if (state) {
-      client.emit('playerSync', {
-        currentTime: state.currentTime,
-        isPlaying: state.isPlaying,
-        updatedAt: state.updatedAt,
-        origin: 'host',
-      });
+      client.emit('playerSync', this.serializePlayerState(state, 'host'));
     }
   }
 
@@ -312,7 +324,10 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @MessageBody() data: { slug: string },
   ) {
     if (typeof data?.slug !== 'string') return;
-    this.broadcastParticipantList(data.slug, client);
+    const membership = this.findMembership(client.id, data.slug);
+    if (membership && client.rooms.has(`room:${membership.roomId}`)) {
+      this.broadcastParticipantList(membership.roomId, client);
+    }
   }
 
   private checkRateLimit(clientId: string): boolean {
@@ -348,6 +363,14 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.roomParticipants.get(roomId)!.set(participant.socketId, participant);
   }
 
+  private findMembership(socketId: string, roomSlug: string) {
+    for (const [roomId, participants] of this.roomParticipants) {
+      const participant = participants.get(socketId);
+      if (participant?.roomSlug === roomSlug) return { roomId, participant };
+    }
+    return null;
+  }
+
   private removeParticipant(roomId: string, socketId: string) {
     this.roomParticipants.get(roomId)?.delete(socketId);
     if (this.roomParticipants.get(roomId)?.size === 0) {
@@ -358,8 +381,12 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   private broadcastParticipantList(roomId: string, target?: Socket) {
     const participants = this.roomParticipants.get(roomId);
+    const uniqueParticipants = new Map<string, RoomParticipant>();
+    for (const participant of participants?.values() ?? []) {
+      uniqueParticipants.set(participant.userId, participant);
+    }
     const list = participants
-      ? Array.from(participants.values()).map((p) => ({
+      ? Array.from(uniqueParticipants.values()).map((p) => ({
           userId: p.userId,
           userName: p.userName,
           name: p.name,
@@ -370,6 +397,38 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     const emit = target ?? this.server.to(`room:${roomId}`);
     emit.emit('participantList', list);
+  }
+
+  private serializePlayerState(state: PlayerSyncState, origin: string) {
+    const elapsed = state.isPlaying
+      ? Math.max(0, (Date.now() - state.updatedAt) / 1000)
+      : 0;
+    return {
+      currentTime: state.currentTime + elapsed,
+      isPlaying: state.isPlaying,
+      origin,
+    };
+  }
+
+  private pauseIfLastHostLeft(roomId: string, participant: RoomParticipant) {
+    if (!participant.isHost) return;
+    const hostStillConnected = Array.from(
+      this.roomParticipants.get(roomId)?.values() ?? [],
+    ).some((item) => item.isHost);
+    if (hostStillConnected) return;
+
+    const state = this.playerState.get(roomId);
+    if (!state?.isPlaying) return;
+    const pausedState: PlayerSyncState = {
+      currentTime:
+        state.currentTime + Math.max(0, (Date.now() - state.updatedAt) / 1000),
+      isPlaying: false,
+      updatedAt: Date.now(),
+    };
+    this.playerState.set(roomId, pausedState);
+    this.server
+      .to(`room:${roomId}`)
+      .emit('playerSync', this.serializePlayerState(pausedState, 'host-left'));
   }
 
   private extractToken(client: Socket): string | null {

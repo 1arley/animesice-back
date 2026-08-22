@@ -110,6 +110,8 @@ describe('EmbedService (proxy HTML/mídia + anti-SSRF)', () => {
     expect(res.body).toContain('src="https://animefire.io/img/a.png"');
     expect(res.body).toContain('src="https://cdn.animefire.io/a.js"');
     expect(res.body).toContain('href="javascript:void(0)"');
+    expect(res.body).toContain('data-animesice-watch-party-bridge');
+    expect(res.body).toContain("const TYPE = 'animesice:watch-party'");
 
     const [url, init] = (global.fetch as jest.Mock).mock.calls[0];
     expect(url).toBe('https://animefire.io/page');

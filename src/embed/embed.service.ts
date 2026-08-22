@@ -47,6 +47,69 @@ const MAX_REDIRECTS = 5;
 /** Teto de bytes p/ corpo de HTML proxyado (anti memory-bloat). */
 const MAX_HTML_BYTES = 5 * 1024 * 1024;
 
+/** Ponte isolada usada pela Watch Party para controlar o video dentro do
+ * iframe proxyado. Só troca estado de mídia via postMessage; não expõe DOM,
+ * cookies ou conteúdo da página terceira ao parent. */
+const WATCH_PARTY_BRIDGE = `<script data-animesice-watch-party-bridge>
+(() => {
+  const TYPE = 'animesice:watch-party';
+  let role = 'viewer';
+  let lastReport = 0;
+  const player = () => {
+    const videos = Array.from(document.querySelectorAll('video'));
+    return videos.sort((a, b) => (b.clientWidth * b.clientHeight) - (a.clientWidth * a.clientHeight))[0] || null;
+  };
+  const send = (event, extra = {}) => parent.postMessage({ type: TYPE, event, ...extra }, '*');
+  const showActivation = (video) => {
+    if (document.getElementById('animesice-watch-party-activate')) return;
+    const button = document.createElement('button');
+    button.id = 'animesice-watch-party-activate';
+    button.textContent = 'Clique para ativar a reprodução sincronizada';
+    button.style.cssText = 'position:fixed;inset:0;margin:auto;z-index:2147483647;width:max-content;max-width:85%;height:max-content;padding:12px 16px;border:1px solid #8ee8ff;border-radius:6px;background:rgba(0,0,0,.88);color:white;font:600 14px sans-serif;cursor:pointer';
+    button.onclick = async () => { try { await video.play(); button.remove(); report('applied'); } catch {} };
+    document.body.appendChild(button);
+  };
+  const report = (event = 'state') => {
+    const video = player();
+    if (!video) return send('unavailable');
+    send(event, { currentTime: Number.isFinite(video.currentTime) ? video.currentTime : 0, isPlaying: !video.paused && !video.ended });
+  };
+  const configure = () => {
+    const video = player();
+    if (!video || video.dataset.animesiceBridge) return;
+    video.dataset.animesiceBridge = '1';
+    if (role !== 'host') video.controls = false;
+    for (const event of ['play', 'pause', 'seeked', 'ended']) video.addEventListener(event, () => report());
+    video.addEventListener('timeupdate', () => {
+      if (role === 'host' && Date.now() - lastReport > 5000) { lastReport = Date.now(); report(); }
+    });
+    send('ready');
+  };
+  addEventListener('message', async ({ data }) => {
+    if (!data || data.type !== TYPE) return;
+    if (data.command === 'setRole') {
+      role = data.role === 'host' ? 'host' : 'viewer';
+      const video = player();
+      if (video) video.controls = role === 'host';
+      configure();
+      return;
+    }
+    if (data.command === 'getState') { configure(); report(); return; }
+    if (data.command !== 'apply') return;
+    const video = player();
+    if (!video) return send('unavailable');
+    if (Number.isFinite(data.currentTime) && Math.abs(video.currentTime - data.currentTime) >= 0.75) video.currentTime = Math.max(0, data.currentTime);
+    try {
+      if (data.isPlaying) await video.play(); else video.pause();
+      report('applied');
+    } catch { showActivation(video); send('autoplay-blocked'); }
+  });
+  new MutationObserver(configure).observe(document.documentElement, { childList: true, subtree: true });
+  configure();
+  send('bridge-ready');
+})();
+</script>`;
+
 /** Mensagem de erro p/ destinos de rede interna. */
 const BLOCKED_MESSAGE =
   'Destino bloqueado: não é permitido proxy para redes internas/metadata.';
@@ -165,6 +228,7 @@ export class EmbedService {
 
       body = this.injectBaseHref(body, origin);
       body = this.rewriteResourceUrls(body, origin, validated);
+      body = this.injectWatchPartyBridge(body);
 
       const cleanHeaders: Record<string, string> = {
         'content-type': contentType.startsWith('text/html')
@@ -541,6 +605,22 @@ export class EmbedService {
     }
 
     return out;
+  }
+
+  private injectWatchPartyBridge(html: string): string {
+    // Um CSP em <meta> do upstream poderia bloquear a ponte inline. O proxy já
+    // aplica seu próprio CSP sandboxado no header da resposta.
+    const withoutMetaCsp = html.replace(
+      /<meta\b[^>]*http-equiv\s*=\s*["']?content-security-policy["']?[^>]*>/gi,
+      '',
+    );
+    if (/<\/body\s*>/i.test(withoutMetaCsp)) {
+      return withoutMetaCsp.replace(
+        /<\/body\s*>/i,
+        `${WATCH_PARTY_BRIDGE}</body>`,
+      );
+    }
+    return `${withoutMetaCsp}\n${WATCH_PARTY_BRIDGE}`;
   }
 
   /**
