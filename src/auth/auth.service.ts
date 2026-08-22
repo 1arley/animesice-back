@@ -324,14 +324,17 @@ export class AuthService {
       throw new ConflictException('Este email já está em uso.');
     }
 
-    await this.prisma.user.update({
-      where: { id: record.userId },
-      data: { email: record.newEmail },
-    });
-
-    await this.prisma.emailChangeToken.delete({
-      where: { id: record.id },
-    });
+    // Operação atômica: atualiza email + deleta token em uma única transação.
+    // Evita token órfão reutilizável se o process crashar entre update e delete.
+    await this.prisma.$transaction([
+      this.prisma.user.update({
+        where: { id: record.userId },
+        data: { email: record.newEmail },
+      }),
+      this.prisma.emailChangeToken.delete({
+        where: { id: record.id },
+      }),
+    ]);
 
     // Identidade trocada — derruba sessões existentes.
     await this.revokeAllUserRefreshTokens(record.userId);

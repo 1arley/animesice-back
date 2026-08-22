@@ -1,7 +1,7 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, BadGatewayException } from '@nestjs/common';
 import { lookup } from 'dns/promises';
 import net, { LookupFunction } from 'net';
-import { Agent, Dispatcher } from 'undici';
+import { Agent, Dispatcher, fetch as undiciFetch } from 'undici';
 
 const BLOCKED_MESSAGE =
   'Destino bloqueado: não é permitido acesso a redes internas ou metadata.';
@@ -150,4 +150,58 @@ export function pinnedDispatcher(resolution: SafeUrlResolution): Dispatcher {
 /** Compatibilidade para callers que só precisam validar, sem fazer request. */
 export async function assertHostResolvesSafely(urlStr: string): Promise<void> {
   await resolveSafeUrl(urlStr);
+}
+
+/** Máximo de redirecionamentos antes de abortar (anti-loop SSRF). */
+const MAX_REDIRECTS = 5;
+
+/**
+ * Fetch SSRF-safe standalone: valida cada hop via DNS-pinned resolution,
+ * bloqueia IPs internos e segue redirecionamentos com revalidação manual.
+ * Uso: fontes de scrape que precisam de fetch protegido sem depender do
+ * EmbedService.
+ */
+export async function fetchSafeRaw(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<{ response: Response; dispatcher: Dispatcher }> {
+  let current = url;
+
+  for (let i = 0; i <= MAX_REDIRECTS; i++) {
+    const resolution = await resolveSafeUrl(current);
+    const dispatcher = pinnedDispatcher(resolution);
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    let response: Response;
+    try {
+      response = await undiciFetch(resolution.url, {
+        ...init,
+        signal: controller.signal,
+        redirect: 'manual',
+        dispatcher,
+      });
+    } catch (err) {
+      await dispatcher.close();
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
+
+    const location = response.headers.get('location');
+    const isRedirect =
+      response.status >= 300 && response.status < 400 && !!location;
+    if (!isRedirect) return { response, dispatcher };
+
+    await response.body?.cancel();
+    await dispatcher.close();
+    try {
+      current = new URL(location, resolution.url).toString();
+    } catch {
+      throw new BadGatewayException('Redirecionamento upstream inválido.');
+    }
+  }
+
+  throw new BadGatewayException('Limite de redirecionamentos excedido.');
 }

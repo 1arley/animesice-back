@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { Page } from 'playwright';
+import { fetchSafeRaw } from '@/common/ssrf';
 import {
   ScrapeSource,
   ScrapeEpisodeResult,
@@ -26,14 +27,11 @@ const FETCH_TIMEOUT_MS = 15_000;
 /** Teto de bytes lidos de uma resposta (anti-memória). */
 const MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
 
-async function fetchBounded(url: string, init: RequestInit): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  try {
-    return await fetch(url, { ...init, signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
+async function fetchBoundedSafe(
+  url: string,
+  init: RequestInit,
+): Promise<{ response: Response; dispatcher: import('undici').Dispatcher }> {
+  return fetchSafeRaw(url, init, FETCH_TIMEOUT_MS);
 }
 
 async function readBounded(res: Response, maxBytes: number): Promise<string> {
@@ -95,24 +93,30 @@ export class AnimefireScrapeSource implements ScrapeSource {
    */
   async extractHttp(ctx: HttpExtractContext): Promise<ScrapeEpisodeResult> {
     // Step 1: página do episódio -> data-video-src.
-    const pageRes = await fetchBounded(ctx.episodeUrl, {
-      headers: {
-        'user-agent': ctx.ua,
-        'accept-language': 'pt-BR,pt;q=0.9',
-        accept: 'text/html,application/xhtml+xml',
-      },
-      redirect: 'follow',
-    });
+    const { response: pageRes, dispatcher: pageDispatcher } =
+      await fetchBoundedSafe(ctx.episodeUrl, {
+        headers: {
+          'user-agent': ctx.ua,
+          'accept-language': 'pt-BR,pt;q=0.9',
+          accept: 'text/html,application/xhtml+xml',
+        },
+        redirect: 'follow',
+      });
 
     console.log(
       `[AF] extractHttp url='${ctx.episodeUrl}' status=${pageRes.status} final='${pageRes.url}'`,
     );
-    if (!pageRes.ok) {
-      throw new Error(
-        `animefire: página do episódio retornou ${pageRes.status} para url='${ctx.episodeUrl}' final='${pageRes.url}'`,
-      );
+    let html: string;
+    try {
+      if (!pageRes.ok) {
+        throw new Error(
+          `animefire: página do episódio retornou ${pageRes.status} para url='${ctx.episodeUrl}' final='${pageRes.url}'`,
+        );
+      }
+      html = await readBounded(pageRes, MAX_RESPONSE_BYTES);
+    } finally {
+      await pageDispatcher.close();
     }
-    const html = await readBounded(pageRes, MAX_RESPONSE_BYTES);
 
     const m = html.match(DATA_VIDEO_SRC_RE);
     if (!m || !m[1]) {
@@ -121,24 +125,28 @@ export class AnimefireScrapeSource implements ScrapeSource {
     const videoPageUrl = m[1];
 
     // Step 2: página interna /video -> JSON de fontes.
-    const videoRes = await fetchBounded(videoPageUrl, {
-      headers: {
-        'user-agent': ctx.ua,
-        referer: `${ANIMEFIRE_ORIGIN}/`,
-        origin: ANIMEFIRE_ORIGIN,
-        accept: 'application/json, text/plain, */*',
-        'accept-language': 'pt-BR,pt;q=0.9',
-      },
-      redirect: 'follow',
-    });
-    if (!videoRes.ok) {
-      throw new Error(`animefire: /video retornou ${videoRes.status}`);
+    const { response: videoRes, dispatcher: videoDispatcher } =
+      await fetchBoundedSafe(videoPageUrl, {
+        headers: {
+          'user-agent': ctx.ua,
+          referer: `${ANIMEFIRE_ORIGIN}/`,
+          origin: ANIMEFIRE_ORIGIN,
+          accept: 'application/json, text/plain, */*',
+          'accept-language': 'pt-BR,pt;q=0.9',
+        },
+        redirect: 'follow',
+      });
+    let json: { data?: Array<{ src?: string; label?: string }> };
+    try {
+      if (!videoRes.ok) {
+        throw new Error(`animefire: /video retornou ${videoRes.status}`);
+      }
+      json = JSON.parse(await readBounded(videoRes, MAX_RESPONSE_BYTES)) as {
+        data?: Array<{ src?: string; label?: string }>;
+      };
+    } finally {
+      await videoDispatcher.close();
     }
-    const json = JSON.parse(
-      await readBounded(videoRes, MAX_RESPONSE_BYTES),
-    ) as {
-      data?: Array<{ src?: string; label?: string }>;
-    };
 
     if (!json.data || json.data.length === 0) {
       throw new Error('animefire: JSON de fontes vazio.');

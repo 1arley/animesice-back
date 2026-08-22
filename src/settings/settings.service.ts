@@ -306,7 +306,12 @@ export class SettingsService {
     return { message: 'Usuário excluído com sucesso.' };
   }
 
-  async updateUserRole(userId: string, role: Role, adminId: string) {
+  async updateUserRole(
+    userId: string,
+    role: Role,
+    adminId: string,
+    adminRole?: Role,
+  ) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: { id: true, role: true },
@@ -318,6 +323,13 @@ export class SettingsService {
 
     if (user.id === adminId) {
       throw new ForbiddenException('Você não pode alterar seu próprio cargo.');
+    }
+
+    // Apenas SUPERADMIN pode promover para SUPERADMIN.
+    if (role === 'SUPERADMIN' && adminRole !== 'SUPERADMIN') {
+      throw new ForbiddenException(
+        'Apenas SUPERADMIN pode atribuir o cargo de SUPERADMIN.',
+      );
     }
 
     return this.prisma.user.update({

@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { Page } from 'playwright';
+import { fetchSafeRaw } from '@/common/ssrf';
 import {
   ScrapeSource,
   ScrapeEpisodeResult,
@@ -214,9 +215,10 @@ export class MeusanimesScrapeSource implements ScrapeSource {
         'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8',
     };
     if (referer) headers.referer = referer;
-    let res: Response;
+    let response: Response;
+    let dispatcher: import('undici').Dispatcher;
     try {
-      res = await fetch(url, { headers, redirect: 'follow' });
+      ({ response, dispatcher } = await fetchSafeRaw(url, { headers }, 15_000));
     } catch (err) {
       const cause = err instanceof Error ? err.cause : undefined;
       throw new Error(
@@ -224,10 +226,14 @@ export class MeusanimesScrapeSource implements ScrapeSource {
         { cause: err },
       );
     }
-    if (!res.ok) {
-      throw new Error(`${url} retornou ${res.status}`);
+    try {
+      if (!response.ok) {
+        throw new Error(`${url} retornou ${response.status}`);
+      }
+      return await response.text();
+    } finally {
+      await dispatcher.close();
     }
-    return res.text();
   }
 
   /** Fallback Playwright (fluxo generico de extração da pagina). */

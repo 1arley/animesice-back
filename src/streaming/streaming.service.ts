@@ -102,6 +102,10 @@ export class StreamingService {
   >();
   private readonly SCRAPE_CACHE_TTL_MS = 5 * 60_000;
 
+  /** Teto de entradas nos caches de inflight — evita crescimento ilimitado
+   *  sob carga sustentada (OOM). Entradas mais antigas são descartadas. */
+  private static readonly MAX_INFLIGHT_ENTRIES = 200;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly embedService: EmbedService,
@@ -126,6 +130,25 @@ export class StreamingService {
     for (const [key, entry] of this.scrapeCache) {
       if (entry.at + this.SCRAPE_CACHE_TTL_MS <= now) {
         this.scrapeCache.delete(key);
+      }
+    }
+    // Eviction por tamanho nos caches de inflight — evita OOM.
+    if (this.scrapeInflight.size > StreamingService.MAX_INFLIGHT_ENTRIES) {
+      const keys = [...this.scrapeInflight.keys()];
+      for (const k of keys.slice(
+        0,
+        keys.length - StreamingService.MAX_INFLIGHT_ENTRIES,
+      )) {
+        this.scrapeInflight.delete(k);
+      }
+    }
+    if (this.reextractInflight.size > StreamingService.MAX_INFLIGHT_ENTRIES) {
+      const keys = [...this.reextractInflight.keys()];
+      for (const k of keys.slice(
+        0,
+        keys.length - StreamingService.MAX_INFLIGHT_ENTRIES,
+      )) {
+        this.reextractInflight.delete(k);
       }
     }
     purgeExpiredLivenessCache(now);

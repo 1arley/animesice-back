@@ -5,6 +5,7 @@ import {
   BadGatewayException,
 } from '@nestjs/common';
 import { Readable } from 'stream';
+import sanitizeHtml from 'sanitize-html';
 import {
   isBlockedHostname,
   pinnedDispatcher,
@@ -228,6 +229,7 @@ export class EmbedService {
 
       body = this.injectBaseHref(body, origin);
       body = this.rewriteResourceUrls(body, origin, validated);
+      body = this.sanitizeProxiedHtml(body);
       body = this.injectWatchPartyBridge(body);
 
       const cleanHeaders: Record<string, string> = {
@@ -577,6 +579,73 @@ export class EmbedService {
     }
 
     return `<head>${baseTag}</head>\n${html}`;
+  }
+
+  /**
+   * Sanitiza HTML proxyado de fontes externas: remove scripts, event handlers,
+   * javascript: URIs e tags perigosas. Preserva <base>, <link>, <style> e
+   * iframe (necessários para players de vídeo).
+   */
+  private sanitizeProxiedHtml(html: string): string {
+    return sanitizeHtml(html, {
+      allowedTags: sanitizeHtml.defaults.allowedTags.concat([
+        'iframe',
+        'video',
+        'source',
+        'audio',
+        'base',
+        'link',
+        'meta',
+        'style',
+        'script',
+      ]),
+      allowedAttributes: {
+        ...sanitizeHtml.defaults.allowedAttributes,
+        iframe: [
+          'src',
+          'allow',
+          'allowfullscreen',
+          'frameborder',
+          'width',
+          'height',
+          'style',
+          'class',
+          'id',
+          'data-*',
+        ],
+        video: [
+          'src',
+          'controls',
+          'autoplay',
+          'muted',
+          'loop',
+          'preload',
+          'width',
+          'height',
+          'style',
+          'class',
+          'poster',
+        ],
+        source: ['src', 'type', 'media'],
+        audio: [
+          'src',
+          'controls',
+          'autoplay',
+          'muted',
+          'loop',
+          'preload',
+          'style',
+          'class',
+        ],
+        base: ['href'],
+        link: ['rel', 'href', 'type', 'media', 'crossorigin'],
+        meta: ['charset', 'name', 'content', 'http-equiv'],
+        style: ['type', 'media'],
+        '*': ['id', 'class', 'style', 'title', 'lang', 'dir'],
+      },
+      allowedSchemes: ['http', 'https', 'data', 'blob'],
+      allowVidetagProtocolInlining: true,
+    });
   }
 
   /**

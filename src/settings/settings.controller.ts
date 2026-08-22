@@ -205,7 +205,12 @@ export class SettingsController {
     @Param('id') id: string,
     @Body() body: { role: Role },
   ) {
-    return this.settingsService.updateUserRole(id, body.role, req.user.id);
+    return this.settingsService.updateUserRole(
+      id,
+      body.role,
+      req.user.id,
+      req.user.role,
+    );
   }
 
   @Get('admin/dashboard')
