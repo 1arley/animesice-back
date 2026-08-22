@@ -1,3 +1,10 @@
+## [1.23.1](https://github.com/1arley/animesice-back/compare/v1.23.0...v1.23.1) (2026-08-22)
+
+
+### Bug Fixes
+
+* **watch-party:** garante sincronizacao autoritativa ([0112c01](https://github.com/1arley/animesice-back/commit/0112c0119bef347a405bcaa635c4ded16c62a802))
+
 # [1.23.0](https://github.com/1arley/animesice-back/compare/v1.22.0...v1.23.0) (2026-08-22)
 
 
