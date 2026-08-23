@@ -644,7 +644,6 @@ export class EmbedService {
         '*': ['id', 'class', 'style', 'title', 'lang', 'dir'],
       },
       allowedSchemes: ['http', 'https', 'data', 'blob'],
-      allowVidetagProtocolInlining: true,
     });
   }
 
