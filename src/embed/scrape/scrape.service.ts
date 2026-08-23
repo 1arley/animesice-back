@@ -18,6 +18,7 @@ import { HealthMonitor } from '@/watchtower/health-monitor.service';
 import { MetricsService } from '@/metrics/metrics.service';
 import { SOURCE_IDS } from '@/watchtower/watchtower.types';
 import { ensureXvfb } from './xvfb.helper';
+import { refererForMediaUrlWithFallback } from '@/common/url-utils';
 /** Remove quebras de linha/separadores Unicode de dados externos antes de logar. */
 function sanitizeLog(v: string): string {
   return v.replace(/[\r\n\u2028\u2029]/g, ' ');
@@ -46,53 +47,11 @@ interface EmbedDocument {
  *  - servir pelo mesmo dominio do backend (sem CORS / Connection Refused).
  * URLs relativas/nulas/do proprio backend sao mantidas intactas.
  */
-/**
- * Origem do site fonte (ex: https://animefire.io) injetada como Referer/Origin
- * no proxy de mídia p/ contornar anti-hotlinking das CDNs (lightspeedst.net
- * valida Referer contra animefire.io; googlevideo valida contra youtube.googleapis.com).
- */
-function originOf(rawUrl: string): string {
-  try {
-    const u = new URL(rawUrl);
-    return `${u.protocol}//${u.host}`;
-  } catch {
-    return '';
-  }
-}
-
-/**
- * Resolve o Referer correto para a URL de mídia com base no host da CDN.
- * - googlevideo.com (vindo de Blogger/YouTube): exige Referer youtube.googleapis.com
- * - lightspeedst.net (vindo de animefire): exige Referer animefire.io
- * - default: origem da própria URL
- */
-function refererForMediaUrl(mediaUrl: string, episodeUrl: string): string {
-  try {
-    const u = new URL(mediaUrl);
-    const host = u.hostname.toLowerCase();
-
-    // googlevideo (tokens Blogger resolvidos via Playwright)
-    if (/googlevideo\.com$/i.test(host)) {
-      return 'https://youtube.googleapis.com/';
-    }
-
-    // lightspeedst (animefire CDN)
-    if (/lightspeedst\.net$/i.test(host)) {
-      return 'https://animefire.io/';
-    }
-
-    // fallback: origem do episódio
-    return originOf(episodeUrl);
-  } catch {
-    return originOf(episodeUrl);
-  }
-}
-
 function wrapMediaUrl(raw: string, episodeUrl: string): string {
   if (!raw) return raw;
   const trimmed = raw.trim();
   if (!/^https?:\/\//i.test(trimmed)) return trimmed;
-  const ref = refererForMediaUrl(trimmed, episodeUrl);
+  const ref = refererForMediaUrlWithFallback(trimmed, episodeUrl);
   const refererParam = ref ? `&referer=${encodeURIComponent(ref)}` : '';
   const apiPrefix = process.env.API_PREFIX || 'api';
   return `/${apiPrefix}/embed/media?url=${encodeURIComponent(trimmed)}${refererParam}`;
