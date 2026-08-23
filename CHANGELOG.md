@@ -1,3 +1,17 @@
+## [1.24.1](https://github.com/1arley/animesice-back/compare/v1.24.0...v1.24.1) (2026-08-23)
+
+
+### Bug Fixes
+
+* **ci:** update repair-worker tests for enqueueMany and add coverage/ to eslintignore ([69ee653](https://github.com/1arley/animesice-back/commit/69ee65341f88653f9f697d4f617de4021198d428))
+* correct mock types in meusanimes.source.spec.ts ([53a025b](https://github.com/1arley/animesice-back/commit/53a025b84f48af931bec1f4f815c4e87bdf01b2f))
+* remove invalid allowVidetagProtocolInlining option from sanitize-html ([5bf7940](https://github.com/1arley/animesice-back/commit/5bf7940b5c56d6dea9b78663201f4e55085a4607))
+* **security:** corrige 5 vulnerabilidades criticas ([0f9f903](https://github.com/1arley/animesice-back/commit/0f9f903cfc438bde023554648718bc9f2b879125))
+* **streaming:** add max-size eviction to scrapeCache and livenessCache ([#32](https://github.com/1arley/animesice-back/issues/32)) ([132f106](https://github.com/1arley/animesice-back/commit/132f106629ef5fb3ec4e759d6c4ef63c36b26549))
+* **tests:** adjust unit tests for updated sanitizer and SSRF module mocking ([a36a865](https://github.com/1arley/animesice-back/commit/a36a865d2735e42b40bbe38f3fb27b35f2cefcf1))
+* type dispatcher mock as undici Dispatcher in spec ([fee952d](https://github.com/1arley/animesice-back/commit/fee952d281df0a748c6908ea59490e58b6316287))
+* **watchtower:** batch enqueue calls to eliminate N+1 queries ([#34](https://github.com/1arley/animesice-back/issues/34)) ([60abdbc](https://github.com/1arley/animesice-back/commit/60abdbc795a45cc1113371bd2c7e3d564fc7d41e))
+
 # [1.24.0](https://github.com/1arley/animesice-back/compare/v1.23.1...v1.24.0) (2026-08-22)
 
 
