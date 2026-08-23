@@ -1,3 +1,10 @@
+## [1.24.2](https://github.com/1arley/animesice-back/compare/v1.24.1...v1.24.2) (2026-08-23)
+
+
+### Bug Fixes
+
+* streaming cache eviction, SSRF URL normalization, watchtower batch enqueue ([#32](https://github.com/1arley/animesice-back/issues/32) [#33](https://github.com/1arley/animesice-back/issues/33) [#34](https://github.com/1arley/animesice-back/issues/34)) ([#37](https://github.com/1arley/animesice-back/issues/37)) ([f6d716f](https://github.com/1arley/animesice-back/commit/f6d716f5c2870e7dc08f2b2ff4fb3d31d90901a7))
+
 ## [1.24.1](https://github.com/1arley/animesice-back/compare/v1.24.0...v1.24.1) (2026-08-23)
 
 
