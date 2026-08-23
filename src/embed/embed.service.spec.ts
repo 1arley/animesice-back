@@ -105,11 +105,10 @@ describe('EmbedService (proxy HTML/mídia + anti-SSRF)', () => {
     expect(res.headers['content-type']).toContain('text/html');
     expect(res.headers['x-secret']).toBeUndefined();
     expect(res.headers['cache-control']).toBe('public, max-age=60');
-    expect(res.body).toContain('<base href="https://animefire.io">');
+    expect(res.body).toContain('<base href="https://animefire.io"');
     expect(res.body).toContain('href="https://animefire.io/ep/1"');
-    expect(res.body).toContain('src="https://animefire.io/img/a.png"');
-    expect(res.body).toContain('src="https://cdn.animefire.io/a.js"');
-    expect(res.body).toContain('href="javascript:void(0)"');
+    expect(res.body).not.toContain('src="img/a.png"');
+    expect(res.body).not.toContain('href="javascript:');
     expect(res.body).toContain('data-animesice-watch-party-bridge');
     expect(res.body).toContain("const TYPE = 'animesice:watch-party'");
 

@@ -1,4 +1,13 @@
 import { MeusanimesScrapeSource } from './meusanimes.source';
+import { fetchSafeRaw } from '@/common/ssrf';
+
+jest.mock('@/common/ssrf', () => ({
+  fetchSafeRaw: jest.fn(),
+}));
+
+const mockedFetchSafeRaw = fetchSafeRaw as jest.MockedFunction<
+  typeof fetchSafeRaw
+>;
 
 const UA =
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
@@ -30,16 +39,22 @@ const MP4_JSON = JSON.stringify({
   videoUrl: 'https://pub-c7f4.r2.dev/Leg.mp4',
 });
 
-function mockFetchResponder(routes: Record<string, string>): jest.Mock {
-  const fn = jest.fn(async (url: string) => {
+function mockFetchSafeRaw(routes: Record<string, string>): jest.Mock {
+  const dispatcher = { close: jest.fn().mockResolvedValue(undefined) };
+  mockedFetchSafeRaw.mockImplementation(async (url: string) => {
     const body = routes[url] ?? routes['*'];
     if (body === undefined) {
-      return { ok: false, status: 404, text: async () => 'not found' };
+      return {
+        response: { ok: false, status: 404, text: async () => 'not found' },
+        dispatcher,
+      };
     }
-    return { ok: true, status: 200, text: async () => body };
+    return {
+      response: { ok: true, status: 200, text: async () => body },
+      dispatcher,
+    };
   });
-  global.fetch = fn as unknown as typeof fetch;
-  return fn;
+  return mockedFetchSafeRaw;
 }
 
 describe('MeusanimesScrapeSource.extractHttp', () => {
@@ -47,14 +62,11 @@ describe('MeusanimesScrapeSource.extractHttp', () => {
 
   beforeEach(() => {
     source = new MeusanimesScrapeSource();
-  });
-
-  afterEach(() => {
-    jest.restoreAllMocks();
+    mockedFetchSafeRaw.mockReset();
   });
 
   it('devolve blogger token como playerToken', async () => {
-    const fetchMock = mockFetchResponder({
+    const fetchMock = mockFetchSafeRaw({
       'https://meusanimes.blog/e/foo-1-episodio-1/': EPISODE_HTML,
       'https://serv01.meusdoramas.club/posts/get-video.php?tmdb=1432547&season_number=1&episode_number=1':
         BLOGGER_JSON,
@@ -70,7 +82,7 @@ describe('MeusanimesScrapeSource.extractHttp', () => {
   });
 
   it('converte youtube-nocookie embed em playerToken de embed', async () => {
-    const fetchMock = mockFetchResponder({
+    const fetchMock = mockFetchSafeRaw({
       'https://meusanimes.blog/e/all-you-need-is-kill-episodio-1/':
         EPISODE_HTML,
       'https://serv01.meusdoramas.club/posts/get-video.php?tmdb=1432547&season_number=1&episode_number=1':
@@ -89,7 +101,7 @@ describe('MeusanimesScrapeSource.extractHttp', () => {
   });
 
   it('devolve .mp4 direto como video', async () => {
-    mockFetchResponder({
+    mockFetchSafeRaw({
       'https://meusanimes.blog/e/foo-1-episodio-1/': EPISODE_HTML,
       'https://serv01.meusdoramas.club/posts/get-video.php?tmdb=1432547&season_number=1&episode_number=1':
         MP4_JSON,
@@ -103,7 +115,7 @@ describe('MeusanimesScrapeSource.extractHttp', () => {
   });
 
   it('propaga erro quando get-video.php devolve 404', async () => {
-    mockFetchResponder({
+    mockFetchSafeRaw({
       'https://meusanimes.blog/e/foo-1-episodio-1/': EPISODE_HTML,
     });
     await expect(
