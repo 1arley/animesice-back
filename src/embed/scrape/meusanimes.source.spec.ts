@@ -1,5 +1,6 @@
 import { MeusanimesScrapeSource } from './meusanimes.source';
 import { fetchSafeRaw } from '@/common/ssrf';
+import { Dispatcher } from 'undici';
 
 jest.mock('@/common/ssrf', () => ({
   fetchSafeRaw: jest.fn(),
@@ -39,8 +40,12 @@ const MP4_JSON = JSON.stringify({
   videoUrl: 'https://pub-c7f4.r2.dev/Leg.mp4',
 });
 
-function mockFetchSafeRaw(routes: Record<string, string>): jest.Mock {
-  const dispatcher = { close: jest.fn().mockResolvedValue(undefined) };
+function mockFetchSafeRaw(
+  routes: Record<string, string>,
+): jest.MockedFunction<typeof fetchSafeRaw> {
+  const dispatcher = {
+    close: jest.fn().mockResolvedValue(undefined),
+  } as unknown as Dispatcher;
   mockedFetchSafeRaw.mockImplementation(async (url: string) => {
     const body = routes[url] ?? routes['*'];
     if (body === undefined) {
