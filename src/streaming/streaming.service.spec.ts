@@ -124,6 +124,52 @@ describe('StreamingService.getSource', () => {
     expect(scrapeService.scrapeEpisodeVideo).not.toHaveBeenCalled();
   });
 
+  it('devolve videoUrl expirada imediatamente e dispara re-extração em background (não bloqueia)', async () => {
+    const { prisma, scrapeService, svc } = makeMocks();
+    const stale = 'https://rr1.googlevideo.com/videoplayback?expire=1700000000';
+    prisma.anime.findUnique.mockResolvedValue({
+      id: 'anime-1',
+      slug: 'anime-dead',
+    });
+    prisma.episode.findUnique.mockResolvedValue({
+      id: 'ep-1',
+      number: 1,
+      videoUrl: stale,
+      embedUrl: 'https://meusanimes.blog/e/anime-dead-1/',
+      thumbnailUrl: null,
+    });
+    scrapeService.scrapeEpisodeVideo.mockResolvedValue({
+      videos: ['https://rr2.googlevideo.com/videoplayback?expire=9999999999'],
+      playerTokens: [],
+    });
+    prisma.episode.update.mockResolvedValue({});
+    probeSpy.mockResolvedValueOnce(true);
+
+    const result = await svc.getSource(
+      'anime-dead',
+      1,
+      'https://api.animesice.app',
+    );
+
+    expect(result.rawVideoUrl).toBe(stale);
+    expect(result.reextracted).toBe(false);
+
+    await new Promise((r) => setImmediate(r));
+
+    expect(scrapeService.scrapeEpisodeVideo).toHaveBeenCalledWith(
+      'https://meusanimes.blog/e/anime-dead-1/',
+      undefined,
+      false,
+      true,
+    );
+    expect(prisma.episode.update).toHaveBeenCalledWith({
+      where: { id: 'ep-1' },
+      data: {
+        videoUrl: 'https://rr2.googlevideo.com/videoplayback?expire=9999999999',
+      },
+    });
+  });
+
   it('refresh forçado ignora videoUrl salvo e exige extração nova', async () => {
     const { prisma, scrapeService, svc } = makeMocks();
     prisma.anime.findUnique.mockResolvedValue({

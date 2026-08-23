@@ -268,15 +268,26 @@ export class StreamingService {
     }
 
     // videoUrl guardada pode estar morta (token CDN/IP-URL expirado). Probe
-    // leve e, se morta, zera para o fluxo de re-extração abaixo recompor.
+    // leve e, se viva, usa direto. Se morta, NÃO bloqueia a resposta: devolve
+    // a URL guardada imediatamente (a CDN pode ainda servi-la além do `expire`
+    // nominal) e dispara a re-extração em background p/ refrescar o DB e
+    // aquecer o scrapeCache. O player, se receber 403 da CDN, aciona o fluxo
+    // de recuperação (refresh=1) que encontra o scrapeCache já aquecido —
+    // mantendo o carregamento da página instantâneo como antes do probe
+    // bloqueante.
     if (!forceRefresh && rawVideoUrl && /^https?:\/\//i.test(rawVideoUrl)) {
       const dead = await probeMediaUrlDead(rawVideoUrl);
       dbg(`[STREAM] probe videoUrl=${rawVideoUrl.slice(0, 80)} dead=${dead}`);
       if (dead) {
         dbg(
-          `[STREAM] videoUrl morta — forçando re-extração p/ ${animeSlug}/${episodeNumber}`,
+          `[STREAM] videoUrl morta — re-extração em background p/ ${animeSlug}/${episodeNumber}`,
         );
-        rawVideoUrl = null;
+        this.kickBackgroundScrape(episode, animeSlug, episodeNumber, season);
+        return {
+          videoUrl: rawVideoUrl,
+          youtubeEmbed: null,
+          reextracted: false,
+        };
       }
     }
 
@@ -315,6 +326,38 @@ export class StreamingService {
 
     const result = await inflight;
     return { ...result, reextracted: true };
+  }
+
+  /** Dispara re-extração (single-flight + scrapeCache) sem bloquear o caller.
+   *  O doSingleScrape persiste o videoUrl fresco no DB e aquece o scrapeCache,
+   *  de modo que a próxima chamada (inclusive o recovery refresh=1 do player)
+   *  encontra o resultado pronto ou compartilha o scrape em andamento. */
+  private kickBackgroundScrape(
+    episode: { id: string; embedUrl: string | null },
+    animeSlug: string,
+    episodeNumber: number,
+    season: number,
+  ): void {
+    const key = `${animeSlug}:${season}:${episodeNumber}`;
+    if (this.scrapeInflight.has(key)) return;
+    const cached = this.scrapeCache.get(key);
+    if (cached && Date.now() - cached.at < this.SCRAPE_CACHE_TTL_MS) return;
+    if (cached) this.scrapeCache.delete(key);
+    const inflight = this.doSingleScrape(
+      episode,
+      animeSlug,
+      episodeNumber,
+      season,
+    )
+      .then((result) => {
+        this.scrapeCache.set(key, { result, at: Date.now() });
+        return result;
+      })
+      .finally(() => {
+        this.scrapeInflight.delete(key);
+      })
+      .catch(() => ({ videoUrl: null, youtubeEmbed: null }));
+    this.scrapeInflight.set(key, inflight);
   }
 
   /** Scrape real (fora do single-flight): fonte original + fallback meusanimes. */

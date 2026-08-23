@@ -36,11 +36,13 @@ interface AniListDescription {
 }
 
 function stripHtml(description: string): string {
-  return description
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
+  let sanitized = description.replace(/<br\s*\/?>/gi, '\n');
+  let previous: string;
+  do {
+    previous = sanitized;
+    sanitized = sanitized.replace(/<[^>]+>/g, '');
+  } while (sanitized !== previous);
+  return sanitized.replace(/\n{3,}/g, '\n\n').trim();
 }
 
 /**
