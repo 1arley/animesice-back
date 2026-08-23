@@ -279,17 +279,19 @@ export class WorkerService {
       GROUP BY g."animeId", a.slug
     `;
 
-    let enqueued = 0;
+    const enqueueInputs: Array<{
+      type: string;
+      dedupeKey: string;
+      payload: { animeId: string; slug: string };
+      priority: number;
+    }> = [];
     for (const gap of gaps) {
-      await this.jobs.enqueue({
+      enqueueInputs.push({
         type: JOB_TYPE.SCAN_CATALOG,
         dedupeKey: `scan-catalog:${gap.animeId}`,
         payload: { animeId: gap.animeId, slug: gap.slug },
-        // SCAN_CATALOG (não GAP_CHECK): varredura de catálogo é backfill —
-        // fica atrás de episódios novos (EXTRACT_NEW) e extrações (EXTRACT).
         priority: PRIORITY.SCAN_CATALOG,
       });
-      enqueued++;
     }
 
     // 2. Detecta animes com episodeCount > count real de eps
@@ -308,19 +310,19 @@ export class WorkerService {
 
     for (const anime of incomplete) {
       if (anime._count.episodes >= (anime.episodeCount ?? 0)) continue;
-      await this.jobs.enqueue({
+      enqueueInputs.push({
         type: JOB_TYPE.SCAN_CATALOG,
         dedupeKey: `scan-catalog:${anime.id}`,
         payload: { animeId: anime.id, slug: anime.slug },
-        // SCAN_CATALOG (não GAP_CHECK): varredura de catálogo é backfill —
-        // fica atrás de episódios novos (EXTRACT_NEW) e extrações (EXTRACT).
         priority: PRIORITY.SCAN_CATALOG,
       });
-      enqueued++;
     }
 
+    // Batch insert: uma única ida ao PostgreSQL para todos os jobs.
+    await this.jobs.enqueueMany(enqueueInputs);
+
     console.error(
-      `[GAP_CHECK] ${gaps.length} animes com gaps, ${incomplete.filter((a) => a._count.episodes < (a.episodeCount ?? 0)).length} incompletos, ${enqueued} jobs enfileirados`,
+      `[GAP_CHECK] ${gaps.length} animes com gaps, ${incomplete.filter((a) => a._count.episodes < (a.episodeCount ?? 0)).length} incompletos, ${enqueueInputs.length} jobs enfileirados`,
     );
   }
 

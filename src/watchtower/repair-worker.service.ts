@@ -27,7 +27,6 @@ export class RepairWorker {
 
   async sweep(): Promise<number> {
     const cap = Number(process.env.WT_REPAIR_DAILY_CAP ?? DEFAULT_DAILY_CAP);
-    let enqueued = 0;
 
     // Sem filtro embedUrl — eps sem embed também precisam de repair
     const broken = await this.prisma.episode.findMany({
@@ -37,8 +36,16 @@ export class RepairWorker {
       take: cap,
       select: { id: true, animeId: true, number: true, season: true },
     });
+
+    const enqueueInputs: Array<{
+      type: string;
+      dedupeKey: string;
+      payload: { animeId: string; episodeNumber: number; season: number };
+      priority: number;
+    }> = [];
+
     for (const ep of broken) {
-      await this.jobs.enqueue({
+      enqueueInputs.push({
         type: JOB_TYPE.REPAIR_EPISODE,
         dedupeKey: `repair:${ep.animeId}:${ep.season ?? 1}:${ep.number}`,
         payload: {
@@ -48,10 +55,14 @@ export class RepairWorker {
         },
         priority: PRIORITY.REPAIR,
       });
-      enqueued++;
     }
 
-    if (enqueued >= cap) return enqueued;
+    let enqueued = enqueueInputs.length;
+
+    if (enqueued >= cap) {
+      await this.jobs.enqueueMany(enqueueInputs);
+      return enqueued;
+    }
 
     // Amostra maior p/ detectar vídeos mortos mais rápido
     const sample = await this.prisma.episode.findMany({
@@ -66,18 +77,14 @@ export class RepairWorker {
         videoUrl: true,
       },
     });
+    const deadIds: string[] = [];
     for (const ep of sample) {
       if (enqueued >= cap) break;
       if (!ep.videoUrl) continue;
       const dead = await probeMediaUrlDead(ep.videoUrl);
       if (dead) {
-        await this.prisma.episode
-          .update({
-            where: { id: ep.id },
-            data: { videoBroken: true },
-          })
-          .catch(() => undefined);
-        await this.jobs.enqueue({
+        deadIds.push(ep.id);
+        enqueueInputs.push({
           type: JOB_TYPE.REPAIR_EPISODE,
           dedupeKey: `repair:${ep.animeId}:${ep.season ?? 1}:${ep.number}`,
           payload: {
@@ -90,6 +97,17 @@ export class RepairWorker {
         enqueued++;
       }
     }
+
+    // Batch: marcar episódios mortos + enfileirar repair jobs em uma ida.
+    if (deadIds.length > 0) {
+      await this.prisma.episode
+        .updateMany({
+          where: { id: { in: deadIds } },
+          data: { videoBroken: true },
+        })
+        .catch(() => undefined);
+    }
+    await this.jobs.enqueueMany(enqueueInputs);
     return enqueued;
   }
 }
