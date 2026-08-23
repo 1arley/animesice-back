@@ -45,12 +45,16 @@ function mockFetchSafeRaw(routes: Record<string, string>): jest.Mock {
     const body = routes[url] ?? routes['*'];
     if (body === undefined) {
       return {
-        response: { ok: false, status: 404, text: async () => 'not found' },
+        response: {
+          ok: false,
+          status: 404,
+          text: async () => 'not found',
+        } as Response,
         dispatcher,
       };
     }
     return {
-      response: { ok: true, status: 200, text: async () => body },
+      response: { ok: true, status: 200, text: async () => body } as Response,
       dispatcher,
     };
   });
