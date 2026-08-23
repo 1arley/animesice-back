@@ -9,6 +9,7 @@ function makeMocks() {
   const brokenEps: any[] = [];
   const sampleEps: any[] = [];
   const enqueue = jest.fn(async () => undefined);
+  const enqueueMany = jest.fn(async () => undefined);
   const prisma = {
     episode: {
       findMany: jest.fn(async (args: any) => {
@@ -19,9 +20,10 @@ function makeMocks() {
         return [];
       }),
       update: jest.fn(async () => undefined),
+      updateMany: jest.fn(async () => undefined),
     },
   };
-  return { brokenEps, sampleEps, enqueue, prisma };
+  return { brokenEps, sampleEps, enqueue, enqueueMany, prisma };
 }
 
 let m: ReturnType<typeof makeMocks>;
@@ -43,17 +45,19 @@ describe('RepairWorker', () => {
     );
     const worker = new RepairWorker(
       m.prisma as any,
-      { enqueue: m.enqueue } as any,
+      { enqueue: m.enqueue, enqueueMany: m.enqueueMany } as any,
     );
     const enqueued = await worker.sweep();
     expect(enqueued).toBe(2);
-    expect(m.enqueue).toHaveBeenCalledTimes(2);
-    expect(m.enqueue).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'REPAIR_EPISODE',
-        priority: 50,
-        payload: { animeId: 'a1', episodeNumber: 1, season: 1 },
-      }),
+    expect(m.enqueueMany).toHaveBeenCalledTimes(1);
+    expect(m.enqueueMany).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'REPAIR_EPISODE',
+          priority: 50,
+          payload: { animeId: 'a1', episodeNumber: 1, season: 1 },
+        }),
+      ]),
     );
   });
 
@@ -65,7 +69,7 @@ describe('RepairWorker', () => {
     );
     const worker = new RepairWorker(
       m.prisma as any,
-      { enqueue: m.enqueue } as any,
+      { enqueue: m.enqueue, enqueueMany: m.enqueueMany } as any,
     );
     const enqueued = await worker.sweep();
     expect(enqueued).toBe(1);
@@ -89,18 +93,20 @@ describe('RepairWorker', () => {
     );
     const worker = new RepairWorker(
       m.prisma as any,
-      { enqueue: m.enqueue } as any,
+      { enqueue: m.enqueue, enqueueMany: m.enqueueMany } as any,
     );
     const enqueued = await worker.sweep();
     expect(enqueued).toBe(1);
-    expect(m.prisma.episode.update).toHaveBeenCalledWith(
+    expect(m.prisma.episode.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { id: 'ep1' },
+        where: { id: { in: ['ep1'] } },
         data: { videoBroken: true },
       }),
     );
-    expect(m.enqueue).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'REPAIR_EPISODE' }),
+    expect(m.enqueueMany).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'REPAIR_EPISODE' }),
+      ]),
     );
     delete process.env.WT_REPAIR_DAILY_CAP;
   });
@@ -122,11 +128,11 @@ describe('RepairWorker', () => {
     );
     const worker = new RepairWorker(
       m.prisma as any,
-      { enqueue: m.enqueue } as any,
+      { enqueue: m.enqueue, enqueueMany: m.enqueueMany } as any,
     );
     const enqueued = await worker.sweep();
     expect(enqueued).toBe(0);
-    expect(m.enqueue).not.toHaveBeenCalled();
+    expect(m.enqueueMany).not.toHaveBeenCalled();
     delete process.env.WT_REPAIR_DAILY_CAP;
   });
 });

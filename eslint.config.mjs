@@ -9,6 +9,7 @@ export default tseslint.config(
     ignores: [
       'eslint.config.mjs',
       'dist/',
+      'coverage/',
       'commitlint.config.js',
       'jest.config.mjs',
       'jest-e2e.config.js',

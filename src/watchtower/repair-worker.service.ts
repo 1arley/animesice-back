@@ -107,7 +107,9 @@ export class RepairWorker {
         })
         .catch(() => undefined);
     }
-    await this.jobs.enqueueMany(enqueueInputs);
+    if (enqueueInputs.length > 0) {
+      await this.jobs.enqueueMany(enqueueInputs);
+    }
     return enqueued;
   }
 }
