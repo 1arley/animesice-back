@@ -16,6 +16,7 @@
  */
 
 import { pinnedDispatcher, resolveSafeUrl } from '@/common/ssrf';
+import { refererForMediaUrl } from '@/common/url-utils';
 
 const MAX_REDIRECTS = 5;
 const LIVENESS_CACHE_TTL_MS = 30_000;
@@ -27,13 +28,28 @@ interface LivenessCacheEntry {
 
 const livenessCache = new Map<string, LivenessCacheEntry>();
 const livenessInflight = new Map<string, Promise<boolean>>();
+const LIVENESS_CACHE_MAX_ENTRIES = 500;
 
-/** Remove resultados vencidos; chamado periodicamente pelo scheduler. */
+/** Remove resultados vencidos e evicta por tamanho; chamado periodicamente pelo scheduler. */
 export function purgeExpiredLivenessCache(now = Date.now()): number {
   let removed = 0;
   for (const [url, entry] of livenessCache) {
     if (entry.expiresAt <= now) {
       livenessCache.delete(url);
+      removed += 1;
+    }
+  }
+  // Eviction por tamanho — evita crescimento indefinido de memória.
+  if (livenessCache.size > LIVENESS_CACHE_MAX_ENTRIES) {
+    const entries = [...livenessCache.entries()];
+    // Ordena por expiresAt asc (mais velho primeiro) e remove os excedentes.
+    entries.sort((a, b) => a[1].expiresAt - b[1].expiresAt);
+    const toRemove = entries.slice(
+      0,
+      entries.length - LIVENESS_CACHE_MAX_ENTRIES,
+    );
+    for (const [key] of toRemove) {
+      livenessCache.delete(key);
       removed += 1;
     }
   }
@@ -44,24 +60,6 @@ export function purgeExpiredLivenessCache(now = Date.now()): number {
 export function clearLivenessCache(): void {
   livenessCache.clear();
   livenessInflight.clear();
-}
-
-/** Referer anti-hotlink por host de CDN (mesma regra do proxy de mídia). */
-export function refererForMediaUrl(mediaUrl: string): string {
-  try {
-    const u = new URL(mediaUrl);
-    const host = u.hostname.toLowerCase();
-
-    if (/googlevideo\.com$/i.test(host)) {
-      return 'https://youtube.googleapis.com/';
-    }
-    if (/lightspeedst\.net$/i.test(host)) {
-      return 'https://animefire.io/';
-    }
-    return `${u.protocol}//${u.host}`;
-  } catch {
-    return 'https://meusanimes.blog/';
-  }
 }
 
 /**

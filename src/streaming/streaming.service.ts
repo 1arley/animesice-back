@@ -12,40 +12,12 @@ import {
   probeMediaUrlDead,
   purgeExpiredLivenessCache,
 } from '@/common/media-probe';
+import { refererForMediaUrl } from '@/common/url-utils';
 import { Readable } from 'stream';
 
 function dbg(msg: string): void {
   const safeMsg = msg.replace(/[\r\n\u2028\u2029]/g, ' ');
   console.error(`${new Date().toISOString()} ${safeMsg}`);
-}
-
-/**
- * Origem da fonte, injetada como Referer/Origin no proxy de mídia anti-hotlink.
- * Derivada por host: googlevideo exige youtube.googleapis.com,
- * lightspeedst exige animefire.io.
- */
-/**
- * Resolve o Referer correto para a URL de mídia com base no host da CDN.
- * - googlevideo.com (vindo de Blogger/YouTube): exige Referer youtube.googleapis.com
- * - lightspeedst.net (vindo de animefire): exige Referer animefire.io
- * - default: origem da própria URL
- */
-function refererForMediaUrl(mediaUrl: string): string {
-  try {
-    const u = new URL(mediaUrl);
-    const host = u.hostname.toLowerCase();
-
-    if (/googlevideo\.com$/i.test(host)) {
-      return 'https://youtube.googleapis.com/';
-    }
-    if (/lightspeedst\.net$/i.test(host)) {
-      return 'https://animefire.io/';
-    }
-
-    return `${u.protocol}//${u.host}`;
-  } catch {
-    return 'https://animefire.io/';
-  }
 }
 
 /**
@@ -106,6 +78,10 @@ export class StreamingService {
    *  sob carga sustentada (OOM). Entradas mais antigas são descartadas. */
   private static readonly MAX_INFLIGHT_ENTRIES = 200;
 
+  /** Teto de entradas no scrapeCache — evita crescimento indefinido de memória.
+   *  Entradas mais antigas (por `at`) são evictadas quando o teto é atingido. */
+  private static readonly MAX_SCRAPE_CACHE_ENTRIES = 300;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly embedService: EmbedService,
@@ -132,6 +108,8 @@ export class StreamingService {
         this.scrapeCache.delete(key);
       }
     }
+    // Eviction por tamanho do scrapeCache — evita crescimento indefinido.
+    this.evictScrapeCacheIfNeeded();
     // Eviction por tamanho nos caches de inflight — evita OOM.
     if (this.scrapeInflight.size > StreamingService.MAX_INFLIGHT_ENTRIES) {
       const keys = [...this.scrapeInflight.keys()];
@@ -152,6 +130,21 @@ export class StreamingService {
       }
     }
     purgeExpiredLivenessCache(now);
+  }
+
+  /** Evicta a entrada mais antiga quando o cache excede o teto máximo. */
+  private evictScrapeCacheIfNeeded(): void {
+    if (this.scrapeCache.size <= StreamingService.MAX_SCRAPE_CACHE_ENTRIES)
+      return;
+    let oldestKey: string | null = null;
+    let oldestAt = Infinity;
+    for (const [k, v] of this.scrapeCache) {
+      if (v.at < oldestAt) {
+        oldestAt = v.at;
+        oldestKey = k;
+      }
+    }
+    if (oldestKey) this.scrapeCache.delete(oldestKey);
   }
 
   async generateToken(
