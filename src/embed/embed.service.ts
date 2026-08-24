@@ -4,6 +4,7 @@ import {
   NotFoundException,
   BadGatewayException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Readable } from 'stream';
 import sanitizeHtml from 'sanitize-html';
 import {
@@ -37,11 +38,6 @@ const DEFAULT_PORTS: Readonly<Record<string, string>> = Object.freeze({
  * Allowlist de hosts externos permitidos para chamadas de proxy.
  * Pode ser configurada via env: EMBED_ALLOWED_HOSTS=example.com,cdn.example.com
  */
-const ALLOWED_OUTBOUND_HOSTS = (process.env.EMBED_ALLOWED_HOSTS ?? '')
-  .split(',')
-  .map((h) => h.trim().toLowerCase())
-  .filter(Boolean);
-
 /** Máximo de redirecionamentos seguidos no fetch (anti-SSRF/anti-loops). */
 const MAX_REDIRECTS = 5;
 
@@ -178,6 +174,20 @@ interface SafeFetchResult {
 
 @Injectable()
 export class EmbedService {
+  private readonly allowedOutboundHosts: readonly string[];
+
+  constructor(configService: ConfigService) {
+    // A configuração precisa ser lida quando o Nest instancia o serviço.
+    // Uma constante no escopo do módulo é avaliada antes de ConfigModule.forRoot()
+    // carregar o .env e deixa a allowlist vazia durante toda a vida do processo.
+    this.allowedOutboundHosts = (
+      configService.get<string>('EMBED_ALLOWED_HOSTS') ?? ''
+    )
+      .split(',')
+      .map((host) => host.trim().toLowerCase())
+      .filter(Boolean);
+  }
+
   /** Timeout do fetch upstream (anti-abuso). */
   private readonly FETCH_TIMEOUT_MS = 30_000;
 
@@ -545,9 +555,9 @@ export class EmbedService {
    * - aceita match exato e subdomínio
    */
   private isHostAllowed(host: string): boolean {
-    if (ALLOWED_OUTBOUND_HOSTS.length === 0) return false;
+    if (this.allowedOutboundHosts.length === 0) return false;
 
-    return ALLOWED_OUTBOUND_HOSTS.some(
+    return this.allowedOutboundHosts.some(
       (allowed) => host === allowed || host.endsWith(`.${allowed}`),
     );
   }

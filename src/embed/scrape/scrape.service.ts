@@ -474,7 +474,10 @@ export class ScrapeService {
         cloudflare: false,
         // Expõe tokens de player não resolvíveis por HTTP (YouTube embeds
         // bloqueados p/ IP datacenter, etc.) p/ o chamador decidir fallback.
-        playerTokens: youtubeEmbeds,
+        // Se o Chromium não conseguiu transformar um token Blogger em MP4,
+        // preserve o player como fallback. Descartá-lo aqui fazia episódios
+        // válidos virarem 404 só porque a automação do clique falhou.
+        playerTokens: videos.length === 0 ? playerTokens : youtubeEmbeds,
       };
     }
 

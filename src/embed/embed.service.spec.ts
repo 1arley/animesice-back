@@ -3,6 +3,7 @@ import {
   BadGatewayException,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { lookup } from 'dns/promises';
 import { Readable } from 'stream';
 import { EmbedService } from './embed.service';
@@ -22,13 +23,17 @@ const PUBLIC_IP = '93.184.216.34';
 describe('EmbedService (proxy HTML/mídia + anti-SSRF)', () => {
   let service: EmbedService;
   const originalFetch = global.fetch;
+  const allowedHosts =
+    'animefire.io,googlevideo.com,meusanimes.blog,youtube.googleapis.com';
+
+  function createService(hosts: string | null = allowedHosts) {
+    return new EmbedService({
+      get: jest.fn().mockReturnValue(hosts ?? undefined),
+    } as unknown as ConfigService);
+  }
 
   beforeAll(() => {
-    // A allowlist de saída (EMBED_ALLOWED_HOSTS) é injetada pelo setupFiles
-    // (test/setup-env.js), que roda antes de qualquer import — assim o módulo
-    // sob teste e as exceções de @nestjs/common compartilham o mesmo registro
-    // (sem require/jest.resetModules, sem problemas de identidade de classe).
-    service = new EmbedService();
+    service = createService();
   });
 
   afterAll(() => {
@@ -36,7 +41,7 @@ describe('EmbedService (proxy HTML/mídia + anti-SSRF)', () => {
   });
 
   beforeEach(() => {
-    service = new EmbedService();
+    service = createService();
     jest.clearAllMocks();
     mockedLookup.mockResolvedValue([{ address: PUBLIC_IP }]);
     global.fetch = jest.fn();
@@ -84,6 +89,35 @@ describe('EmbedService (proxy HTML/mídia + anti-SSRF)', () => {
     expect(() => service.normalizeUrl('https://evil.com/x')).toThrow(
       'Host de destino não permitido',
     );
+  });
+
+  it('aceita subdomínios configurados sem hardcode no serviço', () => {
+    expect(
+      service.normalizeUrl(
+        'https://rr1---sn-ab5l6nrl.googlevideo.com/videoplayback',
+      ),
+    ).toBe('https://rr1---sn-ab5l6nrl.googlevideo.com/videoplayback');
+  });
+
+  it('lê a allowlist ao instanciar, depois que a configuração foi carregada', () => {
+    const configuredHosts = 'example.com';
+    const runtimeConfig = {
+      get: jest.fn(() => configuredHosts),
+    } as unknown as ConfigService;
+
+    const runtimeService = new EmbedService(runtimeConfig);
+
+    expect(runtimeService.normalizeUrl('https://cdn.example.com/video')).toBe(
+      'https://cdn.example.com/video',
+    );
+  });
+
+  it('continua bloqueando tudo quando a allowlist não foi configurada', () => {
+    const failClosedService = createService(null);
+
+    expect(() =>
+      failClosedService.normalizeUrl('https://animefire.io/video'),
+    ).toThrow('Host de destino não permitido');
   });
 
   it('proxyHtml baixa, injeta <base>, reescreve recursos e filtra headers', async () => {
