@@ -267,27 +267,20 @@ export class StreamingService {
       rawVideoUrl = null;
     }
 
-    // videoUrl guardada pode estar morta (token CDN/IP-URL expirado). Probe
-    // leve e, se viva, usa direto. Se morta, NÃO bloqueia a resposta: devolve
-    // a URL guardada imediatamente (a CDN pode ainda servi-la além do `expire`
-    // nominal) e dispara a re-extração em background p/ refrescar o DB e
-    // aquecer o scrapeCache. O player, se receber 403 da CDN, aciona o fluxo
-    // de recuperação (refresh=1) que encontra o scrapeCache já aquecido —
-    // mantendo o carregamento da página instantâneo como antes do probe
-    // bloqueante.
+    // videoUrl guardada pode estar morta (token CDN/IP-URL expirado). Nunca
+    // devolva uma URL que o probe já confirmou como morta: alguns upstreams
+    // mantêm a conexão aberta sem responder e o <video> fica indefinidamente
+    // sem metadata (controles/play desabilitados). Nesse caso seguimos para a
+    // reextração single-flight abaixo e a primeira navegação já recebe uma
+    // fonte utilizável, sem depender de F5.
     if (!forceRefresh && rawVideoUrl && /^https?:\/\//i.test(rawVideoUrl)) {
       const dead = await probeMediaUrlDead(rawVideoUrl);
       dbg(`[STREAM] probe videoUrl=${rawVideoUrl.slice(0, 80)} dead=${dead}`);
       if (dead) {
         dbg(
-          `[STREAM] videoUrl morta — re-extração em background p/ ${animeSlug}/${episodeNumber}`,
+          `[STREAM] videoUrl morta — re-extraindo antes de responder p/ ${animeSlug}/${episodeNumber}`,
         );
-        this.kickBackgroundScrape(episode, animeSlug, episodeNumber, season);
-        return {
-          videoUrl: rawVideoUrl,
-          youtubeEmbed: null,
-          reextracted: false,
-        };
+        rawVideoUrl = null;
       }
     }
 

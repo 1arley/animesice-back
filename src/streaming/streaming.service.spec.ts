@@ -124,7 +124,7 @@ describe('StreamingService.getSource', () => {
     expect(scrapeService.scrapeEpisodeVideo).not.toHaveBeenCalled();
   });
 
-  it('devolve videoUrl expirada imediatamente e dispara re-extração em background (não bloqueia)', async () => {
+  it('reextrai antes de responder quando a videoUrl salva está morta', async () => {
     const { prisma, scrapeService, svc } = makeMocks();
     const stale = 'https://rr1.googlevideo.com/videoplayback?expire=1700000000';
     prisma.anime.findUnique.mockResolvedValue({
@@ -151,10 +151,10 @@ describe('StreamingService.getSource', () => {
       'https://api.animesice.app',
     );
 
-    expect(result.rawVideoUrl).toBe(stale);
-    expect(result.reextracted).toBe(false);
-
-    await new Promise((r) => setImmediate(r));
+    expect(result.rawVideoUrl).toBe(
+      'https://rr2.googlevideo.com/videoplayback?expire=9999999999',
+    );
+    expect(result.reextracted).toBe(true);
 
     expect(scrapeService.scrapeEpisodeVideo).toHaveBeenCalledWith(
       'https://meusanimes.blog/e/anime-dead-1/',
