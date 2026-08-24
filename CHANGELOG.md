@@ -1,3 +1,10 @@
+## [1.24.3](https://github.com/1arley/animesice-back/compare/v1.24.2...v1.24.3) (2026-08-24)
+
+
+### Bug Fixes
+
+* **streaming:** refresh dead sources before response ([a9888a6](https://github.com/1arley/animesice-back/commit/a9888a6bb37b5d5cf8ec6cad726065b2c7e0c175))
+
 ## [1.24.2](https://github.com/1arley/animesice-back/compare/v1.24.1...v1.24.2) (2026-08-23)
 
 
