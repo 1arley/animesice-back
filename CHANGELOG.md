@@ -1,3 +1,10 @@
+## [1.24.4](https://github.com/1arley/animesice-back/compare/v1.24.3...v1.24.4) (2026-08-24)
+
+
+### Bug Fixes
+
+* **streaming:** preserve provider player fallback ([#38](https://github.com/1arley/animesice-back/issues/38)) ([9c73099](https://github.com/1arley/animesice-back/commit/9c73099e0d3cea4b0c5af962bffb545cd340d9c1))
+
 ## [1.24.3](https://github.com/1arley/animesice-back/compare/v1.24.2...v1.24.3) (2026-08-24)
 
 
