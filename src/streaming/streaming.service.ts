@@ -59,12 +59,12 @@ export class StreamingService {
    *  scraper de chromium, que é caro e concorrencia-limitado). */
   private readonly scrapeInflight = new Map<
     string,
-    Promise<{ videoUrl: string | null; youtubeEmbed: string | null }>
+    Promise<{ videoUrl: string | null; playerEmbed: string | null }>
   >();
   private readonly scrapeCache = new Map<
     string,
     {
-      result: { videoUrl: string | null; youtubeEmbed: string | null };
+      result: { videoUrl: string | null; playerEmbed: string | null };
       at: number;
     }
   >();
@@ -228,7 +228,7 @@ export class StreamingService {
     forceRefresh = false,
   ): Promise<{
     videoUrl: string | null;
-    youtubeEmbed: string | null;
+    playerEmbed: string | null;
     reextracted: boolean;
   }> {
     let rawVideoUrl: string | null = episode.videoUrl;
@@ -260,7 +260,7 @@ export class StreamingService {
       if (!dead) {
         return {
           videoUrl: rawVideoUrl,
-          youtubeEmbed: null,
+          playerEmbed: null,
           reextracted: false,
         };
       }
@@ -285,7 +285,7 @@ export class StreamingService {
     }
 
     if (!forceRefresh && rawVideoUrl && /^https?:\/\//i.test(rawVideoUrl)) {
-      return { videoUrl: rawVideoUrl, youtubeEmbed: null, reextracted: false };
+      return { videoUrl: rawVideoUrl, playerEmbed: null, reextracted: false };
     }
 
     // Sem videoUrl utilizável -> re-extração (single-flight + cache curto).
@@ -349,7 +349,7 @@ export class StreamingService {
       .finally(() => {
         this.scrapeInflight.delete(key);
       })
-      .catch(() => ({ videoUrl: null, youtubeEmbed: null }));
+      .catch(() => ({ videoUrl: null, playerEmbed: null }));
     this.scrapeInflight.set(key, inflight);
   }
 
@@ -359,9 +359,9 @@ export class StreamingService {
     animeSlug: string,
     episodeNumber: number,
     season: number,
-  ): Promise<{ videoUrl: string | null; youtubeEmbed: string | null }> {
+  ): Promise<{ videoUrl: string | null; playerEmbed: string | null }> {
     let rawVideoUrl: string | null = null;
-    let youtubeEmbed: string | null = null;
+    let playerEmbed: string | null = null;
 
     // Tentativa 1: fonte original (embedUrl)
     if (episode.embedUrl) {
@@ -376,10 +376,14 @@ export class StreamingService {
           true,
         );
         rawVideoUrl = result.videos[0] ?? null;
-        youtubeEmbed =
-          (result.playerTokens ?? []).find((t) => youtubeEmbedUrl(t)) ?? null;
+        playerEmbed =
+          (result.playerTokens ?? []).find(
+            (t) =>
+              youtubeEmbedUrl(t) !== null ||
+              /blogger\.com\/video\.g\?token=/i.test(t),
+          ) ?? null;
         dbg(
-          `[STREAM] tentativa 1 resultado: videos=${result.videos.length} rawVideoUrl=${rawVideoUrl?.slice(0, 80) ?? 'null'} youtubeEmbed=${youtubeEmbed?.slice(0, 60) ?? 'null'}`,
+          `[STREAM] tentativa 1 resultado: videos=${result.videos.length} rawVideoUrl=${rawVideoUrl?.slice(0, 80) ?? 'null'} playerEmbed=${playerEmbed?.slice(0, 60) ?? 'null'}`,
         );
       } catch (err) {
         dbg(
@@ -413,7 +417,7 @@ export class StreamingService {
         .catch(() => undefined);
     }
 
-    return { videoUrl: rawVideoUrl, youtubeEmbed };
+    return { videoUrl: rawVideoUrl, playerEmbed };
   }
 
   /**
@@ -472,7 +476,7 @@ export class StreamingService {
 
     const {
       videoUrl: rawVideoUrl,
-      youtubeEmbed,
+      playerEmbed,
       reextracted,
     } = await this.resolveVideo(
       episode,
@@ -482,7 +486,7 @@ export class StreamingService {
       forceRefresh,
     );
 
-    if (!rawVideoUrl && !youtubeEmbed) {
+    if (!rawVideoUrl && !playerEmbed) {
       throw new NotFoundException(
         'Vídeo não disponível: re-extração falhou em todas as fontes.',
       );
@@ -491,14 +495,18 @@ export class StreamingService {
     // Fonte é player do YouTube (embed): não há .mp4 server-side extraível
     // (YouTube bloqueia IPs datacenter com LOGIN_REQUIRED). O embed reproduz
     // no browser do usuário via iframe — src aponta direto p/ o embed.
-    if (youtubeEmbed && !rawVideoUrl) {
-      dbg(`[STREAM] fonte é YouTube embed — servindo iframe: ${youtubeEmbed}`);
+    if (playerEmbed && !rawVideoUrl) {
+      const isYoutube = youtubeEmbedUrl(playerEmbed) !== null;
+      const embedSrc = isYoutube
+        ? playerEmbed
+        : `${apiOriginBackend.replace(/\/$/, '')}/${process.env.API_PREFIX || 'api'}/embed/proxy?url=${encodeURIComponent(playerEmbed)}`;
+      dbg(`[STREAM] fonte é player embed — servindo iframe: ${embedSrc}`);
       return {
         animeSlug: anime.slug,
         episodeNumber: episode.number,
-        src: youtubeEmbed,
-        rawVideoUrl: youtubeEmbed,
-        embedUrl: youtubeEmbed,
+        src: embedSrc,
+        rawVideoUrl: playerEmbed,
+        embedUrl: embedSrc,
         reextracted,
         thumbnailUrl: episode.thumbnailUrl,
       };

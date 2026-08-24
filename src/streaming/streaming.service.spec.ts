@@ -75,6 +75,40 @@ describe('StreamingService.getSource', () => {
     expect(prisma.episode.update).not.toHaveBeenCalled();
   });
 
+  it('serve token Blogger pelo proxy de iframe quando extração .mp4 falha', async () => {
+    const { prisma, scrapeService, svc } = makeMocks();
+    prisma.anime.findUnique.mockResolvedValue({
+      id: 'anime-1',
+      slug: 'zenonzard-the-animation',
+    });
+    prisma.episode.findUnique.mockResolvedValue({
+      id: 'ep-1',
+      number: 1,
+      videoUrl: null,
+      embedUrl:
+        'https://meusanimes.blog/e/zenonzard-the-animation-1-episodio-1/',
+      thumbnailUrl: 'thumb.jpg',
+    });
+    const blogger = 'https://www.blogger.com/video.g?token=valid-token';
+    scrapeService.scrapeEpisodeVideo.mockResolvedValue({
+      videos: [],
+      playerTokens: [blogger],
+    });
+    scrapeService.scrapeFromMeusanimes.mockResolvedValue(null);
+
+    const result = await svc.getSource(
+      'zenonzard-the-animation',
+      1,
+      'https://api.animesice.app',
+    );
+
+    expect(result.rawVideoUrl).toBe(blogger);
+    expect(result.src).toBe(
+      `https://api.animesice.app/api/embed/proxy?url=${encodeURIComponent(blogger)}`,
+    );
+    expect(result.embedUrl).toBe(result.src);
+  });
+
   it('mantém 404 quando nenhuma fonte resolve', async () => {
     const { prisma, scrapeService, svc } = makeMocks();
     prisma.anime.findUnique.mockResolvedValue({
