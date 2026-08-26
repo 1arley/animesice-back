@@ -115,10 +115,10 @@ export class ScheduleSync {
           "anilistId" = v.anilist_id::int,
           "status" = COALESCE(v.status, a."status"),
           "endDate" = COALESCE(v.end_date::timestamptz, a."endDate"),
-          "year" = v.year,
+          "year" = v.year::int,
           "season" = v.season::"AnimeSeason",
           "format" = v.format::"AnimeFormat",
-          "episodeCount" = v.episode_count,
+          "episodeCount" = v.episode_count::int,
           "studios" = v.studios,
           "updatedAt" = NOW()
         FROM (VALUES ${values}) AS v(
@@ -228,7 +228,7 @@ export class ScheduleSync {
         this.prisma.$executeRaw`
           INSERT INTO "AnimeSchedule"
             ("id", "animeId", "dayOfWeek", "time", "createdAt", "updatedAt")
-          SELECT gen_random_uuid()::text, v.anime_id, v.day_of_week, v.time,
+          SELECT gen_random_uuid()::text, v.anime_id, v.day_of_week::int, v.time,
                  NOW(), NOW()
           FROM (VALUES ${values}) AS v(anime_id, day_of_week, time)
           ON CONFLICT ("animeId", "dayOfWeek") DO UPDATE
