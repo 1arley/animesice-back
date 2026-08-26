@@ -66,8 +66,35 @@ export class WatchtowerScheduler implements OnModuleInit {
   onModuleInit(): void {
     if (this.enabled()) {
       console.error('[WATCHTOWER] iniciado — tick batch=' + TICK_BATCH);
+      void this.enqueueStartupJobs();
     } else {
       console.error('[WATCHTOWER] desabilitado (WATCHTOWER_ENABLED!=true)');
+    }
+  }
+
+  private async enqueueStartupJobs(): Promise<void> {
+    try {
+      if (process.env.WT_BACKFILL_ENABLED === 'true') {
+        await this.jobs.enqueue({
+          type: JOB_TYPE.BACKFILL_ANILIST,
+          dedupeKey: 'backfill-anilist',
+          payload: {},
+          priority: PRIORITY.BACKFILL_ANILIST,
+        });
+      }
+      if (process.env.WT_SCHEDULE_SYNC_ENABLED === 'true') {
+        await this.jobs.enqueue({
+          type: JOB_TYPE.SYNC_SCHEDULES,
+          dedupeKey: 'sync-schedules',
+          payload: {},
+          priority: PRIORITY.SYNC_SCHEDULES,
+        });
+      }
+    } catch (e) {
+      console.error(
+        '[WATCHTOWER] startup jobs enqueue falhou:',
+        e instanceof Error ? e.message : String(e),
+      );
     }
   }
 
