@@ -112,7 +112,7 @@ export class ScheduleSync {
       );
       await this.prisma.$executeRaw`
         UPDATE "Anime" AS a SET
-          "anilistId" = v.anilist_id,
+          "anilistId" = v.anilist_id::int,
           "status" = COALESCE(v.status, a."status"),
           "endDate" = COALESCE(v.end_date, a."endDate"),
           "year" = v.year,
@@ -128,7 +128,7 @@ export class ScheduleSync {
         WHERE a.id = v.id
           AND NOT EXISTS (
             SELECT 1 FROM "Anime" x
-            WHERE x."anilistId" = v.anilist_id
+            WHERE x."anilistId" = v.anilist_id::int
               AND x.id <> v.id
           )
       `;
