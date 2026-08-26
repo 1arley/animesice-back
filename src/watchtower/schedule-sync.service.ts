@@ -114,7 +114,7 @@ export class ScheduleSync {
         UPDATE "Anime" AS a SET
           "anilistId" = v.anilist_id::int,
           "status" = COALESCE(v.status, a."status"),
-          "endDate" = COALESCE(v.end_date, a."endDate"),
+          "endDate" = COALESCE(v.end_date::timestamptz, a."endDate"),
           "year" = v.year,
           "season" = v.season::"AnimeSeason",
           "format" = v.format::"AnimeFormat",
@@ -207,7 +207,7 @@ export class ScheduleSync {
       writes.push(this.prisma.$executeRaw`
         UPDATE "Anime" AS a SET
           "status" = COALESCE(v.status, a."status"),
-          "endDate" = COALESCE(v.end_date, a."endDate"),
+          "endDate" = COALESCE(v.end_date::timestamptz, a."endDate"),
           "updatedAt" = NOW()
         FROM (VALUES ${values}) AS v(id, status, end_date)
         WHERE a.id = v.id
