@@ -156,6 +156,22 @@ describe('ScheduleSync', () => {
     expect(m.prisma.$executeRaw).not.toHaveBeenCalled();
   });
 
+  it('backfillAnilist loga erro e continua quando searchMedia lança exceção', async () => {
+    const m = makeMocks();
+    m.prisma.anime.findMany.mockResolvedValue([
+      { id: 'anime-1', slug: 'error-anime', title: 'Error Anime' },
+    ]);
+    m.anilist.searchMedia.mockRejectedValue(new Error('network timeout'));
+    const svc = new ScheduleSync(
+      m.prisma as any,
+      m.anilist as any,
+      m.jobs as any,
+    );
+    const matched = await svc.backfillAnilist();
+    expect(matched).toBe(0);
+    expect(m.prisma.$executeRaw).not.toHaveBeenCalled();
+  });
+
   it('syncSchedules pula anime sem episódios agendados', async () => {
     const m = makeMocks();
     m.prisma.anime.findMany.mockResolvedValue([
