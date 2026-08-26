@@ -66,7 +66,9 @@ try {
 
   run('npx dotenv-cli -e .env.test -- npx prisma generate');
 
-  run('npx dotenv-cli -e .env.test -- npx prisma db push --force-reset');
+  run(
+    'npx dotenv-cli -e .env.test -- npx prisma migrate reset --force',
+  );
 
   run(
     'npx dotenv-cli -e .env.test -- npx jest --config ./test/jest-e2e.json --runInBand --forceExit',
