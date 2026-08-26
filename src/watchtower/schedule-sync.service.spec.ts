@@ -126,6 +126,36 @@ describe('ScheduleSync', () => {
     expect(m.prisma.anime.update).not.toHaveBeenCalled();
   });
 
+  it('backfillAnilist retorna 0 quando não há animes pendentes', async () => {
+    const m = makeMocks();
+    m.prisma.anime.findMany.mockResolvedValue([]);
+    const svc = new ScheduleSync(
+      m.prisma as any,
+      m.anilist as any,
+      m.jobs as any,
+    );
+    const matched = await svc.backfillAnilist();
+    expect(matched).toBe(0);
+    expect(m.anilist.searchMedia).not.toHaveBeenCalled();
+    expect(m.prisma.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  it('backfillAnilist pula quando searchMedia retorna null', async () => {
+    const m = makeMocks();
+    m.prisma.anime.findMany.mockResolvedValue([
+      { id: 'anime-1', slug: 'test-anime', title: 'Test Anime' },
+    ]);
+    m.anilist.searchMedia.mockResolvedValue(null);
+    const svc = new ScheduleSync(
+      m.prisma as any,
+      m.anilist as any,
+      m.jobs as any,
+    );
+    const matched = await svc.backfillAnilist();
+    expect(matched).toBe(0);
+    expect(m.prisma.$executeRaw).not.toHaveBeenCalled();
+  });
+
   it('syncSchedules pula anime sem episódios agendados', async () => {
     const m = makeMocks();
     m.prisma.anime.findMany.mockResolvedValue([
