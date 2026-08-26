@@ -160,9 +160,20 @@ export class ScheduleSync {
    * de "No ar"). Retorna qtd de animes sincronizados.
    */
   async syncSchedules(): Promise<number> {
+    const RECENT_CUTOFF = new Date();
+    RECENT_CUTOFF.setDate(RECENT_CUTOFF.getDate() - 60);
+
     const animes = await this.prisma.anime.findMany({
-      where: { anilistId: { not: null } },
+      where: {
+        anilistId: { not: null },
+        OR: [
+          { status: 'LANCAMENTO' },
+          { status: 'NO AR' },
+          { createdAt: { gte: RECENT_CUTOFF } },
+        ],
+      },
       select: { id: true, anilistId: true, status: true },
+      take: 200,
     });
 
     let synced = 0;
