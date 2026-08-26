@@ -6,6 +6,15 @@ jest.mock('@/common/ssrf', () => ({
   fetchSafeRaw: jest.fn(),
 }));
 
+jest.mock('./extract', () => {
+  const actual = jest.requireActual('./extract');
+  return {
+    ...actual,
+    extractVideoElements: jest.fn(),
+    extractAllIframes: jest.fn(),
+  };
+});
+
 const mockedFetchSafeRaw = fetchSafeRaw as jest.MockedFunction<
   typeof fetchSafeRaw
 >;
@@ -133,5 +142,180 @@ describe('MeusanimesScrapeSource.extractHttp', () => {
         ua: UA,
       }),
     ).rejects.toThrow(/404/);
+  });
+});
+
+describe('MeusanimesScrapeSource (cobertura ampliada)', () => {
+  let source: MeusanimesScrapeSource;
+
+  beforeEach(() => {
+    source = new MeusanimesScrapeSource();
+    mockedFetchSafeRaw.mockReset();
+    const helpers = jest.requireMock('./extract');
+    helpers.extractVideoElements.mockReset();
+    helpers.extractAllIframes.mockReset();
+  });
+
+  const EMBED_JSON = JSON.stringify({
+    videoUrl: 'https://video.meusdoramas.club/embed/abc-123',
+  });
+
+  const EMBED_HTML = `<script>
+    "file":"https:\\/\\/pub-c7f4.r2.dev\\/Leg.mp4",
+    "file":"https:\\/\\/cdn.host\\/s3.mp4?X-Amz-Expires=100",
+    "file":"\\/relative\\/a.mp4"
+  </script>`;
+
+  const PICKER_JSON = JSON.stringify({
+    videoUrl: 'https://serv01.meusdoramas.club/e/?a=1/2/3',
+  });
+
+  const PICKER_HTML = `<script>location.href='iframe.php?a=1/2/3/'</script>`;
+
+  const IFRAME_HTML = `<iframe src="https://serv02.meusdoramas.club/#/video/999/2/3/"></iframe>`;
+
+  it('supports reconhece meusanimes.blog e meusdoramas.club', () => {
+    expect(source.supports('https://meusanimes.blog/e/x-episodio-1/')).toBe(
+      true,
+    );
+    expect(
+      source.supports('https://serv01.meusdoramas.club/#/video/1/1/1'),
+    ).toBe(true);
+    expect(source.supports('https://animefire.io/x')).toBe(false);
+  });
+
+  it('propaga erro da página do episódio com prefixo meusanimes', async () => {
+    mockedFetchSafeRaw.mockRejectedValueOnce(new Error('conn refused'));
+    await expect(
+      source.extractHttp({
+        episodeUrl: 'https://meusanimes.blog/e/x-episodio-1/',
+        ua: UA,
+      }),
+    ).rejects.toThrow('meusanimes: fetch failed para');
+  });
+
+  it('ignora resposta não-JSON do get-video.php', async () => {
+    mockFetchSafeRaw({
+      'https://meusanimes.blog/e/x-episodio-1/': EPISODE_HTML,
+      'https://serv01.meusdoramas.club/posts/get-video.php?tmdb=1432547&season_number=1&episode_number=1':
+        '<html>erro</html>',
+    });
+    const result = await source.extractHttp({
+      episodeUrl: 'https://meusanimes.blog/e/x-episodio-1/',
+      ua: UA,
+    });
+    expect(result.videos).toEqual([]);
+    expect(result.playerTokens).toEqual([]);
+  });
+
+  it('ignora videoUrl que não é string', async () => {
+    mockFetchSafeRaw({
+      'https://meusanimes.blog/e/x-episodio-1/': EPISODE_HTML,
+      'https://serv01.meusdoramas.club/posts/get-video.php?tmdb=1432547&season_number=1&episode_number=1':
+        JSON.stringify({ videoUrl: 123 }),
+    });
+    const result = await source.extractHttp({
+      episodeUrl: 'https://meusanimes.blog/e/x-episodio-1/',
+      ua: UA,
+    });
+    expect(result.videos).toEqual([]);
+  });
+
+  it('extrai .mp4 do embed do MeuDoramas e prefere URLs permanentes', async () => {
+    mockFetchSafeRaw({
+      'https://meusanimes.blog/e/x-episodio-1/': EPISODE_HTML,
+      'https://serv01.meusdoramas.club/posts/get-video.php?tmdb=1432547&season_number=1&episode_number=1':
+        EMBED_JSON,
+      'https://video.meusdoramas.club/embed/abc-123': EMBED_HTML,
+    });
+    const result = await source.extractHttp({
+      episodeUrl: 'https://meusanimes.blog/e/x-episodio-1/',
+      ua: UA,
+    });
+    expect(result.videos).toEqual([
+      'https://pub-c7f4.r2.dev/Leg.mp4',
+      'https://cdn.host/s3.mp4?X-Amz-Expires=100',
+    ]);
+  });
+
+  it('ignora embed do MeuDoramas irresolvível', async () => {
+    mockFetchSafeRaw({
+      'https://meusanimes.blog/e/x-episodio-1/': EPISODE_HTML,
+      'https://serv01.meusdoramas.club/posts/get-video.php?tmdb=1432547&season_number=1&episode_number=1':
+        EMBED_JSON,
+    });
+    const result = await source.extractHttp({
+      episodeUrl: 'https://meusanimes.blog/e/x-episodio-1/',
+      ua: UA,
+    });
+    expect(result.videos).toEqual([]);
+  });
+
+  it('resolve seletor de servidores recursivamente via iframe.php', async () => {
+    const fetchMock = mockFetchSafeRaw({
+      'https://meusanimes.blog/e/x-episodio-1/': EPISODE_HTML,
+      'https://serv01.meusdoramas.club/posts/get-video.php?tmdb=1432547&season_number=1&episode_number=1':
+        PICKER_JSON,
+      'https://serv01.meusdoramas.club/e/?a=1/2/3': PICKER_HTML,
+      'https://serv01.meusdoramas.club/e/iframe.php?a=1/2/3/': IFRAME_HTML,
+      'https://serv02.meusdoramas.club/posts/get-video.php?tmdb=999&season_number=2&episode_number=3':
+        MP4_JSON,
+    });
+    const result = await source.extractHttp({
+      episodeUrl: 'https://meusanimes.blog/e/x-episodio-1/',
+      ua: UA,
+    });
+    expect(result.videos).toEqual(['https://pub-c7f4.r2.dev/Leg.mp4']);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+  });
+
+  it('ignora seletor de servidores irresolvível', async () => {
+    mockFetchSafeRaw({
+      'https://meusanimes.blog/e/x-episodio-1/': EPISODE_HTML,
+      'https://serv01.meusdoramas.club/posts/get-video.php?tmdb=1432547&season_number=1&episode_number=1':
+        PICKER_JSON,
+    });
+    const result = await source.extractHttp({
+      episodeUrl: 'https://meusanimes.blog/e/x-episodio-1/',
+      ua: UA,
+    });
+    expect(result.videos).toEqual([]);
+  });
+
+  it('não revisita servidor já processado (visited)', async () => {
+    const pickerTwo = `<script>location.href='iframe.php?a=1/2/3/';location.href='iframe.php?b=1/2/3/'</script>`;
+    const fetchMock = mockFetchSafeRaw({
+      'https://meusanimes.blog/e/x-episodio-1/': EPISODE_HTML,
+      'https://serv01.meusdoramas.club/posts/get-video.php?tmdb=1432547&season_number=1&episode_number=1':
+        PICKER_JSON,
+      'https://serv01.meusdoramas.club/e/?a=1/2/3': pickerTwo,
+      'https://serv01.meusdoramas.club/e/iframe.php?a=1/2/3/': IFRAME_HTML,
+      'https://serv01.meusdoramas.club/e/iframe.php?b=1/2/3/': IFRAME_HTML,
+      'https://serv02.meusdoramas.club/posts/get-video.php?tmdb=999&season_number=2&episode_number=3':
+        MP4_JSON,
+    });
+    const result = await source.extractHttp({
+      episodeUrl: 'https://meusanimes.blog/e/x-episodio-1/',
+      ua: UA,
+    });
+    expect(result.videos).toEqual(['https://pub-c7f4.r2.dev/Leg.mp4']);
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+  });
+
+  it('extract (fallback Playwright) delega para os helpers', async () => {
+    const helpers = jest.requireMock('./extract');
+    helpers.extractVideoElements.mockResolvedValue([
+      'https://cdn.test/v.mp4',
+      'blob:fake',
+      'https://cdn.test/v.m3u8',
+    ]);
+    helpers.extractAllIframes.mockResolvedValue(['https://iframe.test/p']);
+    const result = await source.extract({} as never);
+    expect(result.videos).toEqual([
+      'https://cdn.test/v.mp4',
+      'https://cdn.test/v.m3u8',
+    ]);
+    expect(result.iframes).toEqual(['https://iframe.test/p']);
+    expect(result.cloudflare).toBe(false);
   });
 });

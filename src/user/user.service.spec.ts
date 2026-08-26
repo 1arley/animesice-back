@@ -15,6 +15,7 @@ describe('UserService', () => {
       create: jest.fn(),
       findMany: jest.fn(),
       count: jest.fn(),
+      update: jest.fn(),
     },
     $transaction: jest.fn(),
   };
@@ -263,6 +264,138 @@ describe('UserService', () => {
 
       await expect(service.findByEmail('notfound@example.com')).rejects.toThrow(
         NotFoundException,
+      );
+    });
+  });
+
+  describe('getPublicProfile', () => {
+    it('should return public profile with counts', async () => {
+      const profile = {
+        id: '1',
+        name: 'Test User',
+        userName: 'testuser',
+        avatar: 'avatar.jpg',
+        bio: 'Hello',
+        myAnimeList: 'myanimelist_user',
+        createdAt: new Date(),
+        _count: { comments: 5, ratings: 3, favorites: 10, watchHistories: 20 },
+      };
+
+      mockPrismaService.user.findUnique.mockResolvedValue(profile);
+
+      const result = await service.getPublicProfile('1');
+
+      expect(result).toEqual(profile);
+      expect(prisma.user.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: '1' },
+          select: expect.objectContaining({ _count: expect.any(Object) }),
+        }),
+      );
+    });
+
+    it('should throw NotFoundException if user not found', async () => {
+      mockPrismaService.user.findUnique.mockResolvedValue(null);
+      await expect(service.getPublicProfile('999')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+  });
+
+  describe('updateProfileMeta', () => {
+    it('should update avatar', async () => {
+      mockPrismaService.user.update.mockResolvedValue({
+        id: '1',
+        avatar: 'new.jpg',
+      });
+      await service.updateProfileMeta('1', {
+        avatar: 'new.jpg',
+      });
+      expect(prisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { avatar: 'new.jpg' } }),
+      );
+    });
+
+    it('should update bio', async () => {
+      mockPrismaService.user.update.mockResolvedValue({
+        id: '1',
+        bio: 'new bio',
+      });
+      await service.updateProfileMeta('1', { bio: 'new bio' });
+      expect(prisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { bio: 'new bio' } }),
+      );
+    });
+
+    it('should normalize userName', async () => {
+      mockPrismaService.user.findUnique.mockResolvedValue(null);
+      mockPrismaService.user.update.mockResolvedValue({
+        id: '1',
+        userName: 'novousername',
+      });
+      await service.updateProfileMeta('1', {
+        userName: '  NovoUsername  ',
+      });
+      expect(prisma.user.findUnique).toHaveBeenCalledWith({
+        where: { userName: 'novousername' },
+      });
+      expect(prisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { userName: 'novousername' } }),
+      );
+    });
+
+    it('should throw ConflictException if userName already taken', async () => {
+      mockPrismaService.user.findUnique.mockResolvedValue({
+        id: '2',
+        userName: 'taken',
+      });
+      await expect(
+        service.updateProfileMeta('1', { userName: 'taken' }),
+      ).rejects.toThrow(ConflictException);
+    });
+
+    it('should extract myAnimeList username from URL', async () => {
+      mockPrismaService.user.update.mockResolvedValue({
+        id: '1',
+        myAnimeList: 'myuser',
+      });
+      await service.updateProfileMeta('1', {
+        myAnimeList: 'https://myanimelist.net/profile/MyUser',
+      });
+      expect(prisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { myAnimeList: 'myuser' } }),
+      );
+    });
+
+    it('should extract myAnimeList username from @ mention', async () => {
+      mockPrismaService.user.update.mockResolvedValue({
+        id: '1',
+        myAnimeList: 'user',
+      });
+      await service.updateProfileMeta('1', {
+        myAnimeList: '@User',
+      });
+      expect(prisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { myAnimeList: 'user' } }),
+      );
+    });
+
+    it('should throw NotFoundException if nothing to update', async () => {
+      await expect(service.updateProfileMeta('1', {})).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+  });
+
+  describe('clearAvatar', () => {
+    it('should clear avatar', async () => {
+      mockPrismaService.user.update.mockResolvedValue({
+        id: '1',
+        avatar: null,
+      });
+      await service.clearAvatar('1');
+      expect(prisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { avatar: null } }),
       );
     });
   });

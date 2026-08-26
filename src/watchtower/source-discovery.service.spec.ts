@@ -101,4 +101,52 @@ describe('SourceDiscovery', () => {
     const af = result.find((c) => c.sourceId === 'animefire');
     expect(af?.url).toBe('https://animefire.io/animes/solo-levelling/3');
   });
+
+  it('candidates prioriza episodeUrl explícito da fonte dona do host', async () => {
+    const realUrl = 'https://meusanimes.blog/e/kaguya-sama-episodio-3/';
+    global.fetch = jest.fn(async () => ({ status: 200 }) as any);
+    const result = await discovery.candidates('kaguya-sama', 3, 1, realUrl);
+    expect(result[0]).toEqual({ sourceId: 'meusanimes', url: realUrl });
+    expect(result.filter((c) => c.sourceId === 'meusanimes')).toHaveLength(1);
+  });
+
+  it('candidates descarta episodeUrl explícito quando probe retorna 404', async () => {
+    const realUrl = 'https://meusanimes.blog/e/kaguya-sama/';
+    global.fetch = jest.fn(async (url: string) => {
+      if (url === realUrl) return { status: 404 } as any;
+      return { status: 200 } as any;
+    }) as any;
+    const result = await discovery.candidates('kaguya-sama', 3, 1, realUrl);
+    expect(result.find((c) => c.url === realUrl)).toBeUndefined();
+    expect(result.some((c) => c.sourceId === 'meusanimes')).toBe(true);
+  });
+
+  it('candidates ignora episodeUrl de host desconhecido', async () => {
+    global.fetch = jest.fn(async () => ({ status: 200 }) as any);
+    const result = await discovery.candidates(
+      'kaguya-sama',
+      3,
+      1,
+      'https://unknown.example.com/foo',
+    );
+    expect(result.length).toBeGreaterThan(0);
+  });
+
+  it('candidates inclui fonte bloqueada (403) como fallback', async () => {
+    const fetchFn = jest.fn(async (url: string) => {
+      if (url.includes('meusanimes')) return { status: 403 } as any;
+      return { status: 200 } as any;
+    });
+    global.fetch = fetchFn as any;
+    const result = await discovery.candidates('solo-leveling', 1);
+    const meusa = result.find((c) => c.sourceId === 'meusanimes');
+    expect(meusa).toBeDefined();
+  });
+
+  it('candidates não duplica fonte quando episodeUrl é usado', async () => {
+    const realUrl = 'https://animefire.io/animes/jujutsu/2';
+    global.fetch = jest.fn(async () => ({ status: 200 }) as any);
+    const result = await discovery.candidates('jujutsu', 2, 1, realUrl);
+    expect(result.filter((c) => c.sourceId === 'animefire')).toHaveLength(1);
+  });
 });

@@ -3,7 +3,11 @@ import { AuthController } from '@/auth/auth.controller';
 import { AuthService } from '@/auth/auth.service';
 import { RegisterDto } from '@/auth/dto/register.dto';
 import { LoginDto } from '@/auth/dto/login.dto';
-import { ConflictException, UnauthorizedException } from '@nestjs/common';
+import {
+  ConflictException,
+  UnauthorizedException,
+  HttpException,
+} from '@nestjs/common';
 import { AuthenticatedRequest } from '@/common/interfaces/request.interface';
 
 describe('AuthController', () => {
@@ -15,6 +19,16 @@ describe('AuthController', () => {
     login: jest.fn(),
     refreshTokens: jest.fn(),
     setAuthCookies: jest.fn(),
+    verifyEmail: jest.fn(),
+    resendVerificationCode: jest.fn(),
+    revokeRefreshToken: jest.fn(),
+    clearAuthCookies: jest.fn(),
+    forgotPassword: jest.fn(),
+    resetPassword: jest.fn(),
+    requestEmailChange: jest.fn(),
+    confirmEmailChange: jest.fn(),
+    changePassword: jest.fn(),
+    updateProfile: jest.fn(),
   };
 
   const mockRes = {
@@ -323,6 +337,206 @@ describe('AuthController', () => {
       // First should succeed, others should fail due to conflict
       expect(results[0]?.status).toBe('fulfilled');
       expect(authService.register).toHaveBeenCalledTimes(3);
+    });
+  });
+
+  describe('verifyEmail', () => {
+    it('deve verificar email com sucesso', async () => {
+      mockAuthService.verifyEmail.mockResolvedValue({
+        message: 'Conta verificada com sucesso.',
+      });
+      const result = await controller.verifyEmail({
+        email: 'test@test.com',
+        code: '12345678',
+      });
+      expect(result).toEqual({ message: 'Conta verificada com sucesso.' });
+      expect(authService.verifyEmail).toHaveBeenCalledWith(
+        'test@test.com',
+        '12345678',
+      );
+    });
+
+    it('deve propagar erro do serviço', async () => {
+      mockAuthService.verifyEmail.mockRejectedValue(
+        new UnauthorizedException('Código inválido.'),
+      );
+      await expect(
+        controller.verifyEmail({ email: 'test@test.com', code: '00000000' }),
+      ).rejects.toThrow(UnauthorizedException);
+    });
+  });
+
+  describe('resendVerification', () => {
+    it('deve reenviar código dentro do limite', async () => {
+      const email = `rate-${Date.now()}@test.com`;
+      mockAuthService.resendVerificationCode.mockResolvedValue({
+        message: 'Código reenviado.',
+      });
+      const result = await controller.resendVerification(email);
+      expect(result).toEqual({ message: 'Código reenviado.' });
+      expect(authService.resendVerificationCode).toHaveBeenCalledWith(email);
+    });
+
+    it('deve lançar 429 após atingir limite por email', async () => {
+      const email = `limit-${Date.now()}@test.com`;
+      mockAuthService.resendVerificationCode.mockResolvedValue({});
+      for (let i = 0; i < 3; i++) {
+        await controller.resendVerification(email);
+      }
+      await expect(controller.resendVerification(email)).rejects.toThrow(
+        HttpException,
+      );
+    });
+  });
+
+  describe('logout', () => {
+    it('deve revogar refresh token e limpar cookies', async () => {
+      const req = { cookies: { refresh_token: 'rt-token' } };
+      const res = { clearCookie: jest.fn() };
+      mockAuthService.revokeRefreshToken.mockResolvedValue(undefined);
+
+      const result = await controller.logout(
+        req as unknown as AuthenticatedRequest,
+        res as unknown as import('express').Response,
+      );
+
+      expect(authService.revokeRefreshToken).toHaveBeenCalledWith('rt-token');
+      expect(authService.clearAuthCookies).toHaveBeenCalledWith(res);
+      expect(result).toEqual({ message: 'Logout realizado com sucesso.' });
+    });
+
+    it('deve ignorar erro do revoke e seguir com logout', async () => {
+      const req = { cookies: { refresh_token: 'rt-token' } };
+      const res = { clearCookie: jest.fn() };
+      mockAuthService.revokeRefreshToken.mockRejectedValue(
+        new Error('not found'),
+      );
+
+      const result = await controller.logout(
+        req as unknown as AuthenticatedRequest,
+        res as unknown as import('express').Response,
+      );
+
+      expect(authService.clearAuthCookies).toHaveBeenCalledWith(res);
+      expect(result).toEqual({ message: 'Logout realizado com sucesso.' });
+    });
+
+    it('deve funcionar sem refresh token no cookie', async () => {
+      const req = { cookies: {} };
+      const res = { clearCookie: jest.fn() };
+
+      await controller.logout(
+        req as unknown as AuthenticatedRequest,
+        res as unknown as import('express').Response,
+      );
+
+      expect(authService.revokeRefreshToken).not.toHaveBeenCalled();
+      expect(authService.clearAuthCookies).toHaveBeenCalledWith(res);
+    });
+  });
+
+  describe('forgotPassword', () => {
+    it('deve chamar o serviço de redefinição', async () => {
+      const email = `forgot-${Date.now()}@test.com`;
+      mockAuthService.forgotPassword.mockResolvedValue({
+        message: 'Se o email existir, um link de redefinição foi enviado.',
+      });
+      const result = await controller.forgotPassword({ email });
+      expect(authService.forgotPassword).toHaveBeenCalledWith(email);
+      expect(result).toHaveProperty('message');
+    });
+
+    it('deve retornar resposta genérica quando atingir limite', async () => {
+      const email = `forgot-limit-${Date.now()}@test.com`;
+      mockAuthService.forgotPassword.mockResolvedValue({});
+      for (let i = 0; i < 3; i++) {
+        await controller.forgotPassword({ email });
+      }
+      const result = await controller.forgotPassword({ email });
+      expect(result).toHaveProperty(
+        'message',
+        'Se o email existir, um link de redefinição foi enviado.',
+      );
+      expect(authService.forgotPassword).toHaveBeenCalledTimes(3);
+    });
+  });
+
+  describe('resetPassword', () => {
+    it('deve redefinir senha com sucesso', async () => {
+      mockAuthService.resetPassword.mockResolvedValue({
+        message: 'Senha redefinida com sucesso.',
+      });
+      const result = await controller.resetPassword({
+        token: 'token',
+        newPassword: 'NewPass123!',
+      });
+      expect(authService.resetPassword).toHaveBeenCalledWith(
+        'token',
+        'NewPass123!',
+      );
+      expect(result).toHaveProperty('message');
+    });
+  });
+
+  describe('settings endpoints', () => {
+    const req = { user: { id: '1' } } as unknown as AuthenticatedRequest;
+
+    it('requestEmailChange deve delegar para o serviço', async () => {
+      mockAuthService.requestEmailChange.mockResolvedValue({
+        message: 'Email de confirmação enviado.',
+      });
+      const result = await controller.requestEmailChange(
+        { newEmail: 'new@test.com', password: 'pass' },
+        req,
+      );
+      expect(authService.requestEmailChange).toHaveBeenCalledWith(
+        '1',
+        'new@test.com',
+        'pass',
+      );
+      expect(result).toHaveProperty('message');
+    });
+
+    it('confirmEmailChangePost deve delegar para o serviço', async () => {
+      mockAuthService.confirmEmailChange.mockResolvedValue({
+        message: 'Email alterado com sucesso.',
+      });
+      const result = await controller.confirmEmailChangePost('token');
+      expect(authService.confirmEmailChange).toHaveBeenCalledWith('token');
+      expect(result).toHaveProperty('message');
+    });
+
+    it('changePassword deve delegar para o serviço', async () => {
+      mockAuthService.changePassword.mockResolvedValue({
+        message: 'Senha alterada com sucesso.',
+      });
+      const result = await controller.changePassword(
+        { currentPassword: 'old', newPassword: 'new' },
+        req,
+      );
+      expect(authService.changePassword).toHaveBeenCalledWith(
+        '1',
+        'old',
+        'new',
+      );
+      expect(result).toHaveProperty('message');
+    });
+
+    it('updateProfile deve delegar para o serviço', async () => {
+      mockAuthService.updateProfile.mockResolvedValue({
+        id: '1',
+        name: 'Novo Nome',
+      });
+      const result = await controller.updateProfile(
+        { name: 'Novo Nome', userName: 'novonome' },
+        req,
+      );
+      expect(authService.updateProfile).toHaveBeenCalledWith(
+        '1',
+        'Novo Nome',
+        'novonome',
+      );
+      expect(result).toHaveProperty('name');
     });
   });
 });

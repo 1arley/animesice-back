@@ -119,6 +119,7 @@ function makeMockPrisma() {
         return rows;
       },
     ),
+    $executeRaw: jest.fn(async () => []),
   };
   return prisma;
 }
@@ -317,5 +318,71 @@ describe('JobsService', () => {
   it('stats retorna agregação por status', async () => {
     const stats = await svc.stats();
     expect(stats).toHaveProperty('PENDING');
+  });
+
+  it('enqueue engole P2002 (race de dedupe)', async () => {
+    mock.watchtowerJob.findUnique.mockResolvedValue(null);
+    mock.watchtowerJob.create.mockRejectedValue({ code: 'P2002' });
+    await expect(
+      svc.enqueue({
+        type: 'EXTRACT_EPISODE',
+        dedupeKey: 'extract:race:1',
+        payload: {},
+      }),
+    ).resolves.toBeUndefined();
+  });
+
+  it('enqueue loga erro não-P2002', async () => {
+    mock.watchtowerJob.findUnique.mockResolvedValue(null);
+    mock.watchtowerJob.create.mockRejectedValue(new Error('db down'));
+    const loggerSpy = jest.spyOn(svc['logger'], 'error').mockImplementation();
+    await svc.enqueue({
+      type: 'EXTRACT_EPISODE',
+      dedupeKey: 'extract:err:1',
+      payload: {},
+    });
+    expect(loggerSpy).toHaveBeenCalled();
+  });
+
+  it('complete com count 0 não lança erro', async () => {
+    mock.watchtowerJob.updateMany.mockResolvedValue({ count: 0 });
+    await expect(svc.complete('nope', 'lock')).resolves.toBeUndefined();
+  });
+
+  it('fail com job inexistente retorna silenciosamente', async () => {
+    mock.watchtowerJob.findUnique.mockResolvedValue(null);
+    await expect(svc.fail('nope', 'lock', 'err')).resolves.toBeUndefined();
+  });
+
+  it('fail com lockedBy divergente retorna silenciosamente', async () => {
+    await svc.enqueue({
+      type: 'EXTRACT_EPISODE',
+      dedupeKey: 'extract:lockdiv:1',
+      payload: {},
+    });
+    const claimed = await svc.claimBatch(1);
+    const jobId = claimed[0]!.id;
+    await expect(svc.fail(jobId, 'wrong-lock', 'err')).resolves.toBeUndefined();
+  });
+
+  it('enqueueMany insere múltiplos jobs', async () => {
+    await svc.enqueueMany([
+      {
+        type: 'EXTRACT_EPISODE',
+        dedupeKey: 'extract:batch:1',
+        payload: { slug: 'a' },
+      },
+      {
+        type: 'EXTRACT_EPISODE',
+        dedupeKey: 'extract:batch:2',
+        payload: { slug: 'b' },
+      },
+    ]);
+    expect(mock.$executeRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it('enqueueMany com lista vazia não executa', async () => {
+    await svc.enqueueMany([]);
+    expect(mock.$executeRaw).not.toHaveBeenCalled();
   });
 });
