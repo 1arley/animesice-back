@@ -22,12 +22,18 @@ function makeMocks() {
     scrapeFromMeusanimes: jest.fn(),
     reextractEpisodeVideo: jest.fn(),
   };
+  const extractionJobs = {
+    submit: jest.fn(),
+    findByEpisode: jest.fn(),
+    getJob: jest.fn(),
+  };
   const svc = new StreamingService(
     prisma as any,
     embedService as any,
     scrapeService as any,
+    extractionJobs as any,
   );
-  return { prisma, embedService, scrapeService, svc };
+  return { prisma, embedService, scrapeService, extractionJobs, svc };
 }
 
 describe('StreamingService.purgeExpiredTokens', () => {

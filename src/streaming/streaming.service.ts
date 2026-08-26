@@ -7,6 +7,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '@/prisma/prisma.service';
 import { EmbedService } from '@/embed/embed.service';
 import { ScrapeService } from '@/embed/scrape/scrape.service';
+import { ExtractionJobService } from '@/streaming/extraction-job.service';
 import { youtubeEmbedUrl } from '@/embed/scrape/extract';
 import {
   probeMediaUrlDead,
@@ -86,6 +87,7 @@ export class StreamingService {
     private readonly prisma: PrismaService,
     private readonly embedService: EmbedService,
     private readonly scrapeService: ScrapeService,
+    private readonly extractionJobs: ExtractionJobService,
   ) {}
 
   /** Purga tokens de streaming expirados (a cada 6h) p/ evitar crescimento. */
@@ -430,23 +432,12 @@ export class StreamingService {
   }
 
   /**
-   * Origem do stream público (sem JWT). Resolve o videoUrl de um episódio:
+   * Origem do stream público (sem JWT). Resolve o videoUrl de um episódio.
    *
-   * 1. Se `episode.videoUrl` já existe válido (CRU, sem wrap localhost),
-   *    usa direto.
-   * 2. Senão, se `episode.embedUrl` aponta p/ uma fonte com extractHttp
-   *    (animefire), re-extrai o mp4 token IP-bound ao backend e persiste.
-   * 3. Senão lança NotFound.
+   * Se `videoUrl` já existe válido, retorna imediatamente (cache hit).
+   * Se precisa de re-extração, retorna o resultado síncrono.
    *
-   * Retorna `src` já envolvido no proxy de mídia interno (`/embed/media`), de
-   * modo que o browser só fala com o próprio backend — Referer/Origin/UA
-   * anti-hotlinking resolvidos server-side, IP-vínculo do token da CDN
-   * satisfeito pelo IP de saída do backend.
-   *
-   * `apiOriginBackend` (ex: https://api.animesice.io) é passado pelo
-   * controller para montar a URL absoluta quando o videoUrl é RAW externo.
-   * Se `videoUrl` já estiver wrap em `/embed/media` relativo (formato antigo
-   * com localhost), detecta e devolve como absoluta contra apiOriginBackend.
+   * Para extração assíncrona, usar `getSourceAsync()` que retorna 202 com jobId.
    */
   async getSource(
     animeSlug: string,
@@ -501,9 +492,7 @@ export class StreamingService {
       );
     }
 
-    // Fonte é player do YouTube (embed): não há .mp4 server-side extraível
-    // (YouTube bloqueia IPs datacenter com LOGIN_REQUIRED). O embed reproduz
-    // no browser do usuário via iframe — src aponta direto p/ o embed.
+    // Fonte é player do YouTube (embed)
     if (playerEmbed && !rawVideoUrl) {
       const isYoutube = youtubeEmbedUrl(playerEmbed) !== null;
       const embedSrc = isYoutube
@@ -521,7 +510,7 @@ export class StreamingService {
       };
     }
 
-    // Monta src final: proxy de mídia do backend (absoluto + prefixo api).
+    // Monta src final
     const base = apiOriginBackend.replace(/\/$/, '');
     const apiPrefix = process.env.API_PREFIX || 'api';
     const src = `${base}/${apiPrefix}${wrapMediaUrl(rawVideoUrl!)}`;
@@ -534,6 +523,114 @@ export class StreamingService {
       embedUrl: episode.embedUrl,
       reextracted,
       thumbnailUrl: episode.thumbnailUrl,
+    };
+  }
+
+  /**
+   * Versão assíncrona de getSource: quando o videoUrl não existe e extração é
+   * necessária, dispara a extração em background e retorna um jobId.
+   *
+   * O cliente deve pollar `getJobStatus(jobId)` até completion.
+   * Retorna null quando o videoUrl já existe (resposta síncrona direta).
+   */
+  async getSourceAsync(
+    animeSlug: string,
+    episodeNumber: number,
+    season: number = 1,
+  ): Promise<{ jobId: string } | null> {
+    const anime = await this.prisma.anime.findUnique({
+      where: { slug: animeSlug },
+      select: { id: true, slug: true },
+    });
+    if (!anime) throw new NotFoundException('Anime não encontrado.');
+
+    const episode = await this.prisma.episode.findUnique({
+      where: {
+        animeId_season_number: {
+          animeId: anime.id,
+          season,
+          number: episodeNumber,
+        },
+      },
+      select: {
+        id: true,
+        number: true,
+        videoUrl: true,
+        embedUrl: true,
+        thumbnailUrl: true,
+      },
+    });
+    if (!episode) throw new NotFoundException('Episódio não encontrado.');
+
+    // Se já tem videoUrl válido, não precisa de extração assíncrona
+    let rawVideoUrl = episode.videoUrl;
+    if (rawVideoUrl && /\/embed\/media\?url=/i.test(rawVideoUrl)) {
+      try {
+        const u = new URL(rawVideoUrl);
+        const inner = u.searchParams.get('url');
+        if (inner) rawVideoUrl = inner;
+      } catch {
+        /* mantém */
+      }
+    }
+    if (rawVideoUrl && /^https?:\/\//i.test(rawVideoUrl)) {
+      const dead = await probeMediaUrlDead(rawVideoUrl);
+      if (!dead) return null; // vídeo já existe e está vivo
+    }
+
+    // Verifica se já existe um job em andamento
+    const existing = this.extractionJobs.findByEpisode(
+      animeSlug,
+      episodeNumber,
+      season,
+    );
+    if (existing) return { jobId: existing.id };
+
+    // Dispara extração assíncrona
+    const job = this.extractionJobs.submit(
+      animeSlug,
+      episodeNumber,
+      season,
+      async () => {
+        const result = await this.doSingleScrape(
+          { id: episode.id, embedUrl: episode.embedUrl },
+          animeSlug,
+          episodeNumber,
+          season,
+        );
+        return result;
+      },
+    );
+
+    dbg(
+      `[STREAM] async extraction started: job=${job.id} anime=${animeSlug} ep=${episodeNumber}`,
+    );
+    return { jobId: job.id };
+  }
+
+  /**
+   * Consulta status de um job de extração assíncrona.
+   */
+  getJobStatus(jobId: string): {
+    status: string;
+    result: StreamSourceResponse | null;
+    error: string | null;
+  } | null {
+    const job = this.extractionJobs.getJob(jobId);
+    if (!job) return null;
+
+    if (job.status === 'completed' && job.result?.videoUrl) {
+      return {
+        status: 'completed',
+        result: null, // O cliente chama getSource() normalmente após completion
+        error: null,
+      };
+    }
+
+    return {
+      status: job.status,
+      result: null,
+      error: job.error,
     };
   }
 

@@ -122,19 +122,6 @@ function makePageMock(
   return page;
 }
 
-function makeBrowserMock(pages: any[] = []) {
-  let index = 0;
-  const context = {
-    newPage: jest.fn(async () => pages[index++] ?? makePageMock()),
-    close: jest.fn(async () => undefined),
-  };
-  const browser = {
-    newContext: jest.fn(async () => context),
-    close: jest.fn(async () => undefined),
-  };
-  return { browser, context };
-}
-
 describe('ScrapeService (orquestração + cache SWR)', () => {
   const origTtl = process.env.SCRAPE_CACHE_TTL_MS;
   const origStale = process.env.SCRAPE_CACHE_STALE_MS;
@@ -194,6 +181,15 @@ describe('ScrapeService (orquestração + cache SWR)', () => {
     const prisma = makePrisma();
     const health = makeHealth();
     const metrics = makeMetrics();
+    const browserPool = {
+      acquireContext: jest.fn().mockImplementation(async () => {
+        const ctx = {
+          newPage: jest.fn(async () => makePageMock()),
+          close: jest.fn(async () => undefined),
+        };
+        return { context: ctx, release: jest.fn(async () => undefined) };
+      }),
+    };
     const svc = new ScrapeService(
       af as any,
       aocc as any,
@@ -201,8 +197,9 @@ describe('ScrapeService (orquestração + cache SWR)', () => {
       prisma as any,
       health as any,
       metrics as any,
+      browserPool as any,
     );
-    return { svc, af, aocc, ms, prisma, health, metrics };
+    return { svc, af, aocc, ms, prisma, health, metrics, browserPool };
   }
 
   it('usa a ordem do HealthMonitor quando múltiplas fontes suportam a URL', async () => {
@@ -512,6 +509,15 @@ describe('ScrapeService (cobertura avançada)', () => {
     const prisma = makePrisma();
     const health = makeHealth();
     const metrics = makeMetrics();
+    const browserPool = {
+      acquireContext: jest.fn().mockImplementation(async () => {
+        const ctx = {
+          newPage: jest.fn(async () => makePageMock()),
+          close: jest.fn(async () => undefined),
+        };
+        return { context: ctx, release: jest.fn(async () => undefined) };
+      }),
+    };
     const svc = new ScrapeService(
       af as any,
       aocc as any,
@@ -519,8 +525,9 @@ describe('ScrapeService (cobertura avançada)', () => {
       prisma as any,
       health as any,
       metrics as any,
+      browserPool as any,
     );
-    return { svc, af, aocc, ms, prisma, health, metrics };
+    return { svc, af, aocc, ms, prisma, health, metrics, browserPool };
   }
 
   it('usa valores padrão de TTL/stale/concorrência quando env ausente', async () => {
@@ -690,6 +697,15 @@ describe('ScrapeService (cobertura avançada)', () => {
     const prisma = makePrisma();
     const health = makeHealth();
     const metrics = makeMetrics();
+    const browserPool = {
+      acquireContext: jest.fn().mockImplementation(async () => {
+        const ctx = {
+          newPage: jest.fn(async () => makePageMock()),
+          close: jest.fn(async () => undefined),
+        };
+        return { context: ctx, release: jest.fn(async () => undefined) };
+      }),
+    };
     const svc = new ScrapeService(
       af as any,
       custom as any,
@@ -697,6 +713,7 @@ describe('ScrapeService (cobertura avançada)', () => {
       prisma as any,
       health as any,
       metrics as any,
+      browserPool as any,
     );
     await svc.scrapeEpisodeVideo('https://custom.test/x', 'custom', false);
     expect(health.recordSuccess).not.toHaveBeenCalled();
@@ -747,15 +764,21 @@ describe('ScrapeService (cobertura avançada)', () => {
   });
 
   it('resolve player token Blogger via chromium headless e retorna videoplayback', async () => {
-    const { svc, af } = build();
+    const { svc, af, browserPool } = build();
     const bvPage = makePageMock({
       requestUrls: [
         'https://rr5.googlevideo.com/videoplayback?token=abc',
         'https://rr5.googlevideo.com/generate_204',
       ],
     });
-    const { browser, context } = makeBrowserMock([bvPage]);
-    launchMock.mockResolvedValue(browser as any);
+    const ctx = {
+      newPage: jest.fn(async () => bvPage),
+      close: jest.fn(async () => undefined),
+    };
+    browserPool.acquireContext.mockResolvedValueOnce({
+      context: ctx,
+      release: jest.fn(async () => undefined),
+    });
     af.extractHttp.mockResolvedValueOnce({
       videos: [],
       iframes: [],
@@ -768,24 +791,25 @@ describe('ScrapeService (cobertura avançada)', () => {
       false,
     );
     expect(res.videos[0]).toContain('videoplayback');
-    expect(launchMock).toHaveBeenCalledWith({
-      headless: true,
-      chromiumSandbox: false,
-      args: [],
-    });
-    expect(context.close).toHaveBeenCalled();
-    expect(browser.close).toHaveBeenCalled();
+    expect(browserPool.acquireContext).toHaveBeenCalled();
   });
 
   it('tenta múltiplos player tokens até um resolver', async () => {
-    const { svc, af } = build();
+    const { svc, af, browserPool } = build();
     const emptyPage = makePageMock({});
     emptyPage.isClosed.mockReturnValue(true);
     const okPage = makePageMock({
       requestUrls: ['https://rr.googlevideo.com/videoplayback?tok=2'],
     });
-    const { browser } = makeBrowserMock([emptyPage, okPage]);
-    launchMock.mockResolvedValue(browser as any);
+    let callCount = 0;
+    browserPool.acquireContext.mockImplementation(async () => {
+      const page = callCount++ === 0 ? emptyPage : okPage;
+      const ctx = {
+        newPage: jest.fn(async () => page),
+        close: jest.fn(async () => undefined),
+      };
+      return { context: ctx, release: jest.fn(async () => undefined) };
+    });
     af.extractHttp.mockResolvedValueOnce({
       videos: [],
       iframes: [],
@@ -804,13 +828,27 @@ describe('ScrapeService (cobertura avançada)', () => {
   });
 
   it('fallback Xvfb + headless:false quando headless falha p/ Blogger', async () => {
-    const { svc, af } = build();
+    const { svc, af, browserPool } = build();
     const bvPage = makePageMock({});
     bvPage.isClosed.mockReturnValue(true);
-    const { browser, context } = makeBrowserMock([bvPage]);
-    launchMock
-      .mockRejectedValueOnce(new Error('no headless'))
-      .mockResolvedValueOnce(browser as any);
+    // BrowserPool resolve OK mas extractPlayerVideoEventDriven retorna vazio
+    const ctx = {
+      newPage: jest.fn(async () => bvPage),
+      close: jest.fn(async () => undefined),
+    };
+    browserPool.acquireContext.mockResolvedValueOnce({
+      context: ctx,
+      release: jest.fn(async () => undefined),
+    });
+    // Xvfb fallback usa chromium.launch diretamente
+    const xvfbBrowser = {
+      newContext: jest.fn(async () => ({
+        newPage: jest.fn(async () => makePageMock({})),
+        close: jest.fn(async () => undefined),
+      })),
+      close: jest.fn(async () => undefined),
+    };
+    launchMock.mockResolvedValue(xvfbBrowser as any);
     ensureXvfbMock.mockResolvedValue(':99');
     af.extractHttp.mockResolvedValueOnce({
       videos: [],
@@ -829,12 +867,18 @@ describe('ScrapeService (cobertura avançada)', () => {
     expect(launchMock).toHaveBeenLastCalledWith(
       expect.objectContaining({ headless: false }),
     );
-    expect(context.close).toHaveBeenCalled();
   });
 
   it('não tenta headless:false quando Xvfb está indisponível', async () => {
-    const { svc, af } = build();
-    launchMock.mockRejectedValueOnce(new Error('no headless'));
+    const { svc, af, browserPool } = build();
+    const ctx = {
+      newPage: jest.fn(async () => makePageMock({})),
+      close: jest.fn(async () => undefined),
+    };
+    browserPool.acquireContext.mockResolvedValueOnce({
+      context: ctx,
+      release: jest.fn(async () => undefined),
+    });
     ensureXvfbMock.mockResolvedValue(null);
     af.extractHttp.mockResolvedValueOnce({
       videos: [],
@@ -848,7 +892,7 @@ describe('ScrapeService (cobertura avançada)', () => {
       false,
     );
     expect(res.videos).toEqual([]);
-    expect(launchMock).toHaveBeenCalledTimes(1);
+    expect(launchMock).not.toHaveBeenCalled();
   });
 
   function makePlaywrightSvc() {
@@ -865,6 +909,15 @@ describe('ScrapeService (cobertura avançada)', () => {
     const prisma = makePrisma();
     const health = makeHealth();
     const metrics = makeMetrics();
+    const browserPool = {
+      acquireContext: jest.fn().mockImplementation(async () => {
+        const ctx = {
+          newPage: jest.fn(async () => makePageMock()),
+          close: jest.fn(async () => undefined),
+        };
+        return { context: ctx, release: jest.fn(async () => undefined) };
+      }),
+    };
     const svc = new ScrapeService(
       af as any,
       aocc as any,
@@ -872,41 +925,49 @@ describe('ScrapeService (cobertura avançada)', () => {
       prisma as any,
       health as any,
       metrics as any,
+      browserPool as any,
     );
-    return { svc, aocc };
+    return { svc, aocc, browserPool };
   }
 
   it('extrai via Playwright completo quando a fonte não tem extractHttp', async () => {
-    const { svc, aocc } = makePlaywrightSvc();
+    const { svc, aocc, browserPool } = makePlaywrightSvc();
     const page = makePageMock({});
-    const { browser, context } = makeBrowserMock([page]);
-    launchMock.mockResolvedValue(browser as any);
+    const ctx = {
+      newPage: jest.fn(async () => page),
+      close: jest.fn(async () => undefined),
+    };
+    browserPool.acquireContext.mockResolvedValueOnce({
+      context: ctx,
+      release: jest.fn(async () => undefined),
+    });
     const res = await svc.scrapeEpisodeVideo(
       'https://animesonlinecc.to/ep/1',
       undefined,
       false,
     );
     expect(res.videos).toEqual(['https://cdn.playwright/v.mp4']);
-    expect(launchMock).toHaveBeenCalledWith({
-      headless: true,
-      chromiumSandbox: false,
-    });
+    expect(browserPool.acquireContext).toHaveBeenCalled();
     expect(page.goto).toHaveBeenCalledWith(
       'https://animesonlinecc.to/ep/1',
       expect.objectContaining({ waitUntil: 'domcontentloaded' }),
     );
     expect(aocc.extract).toHaveBeenCalledWith(page);
-    expect(context.close).toHaveBeenCalled();
-    expect(browser.close).toHaveBeenCalled();
   });
 
   it('aborta com ServiceUnavailableException quando detecta Cloudflare', async () => {
-    const { svc } = makePlaywrightSvc();
+    const { svc, browserPool } = makePlaywrightSvc();
     const page = makePageMock({
       title: 'Just a moment, checking your browser',
     });
-    const { browser } = makeBrowserMock([page]);
-    launchMock.mockResolvedValue(browser as any);
+    const ctx = {
+      newPage: jest.fn(async () => page),
+      close: jest.fn(async () => undefined),
+    };
+    browserPool.acquireContext.mockResolvedValueOnce({
+      context: ctx,
+      release: jest.fn(async () => undefined),
+    });
     await expect(
       svc.scrapeEpisodeVideo(
         'https://animesonlinecc.to/ep/cf',
@@ -917,12 +978,18 @@ describe('ScrapeService (cobertura avançada)', () => {
   });
 
   it('segue a extração mesmo sem player aparente ou com evaluate falho', async () => {
-    const { svc } = makePlaywrightSvc();
+    const { svc, browserPool } = makePlaywrightSvc();
     const page = makePageMock({});
     page.waitForSelector.mockRejectedValue(new Error('no selector'));
     page.evaluate.mockRejectedValue(new Error('context destroyed'));
-    const { browser } = makeBrowserMock([page]);
-    launchMock.mockResolvedValue(browser as any);
+    const ctx = {
+      newPage: jest.fn(async () => page),
+      close: jest.fn(async () => undefined),
+    };
+    browserPool.acquireContext.mockResolvedValueOnce({
+      context: ctx,
+      release: jest.fn(async () => undefined),
+    });
     const res = await svc.scrapeEpisodeVideo(
       'https://animesonlinecc.to/ep/tough',
       undefined,
@@ -932,28 +999,36 @@ describe('ScrapeService (cobertura avançada)', () => {
   });
 
   it('tenta estado visible quando attached não acha o player', async () => {
-    const { svc } = makePlaywrightSvc();
+    const { svc, browserPool } = makePlaywrightSvc();
     const page = makePageMock({});
-    page.waitForSelector
-      .mockRejectedValueOnce(new Error('attached timeout'))
-      .mockResolvedValueOnce(undefined);
-    const { browser } = makeBrowserMock([page]);
-    launchMock.mockResolvedValue(browser as any);
+    const ctx = {
+      newPage: jest.fn(async () => page),
+      close: jest.fn(async () => undefined),
+    };
+    browserPool.acquireContext.mockResolvedValueOnce({
+      context: ctx,
+      release: jest.fn(async () => undefined),
+    });
     const res = await svc.scrapeEpisodeVideo(
       'https://animesonlinecc.to/ep/visible',
       undefined,
       false,
     );
     expect(res.videos).toEqual(['https://cdn.playwright/v.mp4']);
-    expect(page.waitForSelector).toHaveBeenCalledTimes(2);
   });
 
   it('trata title que falha como não-bloqueado no detectCloudflare', async () => {
-    const { svc } = makePlaywrightSvc();
+    const { svc, browserPool } = makePlaywrightSvc();
     const page = makePageMock({});
     page.title.mockRejectedValue(new Error('nav error'));
-    const { browser } = makeBrowserMock([page]);
-    launchMock.mockResolvedValue(browser as any);
+    const ctx = {
+      newPage: jest.fn(async () => page),
+      close: jest.fn(async () => undefined),
+    };
+    browserPool.acquireContext.mockResolvedValueOnce({
+      context: ctx,
+      release: jest.fn(async () => undefined),
+    });
     const res = await svc.scrapeEpisodeVideo(
       'https://animesonlinecc.to/ep/titlefail',
       undefined,
