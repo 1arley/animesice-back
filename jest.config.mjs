@@ -9,8 +9,29 @@ export default {
   transformIgnorePatterns: [
     '/node_modules/(?!sanitize-html|htmlparser2|domhandler|domutils|entities|domelementtype|dom-serializer)',
   ],
-  collectCoverageFrom: ['**/*.(t|j)s'],
+  collectCoverageFrom: [
+    '**/*.(t|j)s',
+    // Boilerplate declarativo (modules, entrypoints, DTOs, swagger) não faz
+    // sentido medir: são anotações estáticas sem lógica executável.
+    '!**/*.spec.ts',
+    '!**/*.e2e-spec.ts',
+    '!**/*.module.ts',
+    '!**/dto/**',
+    '!**/swagger/**',
+    '!**/main.ts',
+    '!**/index.ts',
+  ],
   coverageDirectory: '../coverage',
+  coverageReporters: ['text-summary', 'json-summary', 'lcov', 'html'],
+  // Portão de cobertura: qualquer regressão abaixo destes números falha o CI.
+  coverageThreshold: {
+    global: {
+      statements: 90,
+      branches: 80,
+      functions: 90,
+      lines: 90,
+    },
+  },
   testEnvironment: 'node',
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/$1',
