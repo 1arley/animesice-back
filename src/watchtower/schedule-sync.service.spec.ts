@@ -172,6 +172,153 @@ describe('ScheduleSync', () => {
     expect(m.prisma.$executeRaw).not.toHaveBeenCalled();
   });
 
+  it('syncSchedules atualiza metadata quando status muda no AniList', async () => {
+    const m = makeMocks();
+    m.prisma.anime.findMany.mockResolvedValue([
+      { id: 'anime-1', anilistId: 12345, status: 'LANCAMENTO' },
+    ]);
+    m.anilist.mediaSchedule.mockResolvedValue({
+      status: 'FINISHED',
+      startDate: { year: 2024, month: 1, day: 1 },
+      endDate: { year: 2024, month: 3, day: 31 },
+      schedule: [],
+    });
+    const svc = new ScheduleSync(
+      m.prisma as any,
+      m.anilist as any,
+      m.jobs as any,
+    );
+    const synced = await svc.syncSchedules();
+    expect(synced).toBe(1);
+    expect(m.prisma.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(m.prisma.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('syncSchedules continua quando mediaSchedule lança exceção', async () => {
+    const m = makeMocks();
+    m.prisma.anime.findMany.mockResolvedValue([
+      { id: 'anime-1', anilistId: 12345, status: 'LANCAMENTO' },
+      { id: 'anime-2', anilistId: 67890, status: 'LANCAMENTO' },
+    ]);
+    m.anilist.mediaSchedule
+      .mockRejectedValueOnce(new Error('rate limit'))
+      .mockResolvedValueOnce({
+        status: 'RELEASING',
+        startDate: null,
+        endDate: null,
+        schedule: [],
+      });
+    const svc = new ScheduleSync(
+      m.prisma as any,
+      m.anilist as any,
+      m.jobs as any,
+    );
+    const synced = await svc.syncSchedules();
+    expect(synced).toBe(1);
+  });
+
+  it('backfillAnilist cobre todos os paths de mapStatus e validSeason/format', async () => {
+    const m = makeMocks();
+    m.prisma.anime.findMany.mockResolvedValue([
+      { id: 'a1', slug: 's1', title: 'S1' },
+      { id: 'a2', slug: 's2', title: 'S2' },
+      { id: 'a3', slug: 's3', title: 'S3' },
+      { id: 'a4', slug: 's4', title: 'S4' },
+      { id: 'a5', slug: 's5', title: 'S5' },
+    ]);
+    m.prisma.anime.count.mockResolvedValue(0);
+    m.anilist.searchMedia
+      .mockResolvedValueOnce({
+        id: 1,
+        title: { romaji: 'S1' },
+        status: 'RELEASING',
+        season: 'WINTER',
+        seasonYear: 2024,
+        format: 'TV',
+        episodes: 12,
+        endDate: null,
+        studios: { nodes: [{ name: 'A', isAnimationStudio: true }] },
+      })
+      .mockResolvedValueOnce({
+        id: 2,
+        title: { romaji: 'S2' },
+        status: 'FINISHED',
+        season: 'SPRING',
+        seasonYear: 2024,
+        format: 'MOVIE',
+        episodes: 1,
+        endDate: { year: 2024, month: 6, day: 15 },
+        studios: { nodes: [] },
+      })
+      .mockResolvedValueOnce({
+        id: 3,
+        title: { romaji: 'S3' },
+        status: 'CANCELLED',
+        season: 'SUMMER',
+        seasonYear: 2024,
+        format: 'OVA',
+        episodes: 6,
+        endDate: null,
+        studios: { nodes: [{ name: 'B', isAnimationStudio: false }] },
+      })
+      .mockResolvedValueOnce({
+        id: 4,
+        title: { romaji: 'S4' },
+        status: 'HIATUS',
+        season: 'FALL',
+        seasonYear: 2024,
+        format: 'ONA',
+        episodes: null,
+        endDate: null,
+        studios: { nodes: [{ name: null, isAnimationStudio: true }] },
+      })
+      .mockResolvedValueOnce({
+        id: 5,
+        title: { romaji: 'S5' },
+        status: 'NOT_YET_RELEASED',
+        season: 'WINTER',
+        seasonYear: 2025,
+        format: 'SPECIAL',
+        episodes: 1,
+        endDate: null,
+        studios: { nodes: [{ name: 'C', isAnimationStudio: true }] },
+      });
+    const svc = new ScheduleSync(
+      m.prisma as any,
+      m.anilist as any,
+      m.jobs as any,
+    );
+    const matched = await svc.backfillAnilist();
+    expect(matched).toBe(5);
+    expect(m.prisma.$executeRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it('backfillAnilist ignora formato e season inválidos', async () => {
+    const m = makeMocks();
+    m.prisma.anime.findMany.mockResolvedValue([
+      { id: 'a1', slug: 'test', title: 'Test' },
+    ]);
+    m.prisma.anime.count.mockResolvedValue(0);
+    m.anilist.searchMedia.mockResolvedValue({
+      id: 99,
+      title: { romaji: 'Test' },
+      status: 'UNKNOWN_STATUS',
+      season: 'INVALID_SEASON',
+      seasonYear: 2024,
+      format: 'INVALID_FORMAT',
+      episodes: null,
+      endDate: null,
+      studios: { nodes: [] },
+    });
+    const svc = new ScheduleSync(
+      m.prisma as any,
+      m.anilist as any,
+      m.jobs as any,
+    );
+    const matched = await svc.backfillAnilist();
+    expect(matched).toBe(1);
+  });
+
   it('syncSchedules pula anime sem episódios agendados', async () => {
     const m = makeMocks();
     m.prisma.anime.findMany.mockResolvedValue([
