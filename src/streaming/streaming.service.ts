@@ -397,14 +397,23 @@ export class StreamingService {
       dbg(
         `[STREAM] tentativa 2: scrapeFromMeusanimes(${animeSlug}, ${episodeNumber}, s${season})`,
       );
-      rawVideoUrl = await this.scrapeService.scrapeFromMeusanimes(
-        animeSlug,
-        episodeNumber,
-        season,
-      );
-      dbg(
-        `[STREAM] tentativa 2 resultado: ${rawVideoUrl?.slice(0, 80) ?? 'null'}`,
-      );
+      try {
+        rawVideoUrl = await this.scrapeService.scrapeFromMeusanimes(
+          animeSlug,
+          episodeNumber,
+          season,
+        );
+        dbg(
+          `[STREAM] tentativa 2 resultado: ${rawVideoUrl?.slice(0, 80) ?? 'null'}`,
+        );
+      } catch (err) {
+        // Falha do fallback NUNCA pode descartar um playerEmbed válido da
+        // tentativa 1 (YouTube/Blogger). Mantemos o retorno para que
+        // getSource() sirva o iframe via /embed/proxy.
+        dbg(
+          `[STREAM] tentativa 2 FALHOU: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     }
 
     // Persiste RAW (sem wrap) p/ próximas chamadas.

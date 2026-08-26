@@ -22,7 +22,11 @@ import { SeasonDiscovery } from './season-discovery.service';
 import { RepairWorker } from './repair-worker.service';
 import { HealthMonitor } from './health-monitor.service';
 import { CatalogScanner } from './catalog-scanner.service';
-import { ScheduleSync } from './schedule-sync.service';
+import {
+  ScheduleSync,
+  SyncSchedulesPayload,
+  SYNC_PAGE_DELAY_MS,
+} from './schedule-sync.service';
 import { JOB_TYPE, PRIORITY } from './watchtower.types';
 
 interface ExtractPayload {
@@ -92,8 +96,8 @@ export class WorkerService {
           await this.schedule.backfillAnilist();
           break;
         case JOB_TYPE.SYNC_SCHEDULES:
-          await this.schedule.syncSchedules();
-          break;
+          await this.handleSyncSchedules(job);
+          return;
         case JOB_TYPE.GAP_CHECK:
           await this.handleGapCheck();
           break;
@@ -104,6 +108,39 @@ export class WorkerService {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       await this.jobs.fail(job.id, job.lockedBy ?? '', msg);
+    }
+  }
+
+  /**
+   * SyncSchedules pode continuar: se a página não termina o catálogo
+   * elegível, resschedule o MESMO job (lockedBy) com cursor novo e delay
+   * — sem criar nova row, sem clobberar o lock de outra instância.
+   */
+  private async handleSyncSchedules(job: WatchtowerJobRow): Promise<void> {
+    const payload = (job.payload ?? {}) as SyncSchedulesPayload;
+    try {
+      const result = await this.schedule.syncSchedules(payload);
+      if (result.continued && result.nextAfterId) {
+        const nextRunAt = new Date(Date.now() + SYNC_PAGE_DELAY_MS);
+        const rescheduled = await this.jobs.reschedule(
+          job.id,
+          job.lockedBy ?? '',
+          { afterId: result.nextAfterId },
+          nextRunAt,
+        );
+        if (!rescheduled) {
+          // Lock perdido (stale reap) — não clobber. Falha p/ backoff+retry.
+          throw new Error(
+            `reschedule falhou: lock ${job.lockedBy ?? '(none)'} não pertence mais a este worker`,
+          );
+        }
+        return;
+      }
+      await this.jobs.complete(job.id, job.lockedBy ?? '');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await this.jobs.fail(job.id, job.lockedBy ?? '', msg);
+      throw err;
     }
   }
 

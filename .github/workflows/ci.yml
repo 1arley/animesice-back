@@ -66,7 +66,7 @@ jobs:
       # coverageThreshold em jest.config.mjs garante o mínimo (stmts 90, lines 90,
       # functions 90, branches 80) — falha o job se cair abaixo.
       - name: Run unit tests with coverage
-        run: npx dotenv-cli -e .env.test -- npm run test:unit -- --coverage --forceExit
+        run: npx dotenv-cli -e .env.test -- npm run test:unit -- --coverage --detectOpenHandles --forceExit
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v7

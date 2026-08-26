@@ -26,6 +26,19 @@ const BACKFILL_BATCH = Number(process.env.WT_BACKFILL_BATCH ?? 30);
 const SIMILARITY_THRESHOLD = 0.6;
 /** Fuso horário exibido no calendário (animesice é pt-BR). */
 const SCHEDULE_TZ = process.env.WT_SCHEDULE_TZ ?? 'America/Sao_Paulo';
+/** Tamanho da página de syncSchedules (keyset). Pequeno p/ caber no
+ * CONTROL_TIMEOUT_MS com folga p/ retries/rede (25 animes * ~700ms ≈ 18s). */
+const SYNC_PAGE_SIZE = Number(process.env.WT_SCHEDULE_PAGE_SIZE ?? 25);
+/** Delay entre páginas de SYNC_SCHEDULES — espaça as chamadas AniList e
+ * garante que outras instâncias tenham chance de claimar o job (dedupe + lock
+ * atômico já protegem contra duplicação; este valor evita hot-loops). */
+export const SYNC_PAGE_DELAY_MS = Number(
+  process.env.WT_SCHEDULE_PAGE_DELAY_MS ?? 60_000,
+);
+/** Apenas animes com status ativo no vocabulário do catálogo: LANCAMENTO.
+ * (HIATUS/FINALIZADO/CANCELADO não precisam de schedule novo;
+ * NO AR é legacy e não é emitido por mapStatus). */
+const SCHEDULE_ACTIVE_STATUSES = ['LANCAMENTO'] as const;
 
 @Injectable()
 export class ScheduleSync {
@@ -157,24 +170,45 @@ export class ScheduleSync {
    * semana + hora) do mediaSchedule (AniList) de cada anime, gravando em
    * AnimeSchedule — alimenta o calendário semanal e mantém o catálogo
    * fiel ao status real (ex.: FINISHED vira FINALIZADO, encerra o excesso
-   * de "No ar"). Retorna qtd de animes sincronizados.
+   * de "No ar").
+   *
+   * Paginação keyset determinística:
+   *  - lê no máx. SYNC_PAGE_SIZE animes por run com `orderBy: id ASC`,
+   *    `id > afterId` (cursor), e `take: PAGE_SIZE + 1` (sentinela p/
+   *    saber se ainda há mais);
+   *  - se retornou PAGE_SIZE+1, devolve `{ continued: true, nextAfterId }`
+   *    para que o WorkerService resschedule o job (payload atualizado,
+   *    mesma lockId, status=PENDING, nextRunAt = agora + delay) — sem
+   *    duplicar a row e sem clobberar lock de outras instâncias;
+   *  - se retornou menos, terminou o catálogo elegível: o WorkerService
+   *    chama complete e zera a fila.
+   *
+   * Critério de elegibilidade: `published=true AND anilistId IS NOT NULL
+   * AND status='LANCAMENTO'`. Recortes por `createdAt` foram descartados
+   * porque tornavam o full-pass instável (cataloga inativo + omitia ativo
+   * antigo). Rollback de cobertura do SYNC_SCHEDULES é determinístico e
+   * idempotente.
    */
-  async syncSchedules(): Promise<number> {
-    const RECENT_CUTOFF = new Date();
-    RECENT_CUTOFF.setDate(RECENT_CUTOFF.getDate() - 60);
+  async syncSchedules(
+    payload: SyncSchedulesPayload = {},
+  ): Promise<SyncSchedulesResult> {
+    const afterId =
+      typeof payload?.afterId === 'string' ? payload.afterId : null;
 
-    const animes = await this.prisma.anime.findMany({
+    const rows = await this.prisma.anime.findMany({
       where: {
+        published: true,
         anilistId: { not: null },
-        OR: [
-          { status: 'LANCAMENTO' },
-          { status: 'NO AR' },
-          { createdAt: { gte: RECENT_CUTOFF } },
-        ],
+        status: { in: [...SCHEDULE_ACTIVE_STATUSES] },
+        ...(afterId ? { id: { gt: afterId } } : {}),
       },
       select: { id: true, anilistId: true, status: true },
-      take: 200,
+      orderBy: { id: 'asc' },
+      take: SYNC_PAGE_SIZE + 1,
     });
+
+    const hasMore = rows.length > SYNC_PAGE_SIZE;
+    const page = hasMore ? rows.slice(0, SYNC_PAGE_SIZE) : rows;
 
     let synced = 0;
     const metadataUpdates: Array<{
@@ -184,7 +218,7 @@ export class ScheduleSync {
     }> = [];
     const slots: Array<{ animeId: string; dayOfWeek: number; time: string }> =
       [];
-    for (const anime of animes) {
+    for (const anime of page) {
       if (!anime.anilistId) continue;
       try {
         const summary = await this.anilist.mediaSchedule(anime.anilistId);
@@ -249,11 +283,32 @@ export class ScheduleSync {
     }
     if (writes.length > 0) await this.prisma.$transaction(writes);
 
+    const lastProcessedId = page[page.length - 1]?.id ?? null;
+    const result: SyncSchedulesResult = {
+      synced,
+      continued: hasMore,
+      nextAfterId: hasMore ? lastProcessedId : null,
+    };
+
     console.error(
-      `[WATCHTOWER] syncSchedules: ${animes.length} animes, ${synced} sincronizados`,
+      `[WATCHTOWER] syncSchedules: page=${page.length}/${rows.length} synced=${synced} continued=${hasMore} nextAfterId=${lastProcessedId ?? '-'} SYNC_PAGE_DELAY_MS=${SYNC_PAGE_DELAY_MS}`,
     );
-    return synced;
+    return result;
   }
+}
+
+/** Payload do job SYNC_SCHEDULES. Apenas `afterId` (cursor keyset). */
+export interface SyncSchedulesPayload {
+  afterId?: string;
+}
+
+/** Resultado de uma página de syncSchedules. */
+export interface SyncSchedulesResult {
+  synced: number;
+  /** true => ainda há mais páginas; Worker deve reschedule. */
+  continued: boolean;
+  /** Cursor da próxima página (null se terminada). */
+  nextAfterId: string | null;
 }
 
 /** Mapeia status AniList para o vocabulário do catálogo. */

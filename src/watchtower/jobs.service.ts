@@ -40,6 +40,16 @@ export class JobsService {
     });
 
     if (existing) {
+      // Singleton com paginação em curso: se o payload atual carrega um cursor
+      // (afterId) ativo, NÃO sobrescreva. Continuação é owned pelo worker
+      // que detém o lock; re-enfileiramentos diários/startup só refrescam
+      // prioridade ou marcam para re-executar quando DONE.
+      const payloadHasCursor =
+        typeof (existing as unknown as { payload?: { afterId?: unknown } })
+          ?.payload === 'object' &&
+        (existing as unknown as { payload?: { afterId?: unknown } })?.payload
+          ?.afterId !== undefined;
+
       if (existing.status === 'DONE' || existing.status === 'DEAD') {
         await this.prisma.watchtowerJob.update({
           where: { id: existing.id },
@@ -54,9 +64,12 @@ export class JobsService {
             priority,
           },
         });
+      } else if (payloadHasCursor && existing.status === 'RUNNING') {
+        // Paginação em curso — não toca no payload nem no lock.
+        return;
       } else {
-        // PENDING/RUNNING: atualiza payload/priority sem resetar status/attempts
-        // (payload novo traz episodeUrl do catálogo; priority pode subir).
+        // PENDING sem cursor (próximo arranque) ou RUNNING sem cursor: aceita
+        // novo payload e atualiza prioridade.
         await this.prisma.watchtowerJob
           .update({
             where: { id: existing.id },
@@ -89,6 +102,36 @@ export class JobsService {
         `enqueue failed for ${input.type}:${input.dedupeKey}: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
+  }
+
+  /**
+   * Continuação owned: o worker ainda dono (lockedBy) transforma o próprio
+   * job RUNNING em PENDING com novo payload (cursor) e nextRunAt. Garante
+   * apenas UM job singleton ativo no sistema — sem criar nova row e sem
+   * clobberar o lock de outra instância. É a primitiva que sustenta
+   * paginação keyset (syncSchedules) sem race nem duplicação.
+   *
+   * Se o lock já não pertence ao caller (stale reap, restart), retorna false
+   * e nada é alterado — o caller pode ignorar ou logar.
+   */
+  async reschedule(
+    id: string,
+    lockedBy: string,
+    payload: unknown,
+    nextRunAt: Date,
+  ): Promise<boolean> {
+    const r = await this.prisma.watchtowerJob.updateMany({
+      where: { id, lockedBy, status: 'RUNNING' },
+      data: {
+        status: 'PENDING',
+        payload: payload as object,
+        nextRunAt,
+        lockedBy: null,
+        lockedAt: null,
+        lastError: null,
+      },
+    });
+    return r.count > 0;
   }
 
   /** Insere/atualiza vários jobs em uma única ida ao PostgreSQL. */

@@ -117,7 +117,7 @@ describe('ScheduleSync', () => {
       m.jobs as any,
     );
     const synced = await svc.syncSchedules();
-    expect(synced).toBe(1);
+    expect(synced.synced).toBe(1);
     expect(m.prisma.animeSchedule.deleteMany).toHaveBeenCalledWith({
       where: { animeId: { in: ['anime-1'] } },
     });
@@ -189,7 +189,7 @@ describe('ScheduleSync', () => {
       m.jobs as any,
     );
     const synced = await svc.syncSchedules();
-    expect(synced).toBe(1);
+    expect(synced.synced).toBe(1);
     expect(m.prisma.$executeRaw).toHaveBeenCalledTimes(1);
     expect(m.prisma.$transaction).toHaveBeenCalledTimes(1);
   });
@@ -214,7 +214,7 @@ describe('ScheduleSync', () => {
       m.jobs as any,
     );
     const synced = await svc.syncSchedules();
-    expect(synced).toBe(1);
+    expect(synced.synced).toBe(1);
   });
 
   it('backfillAnilist cobre todos os paths de mapStatus e validSeason/format', async () => {
@@ -336,8 +336,141 @@ describe('ScheduleSync', () => {
       m.jobs as any,
     );
     const synced = await svc.syncSchedules();
-    expect(synced).toBe(1);
+    expect(synced.synced).toBe(1);
     expect(m.prisma.animeSchedule.create).not.toHaveBeenCalled();
     expect(m.prisma.anime.update).not.toHaveBeenCalled();
+  });
+
+  it('syncSchedules filtra apenas published + LANCAMENTO + anilistId', async () => {
+    const m = makeMocks();
+    m.prisma.anime.findMany.mockResolvedValue([]);
+    const svc = new ScheduleSync(
+      m.prisma as any,
+      m.anilist as any,
+      m.jobs as any,
+    );
+    await svc.syncSchedules();
+    const call = m.prisma.anime.findMany.mock.calls[0]?.[0];
+    expect(call).toBeDefined();
+    expect(call.where).toEqual({
+      published: true,
+      anilistId: { not: null },
+      status: { in: ['LANCAMENTO'] },
+    });
+    expect(call.orderBy).toEqual({ id: 'asc' });
+    expect(call.take).toBeGreaterThan(25);
+  });
+
+  it('syncSchedules retorna continued=false + nextAfterId=null quando a página termina o catálogo', async () => {
+    const m = makeMocks();
+    m.prisma.anime.findMany.mockResolvedValue([
+      { id: 'anime-1', anilistId: 12345, status: 'LANCAMENTO' },
+    ]);
+    m.anilist.mediaSchedule.mockResolvedValue({
+      status: 'RELEASING',
+      startDate: null,
+      endDate: null,
+      schedule: [],
+    });
+    const svc = new ScheduleSync(
+      m.prisma as any,
+      m.anilist as any,
+      m.jobs as any,
+    );
+    const result = await svc.syncSchedules();
+    expect(result).toEqual({
+      synced: 1,
+      continued: false,
+      nextAfterId: null,
+    });
+  });
+
+  it('syncSchedules usa cursor keyset when afterId presente', async () => {
+    const m = makeMocks();
+    m.prisma.anime.findMany.mockResolvedValue([
+      { id: 'anime-2', anilistId: 12345, status: 'LANCAMENTO' },
+    ]);
+    m.anilist.mediaSchedule.mockResolvedValue({
+      status: 'RELEASING',
+      startDate: null,
+      endDate: null,
+      schedule: [],
+    });
+    const svc = new ScheduleSync(
+      m.prisma as any,
+      m.anilist as any,
+      m.jobs as any,
+    );
+    const result = await svc.syncSchedules({ afterId: 'anime-1' });
+    const call = m.prisma.anime.findMany.mock.calls[0]?.[0];
+    expect(call.where).toMatchObject({ id: { gt: 'anime-1' } });
+    expect(result.continued).toBe(false);
+  });
+
+  it('syncSchedules retorna continued=true + nextAfterId quando há mais páginas', async () => {
+    const m = makeMocks();
+    // 26 itens => excede SYNC_PAGE_SIZE (25) e força sentinela
+    const rows = Array.from({ length: 26 }, (_, i) => ({
+      id: `anime-${String(i).padStart(2, '0')}`,
+      anilistId: 1000 + i,
+      status: 'LANCAMENTO',
+    }));
+    m.prisma.anime.findMany.mockResolvedValue(rows);
+    m.anilist.mediaSchedule.mockResolvedValue({
+      status: 'RELEASING',
+      startDate: null,
+      endDate: null,
+      schedule: [],
+    });
+    const svc = new ScheduleSync(
+      m.prisma as any,
+      m.anilist as any,
+      m.jobs as any,
+    );
+    const result = await svc.syncSchedules();
+    expect(result.continued).toBe(true);
+    expect(result.nextAfterId).toBe('anime-24');
+    expect(result.synced).toBe(25);
+  });
+
+  it('syncSchedules página com menos de PAGE_SIZE+1 encerra sem continuação', async () => {
+    const m = makeMocks();
+    const rows = Array.from({ length: 25 }, (_, i) => ({
+      id: `anime-${String(i).padStart(2, '0')}`,
+      anilistId: 1000 + i,
+      status: 'LANCAMENTO',
+    }));
+    m.prisma.anime.findMany.mockResolvedValue(rows);
+    m.anilist.mediaSchedule.mockResolvedValue({
+      status: 'RELEASING',
+      startDate: null,
+      endDate: null,
+      schedule: [],
+    });
+    const svc = new ScheduleSync(
+      m.prisma as any,
+      m.anilist as any,
+      m.jobs as any,
+    );
+    const result = await svc.syncSchedules();
+    expect(result.continued).toBe(false);
+    expect(result.nextAfterId).toBeNull();
+  });
+
+  it('syncSchedules página vazia encerra sem continuação', async () => {
+    const m = makeMocks();
+    m.prisma.anime.findMany.mockResolvedValue([]);
+    const svc = new ScheduleSync(
+      m.prisma as any,
+      m.anilist as any,
+      m.jobs as any,
+    );
+    const result = await svc.syncSchedules();
+    expect(result).toEqual({
+      synced: 0,
+      continued: false,
+      nextAfterId: null,
+    });
+    expect(m.anilist.mediaSchedule).not.toHaveBeenCalled();
   });
 });

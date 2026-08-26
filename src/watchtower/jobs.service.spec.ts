@@ -385,4 +385,106 @@ describe('JobsService', () => {
     await svc.enqueueMany([]);
     expect(mock.$executeRaw).not.toHaveBeenCalled();
   });
+
+  it('reschedule transforma RUNNING em PENDING com payload novo e limpa lock', async () => {
+    await svc.enqueue({
+      type: 'SYNC_SCHEDULES',
+      dedupeKey: 'sync-schedules',
+      payload: {},
+    });
+    const claimed = await svc.claimBatch(1);
+    const job = claimed[0]!;
+    expect(job.status).toBe('RUNNING');
+
+    const nextRunAt = new Date(Date.now() + 60_000);
+    const ok = await svc.reschedule(
+      job.id,
+      job.lockedBy!,
+      { afterId: 'abc' },
+      nextRunAt,
+    );
+    expect(ok).toBe(true);
+
+    const row = mock.store.get(job.id)!;
+    expect(row.status).toBe('PENDING');
+    expect(row.payload).toEqual({ afterId: 'abc' });
+    expect(row.lockedBy).toBeNull();
+    expect(row.lockedAt).toBeNull();
+    expect(row.lastError).toBeNull();
+  });
+
+  it('reschedule retorna false quando lockedBy não bate (outra instância)', async () => {
+    await svc.enqueue({
+      type: 'SYNC_SCHEDULES',
+      dedupeKey: 'sync-schedules:diverge',
+      payload: {},
+    });
+    const claimed = await svc.claimBatch(1);
+    const job = claimed[0]!;
+    const ok = await svc.reschedule(
+      job.id,
+      'wrong-lock',
+      { afterId: 'x' },
+      new Date(),
+    );
+    expect(ok).toBe(false);
+    expect(mock.store.get(job.id)!.status).toBe('RUNNING');
+  });
+
+  it('reschedule retorna false quando status não é mais RUNNING', async () => {
+    await svc.enqueue({
+      type: 'SYNC_SCHEDULES',
+      dedupeKey: 'sync-schedules:done',
+      payload: {},
+    });
+    const claimed = await svc.claimBatch(1);
+    const job = claimed[0]!;
+    await svc.complete(job.id, job.lockedBy!);
+    const ok = await svc.reschedule(
+      job.id,
+      job.lockedBy!,
+      { afterId: 'x' },
+      new Date(),
+    );
+    expect(ok).toBe(false);
+  });
+
+  it('enqueue não sobrescreve payload de job RUNNING com cursor ativo', async () => {
+    await svc.enqueue({
+      type: 'SYNC_SCHEDULES',
+      dedupeKey: 'sync-schedules:cursor',
+      payload: { afterId: 'old-cursor' },
+    });
+    const claimed = await svc.claimBatch(1);
+    const job = claimed[0]!;
+    expect(job.status).toBe('RUNNING');
+
+    // tenta enqueue com payload diferente (ex: startup) — não deve sobrescrever
+    await svc.enqueue({
+      type: 'SYNC_SCHEDULES',
+      dedupeKey: 'sync-schedules:cursor',
+      payload: {},
+    });
+
+    const row = mock.store.get(job.id)!;
+    expect(row.payload).toEqual({ afterId: 'old-cursor' });
+    expect(row.status).toBe('RUNNING');
+  });
+
+  it('enqueue respeita job PENDING sem cursor (aceita novo payload)', async () => {
+    await svc.enqueue({
+      type: 'SYNC_SCHEDULES',
+      dedupeKey: 'sync-schedules:pend',
+      payload: {},
+    });
+    const row = [...mock.store.values()][0]!;
+    expect(row.status).toBe('PENDING');
+
+    await svc.enqueue({
+      type: 'SYNC_SCHEDULES',
+      dedupeKey: 'sync-schedules:pend',
+      payload: { priority: true },
+    });
+    expect(row.payload).toEqual({ priority: true });
+  });
 });

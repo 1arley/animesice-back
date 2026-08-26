@@ -547,6 +547,134 @@ describe('StreamingService.getSource', () => {
     expect(result.embedUrl).toBe(result.src);
   });
 
+  it('preserva Blogger quando fallback meusanimes rejeita (regressão #42)', async () => {
+    const { prisma, scrapeService, svc } = makeMocks();
+    prisma.anime.findUnique.mockResolvedValue({
+      id: 'anime-1',
+      slug: 'zenonzard-the-animation',
+    });
+    prisma.episode.findUnique.mockResolvedValue({
+      id: 'ep-1',
+      number: 1,
+      videoUrl: null,
+      embedUrl:
+        'https://meusanimes.blog/e/zenonzard-the-animation-1-episodio-1/',
+      thumbnailUrl: 'thumb.jpg',
+    });
+    const blogger = 'https://www.blogger.com/video.g?token=valid-token';
+    scrapeService.scrapeEpisodeVideo.mockResolvedValue({
+      videos: [],
+      playerTokens: [blogger],
+    });
+    scrapeService.scrapeFromMeusanimes.mockRejectedValue(
+      new Error('meusanimes indisponível'),
+    );
+
+    const result = await svc.getSource(
+      'zenonzard-the-animation',
+      1,
+      'https://api.animesice.app',
+    );
+
+    expect(result.rawVideoUrl).toBe(blogger);
+    expect(result.src).toBe(
+      `https://api.animesice.app/api/embed/proxy?url=${encodeURIComponent(blogger)}`,
+    );
+    expect(scrapeService.scrapeFromMeusanimes).toHaveBeenCalledWith(
+      'zenonzard-the-animation',
+      1,
+      1,
+    );
+    expect(prisma.episode.update).not.toHaveBeenCalled();
+  });
+
+  it('preserva YouTube embed quando fallback meusanimes rejeita', async () => {
+    const { prisma, scrapeService, svc } = makeMocks();
+    prisma.anime.findUnique.mockResolvedValue({
+      id: 'anime-1',
+      slug: 'voce-so-precisa-matar',
+    });
+    prisma.episode.findUnique.mockResolvedValue({
+      id: 'ep-1',
+      number: 1,
+      videoUrl: null,
+      embedUrl: 'https://meusanimes.blog/e/all-you-need-is-kill-episodio-1/',
+      thumbnailUrl: 'thumb.jpg',
+    });
+    const yt = 'https://www.youtube-nocookie.com/embed/0YpXN40vIxM';
+    scrapeService.scrapeEpisodeVideo.mockResolvedValue({
+      videos: [],
+      playerTokens: [yt],
+    });
+    scrapeService.scrapeFromMeusanimes.mockRejectedValue(new Error('timeout'));
+
+    const result = await svc.getSource(
+      'voce-so-precisa-matar',
+      1,
+      'https://api.animesice.app',
+    );
+
+    expect(result.src).toBe(yt);
+    expect(result.rawVideoUrl).toBe(yt);
+  });
+
+  it('prioriza mp4 do fallback sobre Blogger da fonte original', async () => {
+    const { prisma, scrapeService, svc } = makeMocks();
+    prisma.anime.findUnique.mockResolvedValue({
+      id: 'anime-1',
+      slug: 'qualquer-anime',
+    });
+    prisma.episode.findUnique.mockResolvedValue({
+      id: 'ep-1',
+      number: 1,
+      videoUrl: null,
+      embedUrl: 'https://example.com/ep-1',
+      thumbnailUrl: 'thumb.jpg',
+    });
+    const blogger = 'https://www.blogger.com/video.g?token=x';
+    const mp4 = 'https://cdn.example.com/video.mp4';
+    scrapeService.scrapeEpisodeVideo.mockResolvedValue({
+      videos: [],
+      playerTokens: [blogger],
+    });
+    scrapeService.scrapeFromMeusanimes.mockResolvedValue(mp4);
+
+    const result = await svc.getSource(
+      'qualquer-anime',
+      1,
+      'https://api.animesice.app',
+    );
+
+    expect(result.rawVideoUrl).toBe(mp4);
+    expect(result.src).not.toContain('/embed/proxy');
+  });
+
+  it('mantém 404 quando ambas as fontes falham (rejeição + nada)', async () => {
+    const { prisma, scrapeService, svc } = makeMocks();
+    prisma.anime.findUnique.mockResolvedValue({
+      id: 'anime-1',
+      slug: 'qualquer-anime',
+    });
+    prisma.episode.findUnique.mockResolvedValue({
+      id: 'ep-1',
+      number: 1,
+      videoUrl: null,
+      embedUrl: 'https://example.com/ep-1',
+      thumbnailUrl: null,
+    });
+    scrapeService.scrapeEpisodeVideo.mockResolvedValue({
+      videos: [],
+      playerTokens: [],
+    });
+    scrapeService.scrapeFromMeusanimes.mockRejectedValue(
+      new Error('upstream indisponível'),
+    );
+
+    await expect(
+      svc.getSource('qualquer-anime', 1, 'https://api.animesice.app'),
+    ).rejects.toThrow(NotFoundException);
+  });
+
   it('mantém 404 quando nenhuma fonte resolve', async () => {
     const { prisma, scrapeService, svc } = makeMocks();
     prisma.anime.findUnique.mockResolvedValue({

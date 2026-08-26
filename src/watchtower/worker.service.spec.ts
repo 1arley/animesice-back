@@ -50,6 +50,7 @@ function makeMocks() {
       complete: jest.fn(async () => undefined),
       fail: jest.fn(async () => undefined),
       enqueueMany: jest.fn(async (..._args: any[]) => undefined),
+      reschedule: jest.fn(async () => true),
     },
     extractor: {
       extract: jest.fn(
@@ -97,7 +98,7 @@ function makeMocks() {
     },
     schedule: {
       backfillAnilist: jest.fn(async () => 0),
-      syncSchedules: jest.fn(async () => 0),
+      syncSchedules: jest.fn(),
     },
   };
 }
@@ -316,7 +317,12 @@ describe('WorkerService', () => {
     expect(m.jobs.complete).toHaveBeenCalledWith('job-ba', '');
   });
 
-  it('process SYNC_SCHEDULES delega para schedule.syncSchedules', async () => {
+  it('process SYNC_SCHEDULES delega para schedule.syncSchedules e completa quando página termina', async () => {
+    m.schedule.syncSchedules.mockResolvedValueOnce({
+      synced: 5,
+      continued: false,
+      nextAfterId: null,
+    });
     const worker = new WorkerService(
       m.prisma as any,
       m.jobs as any,
@@ -340,6 +346,79 @@ describe('WorkerService', () => {
     );
     expect(m.schedule.syncSchedules).toHaveBeenCalledTimes(1);
     expect(m.jobs.complete).toHaveBeenCalledWith('job-ss', '');
+    expect(m.jobs.reschedule).not.toHaveBeenCalled();
+  });
+
+  it('process SYNC_SCHEDULES reschedule quando há mais páginas', async () => {
+    m.schedule.syncSchedules.mockResolvedValueOnce({
+      synced: 25,
+      continued: true,
+      nextAfterId: 'anime-24',
+    });
+    const worker = new WorkerService(
+      m.prisma as any,
+      m.jobs as any,
+      m.extractor as any,
+      m.validator as any,
+      m.publisher as any,
+      m.release as any,
+      m.season as any,
+      m.repair as any,
+      m.health as any,
+      m.catalog as any,
+      m.schedule as any,
+    );
+    await worker.process(
+      job({
+        id: 'job-ss-continued',
+        type: 'SYNC_SCHEDULES',
+        dedupeKey: 'sync-schedules',
+        payload: {},
+      }),
+    );
+    expect(m.jobs.complete).not.toHaveBeenCalled();
+    expect(m.jobs.reschedule).toHaveBeenCalledWith(
+      'job-ss-continued',
+      '',
+      { afterId: 'anime-24' },
+      expect.any(Date),
+    );
+  });
+
+  it('process SYNC_SCHEDULES fail quando reschedule retorna false (lock perdido)', async () => {
+    m.schedule.syncSchedules.mockResolvedValueOnce({
+      synced: 25,
+      continued: true,
+      nextAfterId: 'anime-24',
+    });
+    m.jobs.reschedule.mockResolvedValueOnce(false);
+    const worker = new WorkerService(
+      m.prisma as any,
+      m.jobs as any,
+      m.extractor as any,
+      m.validator as any,
+      m.publisher as any,
+      m.release as any,
+      m.season as any,
+      m.repair as any,
+      m.health as any,
+      m.catalog as any,
+      m.schedule as any,
+    );
+    await worker.process(
+      job({
+        id: 'job-ss-lostlock',
+        type: 'SYNC_SCHEDULES',
+        dedupeKey: 'sync-schedules',
+        payload: {},
+      }),
+    );
+    expect(m.jobs.fail).toHaveBeenCalledWith(
+      'job-ss-lostlock',
+      '',
+      expect.stringContaining('reschedule falhou'),
+    );
+    expect(m.jobs.complete).not.toHaveBeenCalled();
   });
 
   it('lançamento de erro em extract → jobs.fail', async () => {
