@@ -1,3 +1,23 @@
+# [1.25.0](https://github.com/1arley/animesice-back/compare/v1.24.4...v1.25.0) (2026-08-26)
+
+
+### Bug Fixes
+
+* **e2e:** usa prisma migrate reset no setup local ([50b2e08](https://github.com/1arley/animesice-back/commit/50b2e081c159d9f6125b1fccafa754a6bbb4659e))
+* **embed:** load outbound allowlist from runtime config ([830c6f4](https://github.com/1arley/animesice-back/commit/830c6f49c17cb70ee998eb799e677bfe54c35292))
+* resolve regressões do PR [#42](https://github.com/1arley/animesice-back/issues/42) — streaming fallback, schedule-sync pagination, CI ([74ac442](https://github.com/1arley/animesice-back/commit/74ac44242dab12152f30139e73962c8e37b58d62))
+* **streaming:** preserve provider player fallback ([869424c](https://github.com/1arley/animesice-back/commit/869424c2fc828cb28fc0e3502c37a5a8b028f64e))
+* **watchtower:** cast anilist_id para int no raw SQL do backfill ([a31fbde](https://github.com/1arley/animesice-back/commit/a31fbdefab52ba445da1ba807babe4d68b951d66))
+* **watchtower:** cast end_date para timestamptz no raw SQL ([4eb29f9](https://github.com/1arley/animesice-back/commit/4eb29f99bee164ea217051c280ab37e98bebaee0))
+* **watchtower:** cast year, episodeCount e dayOfWeek para int no raw SQL ([013d5df](https://github.com/1arley/animesice-back/commit/013d5df34b6a502335efe95abf0ad699a3d8bae4))
+* **watchtower:** previne PrismaClientKnownRequestError no backfill e sync de calendário ([95db5d4](https://github.com/1arley/animesice-back/commit/95db5d428ce8f2c269175b36ce7b6a12b66ea53a))
+* **watchtower:** sync limitado a animes em lançamento + enfileira no startup ([fe0de2d](https://github.com/1arley/animesice-back/commit/fe0de2d7267004dc369b66326b335de8a41fd239))
+
+
+### Features
+
+* **watchtower:** enfileira backfill+sync no startup do container ([702389e](https://github.com/1arley/animesice-back/commit/702389e0eff453a6007b6883b2372da04772172c))
+
 ## [1.24.4](https://github.com/1arley/animesice-back/compare/v1.24.3...v1.24.4) (2026-08-24)
 
 
