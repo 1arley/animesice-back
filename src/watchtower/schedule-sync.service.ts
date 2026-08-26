@@ -126,6 +126,11 @@ export class ScheduleSync {
           episode_count, studios
         )
         WHERE a.id = v.id
+          AND NOT EXISTS (
+            SELECT 1 FROM "Anime" x
+            WHERE x."anilistId" = v.anilist_id
+              AND x.id <> v.id
+          )
       `;
     }
 
@@ -226,6 +231,8 @@ export class ScheduleSync {
           SELECT gen_random_uuid()::text, v.anime_id, v.day_of_week, v.time,
                  NOW(), NOW()
           FROM (VALUES ${values}) AS v(anime_id, day_of_week, time)
+          ON CONFLICT ("animeId", "dayOfWeek") DO UPDATE
+            SET "time" = EXCLUDED."time", "updatedAt" = NOW()
         `,
       );
     }
