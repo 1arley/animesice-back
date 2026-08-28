@@ -20,6 +20,8 @@ function makeMocks() {
   const scrapeService = {
     scrapeEpisodeVideo: jest.fn(),
     scrapeFromMeusanimes: jest.fn(),
+    scrapeFromAnimefire: jest.fn(),
+    scrapeFromTioanime: jest.fn(),
     reextractEpisodeVideo: jest.fn(),
   };
   const extractionJobs = {
@@ -438,7 +440,42 @@ describe('StreamingService.proxyVideo', () => {
     );
   });
 
-  it('em 403 lança ForbiddenException quando reextrai e meusanimes falham', async () => {
+  it('em 403 tenta animefire quando meusanimes também falha', async () => {
+    const { prisma, embedService, scrapeService, svc } = makeMocks();
+    const expiresAt = new Date(Date.now() + 9999000);
+    prisma.streamingToken.findUnique.mockResolvedValue({
+      token: 'tok',
+      ip: '127.0.0.1',
+      expiresAt,
+      episodeId: 'ep-1',
+    });
+    prisma.episode.findUnique.mockResolvedValue({
+      id: 'ep-1',
+      number: 1,
+      season: 1,
+      videoUrl: 'https://rr1.googlevideo.com/videoplayback?expire=100',
+      anime: { slug: 'anime' },
+    });
+    embedService.proxyMedia
+      .mockResolvedValueOnce({ status: 403, headers: {}, body: null })
+      .mockResolvedValueOnce({
+        status: 200,
+        headers: { 'content-type': 'video/mp4' },
+        body: null,
+      });
+    scrapeService.reextractEpisodeVideo.mockResolvedValue(null);
+    scrapeService.scrapeFromMeusanimes.mockResolvedValue(null);
+    scrapeService.scrapeFromAnimefire.mockResolvedValue(
+      'https://cdn.animefire.example/v.mp4',
+    );
+
+    const future = Math.floor(Date.now() / 1000) + 9999;
+    const result = await svc.proxyVideo('tok', future, '127.0.0.1');
+    expect(result.status).toBe(200);
+    expect(scrapeService.scrapeFromAnimefire).toHaveBeenCalledWith('anime', 1);
+  });
+
+  it('em 403 lança ForbiddenException quando todas as fontes falham', async () => {
     const { prisma, embedService, scrapeService, svc } = makeMocks();
     const expiresAt = new Date(Date.now() + 9999000);
     prisma.streamingToken.findUnique.mockResolvedValue({
@@ -461,6 +498,7 @@ describe('StreamingService.proxyVideo', () => {
     });
     scrapeService.reextractEpisodeVideo.mockResolvedValue(null);
     scrapeService.scrapeFromMeusanimes.mockResolvedValue(null);
+    scrapeService.scrapeFromAnimefire.mockResolvedValue(null);
 
     const future = Math.floor(Date.now() / 1000) + 9999;
     await expect(svc.proxyVideo('tok', future, '127.0.0.1')).rejects.toThrow(
@@ -980,5 +1018,64 @@ describe('StreamingService.getSource', () => {
     );
     expect(result.rawVideoUrl).toBe('https://cdn.example.com/v.mp4');
     expect(result.reextracted).toBe(true);
+  });
+
+  it('doSingleScrape usa animefire quando meusanimes também falha', async () => {
+    const { prisma, scrapeService, svc } = makeMocks();
+    prisma.anime.findUnique.mockResolvedValue({
+      id: 'a1',
+      slug: 'anime-af-fallback',
+    });
+    prisma.episode.findUnique.mockResolvedValue({
+      id: 'ep-1',
+      number: 1,
+      videoUrl: null,
+      embedUrl: 'https://meusanimes.blog/e/anime-af-fallback-1/',
+      thumbnailUrl: null,
+    });
+    scrapeService.scrapeEpisodeVideo.mockRejectedValue(
+      new Error('fonte original falhou'),
+    );
+    scrapeService.scrapeFromMeusanimes.mockResolvedValue(null);
+    scrapeService.scrapeFromAnimefire.mockResolvedValue(
+      'https://cdn.animefire.example/v.mp4',
+    );
+
+    const result = await svc.getSource(
+      'anime-af-fallback',
+      1,
+      'https://api.animesice.app',
+    );
+    expect(result.rawVideoUrl).toBe('https://cdn.animefire.example/v.mp4');
+    expect(result.reextracted).toBe(true);
+    expect(scrapeService.scrapeFromAnimefire).toHaveBeenCalledWith(
+      'anime-af-fallback',
+      1,
+    );
+  });
+
+  it('mantém 404 quando todas as fontes (original, meusanimes, animefire) falham', async () => {
+    const { prisma, scrapeService, svc } = makeMocks();
+    prisma.anime.findUnique.mockResolvedValue({
+      id: 'a1',
+      slug: 'anime-all-fail',
+    });
+    prisma.episode.findUnique.mockResolvedValue({
+      id: 'ep-1',
+      number: 1,
+      videoUrl: null,
+      embedUrl: 'https://meusanimes.blog/e/anime-all-fail-1/',
+      thumbnailUrl: null,
+    });
+    scrapeService.scrapeEpisodeVideo.mockResolvedValue({
+      videos: [],
+      playerTokens: [],
+    });
+    scrapeService.scrapeFromMeusanimes.mockResolvedValue(null);
+    scrapeService.scrapeFromAnimefire.mockResolvedValue(null);
+
+    await expect(
+      svc.getSource('anime-all-fail', 1, 'https://api.animesice.app'),
+    ).rejects.toThrow(NotFoundException);
   });
 });

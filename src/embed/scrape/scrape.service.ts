@@ -12,6 +12,7 @@ import { ScrapeSource, ScrapeEpisodeResult } from './scrape-source.interface';
 import { AnimefireScrapeSource } from './animefire.source';
 import { AnimesonlineccScrapeSource } from './animesonlinecc.source';
 import { MeusanimesScrapeSource } from './meusanimes.source';
+import { TioanimeScrapeSource } from './tioanime.source';
 import { youtubeEmbedUrl } from './extract';
 import {
   waitForPlayerReady,
@@ -125,13 +126,14 @@ export class ScrapeService {
     animefire: AnimefireScrapeSource,
     animesonlinecc: AnimesonlineccScrapeSource,
     meusanimes: MeusanimesScrapeSource,
+    tioanime: TioanimeScrapeSource,
     private readonly prisma: PrismaService,
     @Inject(forwardRef(() => HealthMonitor))
     private readonly health: HealthMonitor,
     private readonly metrics: MetricsService,
     private readonly browserPool: BrowserPool,
   ) {
-    this.sources = [animefire, animesonlinecc, meusanimes];
+    this.sources = [animefire, animesonlinecc, meusanimes, tioanime];
     const ttl = Number(process.env.SCRAPE_CACHE_TTL_MS ?? 10 * 60_000);
     const stale = Number(process.env.SCRAPE_CACHE_STALE_MS ?? 60 * 60_000);
     this.CACHE_TTL_MS = Number.isFinite(ttl) && ttl > 0 ? ttl : 10 * 60_000;
@@ -733,6 +735,106 @@ export class ScrapeService {
           `[MEUSANIMES] candidate failed ${episodeUrl}: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
+    }
+    return null;
+  }
+
+  /**
+   * Constrói a URL de um episódio no animefire.io a partir do slug do anime e
+   * número do episódio.
+   * Padrão: animefire.io/animes/<slug>/<n>
+   */
+  animefireEpisodeUrl(animeSlug: string, episodeNumber: number): string {
+    return `https://animefire.io/animes/${animeSlug}/${episodeNumber}`;
+  }
+
+  /**
+   * Tenta extrair vídeo de um episódio via animefire.io (fallback quando
+   * meusanimes.blog está fora do ar).
+   *
+   * Fluxo: GET animefire.io/animes/<slug>/<ep> -> data-video-src ->
+   * GET /video/<slug>?... -> JSON { data:[{ src:...mp4 }] }.
+   *
+   * Retorna a URL .mp4 RAW (sem wrap) ou null se falhar.
+   */
+  async scrapeFromAnimefire(
+    animeSlug: string,
+    episodeNumber: number,
+  ): Promise<string | null> {
+    const episodeUrl = this.animefireEpisodeUrl(animeSlug, episodeNumber);
+    dbg(`[ANIMEFIRE] try ${animeSlug}/${episodeNumber} -> ${episodeUrl}`);
+    try {
+      const result = await this.scrapeEpisodeVideo(
+        episodeUrl,
+        undefined,
+        false,
+      );
+      const video = result.videos[0] ?? null;
+      if (video) {
+        dbg(
+          `[ANIMEFIRE] OK ${animeSlug}/${episodeNumber}: ${video.slice(0, 80)}...`,
+        );
+        return video;
+      }
+      dbg(`[ANIMEFIRE] no video returned ${animeSlug}/${episodeNumber}`);
+    } catch (err) {
+      dbg(
+        `[ANIMEFIRE] failed ${episodeUrl}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    return null;
+  }
+
+  /**
+   * Constrói a URL de um episódio no tioanime.com a partir do slug do anime e
+   * número do episódio.
+   * Padrão: tioanime.com/ver/<slug>-<n>
+   *
+   * Nota: o tioanime usa slugs em romanji/japones (ex: "fullmetal-alchemist-
+   * brotherhood"), NAO os mesmos slugs do animefire/meusanimes. O slug
+   * exato precisa ser descoberto por busca no catálogo do tioanime.
+   * Por enquanto, usa o slug do anime como tentativa direta.
+   */
+  tioanimeEpisodeUrl(animeSlug: string, episodeNumber: number): string {
+    return `https://tioanime.com/ver/${animeSlug}-${episodeNumber}`;
+  }
+
+  /**
+   * Tenta extrair vídeo de um episódio via tioanime.com (fallback quando
+   * meusanimes e animefire falharam).
+   *
+   * O tioanime retorna multiple fontes de vídeo inline no HTML como JSON:
+   *   var videos = [["nome","url",0,0],...]
+   *
+   * Fontes incluem: StreamSB, Mega, Okru, YourUpload, Amus, Mepu, Netu, Maru.
+   * Funciona de IPs de datacenter (sem Cloudflare).
+   *
+   * Retorna a URL .mp4 RAW (sem wrap) ou null se falhar.
+   */
+  async scrapeFromTioanime(
+    animeSlug: string,
+    episodeNumber: number,
+  ): Promise<string | null> {
+    const episodeUrl = this.tioanimeEpisodeUrl(animeSlug, episodeNumber);
+    dbg(`[TIOANIME] try ${animeSlug}/${episodeNumber} -> ${episodeUrl}`);
+    try {
+      const result = await this.scrapeEpisodeVideo(
+        episodeUrl,
+        undefined,
+        false,
+      );
+      const video = result.videos[0] ?? null;
+      if (video) {
+        dbg(
+          `[TIOANIME] OK ${animeSlug}/${episodeNumber}: ${video.slice(0, 80)}...`,
+        );
+        return video;
+      }
+      dbg(`[TIOANIME] no video returned ${animeSlug}/${episodeNumber}`);
+    } catch (err) {
+      dbg(
+        `[TIOANIME] failed ${episodeUrl}: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
     return null;
   }

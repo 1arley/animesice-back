@@ -442,6 +442,46 @@ export class StreamingService {
       }
     }
 
+    // Tentativa 3: fallback animefire.io (quando meusanimes também falhou)
+    if (!rawVideoUrl) {
+      dbg(
+        `[STREAM] tentativa 3: scrapeFromAnimefire(${animeSlug}, ${episodeNumber})`,
+      );
+      try {
+        rawVideoUrl = await this.scrapeService.scrapeFromAnimefire(
+          animeSlug,
+          episodeNumber,
+        );
+        dbg(
+          `[STREAM] tentativa 3 resultado: ${rawVideoUrl?.slice(0, 80) ?? 'null'}`,
+        );
+      } catch (err) {
+        dbg(
+          `[STREAM] tentativa 3 FALHOU: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
+    // Tentativa 4: fallback tioanime.com (funciona de datacenter, sem Cloudflare)
+    if (!rawVideoUrl) {
+      dbg(
+        `[STREAM] tentativa 4: scrapeFromTioanime(${animeSlug}, ${episodeNumber})`,
+      );
+      try {
+        rawVideoUrl = await this.scrapeService.scrapeFromTioanime(
+          animeSlug,
+          episodeNumber,
+        );
+        dbg(
+          `[STREAM] tentativa 4 resultado: ${rawVideoUrl?.slice(0, 80) ?? 'null'}`,
+        );
+      } catch (err) {
+        dbg(
+          `[STREAM] tentativa 4 FALHOU: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
     // Persiste RAW (sem wrap) p/ próximas chamadas.
     if (rawVideoUrl) {
       await this.prisma.episode
@@ -855,6 +895,20 @@ export class StreamingService {
               animeSlug,
               episodeNumber,
               season,
+            );
+          }
+          // Fallback animefire.io.
+          if (!fresh) {
+            fresh = await this.scrapeService.scrapeFromAnimefire(
+              animeSlug,
+              episodeNumber,
+            );
+          }
+          // Fallback tioanime.com.
+          if (!fresh) {
+            fresh = await this.scrapeService.scrapeFromTioanime(
+              animeSlug,
+              episodeNumber,
             );
           }
           return fresh;

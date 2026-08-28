@@ -178,6 +178,7 @@ describe('ScrapeService (orquestração + cache SWR)', () => {
     const af = makeSource('animefire', ['animefire.io']);
     const aocc = makeSource('animesonlinecc', ['animesonlinecc.to']);
     const ms = makeSource('meusanimes', ['meusanimes.blog']);
+    const ta = makeSource('tioanime', ['tioanime.com']);
     const prisma = makePrisma();
     const health = makeHealth();
     const metrics = makeMetrics();
@@ -194,12 +195,13 @@ describe('ScrapeService (orquestração + cache SWR)', () => {
       af as any,
       aocc as any,
       ms as any,
+      ta as any,
       prisma as any,
       health as any,
       metrics as any,
       browserPool as any,
     );
-    return { svc, af, aocc, ms, prisma, health, metrics, browserPool };
+    return { svc, af, aocc, ms, ta, prisma, health, metrics, browserPool };
   }
 
   it('usa a ordem do HealthMonitor quando múltiplas fontes suportam a URL', async () => {
@@ -506,6 +508,7 @@ describe('ScrapeService (cobertura avançada)', () => {
     const af = makeSource('animefire', ['animefire.io']);
     const aocc = makeSource('animesonlinecc', ['animesonlinecc.to']);
     const ms = makeSource('meusanimes', ['meusanimes.blog']);
+    const ta = makeSource('tioanime', ['tioanime.com']);
     const prisma = makePrisma();
     const health = makeHealth();
     const metrics = makeMetrics();
@@ -522,12 +525,13 @@ describe('ScrapeService (cobertura avançada)', () => {
       af as any,
       aocc as any,
       ms as any,
+      ta as any,
       prisma as any,
       health as any,
       metrics as any,
       browserPool as any,
     );
-    return { svc, af, aocc, ms, prisma, health, metrics, browserPool };
+    return { svc, af, aocc, ms, ta, prisma, health, metrics, browserPool };
   }
 
   it('usa valores padrão de TTL/stale/concorrência quando env ausente', async () => {
@@ -694,6 +698,7 @@ describe('ScrapeService (cobertura avançada)', () => {
     const af = makeSource('animefire', ['animefire.io']);
     const custom = makeSource('custom', ['custom.test']);
     const ms = makeSource('meusanimes', ['meusanimes.blog']);
+    const ta = makeSource('tioanime', ['tioanime.com']);
     const prisma = makePrisma();
     const health = makeHealth();
     const metrics = makeMetrics();
@@ -710,6 +715,7 @@ describe('ScrapeService (cobertura avançada)', () => {
       af as any,
       custom as any,
       ms as any,
+      ta as any,
       prisma as any,
       health as any,
       metrics as any,
@@ -906,6 +912,7 @@ describe('ScrapeService (cobertura avançada)', () => {
     });
     const af = makeSource('animefire', ['animefire.io']);
     const ms = makeSource('meusanimes', ['meusanimes.blog']);
+    const ta = makeSource('tioanime', ['tioanime.com']);
     const prisma = makePrisma();
     const health = makeHealth();
     const metrics = makeMetrics();
@@ -922,6 +929,7 @@ describe('ScrapeService (cobertura avançada)', () => {
       af as any,
       aocc as any,
       ms as any,
+      ta as any,
       prisma as any,
       health as any,
       metrics as any,
@@ -1250,6 +1258,47 @@ describe('ScrapeService (cobertura avançada)', () => {
       .mockRejectedValue(new Error('down'));
     expect(await svc.scrapeFromMeusanimes('foo', 1)).toBeNull();
     expect(spy).toHaveBeenCalledTimes(3);
+  });
+
+  it('monta URL de episodio do animefire', () => {
+    const { svc } = build();
+    expect(svc.animefireEpisodeUrl('kaguya-sama', 2)).toBe(
+      'https://animefire.io/animes/kaguya-sama/2',
+    );
+  });
+
+  it('scrapeFromAnimefire retorna URL quando scrapeEpisodeVideo devolve video', async () => {
+    const { svc } = build();
+    const spy = jest.spyOn(svc, 'scrapeEpisodeVideo').mockResolvedValueOnce({
+      videos: ['https://cdn.animefire.test/v.mp4'],
+      iframes: [],
+      cloudflare: false,
+    });
+    const v = await svc.scrapeFromAnimefire('foo', 1);
+    expect(v).toBe('https://cdn.animefire.test/v.mp4');
+    expect(spy).toHaveBeenCalledWith(
+      'https://animefire.io/animes/foo/1',
+      undefined,
+      false,
+    );
+  });
+
+  it('scrapeFromAnimefire retorna null quando scrapeEpisodeVideo retorna videos vazio', async () => {
+    const { svc } = build();
+    jest.spyOn(svc, 'scrapeEpisodeVideo').mockResolvedValueOnce({
+      videos: [],
+      iframes: [],
+      cloudflare: false,
+    });
+    expect(await svc.scrapeFromAnimefire('foo', 1)).toBeNull();
+  });
+
+  it('scrapeFromAnimefire retorna null quando scrapeEpisodeVideo rejeita', async () => {
+    const { svc } = build();
+    jest
+      .spyOn(svc, 'scrapeEpisodeVideo')
+      .mockRejectedValueOnce(new Error('down'));
+    expect(await svc.scrapeFromAnimefire('foo', 1)).toBeNull();
   });
 
   it('invalidateEpisode remove apenas entradas da URL informada', async () => {

@@ -6,6 +6,7 @@ import { BrowserPool } from '@/embed/scrape/browser-pool.service';
 import { AnimefireScrapeSource } from '@/embed/scrape/animefire.source';
 import { AnimesonlineccScrapeSource } from '@/embed/scrape/animesonlinecc.source';
 import { MeusanimesScrapeSource } from '@/embed/scrape/meusanimes.source';
+import { TioanimeScrapeSource } from '@/embed/scrape/tioanime.source';
 import { PrismaModule } from '@/prisma/prisma.module';
 import { WatchtowerModule } from '@/watchtower/watchtower.module';
 import { MetricsService } from '@/metrics/metrics.service';
@@ -26,6 +27,7 @@ import { MetricsService } from '@/metrics/metrics.service';
     AnimefireScrapeSource,
     AnimesonlineccScrapeSource,
     MeusanimesScrapeSource,
+    TioanimeScrapeSource,
     ScrapeService,
     MetricsService,
   ],
