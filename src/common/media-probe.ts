@@ -19,7 +19,7 @@ import { pinnedDispatcher, resolveSafeUrl } from '@/common/ssrf';
 import { refererForMediaUrl } from '@/common/url-utils';
 
 const MAX_REDIRECTS = 5;
-const LIVENESS_CACHE_TTL_MS = 300_000;
+const LIVENESS_CACHE_TTL_MS = 1_800_000; // 30 min — reduz probes de rede em 6x
 
 interface LivenessCacheEntry {
   dead: boolean;
