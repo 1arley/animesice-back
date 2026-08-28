@@ -1078,4 +1078,101 @@ describe('StreamingService.getSource', () => {
       svc.getSource('anime-all-fail', 1, 'https://api.animesice.app'),
     ).rejects.toThrow(NotFoundException);
   });
+
+  it('doSingleScrape usa tioanime quando meusanimes e animefire falham', async () => {
+    const { prisma, scrapeService, svc } = makeMocks();
+    prisma.anime.findUnique.mockResolvedValue({
+      id: 'a1',
+      slug: 'anime-tio-fallback',
+    });
+    prisma.episode.findUnique.mockResolvedValue({
+      id: 'ep-1',
+      number: 1,
+      videoUrl: null,
+      embedUrl: 'https://meusanimes.blog/e/anime-tio-fallback-1/',
+      thumbnailUrl: null,
+    });
+    scrapeService.scrapeEpisodeVideo.mockRejectedValue(
+      new Error('fonte original falhou'),
+    );
+    scrapeService.scrapeFromMeusanimes.mockResolvedValue(null);
+    scrapeService.scrapeFromAnimefire.mockResolvedValue(null);
+    scrapeService.scrapeFromTioanime.mockResolvedValue(
+      'https://cdn.tioanime.example/v.mp4',
+    );
+
+    const result = await svc.getSource(
+      'anime-tio-fallback',
+      1,
+      'https://api.animesice.app',
+    );
+    expect(result.rawVideoUrl).toBe('https://cdn.tioanime.example/v.mp4');
+    expect(result.reextracted).toBe(true);
+    expect(scrapeService.scrapeFromTioanime).toHaveBeenCalledWith(
+      'anime-tio-fallback',
+      1,
+    );
+  });
+
+  it('mantém 404 quando todas as 4 fontes falham (incluindo tioanime)', async () => {
+    const { prisma, scrapeService, svc } = makeMocks();
+    prisma.anime.findUnique.mockResolvedValue({
+      id: 'a1',
+      slug: 'anime-all-fail-4',
+    });
+    prisma.episode.findUnique.mockResolvedValue({
+      id: 'ep-1',
+      number: 1,
+      videoUrl: null,
+      embedUrl: 'https://meusanimes.blog/e/anime-all-fail-4-1/',
+      thumbnailUrl: null,
+    });
+    scrapeService.scrapeEpisodeVideo.mockResolvedValue({
+      videos: [],
+      playerTokens: [],
+    });
+    scrapeService.scrapeFromMeusanimes.mockResolvedValue(null);
+    scrapeService.scrapeFromAnimefire.mockResolvedValue(null);
+    scrapeService.scrapeFromTioanime.mockResolvedValue(null);
+
+    await expect(
+      svc.getSource('anime-all-fail-4', 1, 'https://api.animesice.app'),
+    ).rejects.toThrow(NotFoundException);
+  });
+
+  it('em 403 tenta tioanime quando meusanimes e animefire falham no proxyVideo', async () => {
+    const { prisma, embedService, scrapeService, svc } = makeMocks();
+    const expiresAt = new Date(Date.now() + 9999000);
+    prisma.streamingToken.findUnique.mockResolvedValue({
+      token: 'tok',
+      ip: '127.0.0.1',
+      expiresAt,
+      episodeId: 'ep-1',
+    });
+    prisma.episode.findUnique.mockResolvedValue({
+      id: 'ep-1',
+      number: 1,
+      season: 1,
+      videoUrl: 'https://rr1.googlevideo.com/videoplayback?expire=100',
+      anime: { slug: 'anime' },
+    });
+    embedService.proxyMedia
+      .mockResolvedValueOnce({ status: 403, headers: {}, body: null })
+      .mockResolvedValueOnce({
+        status: 200,
+        headers: { 'content-type': 'video/mp4' },
+        body: null,
+      });
+    scrapeService.reextractEpisodeVideo.mockResolvedValue(null);
+    scrapeService.scrapeFromMeusanimes.mockResolvedValue(null);
+    scrapeService.scrapeFromAnimefire.mockResolvedValue(null);
+    scrapeService.scrapeFromTioanime.mockResolvedValue(
+      'https://cdn.tioanime.example/v.mp4',
+    );
+
+    const future = Math.floor(Date.now() / 1000) + 9999;
+    const result = await svc.proxyVideo('tok', future, '127.0.0.1');
+    expect(result.status).toBe(200);
+    expect(scrapeService.scrapeFromTioanime).toHaveBeenCalledWith('anime', 1);
+  });
 });
