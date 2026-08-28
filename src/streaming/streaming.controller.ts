@@ -17,6 +17,7 @@ import {
 } from '@nestjs/swagger';
 import express from 'express';
 import { StreamingService } from '@/streaming/streaming.service';
+import { ExtractionJob } from '@/streaming/extraction-job.service';
 import { JwtAuthGuard } from '@/auth/jwt-auth.guard';
 import { ConfigService } from '@nestjs/config';
 import { Throttle } from '@nestjs/throttler';
@@ -180,12 +181,20 @@ export class StreamingController {
 
     // Polling de job assíncrono
     if (jobId) {
-      const status = this.streamingService.getJobStatus(jobId);
+      const status = await this.streamingService.getJobStatus(
+        jobId,
+        backendOrigin(req, this.trustProxy, this.configService),
+      );
       if (!status) {
         throw new NotFoundException('Job não encontrado ou expirado.');
       }
-      if (status.status === 'completed') {
-        // Job completou — retorna o source normalmente
+      if (status.status === 'completed' && status.result) {
+        // Source já pronto — retorna direto (sem round-trip extra)
+        res.json(status.result);
+        return;
+      }
+      if (status.status === 'completed' && !status.result) {
+        // Job completou mas não conseguiu construir source — fallback síncrono
         const source = await this.streamingService.getSource(
           animeSlug,
           episodeNumber,
@@ -241,6 +250,136 @@ export class StreamingController {
       refresh === '1' || refresh === 'true',
     );
     res.json(source);
+  }
+
+  /**
+   * SSE endpoint para extração de stream source em tempo real.
+   *
+   * Fluxo:
+   * 1. Se o vídeo já existe e está vivo → envia evento `source` e fecha
+   * 2. Se extração é necessária → cria job, envia `pending`
+   * 3. Quando o job completa → envia `source` ou `failed`
+   * 4. Timeout de 60s → envia `timeout` e fecha
+   *
+   * Substitui o polling com detecção instantânea de conclusão.
+   */
+  @Get('source/sse')
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @ApiOperation({
+    summary:
+      'SSE: stream source em tempo real. Envia evento quando a extração completa.',
+  })
+  async getSourceSSE(
+    @Query('anime') animeSlug: string,
+    @Query('episode') episodeSlug: string,
+    @Req() req: express.Request,
+    @Res() res: express.Response,
+  ) {
+    const episodeNumber = EPISODE_NUM_RE.test(episodeSlug)
+      ? parseInt(episodeSlug, 10)
+      : NaN;
+    if (!animeSlug || Number.isNaN(episodeNumber)) {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.write(
+        `event: error\ndata: ${JSON.stringify({ error: 'Parâmetros inválidos' })}\n\n`,
+      );
+      res.end();
+      return;
+    }
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+
+    const apiOrigin = backendOrigin(req, this.trustProxy, this.configService);
+
+    // 1. Tenta extração assíncrona — retorna null se o vídeo já existe
+    const asyncResult = await this.streamingService.getSourceAsync(
+      animeSlug,
+      episodeNumber,
+      1,
+    );
+
+    if (!asyncResult) {
+      // Vídeo já existe — envia source imediatamente
+      const source = await this.streamingService.getSource(
+        animeSlug,
+        episodeNumber,
+        apiOrigin,
+        1,
+        false,
+      );
+      res.write(`event: source\ndata: ${JSON.stringify(source)}\n\n`);
+      res.end();
+      return;
+    }
+
+    // 2. Job criado — envia pending
+    const jobId = asyncResult.jobId;
+    res.write(
+      `event: pending\ndata: ${JSON.stringify({ jobId, status: 'pending' })}\n\n`,
+    );
+
+    // 3. Inscreve no completion do job
+    let cleanup: (() => void) | null = null;
+    let finished = false;
+
+    const finish = (job: ExtractionJob) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timeout);
+      cleanup?.();
+      void (async () => {
+        try {
+          if (job.status === 'completed' && job.result?.videoUrl) {
+            const source =
+              await this.streamingService.buildSourceResponseFromJob(
+                job,
+                apiOrigin,
+              );
+            res.write(`event: source\ndata: ${JSON.stringify(source)}\n\n`);
+          } else {
+            res.write(
+              `event: failed\ndata: ${JSON.stringify({ error: job.error ?? 'Extração falhou' })}\n\n`,
+            );
+          }
+        } catch {
+          res.write(
+            `event: failed\ndata: ${JSON.stringify({ error: 'Erro ao construir source' })}\n\n`,
+          );
+        }
+        res.end();
+      })();
+    };
+
+    cleanup = this.streamingService.onJobComplete(jobId, finish);
+
+    // Se o job já completou (race condition), finish já foi chamado
+    if (finished) return;
+
+    // 4. Timeout de 60s
+    const timeout = setTimeout(() => {
+      if (!finished) {
+        finished = true;
+        cleanup?.();
+        res.write(
+          `event: timeout\ndata: ${JSON.stringify({ message: 'Timeout — tente novamente' })}\n\n`,
+        );
+        res.end();
+      }
+    }, 60_000);
+
+    // 5. Cleanup no disconnect do client
+    req.on('close', () => {
+      if (!finished) {
+        finished = true;
+        clearTimeout(timeout);
+        cleanup?.();
+      }
+    });
   }
 
   @UseGuards(JwtAuthGuard)

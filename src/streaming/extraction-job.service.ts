@@ -24,8 +24,13 @@ type ExtractionFn = () => Promise<{
   playerEmbed: string | null;
 }>;
 
+type JobCompletionListener = (job: ExtractionJob) => void;
+
 const JOB_TTL_MS = 5 * 60_000;
-const MAX_CONCURRENT_JOBS = 3;
+const MAX_CONCURRENT_JOBS = parseInt(
+  process.env.MAX_EXTRACTION_JOBS ?? '5',
+  10,
+);
 
 @Injectable()
 export class ExtractionJobService {
@@ -36,6 +41,10 @@ export class ExtractionJobService {
     fn: ExtractionFn;
     resolve: () => void;
   }> = [];
+  private readonly completionListeners = new Map<
+    string,
+    Set<JobCompletionListener>
+  >();
 
   @Cron(CronExpression.EVERY_MINUTE)
   cleanup(): void {
@@ -57,6 +66,29 @@ export class ExtractionJobService {
 
   getJob(id: string): ExtractionJob | undefined {
     return this.jobs.get(id);
+  }
+
+  /**
+   * Registra um callback chamado quando o job completa (completed ou failed).
+   * Se o job já está em estado terminal, chama imediatamente.
+   * Retorna uma função de cleanup que remove o listener.
+   */
+  onComplete(jobId: string, listener: JobCompletionListener): () => void {
+    const job = this.jobs.get(jobId);
+    if (job && (job.status === 'completed' || job.status === 'failed')) {
+      listener(job);
+      return () => {};
+    }
+    let listeners = this.completionListeners.get(jobId);
+    if (!listeners) {
+      listeners = new Set();
+      this.completionListeners.set(jobId, listeners);
+    }
+    listeners.add(listener);
+    return () => {
+      listeners.delete(listener);
+      if (listeners.size === 0) this.completionListeners.delete(jobId);
+    };
   }
 
   findByEpisode(
@@ -125,7 +157,22 @@ export class ExtractionJobService {
     } finally {
       job.completedAt = Date.now();
       this.activeJobs--;
+      this.emitCompletion(job);
       this.drainQueue();
+    }
+  }
+
+  private emitCompletion(job: ExtractionJob): void {
+    const listeners = this.completionListeners.get(job.id);
+    if (listeners && listeners.size > 0) {
+      for (const listener of listeners) {
+        try {
+          listener(job);
+        } catch {
+          /* listener error doesn't break the loop */
+        }
+      }
+      this.completionListeners.delete(job.id);
     }
   }
 

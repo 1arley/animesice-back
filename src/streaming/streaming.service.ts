@@ -7,7 +7,10 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '@/prisma/prisma.service';
 import { EmbedService } from '@/embed/embed.service';
 import { ScrapeService } from '@/embed/scrape/scrape.service';
-import { ExtractionJobService } from '@/streaming/extraction-job.service';
+import {
+  ExtractionJobService,
+  ExtractionJob,
+} from '@/streaming/extraction-job.service';
 import { youtubeEmbedUrl } from '@/embed/scrape/extract';
 import {
   probeMediaUrlDead,
@@ -89,6 +92,27 @@ export class StreamingService {
     private readonly scrapeService: ScrapeService,
     private readonly extractionJobs: ExtractionJobService,
   ) {}
+
+  /**
+   * Registra um callback de conclusão de job para uso no SSE endpoint.
+   * Retorna uma função de cleanup que remove o listener.
+   */
+  onJobComplete(
+    jobId: string,
+    listener: (job: ExtractionJob) => void,
+  ): () => void {
+    return this.extractionJobs.onComplete(jobId, listener);
+  }
+
+  /**
+   * Constrói StreamSourceResponse a partir de um job — público para SSE.
+   */
+  buildSourceResponseFromJob(
+    job: ExtractionJob,
+    apiOriginBackend: string,
+  ): Promise<StreamSourceResponse> {
+    return this.buildSourceFromJobResult(job, apiOriginBackend);
+  }
 
   /** Purga tokens de streaming expirados (a cada 6h) p/ evitar crescimento. */
   @Cron('0 */6 * * *')
@@ -610,27 +634,113 @@ export class StreamingService {
 
   /**
    * Consulta status de um job de extração assíncrona.
+   * Quando o job completa, retorna o StreamSourceResponse pronto —
+   * eliminando a necessidade de uma segunda chamada getSource() no client.
    */
-  getJobStatus(jobId: string): {
+  async getJobStatus(
+    jobId: string,
+    apiOriginBackend: string,
+  ): Promise<{
     status: string;
     result: StreamSourceResponse | null;
     error: string | null;
-  } | null {
+  } | null> {
     const job = this.extractionJobs.getJob(jobId);
     if (!job) return null;
 
     if (job.status === 'completed' && job.result?.videoUrl) {
+      // Constrói o StreamSourceResponse diretamente a partir do resultado do job
+      try {
+        const result = await this.buildSourceFromJobResult(
+          job,
+          apiOriginBackend,
+        );
+        return { status: 'completed', result, error: null };
+      } catch {
+        // Se falhar ao construir, retorna completed sem source
+        // (o client faz fallback para getSource síncrono)
+        return { status: 'completed', result: null, error: null };
+      }
+    }
+
+    if (job.status === 'failed') {
+      return { status: 'failed', result: null, error: job.error };
+    }
+
+    return { status: job.status, result: null, error: null };
+  }
+
+  /**
+   * Constrói um StreamSourceResponse a partir de um job completado.
+   * Replica a lógica de getSource() sem as probes de liveness
+   * (o job acabou de extrair, então o resultado é fresco).
+   */
+  private async buildSourceFromJobResult(
+    job: {
+      animeSlug: string;
+      episodeNumber: number;
+      season: number;
+      result: { videoUrl: string | null; playerEmbed: string | null } | null;
+    },
+    apiOriginBackend: string,
+  ): Promise<StreamSourceResponse> {
+    const anime = await this.prisma.anime.findUnique({
+      where: { slug: job.animeSlug },
+      select: { id: true, slug: true },
+    });
+    if (!anime) throw new NotFoundException('Anime não encontrado.');
+
+    const episode = await this.prisma.episode.findUnique({
+      where: {
+        animeId_season_number: {
+          animeId: anime.id,
+          season: job.season,
+          number: job.episodeNumber,
+        },
+      },
+      select: {
+        id: true,
+        number: true,
+        videoUrl: true,
+        embedUrl: true,
+        thumbnailUrl: true,
+      },
+    });
+    if (!episode) throw new NotFoundException('Episódio não encontrado.');
+
+    const rawVideoUrl = job.result!.videoUrl;
+    const playerEmbed = job.result!.playerEmbed;
+
+    // Fonte é player do YouTube/Blogger (embed)
+    if (playerEmbed && !rawVideoUrl) {
+      const isYoutube = youtubeEmbedUrl(playerEmbed) !== null;
+      const embedSrc = isYoutube
+        ? playerEmbed
+        : `${apiOriginBackend.replace(/\/$/, '')}/${process.env.API_PREFIX || 'api'}/embed/proxy?url=${encodeURIComponent(playerEmbed)}`;
       return {
-        status: 'completed',
-        result: null, // O cliente chama getSource() normalmente após completion
-        error: null,
+        animeSlug: anime.slug,
+        episodeNumber: episode.number,
+        src: embedSrc,
+        rawVideoUrl: playerEmbed,
+        embedUrl: embedSrc,
+        reextracted: true,
+        thumbnailUrl: episode.thumbnailUrl,
       };
     }
 
+    // Monta src final
+    const base = apiOriginBackend.replace(/\/$/, '');
+    const apiPrefix = process.env.API_PREFIX || 'api';
+    const src = `${base}/${apiPrefix}${wrapMediaUrl(rawVideoUrl!)}`;
+
     return {
-      status: job.status,
-      result: null,
-      error: job.error,
+      animeSlug: anime.slug,
+      episodeNumber: episode.number,
+      src,
+      rawVideoUrl,
+      embedUrl: episode.embedUrl,
+      reextracted: true,
+      thumbnailUrl: episode.thumbnailUrl,
     };
   }
 
