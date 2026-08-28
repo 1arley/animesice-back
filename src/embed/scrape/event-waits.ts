@@ -9,6 +9,23 @@ import type { Page, Request as PlaywrightRequest } from 'playwright';
 
 const VIDEO_HOST_RE = /videoplayback|\.mp4($|\?|#)|\.m3u8($|\?|#)/i;
 
+/** Sinais de que o player embutido (Blogger/YouTube) inicializou a API. */
+const PLAYER_INIT_RE = /(youtubei|batchexecute|googlevideo|videoplayback)/i;
+
+/** Seletores de iframe/player injetados pelo Blogger/YouTube. */
+const PLAYER_IFRAME_SELECTOR =
+  'iframe[src*="youtube.com"],iframe[src*="youtube-nocookie.com"],iframe[src*="blogger.com"],iframe[src*="video.google"],video';
+
+/**
+ * Tempo máximo (rede de segurança) para o player ficar pronto. Não é um sleep:
+ * resolve assim que o sinal real de prontidão (iframe anexado ou request da
+ * API do player) disparar — rápido quando o player responde rápido.
+ */
+const PLAYER_READY_TIMEOUT_MS = 12_000;
+
+/** Tempo máximo para o videoplayback ser disparado após o clique. */
+const PLAYER_STREAM_TIMEOUT_MS = 15_000;
+
 /** Subconjunto do DOM usado na verificação de readiness. */
 interface CheckNodeList {
   length: number;
@@ -224,20 +241,37 @@ async function triggerPlaySmart(page: Page): Promise<boolean> {
 
 /**
  * Resolve player token (Blogger/YouTube) de forma event-driven.
- * Substitui o sleep 8s + polling 15s por detecção de events mais agressiva.
+ *
+ * Em vez de sleeps fixos (o legado usava 8s + polling 15s), aguarda sinais
+ * reais:
+ *  1. Prontidão do player: iframe do YouTube/Blogger anexado OU request da
+ *     API do player (batchexecute/youtubei) — resolve assim que o player
+ *     está vivo (sem dormir um tempo arbitrário).
+ *  2. Clique no play (body + botões + iframes).
+ *  3. Videoplayback: waitForRequest resolve no instante em que o stream real
+ *     (.mp4/videoplayback) é disparado, em vez de fazer polling a cada 300ms.
+ *
+ * Os timeouts são apenas redes de segurança. Na prática a extração completa
+ * resolve em ~1-3s quando o player responde rápido (objetivo: o mais próximo
+ * de instantâneo possível), sem sacrificar a confiabilidade do legado (8s/15s).
  */
 export async function extractPlayerVideoEventDriven(
   page: Page,
   playerTokenUrl: string,
 ): Promise<string[]> {
   const captured: string[] = [];
+  const seen = new Set<string>();
 
-  page.on('request', (req) => {
+  const onMediaRequest = (req: PlaywrightRequest) => {
     const u = req.url();
-    if (/videoplayback|googlevideo|\.mp4($|\?|#)/i.test(u)) {
-      captured.push(u);
+    if (/videoplayback|googlevideo|\.mp4($|\?|#)|\.m3u8($|\?|#)/i.test(u)) {
+      if (!seen.has(u)) {
+        seen.add(u);
+        captured.push(u);
+      }
     }
-  });
+  };
+  page.on('request', onMediaRequest);
 
   try {
     await page.goto(playerTokenUrl, {
@@ -245,52 +279,34 @@ export async function extractPlayerVideoEventDriven(
       timeout: 30_000,
     });
 
-    // Espera inicial reduzida: 3s (vs 8s original)
-    await page.waitForTimeout(3_000);
+    // 1) Prontidão do player (event-driven, sem sleep fixo). Se o player já
+    //    disparou o videoplayback no load (captured.populado), pula direto para
+    //    o retorno — caminho mais instantâneo possível.
+    if (captured.length === 0) {
+      // Sinais reais de prontidão: request da API do player (batchexecute /
+      // youtubei) ou iframe do YouTube/Blogger anexado — o que vier primeiro.
+      await Promise.race([
+        page.waitForRequest((req) => PLAYER_INIT_RE.test(req.url()), {
+          timeout: PLAYER_READY_TIMEOUT_MS,
+        }),
+        page.waitForSelector(PLAYER_IFRAME_SELECTOR, {
+          state: 'attached',
+          timeout: PLAYER_READY_TIMEOUT_MS,
+        }),
+      ]).catch(() => undefined);
 
-    // Click no body para triggerar o player
-    await page.click('body', { timeout: 3_000 }).catch(() => undefined);
+      // 2) Clique no body para disparar o play (Blogger/YouTube embutido).
+      await page.click('body', { timeout: 3_000 }).catch(() => undefined);
 
-    // Tenta botões de play
-    const playSelectors = [
-      '.ytp-cued-thumbnail-overlay',
-      '.ytp-large-play-button',
-      '[aria-label*="Play" i]',
-      'button[aria-label*="Play" i]',
-    ];
-    for (const sel of playSelectors) {
-      try {
-        const el = await page.$(sel);
-        if (el) {
-          await el.click({ timeout: 3_000 }).catch(() => undefined);
-          break;
-        }
-      } catch {
-        /* tentative */
-      }
-    }
+      // 3) Botões de play (página e iframes filhos).
+      await clickPlayButtons(page);
 
-    // Tenta nos iframes
-    for (const frame of page.mainFrame().childFrames()) {
-      for (const sel of playSelectors) {
-        try {
-          const el = await frame.$(sel);
-          if (el) {
-            await el.click({ timeout: 3_000 }).catch(() => undefined);
-            break;
-          }
-        } catch {
-          /* cross-origin */
-        }
-      }
-    }
-
-    // Espera por requests de videoplayback (polling reduzido: 4s vs 15s)
-    const deadline = Date.now() + 4_000;
-    while (Date.now() < deadline) {
-      if (page.isClosed()) break;
-      if (captured.length > 0) break;
-      await page.waitForTimeout(300).catch(() => undefined);
+      // 4) Videoplayback real — waitForRequest resolve no instante do disparo.
+      await page
+        .waitForRequest((req) => hasVideoMediaUrls([req.url()]), {
+          timeout: PLAYER_STREAM_TIMEOUT_MS,
+        })
+        .catch(() => undefined);
     }
 
     return [...new Set(captured)].filter((u) =>
@@ -303,6 +319,46 @@ export async function extractPlayerVideoEventDriven(
     );
     return [];
   } finally {
+    page.off('request', onMediaRequest);
     await page.close().catch(() => undefined);
+  }
+}
+
+/**
+ * Clica nos botões de play do YouTube/Blogger embutido, na página e nos
+ * iframes filhos (o player do Blogger fica num iframe cross-origin).
+ */
+async function clickPlayButtons(page: Page): Promise<void> {
+  const playSelectors = [
+    '.ytp-cued-thumbnail-overlay',
+    '.ytp-large-play-button',
+    '[aria-label*="Play" i]',
+    'button[aria-label*="Play" i]',
+  ];
+
+  for (const sel of playSelectors) {
+    try {
+      const el = await page.$(sel);
+      if (el) {
+        await el.click({ timeout: 3_000 }).catch(() => undefined);
+        break;
+      }
+    } catch {
+      /* tentative */
+    }
+  }
+
+  for (const frame of page.mainFrame().childFrames()) {
+    for (const sel of playSelectors) {
+      try {
+        const el = await frame.$(sel);
+        if (el) {
+          await el.click({ timeout: 3_000 }).catch(() => undefined);
+          break;
+        }
+      } catch {
+        /* cross-origin */
+      }
+    }
   }
 }

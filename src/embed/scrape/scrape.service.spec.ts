@@ -111,6 +111,7 @@ function makePageMock(
     }),
     title: jest.fn(async () => overrides.title ?? 'Episódio 1'),
     waitForSelector: jest.fn(async () => undefined),
+    waitForRequest: jest.fn(async () => undefined),
     waitForTimeout: jest.fn(async () => undefined),
     evaluate: jest.fn(async () => []),
     $: jest.fn(async () => null),

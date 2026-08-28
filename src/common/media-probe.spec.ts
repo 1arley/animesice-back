@@ -144,6 +144,6 @@ describe('probeMediaUrlDead', () => {
       body: { cancel: jest.fn() },
     })) as any;
     await probeMediaUrlDead('https://cdn.test/expiring.mp4');
-    expect(purgeExpiredLivenessCache(Date.now() + 300_001)).toBe(1);
+    expect(purgeExpiredLivenessCache(Date.now() + 1_800_001)).toBe(1);
   });
 });
