@@ -99,7 +99,7 @@ export class CommunityService {
   async voteRequest(requestId: string, userId: string) {
     const request = await this.prisma.animeRequest.findUnique({
       where: { id: requestId },
-      select: { id: true, status: true, voteCount: true },
+      select: { id: true, status: true },
     });
 
     if (!request) {
@@ -116,21 +116,22 @@ export class CommunityService {
       await this.prisma.animeRequestVote.delete({
         where: { requestId_userId: { requestId, userId } },
       });
-      await this.prisma.animeRequest.update({
-        where: { id: requestId },
-        data: { voteCount: { decrement: 1 } },
+    } else {
+      await this.prisma.animeRequestVote.create({
+        data: { requestId, userId },
       });
-      return { voted: false, voteCount: request.voteCount - 1 };
     }
 
-    await this.prisma.animeRequestVote.create({
-      data: { requestId, userId },
+    // Atomic: recompute voteCount from actual rows to prevent drift.
+    const voteCount = await this.prisma.animeRequestVote.count({
+      where: { requestId },
     });
     await this.prisma.animeRequest.update({
       where: { id: requestId },
-      data: { voteCount: { increment: 1 } },
+      data: { voteCount },
     });
-    return { voted: true, voteCount: request.voteCount + 1 };
+
+    return { voted: !existingVote, voteCount };
   }
 
   async adminUpdateRequestStatus(
@@ -211,7 +212,7 @@ export class CommunityService {
     };
   }
 
-  async upvoteFeedback(feedbackId: string) {
+  async upvoteFeedback(userId: string, feedbackId: string) {
     const feedback = await this.prisma.siteFeedback.findUnique({
       where: { id: feedbackId },
       select: { id: true },
@@ -221,10 +222,33 @@ export class CommunityService {
       throw new NotFoundException('Feedback não encontrado.');
     }
 
-    return this.prisma.siteFeedback.update({
+    const existing = await this.prisma.siteFeedbackUpvote.findUnique({
+      where: {
+        userId_feedbackId: { userId, feedbackId },
+      },
+    });
+
+    if (existing) {
+      await this.prisma.siteFeedbackUpvote.delete({
+        where: {
+          userId_feedbackId: { userId, feedbackId },
+        },
+      });
+      await this.prisma.siteFeedback.update({
+        where: { id: feedbackId },
+        data: { upvotes: { decrement: 1 } },
+      });
+      return { upvoted: false };
+    }
+
+    await this.prisma.siteFeedbackUpvote.create({
+      data: { userId, feedbackId },
+    });
+    await this.prisma.siteFeedback.update({
       where: { id: feedbackId },
       data: { upvotes: { increment: 1 } },
     });
+    return { upvoted: true };
   }
 
   async adminUpdateFeedbackStatus(

@@ -104,14 +104,14 @@ export class RatingService {
   }
 
   private async updateAnimeRating(animeId: string) {
-    const agg = await this.prisma.rating.aggregate({
-      where: { animeId },
-      _avg: { score: true },
-    });
-
-    await this.prisma.anime.update({
-      where: { id: animeId },
-      data: { rating: agg._avg.score ?? 0 },
-    });
+    // Atomic: compute average + update in a single SQL statement to prevent
+    // stale reads under concurrent rating submissions.
+    await this.prisma.$executeRaw`
+      UPDATE "Anime"
+      SET "rating" = COALESCE((
+        SELECT AVG("score") FROM "Rating" WHERE "animeId" = ${animeId}
+      ), 0)
+      WHERE "id" = ${animeId}
+    `;
   }
 }

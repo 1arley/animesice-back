@@ -18,7 +18,8 @@ function makePrisma() {
     })) as jest.Mock,
     count: jest.fn(async () => 0) as jest.Mock,
   };
-  return { anime, rating };
+  const $executeRaw = jest.fn(async () => 1) as jest.Mock;
+  return { anime, rating, $executeRaw };
 }
 
 describe('RatingService', () => {
@@ -38,13 +39,8 @@ describe('RatingService', () => {
         animeId: 'a1',
         score: 8,
       });
-      prisma.rating.aggregate.mockResolvedValue({
-        _avg: { score: 8 },
-        _min: { score: 8 },
-        _max: { score: 8 },
-      });
       prisma.rating.count.mockResolvedValue(1);
-      prisma.anime.update.mockResolvedValue({});
+      prisma.$executeRaw.mockResolvedValue(1);
 
       const dto: RateAnimeDto = { score: 8 };
       const result = await svc.rate('u1', 'anime-slug', dto);
@@ -55,10 +51,7 @@ describe('RatingService', () => {
         update: { score: 8 },
         create: { userId: 'u1', animeId: 'a1', score: 8 },
       });
-      expect(prisma.anime.update).toHaveBeenCalledWith({
-        where: { id: 'a1' },
-        data: { rating: 8 },
-      });
+      expect(prisma.$executeRaw).toHaveBeenCalled();
     });
 
     it('deve lançar NotFoundException quando o anime não existe', async () => {
@@ -76,12 +69,7 @@ describe('RatingService', () => {
       const { svc, prisma } = build();
       prisma.anime.findUnique.mockResolvedValue({ id: 'a1' });
       prisma.rating.delete.mockResolvedValue({});
-      prisma.rating.aggregate.mockResolvedValue({
-        _avg: { score: null },
-        _min: { score: null },
-        _max: { score: null },
-      });
-      prisma.anime.update.mockResolvedValue({});
+      prisma.$executeRaw.mockResolvedValue(1);
 
       const result = await svc.remove('u1', 'anime-slug');
 
@@ -89,10 +77,7 @@ describe('RatingService', () => {
       expect(prisma.rating.delete).toHaveBeenCalledWith({
         where: { userId_animeId: { userId: 'u1', animeId: 'a1' } },
       });
-      expect(prisma.anime.update).toHaveBeenCalledWith({
-        where: { id: 'a1' },
-        data: { rating: 0 },
-      });
+      expect(prisma.$executeRaw).toHaveBeenCalled();
     });
 
     it('deve lançar NotFoundException quando o anime não existe', async () => {

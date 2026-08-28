@@ -15,6 +15,7 @@ import { SocialService } from '@/social/social.service';
 import { CreatePostCommentDto, CreatePostDto } from '@/social/dto/social.dto';
 import { JwtAuthGuard } from '@/auth/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from '@/auth/optional-jwt-auth.guard';
+import { VerifiedGuard } from '@/auth/verified.guard';
 import type { AuthenticatedRequest } from '@/common/interfaces/request.interface';
 import type { Request } from 'express';
 
@@ -96,7 +97,7 @@ export class SocialController {
   }
 
   @Post('posts/:id/comments')
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({ summary: 'Comentar em um post' })
   createPostComment(
@@ -111,8 +112,8 @@ export class SocialController {
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({ summary: 'Contabilizar compartilhamento de um post' })
-  sharePost(@Req() _req: AuthenticatedRequest, @Param('id') id: string) {
-    return this.socialService.sharePost(id);
+  sharePost(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.socialService.sharePost(req.user.id, id);
   }
 
   // --- Follow ---

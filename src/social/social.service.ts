@@ -258,7 +258,7 @@ export class SocialService {
     return comment;
   }
 
-  async sharePost(postId: string) {
+  async sharePost(userId: string, postId: string) {
     const post = await this.prisma.post.findFirst({
       where: { id: postId, status: ContentStatus.VISIBLE },
       select: { id: true },
@@ -267,13 +267,35 @@ export class SocialService {
       throw new NotFoundException('Post não encontrado.');
     }
 
-    const updated = await this.prisma.post.update({
-      where: { id: postId },
-      data: { shareCount: { increment: 1 } },
-      select: { shareCount: true },
+    const existing = await this.prisma.postShare.findUnique({
+      where: {
+        userId_postId: { userId, postId },
+      },
     });
 
-    return { shared: true, shareCount: updated.shareCount };
+    if (existing) {
+      // Already shared — idempotent, return current count.
+      const current = await this.prisma.post.findUnique({
+        where: { id: postId },
+        select: { shareCount: true },
+      });
+      return { shared: true, shareCount: current?.shareCount ?? 0 };
+    }
+
+    await this.prisma.postShare.create({
+      data: { userId, postId },
+    });
+
+    // Atomic: recompute from actual rows to prevent drift.
+    const shareCount = await this.prisma.postShare.count({
+      where: { postId },
+    });
+    await this.prisma.post.update({
+      where: { id: postId },
+      data: { shareCount },
+    });
+
+    return { shared: true, shareCount };
   }
 
   // ------------------------------------------------------------------

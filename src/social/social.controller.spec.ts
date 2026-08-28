@@ -126,7 +126,7 @@ describe('SocialController', () => {
     it('contabiliza compartilhamento', async () => {
       mockSocialService.sharePost.mockResolvedValue({ shareCount: 5 });
       await controller.sharePost(mockReq(), 'p1');
-      expect(mockSocialService.sharePost).toHaveBeenCalledWith('p1');
+      expect(mockSocialService.sharePost).toHaveBeenCalledWith('user-1', 'p1');
     });
   });
 

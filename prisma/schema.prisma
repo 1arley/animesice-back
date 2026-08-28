@@ -146,10 +146,12 @@ model User {
   animeRequests           AnimeRequest[]           @relation("AnimeRequestUser")
   animeRequestVotes       AnimeRequestVote[]       @relation("AnimeRequestVoteUser")
   siteFeedbacks           SiteFeedback[]           @relation("SiteFeedbackUser")
+  siteFeedbackUpvotes     SiteFeedbackUpvote[]
   privacySettings         PrivacySettings?
   posts                   Post[]
   postLikes               PostLike[]
   postComments            PostComment[]
+  postShares              PostShare[]
   following               Follow[]                 @relation("Follower")
   followers               Follow[]                 @relation("Followee")
 }
@@ -576,17 +578,18 @@ model AnimeRequestVote {
 }
 
 model SiteFeedback {
-  id          String         @id @default(uuid())
+  id          String              @id @default(uuid())
   userId      String
-  user        User           @relation("SiteFeedbackUser", fields: [userId], references: [id], onDelete: Cascade)
+  user        User                @relation("SiteFeedbackUser", fields: [userId], references: [id], onDelete: Cascade)
   type        FeedbackType
   title       String
   description String
-  status      FeedbackStatus @default(OPEN)
+  status      FeedbackStatus      @default(OPEN)
   adminNote   String?
-  upvotes     Int            @default(0)
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
+  upvotes     Int                 @default(0)
+  upvoters    SiteFeedbackUpvote[]
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
 
   @@index([type, status, createdAt])
   @@index([userId])
@@ -601,6 +604,7 @@ model Post {
   animeId    String?
   anime      Anime?        @relation(fields: [animeId], references: [id], onDelete: SetNull)
   shareCount Int           @default(0)
+  shares     PostShare[]
   status     ContentStatus @default(VISIBLE)
   likes      PostLike[]
   comments   PostComment[]
@@ -710,4 +714,26 @@ model AdminAuditLog {
   @@index([adminId, createdAt])
   @@index([action, createdAt])
   @@index([resourceType])
+}
+
+model SiteFeedbackUpvote {
+  userId     String
+  feedbackId String
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  feedback   SiteFeedback @relation(fields: [feedbackId], references: [id], onDelete: Cascade)
+  createdAt  DateTime     @default(now())
+
+  @@id([userId, feedbackId])
+  @@index([feedbackId])
+}
+
+model PostShare {
+  userId    String
+  postId    String
+  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post      Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([userId, postId])
+  @@index([postId])
 }
