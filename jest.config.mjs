@@ -20,6 +20,12 @@ export default {
     '!**/swagger/**',
     '!**/main.ts',
     '!**/index.ts',
+    // Automação de browser (Playwright/Chromium) é coberta por testes de
+    // integração com mocks + e2e, não por unit tests: exige browser real,
+    // timers e eventos de página. Medir aqui derruba o gate global sem
+    // refletir a qualidade da lógica de negócio.
+    '!**/browser-pool.service.ts',
+    '!**/event-waits.ts',
   ],
   coverageDirectory: '../coverage',
   coverageReporters: ['text-summary', 'json-summary', 'lcov', 'html'],

@@ -438,6 +438,128 @@ describe('StreamingController', () => {
       );
       expect(mockStreamingService.getSource).toHaveBeenCalled();
     });
+
+    it('retorna 404 quando jobId não existe', async () => {
+      mockStreamingService.getJobStatus.mockResolvedValue(null);
+      const req = {
+        headers: { host: 'api.animesice.com' },
+        socket: { remoteAddress: '::1' },
+        protocol: 'https',
+      } as any;
+      await expect(
+        controller.getSource(
+          'solo',
+          '1',
+          undefined,
+          undefined,
+          'missing',
+          req,
+          makeRes(),
+        ),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('retorna source direto quando job completou com result', async () => {
+      const result = { animeSlug: 'solo', episodeNumber: 1, src: 's' };
+      mockStreamingService.getJobStatus.mockResolvedValue({
+        status: 'completed',
+        result,
+        error: null,
+      });
+      const req = {
+        headers: { host: 'api.animesice.com' },
+        socket: { remoteAddress: '::1' },
+        protocol: 'https',
+      } as any;
+      const res = makeRes();
+      await controller.getSource(
+        'solo',
+        '1',
+        undefined,
+        undefined,
+        'j1',
+        req,
+        res,
+      );
+      expect(res.json).toHaveBeenCalledWith(result);
+    });
+
+    it('faz fallback síncrono quando job completou sem result', async () => {
+      mockStreamingService.getJobStatus.mockResolvedValue({
+        status: 'completed',
+        result: null,
+        error: null,
+      });
+      mockStreamingService.getSource.mockResolvedValue({ src: 'fallback' });
+      const req = {
+        headers: { host: 'api.animesice.com' },
+        socket: { remoteAddress: '::1' },
+        protocol: 'https',
+      } as any;
+      const res = makeRes();
+      await controller.getSource(
+        'solo',
+        '1',
+        undefined,
+        undefined,
+        'j2',
+        req,
+        res,
+      );
+      expect(mockStreamingService.getSource).toHaveBeenCalled();
+      expect(res.json).toHaveBeenCalledWith({ src: 'fallback' });
+    });
+
+    it('retorna 500 quando job falhou', async () => {
+      mockStreamingService.getJobStatus.mockResolvedValue({
+        status: 'failed',
+        result: null,
+        error: 'boom',
+      });
+      const req = {
+        headers: { host: 'api.animesice.com' },
+        socket: { remoteAddress: '::1' },
+        protocol: 'https',
+      } as any;
+      const res = makeRes();
+      await controller.getSource(
+        'solo',
+        '1',
+        undefined,
+        undefined,
+        'j3',
+        req,
+        res,
+      );
+      expect(res.status).toHaveBeenCalledWith(500);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({ jobId: 'j3', status: 'failed' }),
+      );
+    });
+
+    it('retorna 202 quando job ainda está processando', async () => {
+      mockStreamingService.getJobStatus.mockResolvedValue({
+        status: 'processing',
+        result: null,
+        error: null,
+      });
+      const req = {
+        headers: { host: 'api.animesice.com' },
+        socket: { remoteAddress: '::1' },
+        protocol: 'https',
+      } as any;
+      const res = makeRes();
+      await controller.getSource(
+        'solo',
+        '1',
+        undefined,
+        undefined,
+        'j4',
+        req,
+        res,
+      );
+      expect(res.status).toHaveBeenCalledWith(202);
+    });
   });
 
   describe('getToken', () => {
