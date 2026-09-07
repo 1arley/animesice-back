@@ -68,6 +68,13 @@ export interface AniListMediaSummary {
   } | null;
 }
 
+export interface AniListCharacterSummary {
+  id: number;
+  name: { full?: string | null };
+  image?: { large?: string | null } | null;
+  favourites?: number | null;
+}
+
 interface GraphQLResponse<T> {
   data?: T;
   errors?: Array<{ message: string; status?: number }>;
@@ -160,6 +167,22 @@ export class AniListClient {
       endDate: data.Media.endDate,
       schedule: data.Media.airingSchedule.nodes,
     };
+  }
+
+  /** Personagens do anime ordenados por favoritos (p/ seed do gacha). */
+  async mediaCharacters(mediaId: number): Promise<AniListCharacterSummary[]> {
+    const query = `
+      query ($id: Int) {
+        Media(id: $id) {
+          characters(sort: [FAVOURITES_DESC]) {
+            nodes { id name { full } image { large } favourites }
+          }
+        }
+      }`;
+    const data = await this.request<{
+      Media: { characters: { nodes: AniListCharacterSummary[] } };
+    }>(JSON.stringify({ query, variables: { id: mediaId } }));
+    return data.Media.characters.nodes;
   }
 
   /** Busca media por título (sort: SEARCH_MATCH). */

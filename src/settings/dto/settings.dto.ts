@@ -29,6 +29,11 @@ export class UpdatePrivacyDto {
   @IsOptional()
   @IsBoolean()
   showRatings?: boolean;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsBoolean()
+  showGacha?: boolean;
 }
 
 export class UpdateNotificationPrefDto {

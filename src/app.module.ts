@@ -34,6 +34,7 @@ import { SettingsModule } from '@/settings/settings.module';
 import { AuditService } from '@/common/services/audit.service';
 import { AuditInterceptor } from '@/common/interceptors/audit.interceptor';
 import { BlogModule } from '@/blog/blog.module';
+import { GachaModule } from '@/gacha/gacha.module';
 
 @Module({
   imports: [
@@ -78,6 +79,7 @@ import { BlogModule } from '@/blog/blog.module';
     UsersModule,
     SettingsModule,
     BlogModule,
+    GachaModule,
   ],
   controllers: [AppController, MetricsController],
   providers: [

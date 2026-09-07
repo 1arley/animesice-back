@@ -148,6 +148,7 @@ model User {
   siteFeedbacks           SiteFeedback[]           @relation("SiteFeedbackUser")
   siteFeedbackUpvotes     SiteFeedbackUpvote[]
   privacySettings         PrivacySettings?
+  userWaifus              UserWaifu[]
   posts                   Post[]
   postLikes               PostLike[]
   postComments            PostComment[]
@@ -188,6 +189,7 @@ model PrivacySettings {
   showActivity  Boolean @default(true)
   showFavorites Boolean @default(true)
   showRatings   Boolean @default(true)
+  showGacha     Boolean @default(true)
 }
 
 model EmailVerificationCode {
@@ -276,6 +278,7 @@ model Anime {
   animeSchedules    AnimeSchedule[]
   animeList         UserAnimeList[]
   posts             Post[]
+  waifus            Waifu[]
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
 
@@ -601,6 +604,8 @@ model Post {
   userId     String
   user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   content    String
+  kind       String        @default("TEXT")
+  meta       Json?
   animeId    String?
   anime      Anime?        @relation(fields: [animeId], references: [id], onDelete: SetNull)
   shareCount Int           @default(0)
@@ -736,4 +741,42 @@ model PostShare {
 
   @@id([userId, postId])
   @@index([postId])
+}
+
+/// Personagem cacheado do AniList — o "card" do gacha waifu.
+model Waifu {
+  id                   String      @id @default(uuid())
+  anilistCharacterId   Int         @unique
+  name                 String
+  image                String?
+  favourites           Int         @default(0)
+  rarity               String      @default("COMUM")
+  animeId              String?
+  anime                Anime?      @relation(fields: [animeId], references: [id], onDelete: SetNull)
+  animeTitle           String?
+  owners               UserWaifu[]
+  createdAt            DateTime    @default(now())
+  updatedAt            DateTime    @updatedAt
+
+  @@index([rarity])
+  @@index([animeId])
+}
+
+/// Cópia de carta de um usuário — non-unique, individualizada por
+/// condition/foil/edition (o "float" das skins de CS).
+model UserWaifu {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  waifuId    String
+  waifu      Waifu    @relation(fields: [waifuId], references: [id], onDelete: Cascade)
+  condition  Float
+  foil       String   @default("NORMAL")
+  edition    Int
+  value      Int
+  obtainedAt DateTime @default(now())
+
+  @@index([userId, obtainedAt(sort: Desc)])
+  @@index([waifuId, edition])
+  @@index([userId, value(sort: Desc)])
 }

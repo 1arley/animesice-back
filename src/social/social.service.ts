@@ -17,6 +17,8 @@ const MAX_POST_LENGTH = 2000;
 const POST_SELECT = {
   id: true,
   content: true,
+  kind: true,
+  meta: true,
   animeId: true,
   shareCount: true,
   status: true,
