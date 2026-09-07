@@ -39,6 +39,12 @@ export class AnimeController {
     enum: ['WINTER', 'SPRING', 'SUMMER', 'FALL'],
   })
   @ApiQuery({ name: 'ageRating', required: false, type: String })
+  @ApiQuery({
+    name: 'includeHentai',
+    required: false,
+    type: String,
+    description: '1 para incluir o catálogo adulto (opt-in da busca)',
+  })
   @ApiQuery({ name: 'minScore', required: false, type: Number })
   @ApiQuery({ name: 'maxScore', required: false, type: Number })
   @ApiQuery({

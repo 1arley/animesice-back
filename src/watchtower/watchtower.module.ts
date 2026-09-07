@@ -22,6 +22,7 @@ import { WorkerService } from './worker.service';
 import { WatchtowerScheduler } from './watchtower.scheduler';
 import { CatalogScanner } from './catalog-scanner.service';
 import { ScheduleSync } from './schedule-sync.service';
+import { AdultCatalogSyncService } from './adult-catalog-sync.service';
 import { WatchtowerController } from './watchtower.controller';
 
 @Module({
@@ -42,6 +43,7 @@ import { WatchtowerController } from './watchtower.controller';
     WatchtowerScheduler,
     CatalogScanner,
     ScheduleSync,
+    AdultCatalogSyncService,
   ],
   exports: [JobsService, HealthMonitor, ReleaseMonitor],
 })

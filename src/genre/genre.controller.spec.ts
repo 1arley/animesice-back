@@ -48,13 +48,14 @@ describe('GenreController', () => {
     };
     mockGenreService.findAnimesBySlug.mockResolvedValue(payload);
 
-    const result = await controller.findAnimesBySlug('acao', '2', '5');
+    const result = await controller.findAnimesBySlug('acao', '2', '5', '1');
 
     expect(result).toEqual(payload);
     expect(mockGenreService.findAnimesBySlug).toHaveBeenCalledWith(
       'acao',
       '2',
       '5',
+      '1',
     );
   });
 });

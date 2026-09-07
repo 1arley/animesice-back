@@ -169,6 +169,13 @@ describe('EpisodeService', () => {
       expect(prisma.episode.findMany).toHaveBeenCalledWith({
         take: 5,
         orderBy: { updatedAt: 'desc' },
+        where: {
+          anime: {
+            published: true,
+            ageRating: { not: 'A18' },
+            NOT: { genres: { some: { slug: 'hentai' } } },
+          },
+        },
         include: { anime: true },
       });
     });

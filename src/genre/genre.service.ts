@@ -1,6 +1,11 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '@/prisma/prisma.service';
 import {
+  ADULT_AGE_RATING,
+  ADULT_GENRE_SLUG,
+  shouldExcludeAdult,
+} from '@/common/adult';
+import {
   DEFAULT_PAGE,
   DEFAULT_PAGE_SIZE,
   parsePageParam,
@@ -34,6 +39,7 @@ export class GenreService {
     slug: string,
     page: string | undefined,
     limit: string | undefined,
+    includeHentai?: string,
   ) {
     const genre = await this.prisma.genre.findUnique({
       where: { slug },
@@ -48,10 +54,19 @@ export class GenreService {
     const limitNumber = parsePageParam(limit, DEFAULT_PAGE_SIZE);
     const skip = (pageNumber - 1) * limitNumber;
 
-    const where = {
-      published: true,
-      genres: { some: { slug } },
-    };
+    const where = shouldExcludeAdult({ includeHentai })
+      ? {
+          published: true,
+          genres: { some: { slug } },
+          AND: [
+            { ageRating: { not: ADULT_AGE_RATING } },
+            { NOT: { genres: { some: { slug: ADULT_GENRE_SLUG } } } },
+          ],
+        }
+      : {
+          published: true,
+          genres: { some: { slug } },
+        };
 
     const [animes, total] = await this.prisma.$transaction([
       this.prisma.anime.findMany({
