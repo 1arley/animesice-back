@@ -99,10 +99,35 @@ describe('GenreService', () => {
       });
       expect(prisma.anime.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { published: true, genres: { some: { slug: 'acao' } } },
+          where: {
+            published: true,
+            genres: { some: { slug: 'acao' } },
+            AND: [
+              { ageRating: { not: 'A18' } },
+              { NOT: { genres: { some: { slug: 'hentai' } } } },
+            ],
+          },
           orderBy: { rating: 'desc' },
         }),
       );
+    });
+
+    it('includeHentai com ADULT_CATALOG_ENABLED=true libera o gênero adulto', async () => {
+      process.env.ADULT_CATALOG_ENABLED = 'true';
+      try {
+        const { svc, prisma } = build();
+        prisma.genre.findUnique.mockResolvedValue({ id: 'g1', name: 'Ação' });
+        prisma.anime.findMany.mockResolvedValue([]);
+        prisma.anime.count.mockResolvedValue(0);
+        await svc.findAnimesBySlug('acao', '1', '10', '1');
+        expect(prisma.anime.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: { published: true, genres: { some: { slug: 'acao' } } },
+          }),
+        );
+      } finally {
+        delete process.env.ADULT_CATALOG_ENABLED;
+      }
     });
 
     it('deve lançar NotFoundException quando o gênero não existe', async () => {

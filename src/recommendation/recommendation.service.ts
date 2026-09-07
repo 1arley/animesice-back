@@ -1,5 +1,21 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '@/prisma/prisma.service';
+import {
+  ADULT_AGE_RATING,
+  ADULT_GENRE_SLUG,
+  shouldExcludeAdult,
+} from '@/common/adult';
+
+function vitrineFilter() {
+  return shouldExcludeAdult()
+    ? {
+        AND: [
+          { ageRating: { not: ADULT_AGE_RATING } },
+          { NOT: { genres: { some: { slug: ADULT_GENRE_SLUG } } } },
+        ],
+      }
+    : {};
+}
 
 @Injectable()
 export class RecommendationService {
@@ -52,7 +68,7 @@ export class RecommendationService {
 
     if (genreWeights.size === 0) {
       return this.prisma.anime.findMany({
-        where: { published: true },
+        where: { published: true, ...vitrineFilter() },
         orderBy: { rating: 'desc' },
         take: limit,
         include: { genres: true },
@@ -86,6 +102,7 @@ export class RecommendationService {
     const candidates = await this.prisma.anime.findMany({
       where: {
         published: true,
+        ...vitrineFilter(),
         id: { notIn: [...excludedAnimeIds] },
         genres: { some: { id: { in: topGenreIds } } },
       },
@@ -147,6 +164,7 @@ export class RecommendationService {
       where: {
         id: { not: anime.id },
         published: true,
+        ...vitrineFilter(),
         genres: { some: { id: { in: genreIds } } },
       },
       include: { genres: true },
@@ -204,6 +222,7 @@ export class RecommendationService {
     const candidates = await this.prisma.anime.findMany({
       where: {
         published: true,
+        ...vitrineFilter(),
         id: { notIn: [...watchedAnimeIds] },
         genres: { some: { id: { in: topGenres } } },
       },

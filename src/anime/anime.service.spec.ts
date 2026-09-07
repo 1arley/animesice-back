@@ -367,6 +367,62 @@ describe('AnimeService (busca/filtros/paginação)', () => {
     expect(arg.where.OR).toBeUndefined();
   });
 
+  it('vitrine default exclui catálogo adulto (A18 + gênero hentai)', async () => {
+    const { svc, prisma } = build();
+    await svc.findAll({});
+    const arg = prisma.anime.findMany.mock.calls[0][0];
+    expect(arg.where.AND).toEqual(
+      expect.arrayContaining([
+        { ageRating: { not: 'A18' } },
+        { NOT: { genres: { some: { slug: 'hentai' } } } },
+      ]),
+    );
+  });
+
+  it('includeHentai sem flag continua excluindo (fail-closed)', async () => {
+    const { svc, prisma } = build();
+    await svc.findAll({ includeHentai: '1' });
+    const arg = prisma.anime.findMany.mock.calls[0][0];
+    expect(arg.where.AND).toBeDefined();
+  });
+
+  it('includeHentai com ADULT_CATALOG_ENABLED=true libera a busca', async () => {
+    process.env.ADULT_CATALOG_ENABLED = 'true';
+    try {
+      const { svc, prisma } = build();
+      await svc.findAll({ includeHentai: '1' });
+      const arg = prisma.anime.findMany.mock.calls[0][0];
+      expect(arg.where.AND).toBeUndefined();
+    } finally {
+      delete process.env.ADULT_CATALOG_ENABLED;
+    }
+  });
+
+  it('SITE_MODE=hentai nunca exclui (blindagem do fork)', async () => {
+    process.env.SITE_MODE = 'hentai';
+    try {
+      const { svc, prisma } = build();
+      await svc.findAll({});
+      const arg = prisma.anime.findMany.mock.calls[0][0];
+      expect(arg.where.AND).toBeUndefined();
+      await svc.findTop(5);
+      expect(prisma.anime.findMany.mock.calls[1][0].where.AND).toBeUndefined();
+    } finally {
+      delete process.env.SITE_MODE;
+    }
+  });
+
+  it('vitrines (top/random) excluem adulto por padrão', async () => {
+    const { svc, prisma } = build();
+    await svc.findTop(5);
+    expect(prisma.anime.findMany.mock.calls[0][0].where.AND).toBeDefined();
+    prisma.anime.count.mockResolvedValue(5);
+    prisma.anime.findMany.mockResolvedValue([{ id: 'a1', genres: [] }]);
+    await svc.findRandom();
+    const arg = prisma.anime.findMany.mock.calls[1][0];
+    expect(arg.where.AND).toBeDefined();
+  });
+
   it('findCalendar agrupa por dia da semana e separa não-agendados', async () => {
     const { svc, prisma } = build();
     prisma.anime.findMany.mockResolvedValue([

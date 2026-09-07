@@ -2,6 +2,11 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, AnimeFormat, AnimeSeason, AudioType } from '@prisma/client';
 import { PrismaService } from '@/prisma/prisma.service';
 import {
+  ADULT_AGE_RATING,
+  ADULT_GENRE_SLUG,
+  shouldExcludeAdult,
+} from '@/common/adult';
+import {
   DEFAULT_PAGE,
   DEFAULT_PAGE_SIZE,
   parsePageParam,
@@ -31,6 +36,7 @@ export interface AnimeFilterDto {
   maxScore?: string;
   sort?: string;
   published?: string;
+  includeHentai?: string;
 }
 
 function buildWhere(filters: AnimeFilterDto): Prisma.AnimeWhereInput {
@@ -71,6 +77,19 @@ function buildWhere(filters: AnimeFilterDto): Prisma.AnimeWhereInput {
     where.published = filters.published !== 'false';
   } else {
     where.published = true;
+  }
+
+  if (shouldExcludeAdult(filters)) {
+    const and = where.AND
+      ? Array.isArray(where.AND)
+        ? where.AND
+        : [where.AND]
+      : [];
+    where.AND = [
+      ...and,
+      { ageRating: { not: ADULT_AGE_RATING } },
+      { NOT: { genres: { some: { slug: ADULT_GENRE_SLUG } } } },
+    ];
   }
 
   return where;
@@ -118,7 +137,10 @@ export class AnimeService {
     let fuzzyIds: string[] | null = null;
     if (query && query.length >= FUZZY_MIN_QUERY_LENGTH) {
       try {
-        fuzzyIds = await this.fuzzyRankedIds(query);
+        fuzzyIds = await this.fuzzyRankedIds(
+          query,
+          !shouldExcludeAdult(filters),
+        );
       } catch (err) {
         console.error(
           '[SEARCH] fuzzy indisponível, usando contains:',
@@ -207,7 +229,35 @@ export class AnimeService {
    * No empate, o similarity() da query inteira desempata — o título exato
    * ("Spy x Family") vence das variantes ("Spy x Family Dublado").
    */
-  private async fuzzyRankedIds(query: string): Promise<string[]> {
+  private async fuzzyRankedIds(
+    query: string,
+    includeAdult = false,
+  ): Promise<string[]> {
+    if (includeAdult) {
+      const rows = await this.prisma.$queryRaw<Array<{ id: string }>>`
+        SELECT id
+        FROM (
+          SELECT a.id,
+            GREATEST(
+              word_similarity(w, LOWER(a.title)),
+              COALESCE(word_similarity(w, LOWER(a."japaneseTitle")), 0),
+              COALESCE(word_similarity(w, LOWER(array_to_string(a."alternativeTitles", ' '))), 0)
+            ) AS ws,
+            GREATEST(
+              similarity(${query}, LOWER(a.title)),
+              COALESCE(similarity(${query}, LOWER(array_to_string(a."alternativeTitles", ' '))), 0)
+            ) AS full_sim
+          FROM "Anime" a
+          CROSS JOIN LATERAL unnest(string_to_array(LOWER(${query}), ' ')) AS w
+          WHERE a.published = true
+        ) t
+        GROUP BY t.id
+        HAVING MAX(t.ws) > ${FUZZY_THRESHOLD}
+        ORDER BY SUM(t.ws) DESC, MAX(t.full_sim) DESC, MAX(t.ws) DESC
+        LIMIT ${FUZZY_MAX_CANDIDATES}
+      `;
+      return rows.map((r) => r.id);
+    }
     const rows = await this.prisma.$queryRaw<Array<{ id: string }>>`
       SELECT id
       FROM (
@@ -224,6 +274,7 @@ export class AnimeService {
         FROM "Anime" a
         CROSS JOIN LATERAL unnest(string_to_array(LOWER(${query}), ' ')) AS w
         WHERE a.published = true
+          AND a."ageRating" IS DISTINCT FROM ${ADULT_AGE_RATING}
       ) t
       GROUP BY t.id
       HAVING MAX(t.ws) > ${FUZZY_THRESHOLD}
@@ -284,6 +335,14 @@ export class AnimeService {
       where: {
         id: { not: anime.id },
         published: true,
+        ...(shouldExcludeAdult()
+          ? {
+              AND: [
+                { ageRating: { not: ADULT_AGE_RATING } },
+                { NOT: { genres: { some: { slug: ADULT_GENRE_SLUG } } } },
+              ],
+            }
+          : {}),
         genres: { some: { id: { in: genreIds } } },
       },
       take: Math.min(limit, 12),
@@ -326,12 +385,22 @@ export class AnimeService {
   }
 
   async findRandom() {
-    const count = await this.prisma.anime.count({ where: { published: true } });
+    const excludeAdult = shouldExcludeAdult();
+    const countWhere: Prisma.AnimeWhereInput = excludeAdult
+      ? {
+          published: true,
+          AND: [
+            { ageRating: { not: ADULT_AGE_RATING } },
+            { NOT: { genres: { some: { slug: ADULT_GENRE_SLUG } } } },
+          ],
+        }
+      : { published: true };
+    const count = await this.prisma.anime.count({ where: countWhere });
     if (count === 0) return null;
 
     const skip = Math.floor(Math.random() * count);
     const [anime] = await this.prisma.anime.findMany({
-      where: { published: true },
+      where: countWhere,
       skip,
       take: 1,
       include: { genres: true },
@@ -341,7 +410,15 @@ export class AnimeService {
 
   async findTop(limit = 20) {
     return this.prisma.anime.findMany({
-      where: { published: true },
+      where: shouldExcludeAdult()
+        ? {
+            published: true,
+            AND: [
+              { ageRating: { not: ADULT_AGE_RATING } },
+              { NOT: { genres: { some: { slug: ADULT_GENRE_SLUG } } } },
+            ],
+          }
+        : { published: true },
       orderBy: { rating: 'desc' },
       take: Math.min(limit, 100),
       include: { genres: true },
@@ -375,7 +452,16 @@ export class AnimeService {
     }
 
     const animes = await this.prisma.anime.findMany({
-      where: { id: { in: ranked }, published: true },
+      where: shouldExcludeAdult()
+        ? {
+            id: { in: ranked },
+            published: true,
+            AND: [
+              { ageRating: { not: ADULT_AGE_RATING } },
+              { NOT: { genres: { some: { slug: ADULT_GENRE_SLUG } } } },
+            ],
+          }
+        : { id: { in: ranked }, published: true },
       include: { genres: true },
     });
 
@@ -386,7 +472,15 @@ export class AnimeService {
 
   async findRecentlyAdded(limit = 20) {
     return this.prisma.anime.findMany({
-      where: { published: true },
+      where: shouldExcludeAdult()
+        ? {
+            published: true,
+            AND: [
+              { ageRating: { not: ADULT_AGE_RATING } },
+              { NOT: { genres: { some: { slug: ADULT_GENRE_SLUG } } } },
+            ],
+          }
+        : { published: true },
       orderBy: { createdAt: 'desc' },
       take: Math.min(limit, 100),
       include: { genres: true },
@@ -397,6 +491,12 @@ export class AnimeService {
     const where: Prisma.AnimeWhereInput = { published: true };
     if (year) where.year = parseInt(year, 10);
     if (season) where.season = season as AnimeSeason;
+    if (shouldExcludeAdult()) {
+      where.AND = [
+        { ageRating: { not: ADULT_AGE_RATING } },
+        { NOT: { genres: { some: { slug: ADULT_GENRE_SLUG } } } },
+      ];
+    }
 
     const animes = await this.prisma.anime.findMany({
       where,

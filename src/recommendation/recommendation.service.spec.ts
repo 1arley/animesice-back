@@ -36,7 +36,13 @@ describe('RecommendationService', () => {
       expect(result).toEqual(popular);
       expect(prisma.anime.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { published: true },
+          where: {
+            published: true,
+            AND: [
+              { ageRating: { not: 'A18' } },
+              { NOT: { genres: { some: { slug: 'hentai' } } } },
+            ],
+          },
           orderBy: { rating: 'desc' },
           take: 20,
         }),
@@ -157,6 +163,10 @@ describe('RecommendationService', () => {
           where: {
             id: { not: 'a1' },
             published: true,
+            AND: [
+              { ageRating: { not: 'A18' } },
+              { NOT: { genres: { some: { slug: 'hentai' } } } },
+            ],
             genres: { some: { id: { in: ['g1', 'g2'] } } },
           },
           take: 24,

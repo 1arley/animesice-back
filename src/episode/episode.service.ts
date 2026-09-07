@@ -1,5 +1,10 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '@/prisma/prisma.service';
+import {
+  ADULT_AGE_RATING,
+  ADULT_GENRE_SLUG,
+  shouldExcludeAdult,
+} from '@/common/adult';
 
 @Injectable()
 export class EpisodeService {
@@ -81,6 +86,15 @@ export class EpisodeService {
     return this.prisma.episode.findMany({
       take: limit,
       orderBy: { updatedAt: 'desc' },
+      where: shouldExcludeAdult()
+        ? {
+            anime: {
+              published: true,
+              ageRating: { not: ADULT_AGE_RATING },
+              NOT: { genres: { some: { slug: ADULT_GENRE_SLUG } } },
+            },
+          }
+        : undefined,
       include: { anime: true },
     });
   }
