@@ -18,6 +18,7 @@ import { youtubeEmbedUrl } from './extract';
 import {
   waitForPlayerReady,
   extractPlayerVideoEventDriven,
+  resolvePlayerToken,
 } from './event-waits';
 import { BrowserPool } from './browser-pool.service';
 import { PrismaService } from '@/prisma/prisma.service';
@@ -372,17 +373,23 @@ export class ScrapeService {
 
         // Utiliza BrowserPool para reutilizar instância Chromium
         let resolved = false;
+        // Se nenhuma página de token sequer carregou (goto falhou p/ todas),
+        // o retry com Xvfb/headless:false falharia igual — pula p/ liberar o
+        // slot em vez de pendurar a fila por +30s por token (cascata que
+        // derrubava todas as fontes com "Fila de extração ocupada").
+        let tokenPageLoaded = false;
         for (const token of resolvableTokens) {
           const { context, release } = await this.browserPool.acquireContext(
             `player-${source.id}`,
           );
           try {
-            const bv = await extractPlayerVideoEventDriven(
+            const out = await resolvePlayerToken(
               await context.newPage(),
               token,
             );
-            if (bv.length > 0) {
-              videos = bv;
+            if (out.loaded) tokenPageLoaded = true;
+            if (out.videos.length > 0) {
+              videos = out.videos;
               resolved = true;
               break;
             }
@@ -396,7 +403,12 @@ export class ScrapeService {
         }
 
         // Fallback: Xvfb + headless:false se o pool não resolveu
-        if (!resolved) {
+        if (!resolved && !tokenPageLoaded) {
+          dbg(
+            `[SCRAPE] nenhum token carregou (rede/egress p/ o player?) — pulando retry Xvfb p/ liberar o slot.`,
+          );
+        }
+        if (!resolved && tokenPageLoaded) {
           const display = await ensureXvfb();
           if (display) {
             dbg(

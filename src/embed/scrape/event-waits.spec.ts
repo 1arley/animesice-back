@@ -1,4 +1,7 @@
-import { extractPlayerVideoEventDriven } from './event-waits';
+import {
+  extractPlayerVideoEventDriven,
+  resolvePlayerToken,
+} from './event-waits';
 
 type RequestCb = (req: { url: () => string }) => void;
 
@@ -117,5 +120,34 @@ describe('extractPlayerVideoEventDriven', () => {
 
     expect(videos).toEqual([]);
     expect(page.close).toHaveBeenCalled();
+  });
+
+  it('resolvePlayerToken marca loaded=false quando o goto falha', async () => {
+    const page = makePageMock({});
+    page.goto.mockRejectedValueOnce(new Error('net::ERR_TIMED_OUT'));
+
+    const out = await resolvePlayerToken(
+      page as never,
+      'https://www.blogger.com/video.g?token=w',
+    );
+
+    expect(out).toEqual({ videos: [], loaded: false });
+    expect(page.close).toHaveBeenCalled();
+  });
+
+  it('resolvePlayerToken marca loaded=true quando a página carrega', async () => {
+    const page = makePageMock({
+      requestUrls: ['https://rr5.googlevideo.com/videoplayback?token=abc'],
+    });
+
+    const out = await resolvePlayerToken(
+      page as never,
+      'https://www.blogger.com/video.g?token=x',
+    );
+
+    expect(out.loaded).toBe(true);
+    expect(out.videos).toEqual([
+      'https://rr5.googlevideo.com/videoplayback?token=abc',
+    ]);
   });
 });

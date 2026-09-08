@@ -917,6 +917,37 @@ describe('ScrapeService (cobertura avançada)', () => {
     expect(launchMock).not.toHaveBeenCalled();
   });
 
+  it('pula retry Xvfb quando nenhum token Blogger carrega (timeout de rede)', async () => {
+    const { svc, af, browserPool } = build();
+    const deadPage = makePageMock({});
+    deadPage.goto.mockRejectedValue(new Error('net::ERR_TIMED_OUT'));
+    browserPool.acquireContext.mockResolvedValue({
+      context: {
+        newPage: jest.fn(async () => deadPage),
+        close: jest.fn(async () => undefined),
+      },
+      release: jest.fn(async () => undefined),
+    });
+    ensureXvfbMock.mockResolvedValue(':99');
+    af.extractHttp.mockResolvedValueOnce({
+      videos: [],
+      iframes: [],
+      cloudflare: false,
+      playerTokens: ['https://www.blogger.com/video.g?token=xyz'],
+    });
+    const res = await svc.scrapeEpisodeVideo(
+      'https://animefire.io/a/blogger-down',
+      undefined,
+      false,
+    );
+    expect(res.videos).toEqual([]);
+    expect(res.playerTokens).toEqual([
+      'https://www.blogger.com/video.g?token=xyz',
+    ]);
+    expect(ensureXvfbMock).not.toHaveBeenCalled();
+    expect(launchMock).not.toHaveBeenCalled();
+  });
+
   function makePlaywrightSvc() {
     const aocc = makeSource('animesonlinecc', ['animesonlinecc.to'], [], {
       http: false,
