@@ -1,3 +1,23 @@
+# [1.27.0](https://github.com/1arley/animesice-back/compare/v1.26.0...v1.27.0) (2026-09-08)
+
+
+### Bug Fixes
+
+* **ci:** restore dev CI — episode specs, coverage gate, npm audit ([5af8e9c](https://github.com/1arley/animesice-back/commit/5af8e9ced8591258eb1ce94216c25ac37ca69e10))
+* **scrape:** resolve regressão na extração de player tokens Blogger ([8f66f00](https://github.com/1arley/animesice-back/commit/8f66f008529d9e00d8ee6958df9ae810a0530577)), closes [#42](https://github.com/1arley/animesice-back/issues/42)
+
+
+### Features
+
+* **streaming:** extração assíncrona, browser pool, waits event-based, prefetch ([1bfaf11](https://github.com/1arley/animesice-back/commit/1bfaf1107baba4d3ddae4db54d227d65f8b89925))
+* **streaming:** sse, poll com src, completion callback, max-jobs configuravel ([796da5c](https://github.com/1arley/animesice-back/commit/796da5c053ae07fcd842aa19f752346f48176bfa))
+
+
+### Performance Improvements
+
+* **episode:** merge queries, inject episode numbers, simplify incrementViews ([176a84e](https://github.com/1arley/animesice-back/commit/176a84ea65767507f1298ee4a18293b7fa7cd185))
+* **probe:** expand liveness cache TTL from 5min to 30min ([97db903](https://github.com/1arley/animesice-back/commit/97db903fe770a2a2e8a023ee8a9bfa6d54d63dcd))
+
 # [1.26.0](https://github.com/1arley/animesice-back/compare/v1.25.1...v1.26.0) (2026-09-08)
 
 
