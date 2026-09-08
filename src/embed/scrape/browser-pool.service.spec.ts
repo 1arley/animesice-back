@@ -24,6 +24,32 @@ function makeContext(overrides: Record<string, any> = {}) {
 }
 
 describe('BrowserPool', () => {
+  it('passa proxy autenticado e NO_PROXY ao Chromium', async () => {
+    const env = jest.replaceProperty(process, 'env', {
+      ...process.env,
+      HTTPS_PROXY: 'http://test:pass%40word@proxy.test:3128',
+      NO_PROXY: 'localhost,127.0.0.1,::1,*.local',
+    });
+    const pool = new BrowserPool();
+    mockedLaunch.mockResolvedValue(makeBrowser());
+    try {
+      await pool.acquireContext('proxy');
+      expect(mockedLaunch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          proxy: {
+            server: 'http://proxy.test:3128',
+            username: 'test',
+            password: 'pass@word',
+            bypass: 'localhost,127.0.0.1,[::1],*.local',
+          },
+        }),
+      );
+    } finally {
+      await pool.onModuleDestroy();
+      env.restore();
+    }
+  });
+
   beforeEach(() => {
     mockedLaunch.mockReset();
   });

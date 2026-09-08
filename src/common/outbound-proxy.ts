@@ -1,4 +1,35 @@
 import { EnvHttpProxyAgent, setGlobalDispatcher } from 'undici';
+import type { LaunchOptions } from 'playwright';
+
+/** Chromium precisa receber o proxy e a autenticação explicitamente. */
+export function playwrightProxy(): LaunchOptions['proxy'] {
+  const env = process.env;
+  const raw =
+    env.HTTPS_PROXY || env.https_proxy || env.HTTP_PROXY || env.http_proxy;
+  if (!raw) return undefined;
+
+  let url: URL;
+  try {
+    url = new URL(raw);
+    if (!['http:', 'https:'].includes(url.protocol)) throw new Error();
+    return {
+      server: url.origin,
+      username: decodeURIComponent(url.username),
+      password: decodeURIComponent(url.password),
+      bypass: (
+        env.NO_PROXY ||
+        env.no_proxy ||
+        'localhost,127.0.0.1,::1,*.local'
+      )
+        .split(/[\s,]+/)
+        .filter(Boolean)
+        .map((host) => (host === '::1' ? '[::1]' : host))
+        .join(','),
+    };
+  } catch {
+    throw new Error('Proxy HTTP/HTTPS inválido para o Chromium.');
+  }
+}
 
 /**
  * Configura proxy outbound para TODOS os fetch() do processo (scrape de
