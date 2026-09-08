@@ -1,3 +1,10 @@
+## [1.27.2](https://github.com/1arley/animesice-back/compare/v1.27.1...v1.27.2) (2026-09-08)
+
+
+### Bug Fixes
+
+* **embed:** allow vidcache.net:8161 media port in proxy allowlist ([f27e233](https://github.com/1arley/animesice-back/commit/f27e23364d150cea6d3263f923cf500e5b6484b1))
+
 ## [1.27.1](https://github.com/1arley/animesice-back/compare/v1.27.0...v1.27.1) (2026-09-08)
 
 
