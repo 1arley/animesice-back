@@ -24,7 +24,8 @@ describe('GachaService', () => {
       aggregate: jest.fn(),
       groupBy: jest.fn(),
     },
-    waifu: { count: jest.fn(), findFirst: jest.fn() },
+    gachaRollDay: { count: jest.fn(), create: jest.fn() },
+    waifu: { count: jest.fn(), findFirst: jest.fn(), update: jest.fn() },
     privacySettings: { findUnique: jest.fn() },
     post: { create: jest.fn() },
     user: { findMany: jest.fn() },
@@ -52,9 +53,12 @@ describe('GachaService', () => {
   beforeEach(async () => {
     jest.resetAllMocks();
     mockTurnstile.verify.mockResolvedValue(undefined);
-    mockPrisma.$transaction.mockImplementation((promises: Promise<unknown>[]) =>
-      Promise.all(promises),
+    mockPrisma.$transaction.mockImplementation(
+      (input: Promise<unknown>[] | ((tx: typeof mockPrisma) => unknown)) =>
+        typeof input === 'function' ? input(mockPrisma) : Promise.all(input),
     );
+    mockPrisma.gachaRollDay.count.mockResolvedValue(0);
+    mockPrisma.waifu.update.mockResolvedValue({ editionCounter: 1 });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -82,7 +86,7 @@ describe('GachaService', () => {
     });
 
     it('bloqueia segundo roll no mesmo dia com nextRollAt', async () => {
-      mockPrisma.userWaifu.count.mockResolvedValue(1);
+      mockPrisma.gachaRollDay.count.mockResolvedValue(1);
       mockPrisma.userWaifu.findFirst.mockResolvedValue({
         obtainedAt: new Date(),
       });
@@ -120,7 +124,7 @@ describe('GachaService', () => {
     }
 
     it('barra roll repetido no dia', async () => {
-      mockPrisma.userWaifu.count.mockResolvedValue(1);
+      mockPrisma.gachaRollDay.count.mockResolvedValue(1);
       mockPrisma.userWaifu.findFirst.mockResolvedValue({
         obtainedAt: new Date(),
       });
@@ -151,6 +155,12 @@ describe('GachaService', () => {
       expect(pull.waifu.id).toBe('w1');
       expect(pull.edition).toBe(1);
       expect(pull.conditionLabel).toBeDefined();
+      expect(mockPrisma.gachaRollDay.create).toHaveBeenCalled();
+      expect(mockPrisma.waifu.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { editionCounter: { increment: 1 } },
+        }),
+      );
       expect(mockPrisma.post.create).not.toHaveBeenCalled();
     });
 

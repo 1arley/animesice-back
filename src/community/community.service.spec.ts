@@ -4,12 +4,12 @@ import { FeedbackStatus } from '@prisma/client';
 
 function makePrisma() {
   const animeRequest = {
-    findFirst: jest.fn(async () => null) as jest.Mock,
-    create: jest.fn(async () => ({})) as jest.Mock,
-    update: jest.fn(async () => ({})) as jest.Mock,
-    findMany: jest.fn(async () => []) as jest.Mock,
-    count: jest.fn(async () => 0) as jest.Mock,
-    findUnique: jest.fn(async () => null) as jest.Mock,
+    findFirst: jest.fn(async () => null),
+    create: jest.fn(async () => ({})),
+    update: jest.fn(async () => ({})),
+    findMany: jest.fn(async () => []),
+    count: jest.fn(async () => 0),
+    findUnique: jest.fn(async () => null),
   };
   const animeRequestVote = {
     findUnique: jest.fn(async () => null) as jest.Mock,
@@ -29,12 +29,15 @@ function makePrisma() {
     delete: jest.fn(async () => ({})) as jest.Mock,
     create: jest.fn(async () => ({})) as jest.Mock,
   };
-  const prisma = {
+  const prisma: any = {
     animeRequest,
     animeRequestVote,
     siteFeedback,
     siteFeedbackUpvote,
-    $transaction: jest.fn(async (ops: Promise<unknown>[]) => Promise.all(ops)),
+    $transaction: jest.fn(
+      async (input: Promise<unknown>[] | ((tx: unknown) => unknown)) =>
+        typeof input === 'function' ? input(prisma) : Promise.all(input),
+    ),
   };
   return prisma;
 }
@@ -42,7 +45,7 @@ function makePrisma() {
 describe('CommunityService', () => {
   function build() {
     const prisma = makePrisma();
-    const svc = new CommunityService(prisma as any);
+    const svc = new CommunityService(prisma);
     return { svc, prisma };
   }
 
@@ -118,25 +121,25 @@ describe('CommunityService', () => {
   });
 
   describe('voteRequest', () => {
-    it('deve votar e recomputar contagem', async () => {
+    it('deve votar e incrementar a contagem atomicamente', async () => {
       const { svc, prisma } = build();
       prisma.animeRequest.findUnique.mockResolvedValue({
         id: 'r1',
         status: 'OPEN',
       });
       prisma.animeRequestVote.findUnique.mockResolvedValue(null);
-      prisma.animeRequestVote.count.mockResolvedValue(6);
+      prisma.animeRequest.update.mockResolvedValue({ voteCount: 6 });
       const result = await svc.voteRequest('r1', userId);
       expect(result).toEqual({ voted: true, voteCount: 6 });
       expect(prisma.animeRequestVote.create).toHaveBeenCalled();
       expect(prisma.animeRequest.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: { voteCount: 6 },
+          data: { voteCount: { increment: 1 } },
         }),
       );
     });
 
-    it('deve remover voto existente e recomputar contagem', async () => {
+    it('deve remover voto e decrementar a contagem atomicamente', async () => {
       const { svc, prisma } = build();
       prisma.animeRequest.findUnique.mockResolvedValue({
         id: 'r1',
@@ -146,13 +149,13 @@ describe('CommunityService', () => {
         requestId: 'r1',
         userId,
       });
-      prisma.animeRequestVote.count.mockResolvedValue(4);
+      prisma.animeRequest.update.mockResolvedValue({ voteCount: 4 });
       const result = await svc.voteRequest('r1', userId);
       expect(result).toEqual({ voted: false, voteCount: 4 });
       expect(prisma.animeRequestVote.delete).toHaveBeenCalled();
       expect(prisma.animeRequest.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: { voteCount: 4 },
+          data: { voteCount: { decrement: 1 } },
         }),
       );
     });

@@ -65,8 +65,8 @@ export class GachaService {
   async status(userId: string) {
     const start = this.dayStartUtc();
     const [today, lastEpic, first] = await this.prisma.$transaction([
-      this.prisma.userWaifu.count({
-        where: { userId, obtainedAt: { gte: start } },
+      this.prisma.gachaRollDay.count({
+        where: { userId, day: start },
       }),
       this.prisma.userWaifu.findFirst({
         where: { userId, waifu: { rarity: { in: EPIC_RARITIES } } },
@@ -131,24 +131,41 @@ export class GachaService {
       throw new NotFoundException('Pool do gacha vazio. Seed pendente.');
     }
 
-    const edition =
-      (await this.prisma.userWaifu.count({
-        where: { waifuId: waifu.id },
-      })) + 1;
     const condition = Math.random();
     const foil = pickWeighted(GACHA_FOIL_WEIGHTS);
 
-    const pull = await this.prisma.userWaifu.create({
-      data: {
-        userId,
-        waifuId: waifu.id,
-        condition,
-        foil,
-        edition,
-        value: cardValue(tier, condition, foil, edition),
-      },
-      select: PULL_SELECT,
-    });
+    let pull: Pull;
+    try {
+      pull = await this.prisma.$transaction(async (tx) => {
+        await tx.gachaRollDay.create({
+          data: { userId, day: this.dayStartUtc() },
+        });
+        const counter = await tx.waifu.update({
+          where: { id: waifu.id },
+          data: { editionCounter: { increment: 1 } },
+          select: { editionCounter: true },
+        });
+        const edition = counter.editionCounter;
+        return tx.userWaifu.create({
+          data: {
+            userId,
+            waifuId: waifu.id,
+            condition,
+            foil,
+            edition,
+            value: cardValue(tier, condition, foil, edition),
+          },
+          select: PULL_SELECT,
+        });
+      });
+    } catch (error) {
+      if ((error as { code?: string }).code === 'P2002') {
+        throw new ForbiddenException(
+          'Você já fez seu roll hoje. Volte amanhã.',
+        );
+      }
+      throw error;
+    }
 
     if (isEpicTier(tier)) {
       await this.publishPullPost(userId, pull);

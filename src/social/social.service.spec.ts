@@ -38,6 +38,10 @@ describe('SocialService', () => {
       count: jest.fn(),
       create: jest.fn(),
     },
+    postShare: {
+      findUnique: jest.fn(),
+      create: jest.fn(),
+    },
     follow: {
       findUnique: jest.fn(),
       findMany: jest.fn(),
@@ -63,6 +67,10 @@ describe('SocialService', () => {
     // resetAllMocks (e não clearAllMocks) limpa também as filas de
     // mockResolvedValueOnce — evita vazamento de valores entre testes.
     jest.resetAllMocks();
+    mockPrisma.$transaction.mockImplementation(
+      (input: Promise<unknown>[] | ((tx: typeof mockPrisma) => unknown)) =>
+        typeof input === 'function' ? input(mockPrisma) : Promise.all(input),
+    );
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -238,6 +246,24 @@ describe('SocialService', () => {
         service.createPostComment('u1', 'p1', { content: '   ' }),
       ).rejects.toThrow(BadRequestException);
       expect(prisma.postComment.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('sharePost', () => {
+    it('cria o compartilhamento e incrementa o contador na mesma transação', async () => {
+      mockPrisma.post.findFirst.mockResolvedValue({ id: 'p1' });
+      mockPrisma.postShare.findUnique.mockResolvedValue(null);
+      mockPrisma.post.update.mockResolvedValue({ shareCount: 3 });
+
+      await expect(service.sharePost('u1', 'p1')).resolves.toEqual({
+        shared: true,
+        shareCount: 3,
+      });
+      expect(mockPrisma.post.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { shareCount: { increment: 1 } },
+        }),
+      );
     });
   });
 

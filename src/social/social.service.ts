@@ -284,20 +284,16 @@ export class SocialService {
       return { shared: true, shareCount: current?.shareCount ?? 0 };
     }
 
-    await this.prisma.postShare.create({
-      data: { userId, postId },
+    const updated = await this.prisma.$transaction(async (tx) => {
+      await tx.postShare.create({ data: { userId, postId } });
+      return tx.post.update({
+        where: { id: postId },
+        data: { shareCount: { increment: 1 } },
+        select: { shareCount: true },
+      });
     });
 
-    // Atomic: recompute from actual rows to prevent drift.
-    const shareCount = await this.prisma.postShare.count({
-      where: { postId },
-    });
-    await this.prisma.post.update({
-      where: { id: postId },
-      data: { shareCount },
-    });
-
-    return { shared: true, shareCount };
+    return { shared: true, shareCount: updated.shareCount };
   }
 
   // ------------------------------------------------------------------

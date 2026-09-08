@@ -97,41 +97,32 @@ export class CommunityService {
   }
 
   async voteRequest(requestId: string, userId: string) {
-    const request = await this.prisma.animeRequest.findUnique({
-      where: { id: requestId },
-      select: { id: true, status: true },
-    });
-
-    if (!request) {
-      throw new NotFoundException('Solicitação não encontrada.');
-    }
-
-    const existingVote = await this.prisma.animeRequestVote.findUnique({
-      where: {
-        requestId_userId: { requestId, userId },
-      },
-    });
-
-    if (existingVote) {
-      await this.prisma.animeRequestVote.delete({
-        where: { requestId_userId: { requestId, userId } },
+    return this.prisma.$transaction(async (tx) => {
+      const request = await tx.animeRequest.findUnique({
+        where: { id: requestId },
+        select: { id: true },
       });
-    } else {
-      await this.prisma.animeRequestVote.create({
-        data: { requestId, userId },
+      if (!request) throw new NotFoundException('Solicitação não encontrada.');
+
+      const where = { requestId_userId: { requestId, userId } };
+      const existingVote = await tx.animeRequestVote.findUnique({ where });
+      if (existingVote) {
+        await tx.animeRequestVote.delete({ where });
+      } else {
+        await tx.animeRequestVote.create({ data: { requestId, userId } });
+      }
+      const requestWithCount = await tx.animeRequest.update({
+        where: { id: requestId },
+        data: {
+          voteCount: existingVote ? { decrement: 1 } : { increment: 1 },
+        },
+        select: { voteCount: true },
       });
-    }
-
-    // Atomic: recompute voteCount from actual rows to prevent drift.
-    const voteCount = await this.prisma.animeRequestVote.count({
-      where: { requestId },
+      return {
+        voted: !existingVote,
+        voteCount: requestWithCount.voteCount,
+      };
     });
-    await this.prisma.animeRequest.update({
-      where: { id: requestId },
-      data: { voteCount },
-    });
-
-    return { voted: !existingVote, voteCount };
   }
 
   async adminUpdateRequestStatus(

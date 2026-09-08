@@ -147,11 +147,7 @@ export function pinnedDispatcher(resolution: SafeUrlResolution): Dispatcher {
   return new Agent({ connect: { lookup: resolution.lookup } });
 }
 
-/**
- * Proxy URL do环境 (HTTPS_PROXY / HTTP_PROXY). Definido uma vez no boot.
- * Quando configurado, fetchSafeRaw usa ProxyAgent em vez de Agent pinado.
- * O proxy IP-residencial bypassa bloqueio de datacenter (Cloudflare 403).
- */
+/** Proxy residencial opcional para provedores que bloqueiam datacenters. */
 const PROXY_URL =
   process.env.HTTPS_PROXY ||
   process.env.https_proxy ||
@@ -164,25 +160,29 @@ const PROXY_URL =
  * - Com proxy: usa ProxyAgent (rota pelo IP residencial do proxy)
  * - Sem proxy: usa Agent pinado (conecta direto no IP validado)
  *
- * Em ambos os casos, a validação SSRF (DNS resolution + blocked IPs)
- * acontece ANTES da criação do dispatcher. O proxy re-resolve o hostname,
- * mas o risco de DNS rebinding é mínimo pois:
- *  1. A validação é feita no mesmo tick da request
- *  2. O proxy é infra própria (nim-proxy na VPS)
- *  3. A janela entre validação e connect é da ordem de ms
+ * Com proxy, a URL usa o IP já validado; Host e SNI preservam o domínio
+ * original para HTTP/TLS sem permitir nova resolução DNS no proxy.
  */
-function createSSRFDispatcher(resolution: SafeUrlResolution): Dispatcher {
+function createSSRFDispatcher(resolution: SafeUrlResolution): {
+  dispatcher: Dispatcher;
+  url: string;
+  host?: string;
+} {
   if (PROXY_URL) {
-    try {
-      return new ProxyAgent({
+    const url = new URL(resolution.url);
+    const address = resolution.addresses[0]!.address;
+    const host = url.host;
+    url.hostname = net.isIP(address) === 6 ? `[${address}]` : address;
+    return {
+      dispatcher: new ProxyAgent({
         uri: PROXY_URL,
-        token: undefined,
-      });
-    } catch {
-      // Fallback para dispatcher pinado se proxy falhar
-    }
+        requestTls: { servername: resolution.hostname },
+      }),
+      url: url.toString(),
+      host,
+    };
   }
-  return pinnedDispatcher(resolution);
+  return { dispatcher: pinnedDispatcher(resolution), url: resolution.url };
 }
 
 /** Compatibilidade para callers que só precisam validar, sem fazer request. */
@@ -208,14 +208,18 @@ export async function fetchSafeRaw(
 
   for (let i = 0; i <= MAX_REDIRECTS; i++) {
     const resolution = await resolveSafeUrl(current);
-    const dispatcher = createSSRFDispatcher(resolution);
+    const request = createSSRFDispatcher(resolution);
+    const dispatcher = request.dispatcher;
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     let response: Response;
     try {
-      response = await undiciFetch(resolution.url, {
+      const headers = new Headers(init.headers);
+      if (request.host) headers.set('host', request.host);
+      response = await undiciFetch(request.url, {
         ...init,
+        headers,
         signal: controller.signal,
         redirect: 'manual',
         dispatcher,

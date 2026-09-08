@@ -149,6 +149,7 @@ model User {
   siteFeedbackUpvotes     SiteFeedbackUpvote[]
   privacySettings         PrivacySettings?
   userWaifus              UserWaifu[]
+  gachaRollDays           GachaRollDay[]
   posts                   Post[]
   postLikes               PostLike[]
   postComments            PostComment[]
@@ -755,6 +756,7 @@ model Waifu {
   anime                Anime?      @relation(fields: [animeId], references: [id], onDelete: SetNull)
   animeTitle           String?
   owners               UserWaifu[]
+  editionCounter       Int         @default(0)
   createdAt            DateTime    @default(now())
   updatedAt            DateTime    @updatedAt
 
@@ -779,4 +781,12 @@ model UserWaifu {
   @@index([userId, obtainedAt(sort: Desc)])
   @@index([waifuId, edition])
   @@index([userId, value(sort: Desc)])
+}
+
+model GachaRollDay {
+  userId String
+  user   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  day    DateTime @db.Date
+
+  @@id([userId, day])
 }
