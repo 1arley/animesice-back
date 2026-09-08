@@ -7,7 +7,6 @@ import {
   UseGuards,
   NotFoundException,
   ForbiddenException,
-  HttpCode,
   HttpStatus,
 } from '@nestjs/common';
 import {
@@ -240,11 +239,12 @@ export class StreamingController {
   }
 
   @Get('source/async')
-  @HttpCode(HttpStatus.ACCEPTED)
   @Throttle({ default: { limit: 60, ttl: 60_000 } })
   async getSourceAsync(
     @Query('anime') animeSlug: string,
     @Query('episode') episodeSlug: string,
+    @Req() req: express.Request,
+    @Res() res: express.Response,
   ) {
     const episodeNumber = EPISODE_NUM_RE.test(episodeSlug)
       ? parseInt(episodeSlug, 10)
@@ -254,7 +254,25 @@ export class StreamingController {
         'Parâmetros `anime` e `episode` são obrigatórios.',
       );
     }
-    return this.streamingService.getSourceAsync(animeSlug, episodeNumber);
+    const pending = await this.streamingService.getSourceAsync(
+      animeSlug,
+      episodeNumber,
+    );
+    if (pending) {
+      res.status(HttpStatus.ACCEPTED).json(pending);
+      return;
+    }
+    // Vídeo já pronto: devolve o source direto (200) em vez de 202 vazio.
+    // O 202 vazio fazia o route Next (/api/stream-source) responder 502,
+    // forçando o player a um fallback redundante no backend síncrono.
+    const source = await this.streamingService.getSource(
+      animeSlug,
+      episodeNumber,
+      backendOrigin(req, this.trustProxy, this.configService),
+      1,
+      false,
+    );
+    res.json(source);
   }
 
   /**

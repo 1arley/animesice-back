@@ -563,21 +563,58 @@ describe('StreamingController', () => {
   });
 
   describe('getSourceAsync', () => {
+    function makeAsyncRes() {
+      return {
+        status: jest.fn().mockReturnThis(),
+        json: jest.fn(),
+      } as any;
+    }
+
+    function makeAsyncReq() {
+      return {
+        headers: { host: 'api.animesice.com' },
+        socket: { remoteAddress: '::1' },
+        protocol: 'https',
+      } as any;
+    }
+
     it('inicia a extração assíncrona do episódio', async () => {
       mockStreamingService.getSourceAsync.mockResolvedValue({
         jobId: 'job-1',
         status: 'pending',
         message: 'Extração em andamento.',
       });
-      await expect(
-        controller.getSourceAsync('solo', '1'),
-      ).resolves.toMatchObject({
-        jobId: 'job-1',
-        status: 'pending',
-      });
+      const res = makeAsyncRes();
+      await controller.getSourceAsync('solo', '1', makeAsyncReq(), res);
       expect(mockStreamingService.getSourceAsync).toHaveBeenCalledWith(
         'solo',
         1,
+      );
+      expect(res.status).toHaveBeenCalledWith(202);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({ jobId: 'job-1' }),
+      );
+    });
+
+    it('devolve o source direto (200) quando o vídeo já está pronto', async () => {
+      mockStreamingService.getSourceAsync.mockResolvedValue(null);
+      mockStreamingService.getSource.mockResolvedValue({
+        animeSlug: 'solo',
+        episodeNumber: 1,
+        src: 'https://api.animesice.com/api/embed/media?url=...',
+      });
+      const res = makeAsyncRes();
+      await controller.getSourceAsync('solo', '1', makeAsyncReq(), res);
+      expect(mockStreamingService.getSource).toHaveBeenCalledWith(
+        'solo',
+        1,
+        'https://api.animesice.com',
+        1,
+        false,
+      );
+      expect(res.status).not.toHaveBeenCalled();
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({ animeSlug: 'solo' }),
       );
     });
 
