@@ -34,6 +34,8 @@ const DEFAULT_PORTS: Readonly<Record<string, string>> = Object.freeze({
   'https:': '443',
 });
 
+const ALLOWED_NON_DEFAULT_PORTS = new Set(['vidcache.net:8161']);
+
 /**
  * Allowlist de hosts externos permitidos para chamadas de proxy.
  * Pode ser configurada via env: EMBED_ALLOWED_HOSTS=example.com,cdn.example.com
@@ -525,13 +527,16 @@ export class EmbedService {
     }
 
     const defaultPort = DEFAULT_PORTS[parsed.protocol];
-    if (parsed.port && parsed.port !== defaultPort) {
+    const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+    if (
+      parsed.port &&
+      parsed.port !== defaultPort &&
+      !ALLOWED_NON_DEFAULT_PORTS.has(`${host}:${parsed.port}`)
+    ) {
       throw new BadRequestException(
         `Porta de destino não permitida: ${parsed.protocol} só aceita a porta padrão ${defaultPort}.`,
       );
     }
-
-    const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
 
     if (isBlockedHostname(host)) {
       throw new BadRequestException(BLOCKED_MESSAGE);

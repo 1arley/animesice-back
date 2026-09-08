@@ -24,7 +24,7 @@ describe('EmbedService (proxy HTML/mídia + anti-SSRF)', () => {
   let service: EmbedService;
   const originalFetch = global.fetch;
   const allowedHosts =
-    'animefire.io,googlevideo.com,meusanimes.blog,youtube.googleapis.com';
+    'animefire.io,googlevideo.com,meusanimes.blog,youtube.googleapis.com,vidcache.net';
 
   function createService(hosts: string | null = allowedHosts) {
     return new EmbedService({
@@ -53,6 +53,12 @@ describe('EmbedService (proxy HTML/mídia + anti-SSRF)', () => {
     );
     expect(service.normalizeUrl('https://animefire.io:443/x')).toBe(
       'https://animefire.io/x',
+    );
+  });
+
+  it('aceita a porta de mídia usada pelo vidcache', () => {
+    expect(service.normalizeUrl('https://vidcache.net:8161/video.mp4')).toBe(
+      'https://vidcache.net:8161/video.mp4',
     );
   });
 
