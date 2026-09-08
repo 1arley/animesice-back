@@ -688,7 +688,10 @@ export class StreamingService {
     const job = this.extractionJobs.getJob(jobId);
     if (!job) return null;
 
-    if (job.status === 'completed' && job.result?.videoUrl) {
+    if (
+      job.status === 'completed' &&
+      (job.result?.videoUrl || job.result?.playerEmbed)
+    ) {
       // Constrói o StreamSourceResponse diretamente a partir do resultado do job
       try {
         const result = await this.buildSourceFromJobResult(

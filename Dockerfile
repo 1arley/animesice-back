@@ -1,7 +1,7 @@
 # Stage 1: Base
 # Debian slim (glibc): Playwright chromium não roda em Alpine (musl).
 # Xvfb: necessário para headless:false (token Blogger só renderiza com display).
-FROM node:22-slim AS base
+FROM node:24-slim AS base
 
 RUN apt-get update && apt-get install -y --no-install-recommends dumb-init xvfb \
   && rm -rf /var/lib/apt/lists/*
@@ -11,13 +11,13 @@ WORKDIR /app
 # Stage 2: Dependencies (production only)
 FROM base AS deps
 
-COPY package.json package-lock.json ./
+COPY .npmrc package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts
 
 # Stage 3: Build
 FROM base AS build
 
-COPY package.json package-lock.json ./
+COPY .npmrc package.json package-lock.json ./
 RUN npm ci --ignore-scripts
 
 COPY prisma ./prisma/

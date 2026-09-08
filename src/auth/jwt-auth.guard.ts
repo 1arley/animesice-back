@@ -1,13 +1,24 @@
-import { Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
+import {
+  Injectable,
+  Inject,
+  Optional,
+  CanActivate,
+  ExecutionContext,
+} from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { AuthGuard } from '@nestjs/passport';
+import { AuthGuard, AuthModuleOptions } from '@nestjs/passport';
 import { Observable } from 'rxjs';
 import { IS_PUBLIC_KEY } from '@/auth/decorators/public.decorator';
 
 @Injectable()
 export class JwtAuthGuard extends AuthGuard('jwt') implements CanActivate {
-  constructor(private readonly reflector: Reflector) {
-    super();
+  // NestJS 12 usa getOwnMetadata p/ deps opcionais: o marker @Optional() do
+  // AuthGuard mixin não é herdado por subclasses, então redeclaramos o ctor.
+  constructor(
+    private readonly reflector: Reflector,
+    @Optional() @Inject(AuthModuleOptions) options?: AuthModuleOptions,
+  ) {
+    super(options);
   }
 
   canActivate(

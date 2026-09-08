@@ -7,6 +7,7 @@ import {
   UseGuards,
   NotFoundException,
   ForbiddenException,
+  HttpCode,
   HttpStatus,
 } from '@nestjs/common';
 import {
@@ -178,8 +179,6 @@ export class StreamingController {
         'Parâmetros `anime` e `episode` são obrigatórios.',
       );
     }
-
-    // Polling de job assíncrono
     if (jobId) {
       const status = await this.streamingService.getJobStatus(
         jobId,
@@ -189,18 +188,14 @@ export class StreamingController {
         throw new NotFoundException('Job não encontrado ou expirado.');
       }
       if (status.status === 'completed' && status.result) {
-        // Source já pronto — retorna direto (sem round-trip extra)
         res.json(status.result);
         return;
       }
-      if (status.status === 'completed' && !status.result) {
-        // Job completou mas não conseguiu construir source — fallback síncrono
+      if (status.status === 'completed') {
         const source = await this.streamingService.getSource(
           animeSlug,
           episodeNumber,
           backendOrigin(req, this.trustProxy, this.configService),
-          1,
-          false,
         );
         res.json(source);
         return;
@@ -213,7 +208,6 @@ export class StreamingController {
         });
         return;
       }
-      // still processing
       res.status(HttpStatus.ACCEPTED).json({
         jobId,
         status: status.status,
@@ -221,17 +215,12 @@ export class StreamingController {
       });
       return;
     }
-
-    // Modo síncrono (default): tenta resolver normalmente
     if (asyncMode === '1' || asyncMode === 'true') {
-      // Tenta extração assíncrona
       const asyncResult = await this.streamingService.getSourceAsync(
         animeSlug,
         episodeNumber,
-        1,
       );
       if (asyncResult) {
-        // Extração assíncrona disparada
         res.status(HttpStatus.ACCEPTED).json({
           jobId: asyncResult.jobId,
           status: 'pending',
@@ -239,9 +228,7 @@ export class StreamingController {
         });
         return;
       }
-      // Vídeo já existe — retorna síncrono
     }
-
     const source = await this.streamingService.getSource(
       animeSlug,
       episodeNumber,
@@ -250,6 +237,24 @@ export class StreamingController {
       refresh === '1' || refresh === 'true',
     );
     res.json(source);
+  }
+
+  @Get('source/async')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  async getSourceAsync(
+    @Query('anime') animeSlug: string,
+    @Query('episode') episodeSlug: string,
+  ) {
+    const episodeNumber = EPISODE_NUM_RE.test(episodeSlug)
+      ? parseInt(episodeSlug, 10)
+      : NaN;
+    if (!animeSlug || Number.isNaN(episodeNumber)) {
+      throw new NotFoundException(
+        'Parâmetros `anime` e `episode` são obrigatórios.',
+      );
+    }
+    return this.streamingService.getSourceAsync(animeSlug, episodeNumber);
   }
 
   /**

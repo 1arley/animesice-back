@@ -1,5 +1,6 @@
 import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { chromium, type Browser, type BrowserContext } from 'playwright';
+import { playwrightProxy } from '@/common/outbound-proxy';
 
 const UA_DESKTOP =
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
@@ -49,6 +50,7 @@ export class BrowserPool implements OnModuleInit, OnModuleDestroy {
         this.browser = null;
       }
       this.browser = await chromium.launch({
+        proxy: playwrightProxy(),
         headless: true,
         chromiumSandbox: false,
         args: [
@@ -100,7 +102,6 @@ export class BrowserPool implements OnModuleInit, OnModuleDestroy {
     return { browser, context, release };
   }
 
-  // eslint-disable-next-line @typescript-eslint/require-await -- cleanup runs async context.close() operations
   private async cleanupIdle(): Promise<void> {
     const now = Date.now();
     for (const [key, entry] of this.contexts) {

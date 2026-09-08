@@ -1,4 +1,4 @@
-import { setupOutboundProxy } from '@/common/outbound-proxy';
+import { playwrightProxy, setupOutboundProxy } from '@/common/outbound-proxy';
 import { setGlobalDispatcher } from 'undici';
 
 jest.mock('undici', () => ({
@@ -39,9 +39,27 @@ describe('setupOutboundProxy', () => {
   });
 
   it('não faz nada quando nenhum proxy é configurado', () => {
+    expect(playwrightProxy()).toBeUndefined();
     setupOutboundProxy();
 
     expect(mockedSetGlobalDispatcher).not.toHaveBeenCalled();
+  });
+
+  it('configura Chromium com variável minúscula e bypass padrão', () => {
+    process.env.http_proxy = 'http://proxy.test:3128';
+    expect(playwrightProxy()).toEqual({
+      server: 'http://proxy.test:3128',
+      username: '',
+      password: '',
+      bypass: 'localhost,127.0.0.1,[::1],*.local',
+    });
+  });
+
+  it('rejeita proxy inválido sem expor credenciais', () => {
+    process.env.HTTPS_PROXY = 'http://secret:password@';
+    expect(() => playwrightProxy()).toThrow(
+      'Proxy HTTP/HTTPS inválido para o Chromium.',
+    );
   });
 
   it('configura proxy e define NO_PROXY padrão', () => {
