@@ -136,7 +136,10 @@ export class AuthService {
           where: { userId: userExists.id },
         });
         const code = await this.createVerificationCode(userExists.id);
-        await this.mailService.sendVerificationCode(email, code);
+        const sent = await this.mailService.sendVerificationCode(email, code);
+        if (!sent) {
+          this.logger.warn(`verification email não enviado p/ ${email}`);
+        }
       }
 
       return {
@@ -160,7 +163,10 @@ export class AuthService {
       });
 
       const code = await this.createVerificationCode(user.id);
-      await this.mailService.sendVerificationCode(email, code);
+      const sent = await this.mailService.sendVerificationCode(email, code);
+      if (!sent) {
+        this.logger.warn(`verification email não enviado p/ ${email}`);
+      }
 
       return {
         message:
@@ -288,10 +294,15 @@ export class AuthService {
 
     const confirmUrl = `${this.configService.get<string>('FRONTEND_URL') || 'http://localhost:3000'}/settings/confirm-email?token=${token}`;
 
-    await this.mailService.sendEmailChangeConfirm(
+    const sent = await this.mailService.sendEmailChangeConfirm(
       normalizedNewEmail,
       confirmUrl,
     );
+    if (!sent) {
+      this.logger.warn(
+        `change-confirm email não enviado p/ ${normalizedNewEmail}`,
+      );
+    }
 
     return {
       message:
@@ -436,7 +447,13 @@ export class AuthService {
 
     const resetUrl = `${this.configService.get<string>('FRONTEND_URL') || 'http://localhost:3000'}/redefinir-senha?token=${token}`;
 
-    await this.mailService.sendPasswordResetEmail(user.email, resetUrl);
+    const sent = await this.mailService.sendPasswordResetEmail(
+      user.email,
+      resetUrl,
+    );
+    if (!sent) {
+      this.logger.warn(`password-reset email não enviado p/ ${user.email}`);
+    }
 
     return {
       message: 'Se o email existir, um link de redefinição foi enviado.',

@@ -1,6 +1,7 @@
 import {
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
@@ -50,6 +51,8 @@ type Pull = Prisma.UserWaifuGetPayload<{ select: typeof PULL_SELECT }>;
 
 @Injectable()
 export class GachaService {
+  private readonly logger = new Logger(GachaService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly turnstile: TurnstileService,
@@ -168,7 +171,17 @@ export class GachaService {
     }
 
     if (isEpicTier(tier)) {
-      await this.publishPullPost(userId, pull);
+      // Best-effort pós-commit: falha no post não pode transformar
+      // um roll commitado em 500 (caller retry veria 403 confuso).
+      try {
+        await this.publishPullPost(userId, pull);
+      } catch (error) {
+        this.logger.warn(
+          `publishPullPost falhou p/ user ${userId} pull ${pull.id}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
     }
 
     return {

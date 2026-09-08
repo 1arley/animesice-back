@@ -155,29 +155,40 @@ export class SocialService {
     });
 
     if (existing) {
-      await this.prisma.postLike.delete({
-        where: { userId_postId: { userId, postId } },
-      });
+      try {
+        await this.prisma.postLike.delete({
+          where: { userId_postId: { userId, postId } },
+        });
+      } catch (error) {
+        if ((error as { code?: string }).code !== 'P2025') throw error;
+      }
       return { liked: false };
     }
 
-    await this.prisma.postLike.create({ data: { userId, postId } });
+    try {
+      await this.prisma.postLike.create({ data: { userId, postId } });
+    } catch (error) {
+      if ((error as { code?: string }).code !== 'P2002') throw error;
+      return { liked: true };
+    }
 
     if (post.userId !== userId) {
       const liker = await this.prisma.user.findUnique({
         where: { id: userId },
         select: { name: true, userName: true },
       });
-      void this.notificationService.create({
-        userId: post.userId,
-        type: NotificationType.POST_LIKE,
-        title: `${liker?.name ?? liker?.userName ?? 'Alguém'} curtiu seu post`,
-        body:
-          post.content.length > 80
-            ? `${post.content.slice(0, 80)}…`
-            : post.content,
-        linkUrl: '/comunidade/feed',
-      });
+      void Promise.resolve(
+        this.notificationService.create({
+          userId: post.userId,
+          type: NotificationType.POST_LIKE,
+          title: `${liker?.name ?? liker?.userName ?? 'Alguém'} curtiu seu post`,
+          body:
+            post.content.length > 80
+              ? `${post.content.slice(0, 80)}…`
+              : post.content,
+          linkUrl: '/comunidade/feed',
+        }),
+      ).catch(() => undefined);
     }
 
     return { liked: true };
@@ -247,14 +258,16 @@ export class SocialService {
         where: { id: userId },
         select: { name: true, userName: true },
       });
-      void this.notificationService.create({
-        userId: post.userId,
-        type: NotificationType.POST_COMMENT,
-        title: `${
-          author?.name ?? author?.userName ?? 'Alguém'
-        } comentou no seu post`,
-        linkUrl: '/comunidade/feed',
-      });
+      void Promise.resolve(
+        this.notificationService.create({
+          userId: post.userId,
+          type: NotificationType.POST_COMMENT,
+          title: `${
+            author?.name ?? author?.userName ?? 'Alguém'
+          } comentou no seu post`,
+          linkUrl: '/comunidade/feed',
+        }),
+      ).catch(() => undefined);
     }
 
     return comment;
@@ -284,14 +297,27 @@ export class SocialService {
       return { shared: true, shareCount: current?.shareCount ?? 0 };
     }
 
-    const updated = await this.prisma.$transaction(async (tx) => {
-      await tx.postShare.create({ data: { userId, postId } });
-      return tx.post.update({
-        where: { id: postId },
-        data: { shareCount: { increment: 1 } },
-        select: { shareCount: true },
+    const updated = await this.prisma
+      .$transaction(async (tx) => {
+        await tx.postShare.create({ data: { userId, postId } });
+        return tx.post.update({
+          where: { id: postId },
+          data: { shareCount: { increment: 1 } },
+          select: { shareCount: true },
+        });
+      })
+      .catch(async (error) => {
+        // Corrida: outro request criou o share entre o check e o create.
+        // Retorna o estado idempotente em vez de 500 (P2002).
+        if ((error as { code?: string }).code === 'P2002') {
+          const current = await this.prisma.post.findUnique({
+            where: { id: postId },
+            select: { shareCount: true },
+          });
+          return { shareCount: current?.shareCount ?? 0 };
+        }
+        throw error;
       });
-    });
 
     return { shared: true, shareCount: updated.shareCount };
   }
@@ -321,33 +347,46 @@ export class SocialService {
     });
 
     if (existing) {
-      await this.prisma.follow.delete({
-        where: {
-          followerId_followeeId: {
-            followerId: userId,
-            followeeId: targetUserId,
+      try {
+        await this.prisma.follow.delete({
+          where: {
+            followerId_followeeId: {
+              followerId: userId,
+              followeeId: targetUserId,
+            },
           },
-        },
-      });
+        });
+      } catch (error) {
+        // Corrida: já removido entre o check e o delete (P2025).
+        if ((error as { code?: string }).code !== 'P2025') throw error;
+      }
       return { following: false };
     }
 
-    await this.prisma.follow.create({
-      data: { followerId: userId, followeeId: targetUserId },
-    });
+    try {
+      await this.prisma.follow.create({
+        data: { followerId: userId, followeeId: targetUserId },
+      });
+    } catch (error) {
+      // Corrida/duplo clique: já seguido entre o check e o create (P2002).
+      if ((error as { code?: string }).code !== 'P2002') throw error;
+      return { following: true };
+    }
 
     const follower = await this.prisma.user.findUnique({
       where: { id: userId },
       select: { name: true, userName: true },
     });
-    void this.notificationService.create({
-      userId: targetUserId,
-      type: NotificationType.NEW_FOLLOW,
-      title: `${
-        follower?.name ?? follower?.userName ?? 'Alguém'
-      } começou a seguir você`,
-      linkUrl: `/users/${target.userName ?? targetUserId}`,
-    });
+    void Promise.resolve(
+      this.notificationService.create({
+        userId: targetUserId,
+        type: NotificationType.NEW_FOLLOW,
+        title: `${
+          follower?.name ?? follower?.userName ?? 'Alguém'
+        } começou a seguir você`,
+        linkUrl: `/users/${target.userName ?? targetUserId}`,
+      }),
+    ).catch(() => undefined);
 
     return { following: true };
   }
