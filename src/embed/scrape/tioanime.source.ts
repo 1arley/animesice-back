@@ -24,10 +24,10 @@ const VIDEOS_JSON_RE = /var\s+videos\s*=\s*(\[[\s\S]*?\])\s*;/;
  * Outros ficam em playerTokens para resolucao via Playwright no browser.
  */
 const DIRECT_VIDEO_HOSTS = [
-  /embedsb\.com/i,
-  /yourupload\.com/i,
-  /ok\.ru/i,
-  /my\.mail\.ru/i,
+  /^(?:[\w-]+\.)*embedsb\.com$/i,
+  /^(?:[\w-]+\.)*yourupload\.com$/i,
+  /^(?:[\w-]+\.)*ok\.ru$/i,
+  /^(?:[\w-]+\.)*my\.mail\.ru$/i,
 ];
 
 /**
