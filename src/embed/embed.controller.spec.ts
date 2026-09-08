@@ -133,13 +133,12 @@ describe('EmbedController', () => {
         destroy: jest.fn(),
         headersSent: false,
       };
-      await expect(
-        controller.media(
-          { url: 'https://cdn/v.mp4', referer: 'https://animefire.io/' } as any,
-          { 'user-agent': 'Mozilla' } as any,
-          res as any,
-        ),
-      ).rejects.toThrow(/dynamic import/);
+      await controller.media(
+        { url: 'https://cdn/v.mp4', referer: 'https://animefire.io/' },
+        { 'user-agent': 'Mozilla' },
+        res as any,
+      );
+      await new Promise((r) => setImmediate(r));
       expect(embedService.proxyMedia).toHaveBeenCalledWith(
         'https://cdn/v.mp4',
         { 'user-agent': 'Mozilla' },
@@ -153,6 +152,9 @@ describe('EmbedController', () => {
       );
       expect(res.setHeader).not.toHaveBeenCalledWith('x-vazio', '');
       expect(res.setHeader).not.toHaveBeenCalledWith('x-nulo', null);
+      expect(res.setHeader).toHaveBeenCalledWith('Accept-Ranges', 'bytes');
+      // body mock não é stream => pipeline falha e destrói a resposta.
+      expect(res.destroy).toHaveBeenCalled();
     });
   });
 

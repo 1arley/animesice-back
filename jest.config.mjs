@@ -6,9 +6,6 @@ export default {
   transform: {
     '^.+\\.(t|j)s$': 'ts-jest',
   },
-  transformIgnorePatterns: [
-    '/node_modules/(?!sanitize-html|htmlparser2|domhandler|domutils|entities|domelementtype|dom-serializer)',
-  ],
   collectCoverageFrom: [
     '**/*.(t|j)s',
     // Boilerplate declarativo (modules, entrypoints, DTOs, swagger) não faz

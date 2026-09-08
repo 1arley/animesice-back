@@ -115,6 +115,8 @@ jobs:
         run: npx dotenv-cli -e .env.test -- npx prisma migrate deploy
 
       - name: Run E2E tests
+        env:
+          NODE_OPTIONS: --experimental-vm-modules
         run: npx dotenv-cli -e .env.test -- npx jest --config ./test/jest-e2e.json --runInBand --forceExit
 
   # ---------------------------------------------------------------------------
