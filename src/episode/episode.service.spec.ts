@@ -10,6 +10,7 @@ function makePrisma() {
     findMany: jest.fn(async () => []) as jest.Mock,
     findUnique: jest.fn(async () => null) as jest.Mock,
     update: jest.fn(async () => ({})) as jest.Mock,
+    updateMany: jest.fn(async () => ({ count: 1 })) as jest.Mock,
   };
   return { anime, episode };
 }
@@ -24,23 +25,18 @@ describe('EpisodeService', () => {
   describe('findByAnimeSlug', () => {
     it('deve retornar episódios ordenados por número ascendente', async () => {
       const { svc, prisma } = build();
-      prisma.anime.findFirst.mockResolvedValue({ id: 'a1' });
       const episodes = [
         { id: 'e1', number: 1, animeId: 'a1' },
         { id: 'e2', number: 2, animeId: 'a1' },
       ];
-      prisma.episode.findMany.mockResolvedValue(episodes);
+      prisma.anime.findFirst.mockResolvedValue({ id: 'a1', episodes });
 
       const result = await svc.findByAnimeSlug('anime-slug');
 
       expect(result).toEqual(episodes);
       expect(prisma.anime.findFirst).toHaveBeenCalledWith({
         where: { slug: 'anime-slug', published: true },
-        select: { id: true },
-      });
-      expect(prisma.episode.findMany).toHaveBeenCalledWith({
-        where: { animeId: 'a1' },
-        orderBy: { number: 'asc' },
+        include: { episodes: { orderBy: { number: 'asc' } } },
       });
     });
 
@@ -54,8 +50,7 @@ describe('EpisodeService', () => {
 
     it('deve retornar lista vazia quando o anime não tem episódios', async () => {
       const { svc, prisma } = build();
-      prisma.anime.findFirst.mockResolvedValue({ id: 'a1' });
-      prisma.episode.findMany.mockResolvedValue([]);
+      prisma.anime.findFirst.mockResolvedValue({ id: 'a1', episodes: [] });
 
       const result = await svc.findByAnimeSlug('anime-slug');
 
@@ -66,7 +61,14 @@ describe('EpisodeService', () => {
   describe('findByAnimeSlugAndNumber', () => {
     it('deve retornar o episódio específico com o anime incluso', async () => {
       const { svc, prisma } = build();
-      prisma.anime.findFirst.mockResolvedValue({ id: 'a1' });
+      const episodeNumbers = [
+        { number: 1, season: 1 },
+        { number: 3, season: 1 },
+      ];
+      prisma.anime.findFirst.mockResolvedValue({
+        id: 'a1',
+        episodes: episodeNumbers,
+      });
       const episode = {
         id: 'e1',
         animeId: 'a1',
@@ -78,7 +80,20 @@ describe('EpisodeService', () => {
 
       const result = await svc.findByAnimeSlugAndNumber('anime-slug', 3);
 
-      expect(result).toEqual(episode);
+      expect(result).toEqual({
+        ...episode,
+        anime: { ...episode.anime, episodes: episodeNumbers },
+      });
+      expect(prisma.anime.findFirst).toHaveBeenCalledWith({
+        where: { slug: 'anime-slug', published: true },
+        select: {
+          id: true,
+          episodes: {
+            select: { number: true, season: true },
+            orderBy: { number: 'asc' },
+          },
+        },
+      });
       expect(prisma.episode.findUnique).toHaveBeenCalledWith({
         where: {
           animeId_season_number: { animeId: 'a1', season: 1, number: 3 },
@@ -89,7 +104,7 @@ describe('EpisodeService', () => {
 
     it('deve usar a temporada informada', async () => {
       const { svc, prisma } = build();
-      prisma.anime.findFirst.mockResolvedValue({ id: 'a1' });
+      prisma.anime.findFirst.mockResolvedValue({ id: 'a1', episodes: [] });
       prisma.episode.findUnique.mockResolvedValue({ id: 'e1', anime: {} });
 
       await svc.findByAnimeSlugAndNumber('anime-slug', 3, 2);
@@ -113,7 +128,7 @@ describe('EpisodeService', () => {
 
     it('deve lançar NotFoundException quando o episódio não existe', async () => {
       const { svc, prisma } = build();
-      prisma.anime.findFirst.mockResolvedValue({ id: 'a1' });
+      prisma.anime.findFirst.mockResolvedValue({ id: 'a1', episodes: [] });
       prisma.episode.findUnique.mockResolvedValue(null);
 
       await expect(
@@ -126,14 +141,26 @@ describe('EpisodeService', () => {
     it('deve incrementar as views do episódio', async () => {
       const { svc, prisma } = build();
       prisma.anime.findUnique.mockResolvedValue({ id: 'a1' });
-      prisma.episode.findUnique.mockResolvedValue({ id: 'e1' });
-      prisma.episode.update.mockResolvedValue({ id: 'e1', views: 5 });
+      prisma.episode.updateMany.mockResolvedValue({ count: 1 });
 
       const result = await svc.incrementViews('anime-slug', 1);
 
       expect(result).toEqual({ message: 'View incrementada.' });
-      expect(prisma.episode.update).toHaveBeenCalledWith({
-        where: { id: 'e1' },
+      expect(prisma.episode.updateMany).toHaveBeenCalledWith({
+        where: { animeId: 'a1', season: 1, number: 1 },
+        data: { views: { increment: 1 } },
+      });
+    });
+
+    it('deve usar a temporada informada', async () => {
+      const { svc, prisma } = build();
+      prisma.anime.findUnique.mockResolvedValue({ id: 'a1' });
+      prisma.episode.updateMany.mockResolvedValue({ count: 1 });
+
+      await svc.incrementViews('anime-slug', 3, 2);
+
+      expect(prisma.episode.updateMany).toHaveBeenCalledWith({
+        where: { animeId: 'a1', season: 2, number: 3 },
         data: { views: { increment: 1 } },
       });
     });
@@ -142,16 +169,6 @@ describe('EpisodeService', () => {
       const { svc } = build();
 
       await expect(svc.incrementViews('nao-existe', 1)).rejects.toThrow(
-        NotFoundException,
-      );
-    });
-
-    it('deve lançar NotFoundException quando o episódio não existe', async () => {
-      const { svc, prisma } = build();
-      prisma.anime.findUnique.mockResolvedValue({ id: 'a1' });
-      prisma.episode.findUnique.mockResolvedValue(null);
-
-      await expect(svc.incrementViews('anime-slug', 999)).rejects.toThrow(
         NotFoundException,
       );
     });

@@ -18,7 +18,7 @@ describe('StreamingController', () => {
   const mockStreamingService = {
     getSource: jest.fn(),
     getSourceAsync: jest.fn(),
-    getSourceAsyncStatus: jest.fn(),
+    getJobStatus: jest.fn(),
     generateToken: jest.fn(),
     proxyVideo: jest.fn(),
   };
@@ -42,6 +42,13 @@ describe('StreamingController', () => {
   });
 
   describe('getSource', () => {
+    function makeRes() {
+      return {
+        status: jest.fn().mockReturnThis(),
+        json: jest.fn(),
+      } as any;
+    }
+
     it('retorna source do episódio', async () => {
       mockStreamingService.getSource.mockResolvedValue({
         animeSlug: 'solo',
@@ -54,9 +61,20 @@ describe('StreamingController', () => {
         socket: { remoteAddress: '::1' },
         protocol: 'https',
       } as any;
+      const res = makeRes();
 
-      const result = await controller.getSource('solo', '1', undefined, req);
-      expect(result.animeSlug).toBe('solo');
+      await controller.getSource(
+        'solo',
+        '1',
+        undefined,
+        undefined,
+        undefined,
+        req,
+        res,
+      );
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({ animeSlug: 'solo' }),
+      );
       expect(mockStreamingService.getSource).toHaveBeenCalledWith(
         'solo',
         1,
@@ -72,11 +90,28 @@ describe('StreamingController', () => {
         socket: { remoteAddress: '::1' },
         protocol: 'https',
       } as any;
+      const res = makeRes();
       await expect(
-        controller.getSource('', 'abc', undefined, req),
+        controller.getSource(
+          '',
+          'abc',
+          undefined,
+          undefined,
+          undefined,
+          req,
+          res,
+        ),
       ).rejects.toThrow(NotFoundException);
       await expect(
-        controller.getSource('solo', 'abc', undefined, req),
+        controller.getSource(
+          'solo',
+          'abc',
+          undefined,
+          undefined,
+          undefined,
+          req,
+          res,
+        ),
       ).rejects.toThrow(NotFoundException);
     });
 
@@ -91,7 +126,16 @@ describe('StreamingController', () => {
         socket: { remoteAddress: '::1' },
         protocol: 'https',
       } as any;
-      await controller.getSource('solo', '1', '1', req);
+      const res = makeRes();
+      await controller.getSource(
+        'solo',
+        '1',
+        '1',
+        undefined,
+        undefined,
+        req,
+        res,
+      );
       expect(mockStreamingService.getSource).toHaveBeenCalledWith(
         'solo',
         1,
@@ -112,7 +156,16 @@ describe('StreamingController', () => {
         socket: { remoteAddress: '::1' },
         protocol: 'https',
       } as any;
-      await controller.getSource('solo', '1', 'true', req);
+      const res = makeRes();
+      await controller.getSource(
+        'solo',
+        '1',
+        'true',
+        undefined,
+        undefined,
+        req,
+        res,
+      );
       expect(mockStreamingService.getSource).toHaveBeenCalledWith(
         'solo',
         1,
@@ -143,7 +196,16 @@ describe('StreamingController', () => {
         socket: { remoteAddress: '::1' },
         protocol: 'https',
       } as any;
-      await controller.getSource('solo', '1', undefined, req);
+      const res = makeRes();
+      await controller.getSource(
+        'solo',
+        '1',
+        undefined,
+        undefined,
+        undefined,
+        req,
+        res,
+      );
       expect(mockStreamingService.getSource).toHaveBeenCalledWith(
         'solo',
         1,
@@ -171,7 +233,16 @@ describe('StreamingController', () => {
         socket: { remoteAddress: '::1' },
         protocol: 'https',
       } as any;
-      await controller.getSource('solo', '1', undefined, req);
+      const res = makeRes();
+      await controller.getSource(
+        'solo',
+        '1',
+        undefined,
+        undefined,
+        undefined,
+        req,
+        res,
+      );
       expect(mockStreamingService.getSource).toHaveBeenCalledWith(
         'solo',
         1,
@@ -200,7 +271,16 @@ describe('StreamingController', () => {
         socket: { remoteAddress: '::1' },
         protocol: 'http',
       } as any;
-      await controller.getSource('solo', '1', undefined, req);
+      const res = makeRes();
+      await controller.getSource(
+        'solo',
+        '1',
+        undefined,
+        undefined,
+        undefined,
+        req,
+        res,
+      );
       expect(mockStreamingService.getSource).toHaveBeenCalledWith(
         'solo',
         1,
@@ -230,7 +310,16 @@ describe('StreamingController', () => {
         socket: { remoteAddress: '::1' },
         protocol: 'http',
       } as any;
-      await controller.getSource('solo', '1', undefined, req);
+      const res = makeRes();
+      await controller.getSource(
+        'solo',
+        '1',
+        undefined,
+        undefined,
+        undefined,
+        req,
+        res,
+      );
       expect(mockStreamingService.getSource).toHaveBeenCalledWith(
         'solo',
         1,
@@ -255,8 +344,17 @@ describe('StreamingController', () => {
         socket: { remoteAddress: '::1' },
         protocol: 'https',
       } as any;
+      const res = makeRes();
       await expect(
-        controller.getSource('solo', '1', undefined, req),
+        controller.getSource(
+          'solo',
+          '1',
+          undefined,
+          undefined,
+          undefined,
+          req,
+          res,
+        ),
       ).rejects.toThrow(ForbiddenException);
       process.env.NODE_ENV = origEnv;
     });
@@ -276,10 +374,191 @@ describe('StreamingController', () => {
         socket: { remoteAddress: '::1' },
         protocol: 'https',
       } as any;
+      const res = makeRes();
       await expect(
-        controller.getSource('solo', '1', undefined, req),
+        controller.getSource(
+          'solo',
+          '1',
+          undefined,
+          undefined,
+          undefined,
+          req,
+          res,
+        ),
       ).rejects.toThrow(ForbiddenException);
       process.env.NODE_ENV = origEnv;
+    });
+
+    it('retorna 202 com jobId quando async=1 e extração é necessária', async () => {
+      mockStreamingService.getSourceAsync.mockResolvedValue({
+        jobId: 'ext:test:1',
+      });
+      const req = {
+        headers: { host: 'api.animesice.com' },
+        socket: { remoteAddress: '::1' },
+        protocol: 'https',
+      } as any;
+      const res = makeRes();
+      await controller.getSource(
+        'solo',
+        '1',
+        undefined,
+        '1',
+        undefined,
+        req,
+        res,
+      );
+      expect(res.status).toHaveBeenCalledWith(202);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({ jobId: 'ext:test:1', status: 'pending' }),
+      );
+    });
+
+    it('retorna source normalmente quando async=1 mas vídeo já existe', async () => {
+      mockStreamingService.getSourceAsync.mockResolvedValue(null);
+      mockStreamingService.getSource.mockResolvedValue({
+        animeSlug: 'solo',
+        episodeNumber: 1,
+        src: 'https://api.animesice.com/api/embed/media?url=...',
+      });
+      const req = {
+        headers: { host: 'api.animesice.com' },
+        socket: { remoteAddress: '::1' },
+        protocol: 'https',
+      } as any;
+      const res = makeRes();
+      await controller.getSource(
+        'solo',
+        '1',
+        undefined,
+        '1',
+        undefined,
+        req,
+        res,
+      );
+      expect(mockStreamingService.getSource).toHaveBeenCalled();
+    });
+
+    it('retorna 404 quando jobId não existe', async () => {
+      mockStreamingService.getJobStatus.mockResolvedValue(null);
+      const req = {
+        headers: { host: 'api.animesice.com' },
+        socket: { remoteAddress: '::1' },
+        protocol: 'https',
+      } as any;
+      await expect(
+        controller.getSource(
+          'solo',
+          '1',
+          undefined,
+          undefined,
+          'missing',
+          req,
+          makeRes(),
+        ),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('retorna source direto quando job completou com result', async () => {
+      const result = { animeSlug: 'solo', episodeNumber: 1, src: 's' };
+      mockStreamingService.getJobStatus.mockResolvedValue({
+        status: 'completed',
+        result,
+        error: null,
+      });
+      const req = {
+        headers: { host: 'api.animesice.com' },
+        socket: { remoteAddress: '::1' },
+        protocol: 'https',
+      } as any;
+      const res = makeRes();
+      await controller.getSource(
+        'solo',
+        '1',
+        undefined,
+        undefined,
+        'j1',
+        req,
+        res,
+      );
+      expect(res.json).toHaveBeenCalledWith(result);
+    });
+
+    it('faz fallback síncrono quando job completou sem result', async () => {
+      mockStreamingService.getJobStatus.mockResolvedValue({
+        status: 'completed',
+        result: null,
+        error: null,
+      });
+      mockStreamingService.getSource.mockResolvedValue({ src: 'fallback' });
+      const req = {
+        headers: { host: 'api.animesice.com' },
+        socket: { remoteAddress: '::1' },
+        protocol: 'https',
+      } as any;
+      const res = makeRes();
+      await controller.getSource(
+        'solo',
+        '1',
+        undefined,
+        undefined,
+        'j2',
+        req,
+        res,
+      );
+      expect(mockStreamingService.getSource).toHaveBeenCalled();
+      expect(res.json).toHaveBeenCalledWith({ src: 'fallback' });
+    });
+
+    it('retorna 500 quando job falhou', async () => {
+      mockStreamingService.getJobStatus.mockResolvedValue({
+        status: 'failed',
+        result: null,
+        error: 'boom',
+      });
+      const req = {
+        headers: { host: 'api.animesice.com' },
+        socket: { remoteAddress: '::1' },
+        protocol: 'https',
+      } as any;
+      const res = makeRes();
+      await controller.getSource(
+        'solo',
+        '1',
+        undefined,
+        undefined,
+        'j3',
+        req,
+        res,
+      );
+      expect(res.status).toHaveBeenCalledWith(500);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({ jobId: 'j3', status: 'failed' }),
+      );
+    });
+
+    it('retorna 202 quando job ainda está processando', async () => {
+      mockStreamingService.getJobStatus.mockResolvedValue({
+        status: 'processing',
+        result: null,
+        error: null,
+      });
+      const req = {
+        headers: { host: 'api.animesice.com' },
+        socket: { remoteAddress: '::1' },
+        protocol: 'https',
+      } as any;
+      const res = makeRes();
+      await controller.getSource(
+        'solo',
+        '1',
+        undefined,
+        undefined,
+        'j4',
+        req,
+        res,
+      );
+      expect(res.status).toHaveBeenCalledWith(202);
     });
   });
 
@@ -290,14 +569,8 @@ describe('StreamingController', () => {
         status: 'pending',
         message: 'Extração em andamento.',
       });
-      const req = {
-        headers: { host: 'api.animesice.com' },
-        socket: { remoteAddress: '::1' },
-        protocol: 'https',
-      } as any;
-
       await expect(
-        controller.getSourceAsync('solo', '1', req),
+        controller.getSourceAsync('solo', '1'),
       ).resolves.toMatchObject({
         jobId: 'job-1',
         status: 'pending',
@@ -305,14 +578,14 @@ describe('StreamingController', () => {
       expect(mockStreamingService.getSourceAsync).toHaveBeenCalledWith(
         'solo',
         1,
-        'https://api.animesice.com',
       );
     });
 
     it('consulta o job quando jobId é fornecido no endpoint source', async () => {
-      mockStreamingService.getSourceAsyncStatus.mockResolvedValue({
-        jobId: 'job-1',
-        status: 'pending',
+      mockStreamingService.getJobStatus.mockResolvedValue({
+        status: 'processing',
+        result: null,
+        error: null,
       });
       const req = {
         headers: { host: 'api.animesice.com' },
@@ -321,12 +594,14 @@ describe('StreamingController', () => {
       } as any;
 
       await expect(
-        controller.getSource('solo', '1', undefined, req, 'job-1', undefined),
-      ).resolves.toMatchObject({ jobId: 'job-1', status: 'pending' });
-      expect(mockStreamingService.getSourceAsyncStatus).toHaveBeenCalledWith(
+        controller.getSource('solo', '1', undefined, undefined, 'job-1', req, {
+          status: jest.fn().mockReturnThis(),
+          json: jest.fn(),
+        } as any),
+      ).resolves.toBeUndefined();
+      expect(mockStreamingService.getJobStatus).toHaveBeenCalledWith(
         'job-1',
-        'solo',
-        1,
+        'https://api.animesice.com',
       );
     });
   });

@@ -2,6 +2,7 @@ import { Module, forwardRef } from '@nestjs/common';
 import { EmbedService } from '@/embed/embed.service';
 import { EmbedController } from '@/embed/embed.controller';
 import { ScrapeService } from '@/embed/scrape/scrape.service';
+import { BrowserPool } from '@/embed/scrape/browser-pool.service';
 import { AnimefireScrapeSource } from '@/embed/scrape/animefire.source';
 import { AnimesonlineccScrapeSource } from '@/embed/scrape/animesonlinecc.source';
 import { MeusanimesScrapeSource } from '@/embed/scrape/meusanimes.source';
@@ -20,6 +21,7 @@ import { MetricsService } from '@/metrics/metrics.service';
   controllers: [EmbedController],
   providers: [
     EmbedService,
+    BrowserPool,
     // Scrape multi-fonte (adapters de extração + orquestrador).
     AnimefireScrapeSource,
     AnimesonlineccScrapeSource,
@@ -27,6 +29,6 @@ import { MetricsService } from '@/metrics/metrics.service';
     ScrapeService,
     MetricsService,
   ],
-  exports: [EmbedService, ScrapeService, MetricsService],
+  exports: [EmbedService, ScrapeService, BrowserPool, MetricsService],
 })
 export class EmbedModule {}

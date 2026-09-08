@@ -8,17 +8,14 @@ export class EpisodeService {
   async findByAnimeSlug(slug: string) {
     const anime = await this.prisma.anime.findFirst({
       where: { slug, published: true },
-      select: { id: true },
+      include: { episodes: { orderBy: { number: 'asc' } } },
     });
 
     if (!anime) {
       throw new NotFoundException('Anime não encontrado.');
     }
 
-    return this.prisma.episode.findMany({
-      where: { animeId: anime.id },
-      orderBy: { number: 'asc' },
-    });
+    return anime.episodes;
   }
 
   async findByAnimeSlugAndNumber(
@@ -28,7 +25,13 @@ export class EpisodeService {
   ) {
     const anime = await this.prisma.anime.findFirst({
       where: { slug, published: true },
-      select: { id: true },
+      select: {
+        id: true,
+        episodes: {
+          select: { number: true, season: true },
+          orderBy: { number: 'asc' },
+        },
+      },
     });
 
     if (!anime) {
@@ -50,6 +53,9 @@ export class EpisodeService {
       throw new NotFoundException('Episódio não encontrado.');
     }
 
+    // Injeta os números dos episódios no anime para o frontend evitar fetch extra
+    (episode.anime as Record<string, unknown>).episodes = anime.episodes;
+
     return episode;
   }
 
@@ -63,19 +69,8 @@ export class EpisodeService {
       throw new NotFoundException('Anime não encontrado.');
     }
 
-    const episode = await this.prisma.episode.findUnique({
-      where: {
-        animeId_season_number: { animeId: anime.id, season, number },
-      },
-      select: { id: true },
-    });
-
-    if (!episode) {
-      throw new NotFoundException('Episódio não encontrado.');
-    }
-
-    await this.prisma.episode.update({
-      where: { id: episode.id },
+    await this.prisma.episode.updateMany({
+      where: { animeId: anime.id, season, number },
       data: { views: { increment: 1 } },
     });
 

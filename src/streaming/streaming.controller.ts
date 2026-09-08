@@ -8,6 +8,7 @@ import {
   NotFoundException,
   ForbiddenException,
   HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -16,11 +17,8 @@ import {
   ApiBearerAuth,
 } from '@nestjs/swagger';
 import express from 'express';
-import {
-  StreamingService,
-  type StreamSourceExtractionJob,
-  type StreamSourceResponse,
-} from '@/streaming/streaming.service';
+import { StreamingService } from '@/streaming/streaming.service';
+import { ExtractionJob } from '@/streaming/extraction-job.service';
 import { JwtAuthGuard } from '@/auth/jwt-auth.guard';
 import { ConfigService } from '@nestjs/config';
 import { Throttle } from '@nestjs/throttler';
@@ -119,14 +117,12 @@ export class StreamingController {
   /**
    * Endpoint público de source do player (sem JWT).
    *
-   * Resolve o videoUrl de um episódio (re-extraindo da fonte via HTTP puro
-   * quando necessário) e devolve `src` — URL absoluta do proxy de mídia
-   * `/embed/media` que injeta Referer/Origin/UA anti-hotlinking e usa o IP
-   * de saída do backend (mesmo IP que extraiu o token da CDN).
+   * Resolve o videoUrl de um episódio. Suporta dois modos:
+   * - Síncrono (default): retorna o source quando disponível
+   * - Assíncrono (?async=1): retorna 202 com jobId quando extração é necessária
+   * - Polling (?jobId=X): retorna status de um job de extração assíncrona
    *
-   * O player no frontend só precisa desta URL; não há token nem IP-vínculo
-   * client-side. Pensado p/ demo/prod onde o catálogo NOW tem videoUrl e o
-   * backend compartilha o IP de saída com a CDN.
+   * O modo assíncrono evita que o usuário espere 30-60s durante extração Chromium.
    */
   @Get('source')
   @Throttle({ default: { limit: 60, ttl: 60_000 } })
@@ -151,6 +147,18 @@ export class StreamingController {
     },
   })
   @ApiResponse({
+    status: 202,
+    description: 'Extração assíncrona em andamento',
+    schema: {
+      type: 'object',
+      properties: {
+        jobId: { type: 'string' },
+        status: { type: 'string' },
+        message: { type: 'string' },
+      },
+    },
+  })
+  @ApiResponse({
     status: 404,
     description: 'Anime/episódio/vídeo não encontrado.',
   })
@@ -158,47 +166,10 @@ export class StreamingController {
     @Query('anime') animeSlug: string,
     @Query('episode') episodeSlug: string,
     @Query('refresh') refresh: string | undefined,
+    @Query('async') asyncMode: string | undefined,
+    @Query('jobId') jobId: string | undefined,
     @Req() req: express.Request,
-    @Query('jobId') jobId: string | undefined = undefined,
-    @Query('async') asyncRequest: string | undefined = undefined,
-  ): Promise<
-    | StreamSourceResponse
-    | (StreamSourceExtractionJob & Partial<StreamSourceResponse>)
-  > {
-    const episodeNumber = EPISODE_NUM_RE.test(episodeSlug)
-      ? parseInt(episodeSlug, 10)
-      : NaN;
-    if (!animeSlug || Number.isNaN(episodeNumber)) {
-      throw new NotFoundException(
-        'Parâmetros `anime` e `episode` são obrigatórios.',
-      );
-    }
-    if (jobId) {
-      return this.streamingService.getSourceAsyncStatus(
-        jobId,
-        animeSlug,
-        episodeNumber,
-      );
-    }
-    if (asyncRequest === '1' || asyncRequest === 'true') {
-      return this.getSourceAsync(animeSlug, episodeSlug, req);
-    }
-    return this.streamingService.getSource(
-      animeSlug,
-      episodeNumber,
-      backendOrigin(req, this.trustProxy, this.configService),
-      1,
-      refresh === '1' || refresh === 'true',
-    );
-  }
-
-  @Get('source/async')
-  @HttpCode(202)
-  @Throttle({ default: { limit: 60, ttl: 60_000 } })
-  getSourceAsync(
-    @Query('anime') animeSlug: string,
-    @Query('episode') episodeSlug: string,
-    @Req() req: express.Request,
+    @Res() res: express.Response,
   ) {
     const episodeNumber = EPISODE_NUM_RE.test(episodeSlug)
       ? parseInt(episodeSlug, 10)
@@ -208,11 +179,212 @@ export class StreamingController {
         'Parâmetros `anime` e `episode` são obrigatórios.',
       );
     }
-    return this.streamingService.getSourceAsync(
+    if (jobId) {
+      const status = await this.streamingService.getJobStatus(
+        jobId,
+        backendOrigin(req, this.trustProxy, this.configService),
+      );
+      if (!status) {
+        throw new NotFoundException('Job não encontrado ou expirado.');
+      }
+      if (status.status === 'completed' && status.result) {
+        res.json(status.result);
+        return;
+      }
+      if (status.status === 'completed') {
+        const source = await this.streamingService.getSource(
+          animeSlug,
+          episodeNumber,
+          backendOrigin(req, this.trustProxy, this.configService),
+        );
+        res.json(source);
+        return;
+      }
+      if (status.status === 'failed') {
+        res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
+          jobId,
+          status: 'failed',
+          error: status.error ?? 'Extração falhou.',
+        });
+        return;
+      }
+      res.status(HttpStatus.ACCEPTED).json({
+        jobId,
+        status: status.status,
+        message: 'Extração em andamento...',
+      });
+      return;
+    }
+    if (asyncMode === '1' || asyncMode === 'true') {
+      const asyncResult = await this.streamingService.getSourceAsync(
+        animeSlug,
+        episodeNumber,
+      );
+      if (asyncResult) {
+        res.status(HttpStatus.ACCEPTED).json({
+          jobId: asyncResult.jobId,
+          status: 'pending',
+          message: 'Extraindo vídeo... Tente novamente em alguns segundos.',
+        });
+        return;
+      }
+    }
+    const source = await this.streamingService.getSource(
       animeSlug,
       episodeNumber,
       backendOrigin(req, this.trustProxy, this.configService),
+      1,
+      refresh === '1' || refresh === 'true',
     );
+    res.json(source);
+  }
+
+  @Get('source/async')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  async getSourceAsync(
+    @Query('anime') animeSlug: string,
+    @Query('episode') episodeSlug: string,
+  ) {
+    const episodeNumber = EPISODE_NUM_RE.test(episodeSlug)
+      ? parseInt(episodeSlug, 10)
+      : NaN;
+    if (!animeSlug || Number.isNaN(episodeNumber)) {
+      throw new NotFoundException(
+        'Parâmetros `anime` e `episode` são obrigatórios.',
+      );
+    }
+    return this.streamingService.getSourceAsync(animeSlug, episodeNumber);
+  }
+
+  /**
+   * SSE endpoint para extração de stream source em tempo real.
+   *
+   * Fluxo:
+   * 1. Se o vídeo já existe e está vivo → envia evento `source` e fecha
+   * 2. Se extração é necessária → cria job, envia `pending`
+   * 3. Quando o job completa → envia `source` ou `failed`
+   * 4. Timeout de 60s → envia `timeout` e fecha
+   *
+   * Substitui o polling com detecção instantânea de conclusão.
+   */
+  @Get('source/sse')
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
+  @ApiOperation({
+    summary:
+      'SSE: stream source em tempo real. Envia evento quando a extração completa.',
+  })
+  async getSourceSSE(
+    @Query('anime') animeSlug: string,
+    @Query('episode') episodeSlug: string,
+    @Req() req: express.Request,
+    @Res() res: express.Response,
+  ) {
+    const episodeNumber = EPISODE_NUM_RE.test(episodeSlug)
+      ? parseInt(episodeSlug, 10)
+      : NaN;
+    if (!animeSlug || Number.isNaN(episodeNumber)) {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.write(
+        `event: error\ndata: ${JSON.stringify({ error: 'Parâmetros inválidos' })}\n\n`,
+      );
+      res.end();
+      return;
+    }
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+
+    const apiOrigin = backendOrigin(req, this.trustProxy, this.configService);
+
+    // 1. Tenta extração assíncrona — retorna null se o vídeo já existe
+    const asyncResult = await this.streamingService.getSourceAsync(
+      animeSlug,
+      episodeNumber,
+      1,
+    );
+
+    if (!asyncResult) {
+      // Vídeo já existe — envia source imediatamente
+      const source = await this.streamingService.getSource(
+        animeSlug,
+        episodeNumber,
+        apiOrigin,
+        1,
+        false,
+      );
+      res.write(`event: source\ndata: ${JSON.stringify(source)}\n\n`);
+      res.end();
+      return;
+    }
+
+    // 2. Job criado — envia pending
+    const jobId = asyncResult.jobId;
+    res.write(
+      `event: pending\ndata: ${JSON.stringify({ jobId, status: 'pending' })}\n\n`,
+    );
+
+    // 3. Inscreve no completion do job
+    let cleanup: (() => void) | null = null;
+    let finished = false;
+
+    const finish = (job: ExtractionJob) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timeout);
+      cleanup?.();
+      void (async () => {
+        try {
+          if (job.status === 'completed' && job.result?.videoUrl) {
+            const source =
+              await this.streamingService.buildSourceResponseFromJob(
+                job,
+                apiOrigin,
+              );
+            res.write(`event: source\ndata: ${JSON.stringify(source)}\n\n`);
+          } else {
+            res.write(
+              `event: failed\ndata: ${JSON.stringify({ error: job.error ?? 'Extração falhou' })}\n\n`,
+            );
+          }
+        } catch {
+          res.write(
+            `event: failed\ndata: ${JSON.stringify({ error: 'Erro ao construir source' })}\n\n`,
+          );
+        }
+        res.end();
+      })();
+    };
+
+    cleanup = this.streamingService.onJobComplete(jobId, finish);
+
+    // Se o job já completou (race condition), finish já foi chamado
+    if (finished) return;
+
+    // 4. Timeout de 60s
+    const timeout = setTimeout(() => {
+      if (!finished) {
+        finished = true;
+        cleanup?.();
+        res.write(
+          `event: timeout\ndata: ${JSON.stringify({ message: 'Timeout — tente novamente' })}\n\n`,
+        );
+        res.end();
+      }
+    }, 60_000);
+
+    // 5. Cleanup no disconnect do client
+    req.on('close', () => {
+      if (!finished) {
+        finished = true;
+        clearTimeout(timeout);
+        cleanup?.();
+      }
+    });
   }
 
   @UseGuards(JwtAuthGuard)
