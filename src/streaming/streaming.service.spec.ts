@@ -303,6 +303,10 @@ describe('StreamingService.validateToken', () => {
 });
 
 describe('StreamingService.proxyVideo', () => {
+  beforeEach(() =>
+    jest.spyOn(mediaProbe, 'probeMediaUrlDead').mockResolvedValue(false),
+  );
+  afterEach(() => jest.restoreAllMocks());
   it('retorna stream com sucesso (200)', async () => {
     const { prisma, embedService, svc } = makeMocks();
     const expiresAt = new Date(Date.now() + 9999000);
@@ -362,46 +366,49 @@ describe('StreamingService.proxyVideo', () => {
     );
   });
 
-  it('em 403 reextrai e refaz proxy com sucesso', async () => {
-    const { prisma, embedService, scrapeService, svc } = makeMocks();
-    const expiresAt = new Date(Date.now() + 9999000);
-    prisma.streamingToken.findUnique.mockResolvedValue({
-      token: 'tok',
-      ip: '127.0.0.1',
-      expiresAt,
-      episodeId: 'ep-1',
-    });
-    prisma.episode.findUnique.mockResolvedValue({
-      id: 'ep-1',
-      number: 1,
-      season: 1,
-      videoUrl: 'https://rr1.googlevideo.com/videoplayback?expire=100',
-      anime: { slug: 'anime' },
-    });
-    embedService.proxyMedia
-      .mockResolvedValueOnce({
-        status: 403,
-        headers: {},
-        body: null,
-      })
-      .mockResolvedValueOnce({
-        status: 200,
-        headers: { 'content-type': 'video/mp4' },
-        body: null,
+  it.each([401, 403, 404, 410, 500, 502, 503])(
+    'em %i reextrai e refaz proxy com sucesso',
+    async (status) => {
+      const { prisma, embedService, scrapeService, svc } = makeMocks();
+      const expiresAt = new Date(Date.now() + 9999000);
+      prisma.streamingToken.findUnique.mockResolvedValue({
+        token: 'tok',
+        ip: '127.0.0.1',
+        expiresAt,
+        episodeId: 'ep-1',
       });
-    scrapeService.reextractEpisodeVideo.mockResolvedValue(
-      'https://rr2.googlevideo.com/videoplayback?expire=999999',
-    );
+      prisma.episode.findUnique.mockResolvedValue({
+        id: 'ep-1',
+        number: 1,
+        season: 1,
+        videoUrl: 'https://rr1.googlevideo.com/videoplayback?expire=100',
+        anime: { slug: 'anime' },
+      });
+      embedService.proxyMedia
+        .mockResolvedValueOnce({
+          status,
+          headers: {},
+          body: null,
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          headers: { 'content-type': 'video/mp4' },
+          body: null,
+        });
+      scrapeService.reextractEpisodeVideo.mockResolvedValue(
+        'https://rr2.googlevideo.com/videoplayback?expire=999999',
+      );
 
-    const future = Math.floor(Date.now() / 1000) + 9999;
-    const result = await svc.proxyVideo('tok', future, '127.0.0.1');
-    expect(result.status).toBe(200);
-    expect(scrapeService.reextractEpisodeVideo).toHaveBeenCalledWith(
-      'anime',
-      1,
-      1,
-    );
-  });
+      const future = Math.floor(Date.now() / 1000) + 9999;
+      const result = await svc.proxyVideo('tok', future, '127.0.0.1');
+      expect(result.status).toBe(200);
+      expect(scrapeService.reextractEpisodeVideo).toHaveBeenCalledWith(
+        'anime',
+        1,
+        1,
+      );
+    },
+  );
 
   it('em 403 tenta meusanimes como fallback se reextract retorna null', async () => {
     const { prisma, embedService, scrapeService, svc } = makeMocks();
@@ -519,6 +526,29 @@ describe('StreamingService.getSource', () => {
 
   afterEach(() => {
     probeSpy.mockRestore();
+  });
+
+  it('descarta vidcache morta na extração e persiste o fallback utilizável', async () => {
+    const { prisma, scrapeService, svc } = makeMocks();
+    const dead = 'https://vidcache.net:8161/token/video.mp4';
+    const live = 'https://cdn.test/fallback.mp4';
+    prisma.anime.findUnique.mockResolvedValue({ id: 'a1', slug: 'anime' });
+    prisma.episode.findUnique.mockResolvedValue({
+      id: 'ep1',
+      number: 1,
+      videoUrl: dead,
+      embedUrl: 'https://meusanimes.blog/e/anime/',
+    });
+    probeSpy.mockImplementation((url: string) => Promise.resolve(url === dead));
+    scrapeService.scrapeEpisodeVideo.mockResolvedValue({ videos: [dead] });
+    scrapeService.scrapeFromMeusanimes.mockResolvedValue(dead);
+    scrapeService.scrapeFromAnimefire.mockResolvedValue(live);
+    const result = await svc.getSource('anime', 1, 'https://api.test', 1, true);
+    expect(result.rawVideoUrl).toBe(live);
+    expect(prisma.episode.update).toHaveBeenCalledWith({
+      where: { id: 'ep1' },
+      data: { videoUrl: live },
+    });
   });
 
   it('serve YouTube embed como iframe quando extração .mp4 falha', async () => {

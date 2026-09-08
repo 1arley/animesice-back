@@ -15,6 +15,7 @@ import { youtubeEmbedUrl } from '@/embed/scrape/extract';
 import {
   probeMediaUrlDead,
   purgeExpiredLivenessCache,
+  shouldReextractMedia,
 } from '@/common/media-probe';
 import { refererForMediaUrl } from '@/common/url-utils';
 import { Readable } from 'stream';
@@ -323,7 +324,9 @@ export class StreamingService {
     if (
       !forceRefresh &&
       cached &&
-      Date.now() - cached.at < this.SCRAPE_CACHE_TTL_MS
+      Date.now() - cached.at < this.SCRAPE_CACHE_TTL_MS &&
+      (!cached.result.videoUrl ||
+        !(await probeMediaUrlDead(cached.result.videoUrl)))
     ) {
       dbg(`[STREAM] scrape cache hit p/ ${key}`);
       return { ...cached.result, reextracted: false };
@@ -401,7 +404,12 @@ export class StreamingService {
           false,
           true,
         );
-        rawVideoUrl = result.videos[0] ?? null;
+        for (const video of result.videos) {
+          if (!(await probeMediaUrlDead(video, true))) {
+            rawVideoUrl = video;
+            break;
+          }
+        }
         playerEmbed =
           (result.playerTokens ?? []).find(
             (t) =>
@@ -429,6 +437,9 @@ export class StreamingService {
           episodeNumber,
           season,
         );
+        if (rawVideoUrl && (await probeMediaUrlDead(rawVideoUrl, true))) {
+          rawVideoUrl = null;
+        }
         dbg(
           `[STREAM] tentativa 2 resultado: ${rawVideoUrl?.slice(0, 80) ?? 'null'}`,
         );
@@ -452,6 +463,9 @@ export class StreamingService {
           animeSlug,
           episodeNumber,
         );
+        if (rawVideoUrl && (await probeMediaUrlDead(rawVideoUrl, true))) {
+          rawVideoUrl = null;
+        }
         dbg(
           `[STREAM] tentativa 3 resultado: ${rawVideoUrl?.slice(0, 80) ?? 'null'}`,
         );
@@ -472,6 +486,9 @@ export class StreamingService {
           animeSlug,
           episodeNumber,
         );
+        if (rawVideoUrl && (await probeMediaUrlDead(rawVideoUrl, true))) {
+          rawVideoUrl = null;
+        }
         dbg(
           `[STREAM] tentativa 4 resultado: ${rawVideoUrl?.slice(0, 80) ?? 'null'}`,
         );
@@ -847,7 +864,7 @@ export class StreamingService {
    * Proxy do vídeo: roteia o videoUrl (RAW da CDN) via EmbedService.proxyMedia,
    * que injeta Referer/Origin/UA anti-hotlinking e streama pelo IP de saída
    * do backend (mesmo IP que fez a extração -> resolve IP-vinculo do token da
-   * CDN). Repassa Range p/ seek. Em 403 (token CDN expirado), re-extrai a
+   * CDN). Repassa Range p/ seek. Em falha recuperável da CDN, re-extrai a
    * fonte via ScrapeService.reextractEpisodeVideo e tenta uma vez mais.
    */
   async proxyVideo(
@@ -860,7 +877,7 @@ export class StreamingService {
     headers: Headers;
     body: Readable;
   }> {
-    const { videoUrl, animeSlug, episodeNumber, season } =
+    const { videoUrl, episodeId, animeSlug, episodeNumber, season } =
       await this.validateToken(token, expires, ip);
 
     const reqHeaders: Record<string, string> = {};
@@ -875,10 +892,10 @@ export class StreamingService {
       sourceOrigin,
     );
 
-    // 403 = token .mp4 da CDN expirado -> re-extração e retry único.
-    if (result.status === 403) {
+    // Fonte indisponível (inclusive 5xx) -> re-extração e retry único.
+    if (shouldReextractMedia(result.status)) {
       console.log(
-        `[STREAM] 403 p/ ${animeSlug}/s${season}/${episodeNumber}, re-extraindo...`,
+        `[STREAM] ${result.status} p/ ${animeSlug}/s${season}/${episodeNumber}, re-extraindo...`,
       );
       // Single-flight: N viewers com 403 compartilham UMA re-extração (o
       // scraper é caro e concorrencia-limitado).
@@ -899,6 +916,7 @@ export class StreamingService {
               episodeNumber,
               season,
             );
+            if (fresh && (await probeMediaUrlDead(fresh, true))) fresh = null;
           }
           // Fallback animefire.io.
           if (!fresh) {
@@ -906,6 +924,7 @@ export class StreamingService {
               animeSlug,
               episodeNumber,
             );
+            if (fresh && (await probeMediaUrlDead(fresh, true))) fresh = null;
           }
           // Fallback tioanime.com.
           if (!fresh) {
@@ -913,6 +932,7 @@ export class StreamingService {
               animeSlug,
               episodeNumber,
             );
+            if (fresh && (await probeMediaUrlDead(fresh, true))) fresh = null;
           }
           return fresh;
         })().finally(() => {
@@ -922,12 +942,18 @@ export class StreamingService {
       }
       const fresh = await inflight;
       if (fresh) {
+        result.body?.destroy();
         const freshOrigin = refererForMediaUrl(fresh);
         result = await this.embedService.proxyMedia(
           fresh,
           reqHeaders,
           freshOrigin,
         );
+        if (result.status === 200 || result.status === 206) {
+          await this.prisma.episode
+            .update({ where: { id: episodeId }, data: { videoUrl: fresh } })
+            .catch(() => undefined);
+        }
       }
     }
     if (result.status === 403) {

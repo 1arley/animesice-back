@@ -94,6 +94,21 @@ describe('probeMediaUrlDead', () => {
     }
   });
 
+  it('rejeita 500 da CDN e refaz o probe forçado após sucesso em cache', async () => {
+    global.fetch = jest
+      .fn()
+      .mockResolvedValueOnce({
+        status: 206,
+        headers: new Headers(),
+        body: null,
+      })
+      .mockResolvedValue({ status: 500, headers: new Headers(), body: null });
+    const url = 'https://vidcache.net:8161/token/video.mp4';
+    expect(await probeMediaUrlDead(url, true)).toBe(false);
+    expect(await probeMediaUrlDead(url, true)).toBe(true);
+    expect(await probeMediaUrlDead(url)).toBe(true);
+  });
+
   it('considera 200/206 como viva', async () => {
     global.fetch = jest.fn(async () => ({
       status: 206,
@@ -108,6 +123,13 @@ describe('probeMediaUrlDead', () => {
       throw new Error('network down');
     }) as any;
     expect(await probeMediaUrlDead('https://cdn.test/v.mp4')).toBe(false);
+  });
+
+  it('não confirma vida em recuperação quando a rede falha', async () => {
+    global.fetch = jest.fn().mockRejectedValue(new Error('timeout'));
+    expect(await probeMediaUrlDead('https://cdn.test/timeout.mp4', true)).toBe(
+      true,
+    );
   });
 
   it('reutiliza probe em andamento e resultado vivo no TTL', async () => {

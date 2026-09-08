@@ -1,3 +1,7 @@
+import { probeMediaUrlDead } from '@/common/media-probe';
+jest.mock('@/common/media-probe', () => ({
+  probeMediaUrlDead: jest.fn(() => Promise.resolve(false)),
+}));
 import { ScrapeService } from '@/embed/scrape/scrape.service';
 import type { ScrapeEpisodeResult } from '@/embed/scrape/scrape-source.interface';
 import { ServiceUnavailableException } from '@nestjs/common';
@@ -454,6 +458,17 @@ describe('ScrapeService (orquestração + cache SWR)', () => {
     svc.invalidateEpisode('https://animefire.io/a/9');
     await svc.scrapeEpisodeVideo('https://animefire.io/a/9', undefined, false);
     expect(af.extractHttp).toHaveBeenCalledTimes(2);
+  });
+
+  it('não persiste nem semeia cache com URL rejeitada pela CDN', async () => {
+    const { svc, prisma } = build();
+    prisma.episode.findUnique.mockResolvedValue({
+      id: 'e1',
+      embedUrl: 'https://animefire.io/animes/x/1',
+    });
+    jest.mocked(probeMediaUrlDead).mockResolvedValueOnce(true);
+    expect(await svc.reextractEpisodeVideo('x', 1)).toBeNull();
+    expect(prisma.episode.update).not.toHaveBeenCalled();
   });
 
   it('reextractEpisodeVideo usa fonte saudável, invalida e semeia o cache', async () => {

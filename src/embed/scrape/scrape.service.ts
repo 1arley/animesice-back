@@ -1,3 +1,4 @@
+import { probeMediaUrlDead } from '@/common/media-probe';
 // src/embed/scrape/scrape.service.ts
 import {
   Inject,
@@ -652,7 +653,7 @@ export class ScrapeService {
       );
       return null;
     }
-    if (!rawMp4) {
+    if (!rawMp4 || (await probeMediaUrlDead(rawMp4, true))) {
       await this.recordFailure(source.id);
       this.metrics.recordReextract(source.id, false);
       return null;
