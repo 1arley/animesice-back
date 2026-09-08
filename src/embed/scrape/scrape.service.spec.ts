@@ -1343,3 +1343,339 @@ describe('ScrapeService (cobertura avançada)', () => {
     expect(cache.has('scrape:animefire:https://cdn.test/0')).toBe(false);
   });
 });
+
+describe('ScrapeService (cobertura de recuperação)', () => {
+  beforeEach(() => {
+    launchMock.mockReset();
+    ensureXvfbMock.mockReset();
+    jest.mocked(probeMediaUrlDead).mockResolvedValue(false);
+  });
+
+  afterEach(() => {
+    delete process.env.SCRAPE_CACHE_TTL_MS;
+    delete process.env.SCRAPE_CACHE_STALE_MS;
+    delete process.env.MAX_CONCURRENT_SCRAPES;
+    delete process.env.SCRAPE_QUEUE_TIMEOUT_MS;
+    jest.mocked(probeMediaUrlDead).mockResolvedValue(false);
+  });
+
+  function build(opts?: {
+    ttlMs?: number;
+    staleMs?: number;
+    concurrency?: number;
+    queueTimeoutMs?: number;
+    http?: boolean;
+  }) {
+    if (opts?.ttlMs !== undefined)
+      process.env.SCRAPE_CACHE_TTL_MS = String(opts.ttlMs);
+    if (opts?.staleMs !== undefined)
+      process.env.SCRAPE_CACHE_STALE_MS = String(opts.staleMs);
+    if (opts?.concurrency !== undefined)
+      process.env.MAX_CONCURRENT_SCRAPES = String(opts.concurrency);
+    if (opts?.queueTimeoutMs !== undefined)
+      process.env.SCRAPE_QUEUE_TIMEOUT_MS = String(opts.queueTimeoutMs);
+    const noHttp = opts?.http === false ? { http: false } : {};
+    const af = makeSource('animefire', ['animefire.io'], undefined, noHttp);
+    const aocc = makeSource(
+      'animesonlinecc',
+      ['animesonlinecc.to'],
+      undefined,
+      noHttp,
+    );
+    const ms = makeSource('meusanimes', ['meusanimes.blog'], undefined, noHttp);
+    const ta = makeSource('tioanime', ['tioanime.com'], undefined, noHttp);
+    const prisma = makePrisma();
+    const health = makeHealth();
+    const metrics = makeMetrics();
+    const browserPool = {
+      acquireContext: jest.fn().mockImplementation(async () => {
+        const ctx = {
+          newPage: jest.fn(async () => makePageMock()),
+          close: jest.fn(async () => undefined),
+        };
+        return { context: ctx, release: jest.fn(async () => undefined) };
+      }),
+    };
+    const svc = new ScrapeService(
+      af as any,
+      aocc as any,
+      ms as any,
+      ta as any,
+      prisma as any,
+      health as any,
+      metrics as any,
+      browserPool as any,
+    );
+    return { svc, af, aocc, ms, ta, prisma, health, metrics, browserPool };
+  }
+
+  it('usa defaults de wrap/forceRefresh quando omitidos', async () => {
+    const { svc } = build();
+    const res = await svc.scrapeEpisodeVideo('https://animefire.io/a/dflt');
+    expect(res.videos[0]).toContain('cdn.animefire');
+  });
+
+  it('revalidação em background com rejeição não-Error é engolida', async () => {
+    const { svc, af } = build({ ttlMs: 50, staleMs: 60_000 });
+    await svc.scrapeEpisodeVideo(
+      'https://animefire.io/a/stale-str',
+      undefined,
+      false,
+    );
+    await sleep(120);
+    af.extractHttp.mockRejectedValueOnce('bg down string');
+    const res = await svc.scrapeEpisodeVideo(
+      'https://animefire.io/a/stale-str',
+      undefined,
+      false,
+    );
+    expect(res.videos[0]).toContain('cdn.animefire');
+    await sleep(30);
+    expect(af.extractHttp).toHaveBeenCalledTimes(2);
+  });
+
+  it('degradação com rejeição não-Error serve stale', async () => {
+    const { svc, af } = build({ ttlMs: 30, staleMs: 60 });
+    const first = await svc.scrapeEpisodeVideo(
+      'https://animefire.io/a/deg-str',
+      undefined,
+      false,
+    );
+    await sleep(150);
+    af.extractHttp.mockRejectedValueOnce('provider down string');
+    const second = await svc.scrapeEpisodeVideo(
+      'https://animefire.io/a/deg-str',
+      undefined,
+      false,
+    );
+    expect(second.videos).toEqual(first.videos);
+  });
+
+  it('não deleta inflight assumido por outro fetch', async () => {
+    const { svc, af } = build();
+    let release!: (r: ScrapeEpisodeResult) => void;
+    af.extractHttp.mockImplementationOnce(
+      () =>
+        new Promise<ScrapeEpisodeResult>((res) => {
+          release = res;
+        }),
+    );
+    const pending = svc.scrapeEpisodeVideo(
+      'https://animefire.io/a/supersede',
+      undefined,
+      false,
+    );
+    for (let i = 0; i < 100; i++) await Promise.resolve();
+    (svc as any).inflight.clear();
+    release({
+      videos: ['https://cdn.test/s.mp4'],
+      iframes: [],
+      cloudflare: false,
+    });
+    await expect(pending).resolves.toMatchObject({
+      videos: ['https://cdn.test/s.mp4'],
+    });
+  });
+
+  it('não registra health p/ fonte custom quando extração falha', async () => {
+    const custom = makeSource('custom', ['custom.test']);
+    const ms = makeSource('meusanimes', ['meusanimes.blog']);
+    const ta = makeSource('tioanime', ['tioanime.com']);
+    const prisma = makePrisma();
+    const health = makeHealth();
+    const metrics = makeMetrics();
+    const browserPool = {
+      acquireContext: jest.fn().mockImplementation(async () => {
+        const ctx = {
+          newPage: jest.fn(async () => makePageMock()),
+          close: jest.fn(async () => undefined),
+        };
+        return { context: ctx, release: jest.fn(async () => undefined) };
+      }),
+    };
+    const svc = new ScrapeService(
+      custom as any,
+      ms as any,
+      ta as any,
+      ta as any,
+      prisma as any,
+      health as any,
+      metrics as any,
+      browserPool as any,
+    );
+    custom.extractHttp.mockRejectedValueOnce(new Error('custom down'));
+    await expect(
+      svc.scrapeEpisodeVideo('https://custom.test/f', 'custom', false),
+    ).rejects.toThrow('custom down');
+    expect(health.recordFailure).not.toHaveBeenCalled();
+  });
+
+  it('cai para a ordem base com erro não-Error em rankedSources', async () => {
+    const { svc, af, health } = build();
+    health.rankedSources.mockRejectedValueOnce('watchtower down string');
+    const res = await svc.scrapeEpisodeVideo(
+      'https://animefire.io/a/rkstr',
+      undefined,
+      false,
+    );
+    expect(res.videos[0]).toContain('cdn.animefire');
+    expect(af.extractHttp).toHaveBeenCalledTimes(1);
+  });
+
+  it('reextract usa season padrão quando omitido', async () => {
+    const { svc, prisma } = build();
+    const out = await svc.reextractEpisodeVideo('foo', 1);
+    expect(out).toBe('https://cdn.animefire.test/v.mp4');
+    expect(prisma.episode.update).toHaveBeenCalled();
+  });
+
+  it('reextract retorna null com rejeição não-Error', async () => {
+    const { svc, af, health } = build();
+    af.extractHttp.mockRejectedValueOnce('extract down string');
+    await expect(svc.reextractEpisodeVideo('foo', 1, 1)).resolves.toBeNull();
+    expect(health.recordFailure).toHaveBeenCalledWith('animefire');
+  });
+
+  it('scrapeFromMeusanimes usa season padrão quando omitido', async () => {
+    const { svc } = build();
+    jest.spyOn(svc, 'scrapeEpisodeVideo').mockResolvedValue({
+      videos: ['https://cdn.test/m.mp4'],
+      iframes: [],
+      cloudflare: false,
+    });
+    await expect(svc.scrapeFromMeusanimes('foo', 1)).resolves.toBe(
+      'https://cdn.test/m.mp4',
+    );
+  });
+
+  it('scrapeFromMeusanimes retorna null com rejeição não-Error', async () => {
+    const { svc } = build();
+    jest.spyOn(svc, 'scrapeEpisodeVideo').mockRejectedValue('nope string');
+    await expect(svc.scrapeFromMeusanimes('foo', 1, 1)).resolves.toBeNull();
+  });
+
+  it('scrapeFromAnimefire retorna null com rejeição não-Error', async () => {
+    const { svc } = build();
+    jest.spyOn(svc, 'scrapeEpisodeVideo').mockRejectedValue('nope string');
+    await expect(svc.scrapeFromAnimefire('foo', 1)).resolves.toBeNull();
+  });
+
+  it('scrapeFromTioanime retorna vídeo quando resolve', async () => {
+    const { svc } = build();
+    jest.spyOn(svc, 'scrapeEpisodeVideo').mockResolvedValue({
+      videos: ['https://cdn.test/t.mp4'],
+      iframes: [],
+      cloudflare: false,
+    });
+    await expect(svc.scrapeFromTioanime('foo', 1)).resolves.toBe(
+      'https://cdn.test/t.mp4',
+    );
+  });
+
+  it('scrapeFromTioanime retorna null sem vídeo ou com erro', async () => {
+    const { svc } = build();
+    const spy = jest.spyOn(svc, 'scrapeEpisodeVideo');
+    spy.mockResolvedValueOnce({ videos: [], iframes: [], cloudflare: false });
+    await expect(svc.scrapeFromTioanime('foo', 1)).resolves.toBeNull();
+    spy.mockRejectedValueOnce(new Error('tio down'));
+    await expect(svc.scrapeFromTioanime('foo', 1)).resolves.toBeNull();
+    spy.mockRejectedValueOnce('tio down string');
+    await expect(svc.scrapeFromTioanime('foo', 1)).resolves.toBeNull();
+  });
+
+  it('monta URL de episódio do tioanime', () => {
+    const { svc } = build();
+    expect(svc.tioanimeEpisodeUrl('foo', 2)).toBe(
+      'https://tioanime.com/ver/foo-2',
+    );
+  });
+
+  it('resultado sem playerTokens não é cacheado e registra failure', async () => {
+    const { svc, af, metrics } = build();
+    af.extractHttp.mockResolvedValueOnce({
+      videos: [],
+      iframes: [],
+      cloudflare: false,
+    });
+    const res = await svc.scrapeEpisodeVideo(
+      'https://animefire.io/a/notokens',
+      undefined,
+      false,
+    );
+    expect(res.videos).toEqual([]);
+    expect(metrics.recordExtractionFailure).toHaveBeenCalledWith('animefire');
+  });
+
+  it('resolve via Xvfb e aproveita vídeo capturado', async () => {
+    const { svc, af, browserPool } = build();
+    const emptyPage = makePageMock({});
+    emptyPage.isClosed.mockReturnValue(true);
+    browserPool.acquireContext.mockResolvedValueOnce({
+      context: {
+        newPage: jest.fn(async () => emptyPage),
+        close: jest.fn(async () => undefined),
+      },
+      release: jest.fn(async () => undefined),
+    });
+    const okPage = makePageMock({
+      requestUrls: ['https://rr9.googlevideo.com/videoplayback?tok=9'],
+    });
+    launchMock.mockResolvedValue({
+      newContext: jest.fn(async () => ({
+        newPage: jest.fn(async () => okPage),
+        close: jest.fn(async () => undefined),
+      })),
+      close: jest.fn(async () => undefined),
+    } as any);
+    ensureXvfbMock.mockResolvedValue(':99');
+    af.extractHttp.mockResolvedValueOnce({
+      videos: [],
+      iframes: [],
+      cloudflare: false,
+      playerTokens: ['https://www.blogger.com/video.g?token=xyz'],
+    });
+    const res = await svc.scrapeEpisodeVideo(
+      'https://animefire.io/a/xvfb-ok',
+      undefined,
+      false,
+    );
+    expect(res.videos[0]).toContain('videoplayback');
+  });
+
+  it('extractPlayerVideo retorna [] com erro não-Error no goto', async () => {
+    const { svc } = build();
+    const page = makePageMock({});
+    page.goto.mockRejectedValue('net down string');
+    const context = {
+      newPage: jest.fn(async () => page),
+      close: jest.fn(async () => undefined),
+    };
+    const videos = await (svc as any).extractPlayerVideo(
+      context,
+      'https://player.test/2',
+      'https://ep.test/2',
+    );
+    expect(videos).toEqual([]);
+  });
+
+  it('extractPlayerVideo ignora frames sem botão de play', async () => {
+    const { svc } = build();
+    const frame = { $: jest.fn(async () => null) };
+    const page = makePageMock({});
+    page.mainFrame.mockReturnValue({
+      childFrames: jest.fn(() => [frame]),
+    } as any);
+    page.isClosed.mockReturnValue(true);
+    const context = {
+      newPage: jest.fn(async () => page),
+      close: jest.fn(async () => undefined),
+    };
+    const videos = await (svc as any).extractPlayerVideo(
+      context,
+      'https://player.test/3',
+      'https://ep.test/3',
+    );
+    expect(videos).toEqual([]);
+    expect(frame.$).toHaveBeenCalled();
+  });
+});

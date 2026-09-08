@@ -1,5 +1,6 @@
 import {
   clearLivenessCache,
+  shouldReextractMedia,
   signedExpiryDead,
   probeMediaUrlDead,
   purgeExpiredLivenessCache,
@@ -167,5 +168,188 @@ describe('probeMediaUrlDead', () => {
     })) as any;
     await probeMediaUrlDead('https://cdn.test/expiring.mp4');
     expect(purgeExpiredLivenessCache(Date.now() + 1_800_001)).toBe(1);
+  });
+});
+
+describe('shouldReextractMedia', () => {
+  it.each([401, 403, 404, 410, 500, 502, 503, 599])(
+    'retorna true para status %i',
+    (status) => {
+      expect(shouldReextractMedia(status)).toBe(true);
+    },
+  );
+
+  it.each([200, 206, 301, 302, 429])(
+    'retorna false para status %i',
+    (status) => {
+      expect(shouldReextractMedia(status)).toBe(false);
+    },
+  );
+});
+
+describe('probeMediaUrlDead (cobertura de recuperação)', () => {
+  beforeEach(() => clearLivenessCache());
+
+  it('usa dispatcher global fora do ambiente de teste', async () => {
+    const prev = process.env.NODE_ENV;
+    process.env.NODE_ENV = '';
+    const fetchFn = jest.fn();
+    global.fetch = fetchFn as any;
+    try {
+      // undici real com dispatcher mockado rejeita -> inconclusivo sem forçar.
+      await expect(
+        probeMediaUrlDead('https://cdn.test/noproxy.mp4'),
+      ).resolves.toBe(false);
+      expect(fetchFn).not.toHaveBeenCalled();
+    } finally {
+      process.env.NODE_ENV = prev;
+    }
+  });
+
+  it('purge sem argumentos usa Date.now e mantém vivos', async () => {
+    global.fetch = jest.fn(async () => ({
+      status: 206,
+      headers: { get: () => null },
+      body: { cancel: jest.fn() },
+    })) as any;
+    await probeMediaUrlDead('https://cdn.test/keep.mp4');
+    expect(purgeExpiredLivenessCache()).toBe(0);
+  });
+
+  it('evicta por tamanho quando o cache excede 500 entradas', async () => {
+    global.fetch = jest.fn(async () => ({
+      status: 206,
+      headers: { get: () => null },
+      body: { cancel: jest.fn() },
+    })) as any;
+    for (let i = 0; i < 501; i++) {
+      await probeMediaUrlDead(`https://cdn.test/evict${i}.mp4`);
+    }
+    expect(purgeExpiredLivenessCache()).toBeGreaterThanOrEqual(1);
+  });
+
+  it('segue redirecionamento e avalia o destino final', async () => {
+    global.fetch = jest
+      .fn()
+      .mockResolvedValueOnce({
+        status: 302,
+        headers: {
+          get: (name: string) =>
+            name.toLowerCase() === 'location' ? '/final.mp4' : null,
+        },
+        body: { cancel: jest.fn() },
+      })
+      .mockResolvedValue({
+        status: 206,
+        headers: { get: () => null },
+        body: { cancel: jest.fn() },
+      }) as any;
+    await expect(probeMediaUrlDead('https://cdn.test/start.mp4')).resolves.toBe(
+      false,
+    );
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('trata redirecionamento inválido como morta', async () => {
+    global.fetch = jest.fn(async () => ({
+      status: 302,
+      headers: {
+        get: (name: string) =>
+          name.toLowerCase() === 'location' ? 'http://[invalido' : null,
+      },
+      body: { cancel: jest.fn() },
+    })) as any;
+    await expect(
+      probeMediaUrlDead('https://cdn.test/badredir.mp4'),
+    ).resolves.toBe(true);
+  });
+
+  it('trata estouro de redirecionamentos como morta', async () => {
+    global.fetch = jest.fn(async () => ({
+      status: 302,
+      headers: {
+        get: (name: string) =>
+          name.toLowerCase() === 'location' ? '/loop.mp4' : null,
+      },
+      body: { cancel: jest.fn() },
+    })) as any;
+    await expect(probeMediaUrlDead('https://cdn.test/loop.mp4')).resolves.toBe(
+      true,
+    );
+    expect(global.fetch).toHaveBeenCalledTimes(6);
+  });
+
+  it('re-probeia quando o cache venceu', async () => {
+    const fetchFn = jest.fn(async () => ({
+      status: 206,
+      headers: { get: () => null },
+      body: { cancel: jest.fn() },
+    }));
+    global.fetch = fetchFn as any;
+    await expect(probeMediaUrlDead('https://cdn.test/stale.mp4')).resolves.toBe(
+      false,
+    );
+    const nowSpy = jest
+      .spyOn(Date, 'now')
+      .mockReturnValue(Date.now() + 1_800_001);
+    try {
+      await expect(
+        probeMediaUrlDead('https://cdn.test/stale.mp4'),
+      ).resolves.toBe(false);
+    } finally {
+      nowSpy.mockRestore();
+    }
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+  });
+
+  it('ignora limpeza de inflight quando outro probe assumiu a chave', async () => {
+    let resolveFetch!: (value: unknown) => void;
+    global.fetch = jest.fn(
+      () =>
+        new Promise((resolve) => {
+          resolveFetch = resolve;
+        }),
+    ) as any;
+    const first = probeMediaUrlDead('https://cdn.test/race.mp4');
+    await Promise.resolve();
+    await Promise.resolve();
+    clearLivenessCache();
+    resolveFetch({
+      status: 206,
+      headers: { get: () => null },
+      body: { cancel: jest.fn() },
+    });
+    await expect(first).resolves.toBe(false);
+  });
+});
+
+describe('signedExpiryDead (casos de borda)', () => {
+  it('retorna null para X-Amz-Date malformado', () => {
+    expect(
+      signedExpiryDead(
+        'https://cdn.test/v.mp4?X-Amz-Date=not-a-date&X-Amz-Expires=100',
+      ),
+    ).toBe(null);
+  });
+
+  it('aplica defaults de hora quando a data só tem dia', () => {
+    expect(
+      signedExpiryDead(
+        'https://cdn.test/v.mp4?X-Amz-Date=20200101&X-Amz-Expires=60',
+      ),
+    ).toBe(true);
+    const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    expect(
+      signedExpiryDead(
+        `https://cdn.test/v.mp4?X-Amz-Date=${today}&X-Amz-Expires=86400`,
+      ),
+    ).toBe(false);
+  });
+
+  it('retorna null para expire zerado ou fora do inteiro seguro', () => {
+    expect(signedExpiryDead('https://cdn.test/v.mp4?expire=0')).toBe(null);
+    expect(
+      signedExpiryDead('https://cdn.test/v.mp4?expire=99999999999999999999999'),
+    ).toBe(null);
   });
 });
