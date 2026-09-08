@@ -11,13 +11,13 @@ WORKDIR /app
 # Stage 2: Dependencies (production only)
 FROM base AS deps
 
-COPY package.json package-lock.json ./
+COPY .npmrc package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts
 
 # Stage 3: Build
 FROM base AS build
 
-COPY package.json package-lock.json ./
+COPY .npmrc package.json package-lock.json ./
 RUN npm ci --ignore-scripts
 
 COPY prisma ./prisma/
