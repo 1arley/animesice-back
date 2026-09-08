@@ -1,3 +1,10 @@
+# [1.26.0](https://github.com/1arley/animesice-back/compare/v1.25.1...v1.26.0) (2026-09-08)
+
+
+### Features
+
+* **streaming:** add async source extraction endpoint with job polling ([b7c6009](https://github.com/1arley/animesice-back/commit/b7c60091b65b3fcdd60d42fe6b74c37c082223f6))
+
 ## [1.25.1](https://github.com/1arley/animesice-back/compare/v1.25.0...v1.25.1) (2026-09-08)
 
 
