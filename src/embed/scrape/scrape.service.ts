@@ -24,6 +24,7 @@ import { MetricsService } from '@/metrics/metrics.service';
 import { SOURCE_IDS } from '@/watchtower/watchtower.types';
 import { ensureXvfb } from './xvfb.helper';
 import { refererForMediaUrlWithFallback } from '@/common/url-utils';
+import { playwrightProxy } from '@/common/outbound-proxy';
 /** Remove quebras de linha/separadores Unicode de dados externos antes de logar. */
 function sanitizeLog(v: string): string {
   return v.replace(/[\r\n\u2028\u2029]/g, ' ');
@@ -401,6 +402,7 @@ export class ScrapeService {
             let browser: Browser | null = null;
             try {
               browser = await chromium.launch({
+                proxy: playwrightProxy(),
                 headless: false,
                 chromiumSandbox: false,
                 args: ['--no-sandbox', '--disable-gpu'],
