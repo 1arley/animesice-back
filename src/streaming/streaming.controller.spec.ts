@@ -18,7 +18,7 @@ describe('StreamingController', () => {
   const mockStreamingService = {
     getSource: jest.fn(),
     getSourceAsync: jest.fn(),
-    getSourceAsyncStatus: jest.fn(),
+    getJobStatus: jest.fn(),
     generateToken: jest.fn(),
     proxyVideo: jest.fn(),
   };
@@ -569,14 +569,8 @@ describe('StreamingController', () => {
         status: 'pending',
         message: 'Extração em andamento.',
       });
-      const req = {
-        headers: { host: 'api.animesice.com' },
-        socket: { remoteAddress: '::1' },
-        protocol: 'https',
-      } as any;
-
       await expect(
-        controller.getSourceAsync('solo', '1', req),
+        controller.getSourceAsync('solo', '1'),
       ).resolves.toMatchObject({
         jobId: 'job-1',
         status: 'pending',
@@ -584,14 +578,14 @@ describe('StreamingController', () => {
       expect(mockStreamingService.getSourceAsync).toHaveBeenCalledWith(
         'solo',
         1,
-        'https://api.animesice.com',
       );
     });
 
     it('consulta o job quando jobId é fornecido no endpoint source', async () => {
-      mockStreamingService.getSourceAsyncStatus.mockResolvedValue({
-        jobId: 'job-1',
-        status: 'pending',
+      mockStreamingService.getJobStatus.mockResolvedValue({
+        status: 'processing',
+        result: null,
+        error: null,
       });
       const req = {
         headers: { host: 'api.animesice.com' },
@@ -600,12 +594,14 @@ describe('StreamingController', () => {
       } as any;
 
       await expect(
-        controller.getSource('solo', '1', undefined, req, 'job-1', undefined),
-      ).resolves.toMatchObject({ jobId: 'job-1', status: 'pending' });
-      expect(mockStreamingService.getSourceAsyncStatus).toHaveBeenCalledWith(
+        controller.getSource('solo', '1', undefined, undefined, 'job-1', req, {
+          status: jest.fn().mockReturnThis(),
+          json: jest.fn(),
+        } as any),
+      ).resolves.toBeUndefined();
+      expect(mockStreamingService.getJobStatus).toHaveBeenCalledWith(
         'job-1',
-        'solo',
-        1,
+        'https://api.animesice.com',
       );
     });
   });

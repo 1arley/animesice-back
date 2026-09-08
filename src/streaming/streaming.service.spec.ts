@@ -130,68 +130,6 @@ describe('StreamingService.cleanupMemoryCaches', () => {
     svc.cleanupMemoryCaches();
     expect(reextract.size).toBe(200);
   });
-
-  it('não remove o índice de um job novo ao limpar o job expirado anterior', () => {
-    const { svc } = makeMocks();
-    const jobs = (svc as any).sourceExtractionJobs as Map<string, any>;
-    const keys = (svc as any).sourceExtractionJobKeys as Map<string, string>;
-    jobs.set('old-job', {
-      jobId: 'old-job',
-      animeSlug: 'solo',
-      episodeNumber: 1,
-      expiresAt: 0,
-      status: 'failed',
-    });
-    keys.set('solo:1', 'new-job');
-
-    svc.cleanupMemoryCaches();
-
-    expect(keys.get('solo:1')).toBe('new-job');
-  });
-});
-
-describe('StreamingService source extraction jobs', () => {
-  it('reutiliza o job pendente e devolve a fonte quando concluído', async () => {
-    const { svc } = makeMocks();
-    const source = {
-      animeSlug: 'solo',
-      episodeNumber: 1,
-      src: 'https://api.test/api/embed/media?url=video',
-      rawVideoUrl: 'https://cdn.test/video.mp4',
-      embedUrl: null,
-      reextracted: false,
-      thumbnailUrl: null,
-    };
-    jest.spyOn(svc, 'getSource').mockResolvedValue(source);
-
-    const first = svc.getSourceAsync('solo', 1, 'https://api.test');
-    const second = svc.getSourceAsync('solo', 1, 'https://api.test');
-
-    expect(second.jobId).toBe(first.jobId);
-    expect(first.status).toBe('pending');
-
-    await Promise.resolve();
-    await Promise.resolve();
-
-    expect(svc.getSourceAsyncStatus(first.jobId, 'solo', 1)).toEqual(source);
-  });
-
-  it('expõe falha de extração pelo job sem lançar no polling', async () => {
-    const { svc } = makeMocks();
-    jest
-      .spyOn(svc, 'getSource')
-      .mockRejectedValue(new NotFoundException('Vídeo não disponível.'));
-
-    const job = svc.getSourceAsync('solo', 1, 'https://api.test');
-    await Promise.resolve();
-    await Promise.resolve();
-
-    expect(svc.getSourceAsyncStatus(job.jobId, 'solo', 1)).toMatchObject({
-      jobId: job.jobId,
-      status: 'failed',
-      error: 'Vídeo não disponível.',
-    });
-  });
 });
 
 describe('StreamingService.generateToken', () => {

@@ -8,6 +8,7 @@ import {
   NotFoundException,
   ForbiddenException,
   HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -16,11 +17,8 @@ import {
   ApiBearerAuth,
 } from '@nestjs/swagger';
 import express from 'express';
-import {
-  StreamingService,
-  type StreamSourceExtractionJob,
-  type StreamSourceResponse,
-} from '@/streaming/streaming.service';
+import { StreamingService } from '@/streaming/streaming.service';
+import { ExtractionJob } from '@/streaming/extraction-job.service';
 import { JwtAuthGuard } from '@/auth/jwt-auth.guard';
 import { ConfigService } from '@nestjs/config';
 import { Throttle } from '@nestjs/throttler';
@@ -171,46 +169,7 @@ export class StreamingController {
     @Query('async') asyncMode: string | undefined,
     @Query('jobId') jobId: string | undefined,
     @Req() req: express.Request,
-    @Query('jobId') jobId: string | undefined = undefined,
-    @Query('async') asyncRequest: string | undefined = undefined,
-  ): Promise<
-    | StreamSourceResponse
-    | (StreamSourceExtractionJob & Partial<StreamSourceResponse>)
-  > {
-    const episodeNumber = EPISODE_NUM_RE.test(episodeSlug)
-      ? parseInt(episodeSlug, 10)
-      : NaN;
-    if (!animeSlug || Number.isNaN(episodeNumber)) {
-      throw new NotFoundException(
-        'Parâmetros `anime` e `episode` são obrigatórios.',
-      );
-    }
-    if (jobId) {
-      return this.streamingService.getSourceAsyncStatus(
-        jobId,
-        animeSlug,
-        episodeNumber,
-      );
-    }
-    if (asyncRequest === '1' || asyncRequest === 'true') {
-      return this.getSourceAsync(animeSlug, episodeSlug, req);
-    }
-    return this.streamingService.getSource(
-      animeSlug,
-      episodeNumber,
-      backendOrigin(req, this.trustProxy, this.configService),
-      1,
-      refresh === '1' || refresh === 'true',
-    );
-  }
-
-  @Get('source/async')
-  @HttpCode(202)
-  @Throttle({ default: { limit: 60, ttl: 60_000 } })
-  getSourceAsync(
-    @Query('anime') animeSlug: string,
-    @Query('episode') episodeSlug: string,
-    @Req() req: express.Request,
+    @Res() res: express.Response,
   ) {
     const episodeNumber = EPISODE_NUM_RE.test(episodeSlug)
       ? parseInt(episodeSlug, 10)
@@ -220,12 +179,82 @@ export class StreamingController {
         'Parâmetros `anime` e `episode` são obrigatórios.',
       );
     }
-    return this.streamingService.getSourceAsync(
+    if (jobId) {
+      const status = await this.streamingService.getJobStatus(
+        jobId,
+        backendOrigin(req, this.trustProxy, this.configService),
+      );
+      if (!status) {
+        throw new NotFoundException('Job não encontrado ou expirado.');
+      }
+      if (status.status === 'completed' && status.result) {
+        res.json(status.result);
+        return;
+      }
+      if (status.status === 'completed') {
+        const source = await this.streamingService.getSource(
+          animeSlug,
+          episodeNumber,
+          backendOrigin(req, this.trustProxy, this.configService),
+        );
+        res.json(source);
+        return;
+      }
+      if (status.status === 'failed') {
+        res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
+          jobId,
+          status: 'failed',
+          error: status.error ?? 'Extração falhou.',
+        });
+        return;
+      }
+      res.status(HttpStatus.ACCEPTED).json({
+        jobId,
+        status: status.status,
+        message: 'Extração em andamento...',
+      });
+      return;
+    }
+    if (asyncMode === '1' || asyncMode === 'true') {
+      const asyncResult = await this.streamingService.getSourceAsync(
+        animeSlug,
+        episodeNumber,
+      );
+      if (asyncResult) {
+        res.status(HttpStatus.ACCEPTED).json({
+          jobId: asyncResult.jobId,
+          status: 'pending',
+          message: 'Extraindo vídeo... Tente novamente em alguns segundos.',
+        });
+        return;
+      }
+    }
+    const source = await this.streamingService.getSource(
       animeSlug,
       episodeNumber,
       backendOrigin(req, this.trustProxy, this.configService),
+      1,
+      refresh === '1' || refresh === 'true',
     );
     res.json(source);
+  }
+
+  @Get('source/async')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  async getSourceAsync(
+    @Query('anime') animeSlug: string,
+    @Query('episode') episodeSlug: string,
+  ) {
+    const episodeNumber = EPISODE_NUM_RE.test(episodeSlug)
+      ? parseInt(episodeSlug, 10)
+      : NaN;
+    if (!animeSlug || Number.isNaN(episodeNumber)) {
+      throw new NotFoundException(
+        'Parâmetros `anime` e `episode` são obrigatórios.',
+      );
+    }
+    return this.streamingService.getSourceAsync(animeSlug, episodeNumber);
   }
 
   /**
