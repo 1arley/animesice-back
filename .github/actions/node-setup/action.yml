@@ -12,7 +12,7 @@ inputs:
 runs:
   using: composite
   steps:
-    # .nvmrc pins the single supported Node version (22). No matrix needed
+    # .nvmrc pins the single supported Node version (24). No matrix needed
     # because the project targets exactly one runtime.
     - name: Set up Node.js
       uses: actions/setup-node@v4
