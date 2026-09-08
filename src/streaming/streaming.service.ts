@@ -14,6 +14,7 @@ import {
 } from '@/common/media-probe';
 import { refererForMediaUrl } from '@/common/url-utils';
 import { Readable } from 'stream';
+import { randomUUID } from 'crypto';
 
 function dbg(msg: string): void {
   const safeMsg = msg.replace(/[\r\n\u2028\u2029]/g, ' ');
@@ -53,6 +54,20 @@ export interface StreamSourceResponse {
   thumbnailUrl: string | null;
 }
 
+export interface StreamSourceExtractionJob {
+  jobId: string;
+  status: 'pending' | 'completed' | 'failed';
+  message?: string;
+  error?: string;
+}
+
+type ExtractionJobEntry = StreamSourceExtractionJob & {
+  animeSlug: string;
+  episodeNumber: number;
+  expiresAt: number;
+  source?: StreamSourceResponse;
+};
+
 @Injectable()
 export class StreamingService {
   /** Single-flight + cache curto p/ re-extrações (anti thundering herd no
@@ -72,6 +87,8 @@ export class StreamingService {
     string,
     Promise<string | null>
   >();
+  private readonly sourceExtractionJobs = new Map<string, ExtractionJobEntry>();
+  private readonly sourceExtractionJobKeys = new Map<string, string>();
   private readonly SCRAPE_CACHE_TTL_MS = 5 * 60_000;
 
   /** Teto de entradas nos caches de inflight — evita crescimento ilimitado
@@ -129,6 +146,15 @@ export class StreamingService {
         this.reextractInflight.delete(k);
       }
     }
+    for (const [jobId, job] of this.sourceExtractionJobs) {
+      if (job.expiresAt <= now) {
+        this.sourceExtractionJobs.delete(jobId);
+        const key = `${job.animeSlug}:${job.episodeNumber}`;
+        if (this.sourceExtractionJobKeys.get(key) === jobId) {
+          this.sourceExtractionJobKeys.delete(key);
+        }
+      }
+    }
     purgeExpiredLivenessCache(now);
   }
 
@@ -145,6 +171,85 @@ export class StreamingService {
       }
     }
     if (oldestKey) this.scrapeCache.delete(oldestKey);
+  }
+
+  /**
+   * Inicia a resolução custosa fora do request. Chamadas para o mesmo episódio
+   * compartilham o job, evitando múltiplos Chromiums para o mesmo vídeo.
+   */
+  getSourceAsync(
+    animeSlug: string,
+    episodeNumber: number,
+    apiOriginBackend: string,
+  ): StreamSourceExtractionJob {
+    const key = `${animeSlug}:${episodeNumber}`;
+    const existingId = this.sourceExtractionJobKeys.get(key);
+    const existing = existingId
+      ? this.sourceExtractionJobs.get(existingId)
+      : undefined;
+    if (existing && existing.expiresAt > Date.now()) {
+      return this.publicJob(existing);
+    }
+
+    const entry: ExtractionJobEntry = {
+      jobId: randomUUID(),
+      status: 'pending',
+      message: 'Extração em andamento.',
+      animeSlug,
+      episodeNumber,
+      expiresAt: Date.now() + this.SCRAPE_CACHE_TTL_MS,
+    };
+    this.sourceExtractionJobs.set(entry.jobId, entry);
+    this.sourceExtractionJobKeys.set(key, entry.jobId);
+
+    void this.getSource(animeSlug, episodeNumber, apiOriginBackend)
+      .then((source) => {
+        entry.status = 'completed';
+        entry.message = undefined;
+        entry.source = source;
+      })
+      .catch((err: unknown) => {
+        entry.status = 'failed';
+        entry.message = undefined;
+        entry.error =
+          err instanceof NotFoundException
+            ? err.message
+            : 'Não foi possível extrair o vídeo deste episódio.';
+      });
+
+    return this.publicJob(entry);
+  }
+
+  getSourceAsyncStatus(
+    jobId: string,
+    animeSlug: string,
+    episodeNumber: number,
+  ): StreamSourceResponse | StreamSourceExtractionJob {
+    const entry = this.sourceExtractionJobs.get(jobId);
+    if (
+      !entry ||
+      entry.expiresAt <= Date.now() ||
+      entry.animeSlug !== animeSlug ||
+      entry.episodeNumber !== episodeNumber
+    ) {
+      return {
+        jobId,
+        status: 'failed',
+        error: 'Extração não encontrada ou expirada.',
+      };
+    }
+    return entry.status === 'completed' && entry.source
+      ? entry.source
+      : this.publicJob(entry);
+  }
+
+  private publicJob(entry: ExtractionJobEntry): StreamSourceExtractionJob {
+    return {
+      jobId: entry.jobId,
+      status: entry.status,
+      ...(entry.message ? { message: entry.message } : {}),
+      ...(entry.error ? { error: entry.error } : {}),
+    };
   }
 
   async generateToken(

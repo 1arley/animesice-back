@@ -17,6 +17,8 @@ describe('StreamingController', () => {
 
   const mockStreamingService = {
     getSource: jest.fn(),
+    getSourceAsync: jest.fn(),
+    getSourceAsyncStatus: jest.fn(),
     generateToken: jest.fn(),
     proxyVideo: jest.fn(),
   };
@@ -278,6 +280,54 @@ describe('StreamingController', () => {
         controller.getSource('solo', '1', undefined, req),
       ).rejects.toThrow(ForbiddenException);
       process.env.NODE_ENV = origEnv;
+    });
+  });
+
+  describe('getSourceAsync', () => {
+    it('inicia a extração assíncrona do episódio', async () => {
+      mockStreamingService.getSourceAsync.mockResolvedValue({
+        jobId: 'job-1',
+        status: 'pending',
+        message: 'Extração em andamento.',
+      });
+      const req = {
+        headers: { host: 'api.animesice.com' },
+        socket: { remoteAddress: '::1' },
+        protocol: 'https',
+      } as any;
+
+      await expect(
+        controller.getSourceAsync('solo', '1', req),
+      ).resolves.toMatchObject({
+        jobId: 'job-1',
+        status: 'pending',
+      });
+      expect(mockStreamingService.getSourceAsync).toHaveBeenCalledWith(
+        'solo',
+        1,
+        'https://api.animesice.com',
+      );
+    });
+
+    it('consulta o job quando jobId é fornecido no endpoint source', async () => {
+      mockStreamingService.getSourceAsyncStatus.mockResolvedValue({
+        jobId: 'job-1',
+        status: 'pending',
+      });
+      const req = {
+        headers: { host: 'api.animesice.com' },
+        socket: { remoteAddress: '::1' },
+        protocol: 'https',
+      } as any;
+
+      await expect(
+        controller.getSource('solo', '1', undefined, req, 'job-1', undefined),
+      ).resolves.toMatchObject({ jobId: 'job-1', status: 'pending' });
+      expect(mockStreamingService.getSourceAsyncStatus).toHaveBeenCalledWith(
+        'job-1',
+        'solo',
+        1,
+      );
     });
   });
 

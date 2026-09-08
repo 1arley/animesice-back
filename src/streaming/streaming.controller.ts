@@ -7,6 +7,7 @@ import {
   UseGuards,
   NotFoundException,
   ForbiddenException,
+  HttpCode,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -15,7 +16,11 @@ import {
   ApiBearerAuth,
 } from '@nestjs/swagger';
 import express from 'express';
-import { StreamingService } from '@/streaming/streaming.service';
+import {
+  StreamingService,
+  type StreamSourceExtractionJob,
+  type StreamSourceResponse,
+} from '@/streaming/streaming.service';
 import { JwtAuthGuard } from '@/auth/jwt-auth.guard';
 import { ConfigService } from '@nestjs/config';
 import { Throttle } from '@nestjs/throttler';
@@ -154,6 +159,46 @@ export class StreamingController {
     @Query('episode') episodeSlug: string,
     @Query('refresh') refresh: string | undefined,
     @Req() req: express.Request,
+    @Query('jobId') jobId: string | undefined = undefined,
+    @Query('async') asyncRequest: string | undefined = undefined,
+  ): Promise<
+    | StreamSourceResponse
+    | (StreamSourceExtractionJob & Partial<StreamSourceResponse>)
+  > {
+    const episodeNumber = EPISODE_NUM_RE.test(episodeSlug)
+      ? parseInt(episodeSlug, 10)
+      : NaN;
+    if (!animeSlug || Number.isNaN(episodeNumber)) {
+      throw new NotFoundException(
+        'Parâmetros `anime` e `episode` são obrigatórios.',
+      );
+    }
+    if (jobId) {
+      return this.streamingService.getSourceAsyncStatus(
+        jobId,
+        animeSlug,
+        episodeNumber,
+      );
+    }
+    if (asyncRequest === '1' || asyncRequest === 'true') {
+      return this.getSourceAsync(animeSlug, episodeSlug, req);
+    }
+    return this.streamingService.getSource(
+      animeSlug,
+      episodeNumber,
+      backendOrigin(req, this.trustProxy, this.configService),
+      1,
+      refresh === '1' || refresh === 'true',
+    );
+  }
+
+  @Get('source/async')
+  @HttpCode(202)
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  getSourceAsync(
+    @Query('anime') animeSlug: string,
+    @Query('episode') episodeSlug: string,
+    @Req() req: express.Request,
   ) {
     const episodeNumber = EPISODE_NUM_RE.test(episodeSlug)
       ? parseInt(episodeSlug, 10)
@@ -163,12 +208,10 @@ export class StreamingController {
         'Parâmetros `anime` e `episode` são obrigatórios.',
       );
     }
-    return this.streamingService.getSource(
+    return this.streamingService.getSourceAsync(
       animeSlug,
       episodeNumber,
       backendOrigin(req, this.trustProxy, this.configService),
-      1,
-      refresh === '1' || refresh === 'true',
     );
   }
 
