@@ -1,7 +1,7 @@
 # Stage 1: Base
 # Debian slim (glibc): Playwright chromium não roda em Alpine (musl).
 # Xvfb: necessário para headless:false (token Blogger só renderiza com display).
-FROM node:22-slim AS base
+FROM node:24-slim AS base
 
 RUN apt-get update && apt-get install -y --no-install-recommends dumb-init xvfb \
   && rm -rf /var/lib/apt/lists/*
