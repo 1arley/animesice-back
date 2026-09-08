@@ -1,3 +1,10 @@
+## [1.27.1](https://github.com/1arley/animesice-back/compare/v1.27.0...v1.27.1) (2026-09-08)
+
+
+### Bug Fixes
+
+* **scrape:** pass outbound proxy to Chromium via playwrightProxy() ([e9731d8](https://github.com/1arley/animesice-back/commit/e9731d8bd1ed0a45206c575ac26c08f0d31224be))
+
 # [1.27.0](https://github.com/1arley/animesice-back/compare/v1.26.0...v1.27.0) (2026-09-08)
 
 
