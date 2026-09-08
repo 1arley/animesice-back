@@ -1,3 +1,10 @@
+## [1.25.1](https://github.com/1arley/animesice-back/compare/v1.25.0...v1.25.1) (2026-09-08)
+
+
+### Bug Fixes
+
+* **docker:** move prisma CLI to dependencies — prod image ships pinned CLI preventing npx from fetching broken v8 RC ([4d7bf36](https://github.com/1arley/animesice-back/commit/4d7bf366cfdd1f01526fef217f8caebd13514226))
+
 # [1.25.0](https://github.com/1arley/animesice-back/compare/v1.24.4...v1.25.0) (2026-08-26)
 
 
