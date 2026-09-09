@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, OnApplicationBootstrap } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
@@ -17,18 +17,30 @@ function syncEnabled(): boolean {
 }
 
 @Injectable()
-export class AdultCatalogSyncService {
+export class AdultCatalogSyncService implements OnApplicationBootstrap {
+  private running = false;
+
   constructor(private readonly prisma: PrismaService) {}
+
+  async onApplicationBootstrap(): Promise<void> {
+    await this.handleCron();
+  }
 
   @Cron('0 4 * * *')
   async handleCron(): Promise<void> {
-    if (!syncEnabled()) return;
-    await this.sync().catch((e) => {
+    if (!syncEnabled() || this.running) return;
+
+    this.running = true;
+    try {
+      await this.sync();
+    } catch (e) {
       console.error(
         '[ADULT-SYNC] falhou:',
         e instanceof Error ? e.message : String(e),
       );
-    });
+    } finally {
+      this.running = false;
+    }
   }
 
   async sync(opts?: { dryRun?: boolean; limit?: number }) {

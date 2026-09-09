@@ -111,6 +111,33 @@ describe('AdultCatalogSyncService', () => {
       expect(prisma.genre.upsert).toHaveBeenCalled();
     });
 
+    it('sincroniza no bootstrap quando habilitado', async () => {
+      const sync = jest
+        .spyOn(service, 'sync')
+        .mockResolvedValue({ imported: 0, updated: 0 });
+
+      await service.onApplicationBootstrap();
+
+      expect(sync).toHaveBeenCalledTimes(1);
+    });
+
+    it('não executa sync concorrente', async () => {
+      let release!: () => void;
+      const sync = jest.spyOn(service, 'sync').mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            release = () => resolve({ imported: 0, updated: 0 });
+          }),
+      );
+
+      const first = service.handleCron();
+      await service.handleCron();
+      release();
+      await first;
+
+      expect(sync).toHaveBeenCalledTimes(1);
+    });
+
     it('loga erro quando o sync com Error falha', async () => {
       jest.spyOn(service, 'sync').mockRejectedValue(new Error('boom'));
       await expect(service.handleCron()).resolves.toBeUndefined();
