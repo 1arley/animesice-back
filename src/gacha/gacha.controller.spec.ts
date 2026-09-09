@@ -6,6 +6,11 @@ function makeMocks() {
       roll: jest.fn(),
       status: jest.fn(),
       collection: jest.fn(),
+      featured: jest.fn(),
+      setFeatured: jest.fn(),
+      removeFeatured: jest.fn(),
+      publicCard: jest.fn(),
+      publicFeatured: jest.fn(),
       recent: jest.fn(),
       ranking: jest.fn(),
     },
@@ -52,20 +57,63 @@ describe('GachaController', () => {
         undefined as any,
         undefined as any,
         undefined as any,
+        undefined,
+        undefined,
+        undefined,
       );
-      expect(m.gachaService.collection).toHaveBeenCalledWith('u1', 'u1', 1, 24);
+      expect(m.gachaService.collection).toHaveBeenCalledWith(
+        'u1',
+        'u1',
+        1,
+        24,
+        undefined,
+        undefined,
+        undefined,
+      );
     });
 
     it('aceita userId, page e limit explícitos', async () => {
       m.gachaService.collection.mockResolvedValue([]);
-      await controller.collection(req('u1'), 'u2', '3', '10');
-      expect(m.gachaService.collection).toHaveBeenCalledWith('u2', 'u1', 3, 10);
+      await controller.collection(
+        req('u1'),
+        'u2',
+        '3',
+        '10',
+        'recent',
+        'RARA',
+        'HOLO',
+      );
+      expect(m.gachaService.collection).toHaveBeenCalledWith(
+        'u2',
+        'u1',
+        3,
+        10,
+        'recent',
+        'RARA',
+        'HOLO',
+      );
     });
 
     it('recorre aos defaults com page/limit inválidos', async () => {
       m.gachaService.collection.mockResolvedValue([]);
-      await controller.collection(req('u1'), undefined as any, 'abc', 'abc');
-      expect(m.gachaService.collection).toHaveBeenCalledWith('u1', 'u1', 1, 24);
+      await controller.collection(
+        req('u1'),
+        undefined as any,
+        'abc',
+        'abc',
+        undefined,
+        undefined,
+        undefined,
+      );
+      expect(m.gachaService.collection).toHaveBeenCalledWith(
+        'u1',
+        'u1',
+        1,
+        24,
+        undefined,
+        undefined,
+        undefined,
+      );
     });
   });
 

@@ -149,6 +149,8 @@ model User {
   siteFeedbackUpvotes     SiteFeedbackUpvote[]
   privacySettings         PrivacySettings?
   userCards              UserCard[]
+  featuredUserCardId     String?                  @unique
+  featuredUserCard       UserCard?                @relation("FeaturedUserCard", fields: [featuredUserCardId], references: [id], onDelete: SetNull)
   gachaRollDays           GachaRollDay[]
   posts                   Post[]
   postLikes               PostLike[]
@@ -772,6 +774,7 @@ model UserCard {
   id         String   @id @default(uuid())
   userId     String
   user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  featuredBy User?    @relation("FeaturedUserCard")
   cardId     String
   card       Card     @relation(fields: [cardId], references: [id], onDelete: Cascade)
   condition  Float

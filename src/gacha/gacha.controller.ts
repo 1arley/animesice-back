@@ -12,7 +12,7 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { GachaService } from '@/gacha/gacha.service';
-import { RollGachaDto } from '@/gacha/dto/gacha.dto';
+import { RollGachaDto, SetFeaturedGachaCardDto } from '@/gacha/dto/gacha.dto';
 import { JwtAuthGuard } from '@/auth/jwt-auth.guard';
 import { VerifiedGuard } from '@/auth/verified.guard';
 import { RolesGuard } from '@/auth/roles.guard';
@@ -53,13 +53,53 @@ export class GachaController {
     @Query('userId') userId: string,
     @Query('page') page: string,
     @Query('limit') limit: string,
+    @Query('sort') sort?: string,
+    @Query('rarity') rarity?: string,
+    @Query('foil') foil?: string,
   ) {
     return this.gachaService.collection(
       userId || req.user.id,
       req.user.id,
       parseInt(page ?? '1', 10) || DEFAULT_PAGE,
       parseInt(limit ?? '24', 10) || 24,
+      sort,
+      rarity,
+      foil,
     );
+  }
+
+  @Get('featured')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  featured(@Req() req: AuthenticatedRequest) {
+    return this.gachaService.featured(req.user.id);
+  }
+
+  @Patch('featured')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  setFeatured(
+    @Req() req: AuthenticatedRequest,
+    @Body() dto: SetFeaturedGachaCardDto,
+  ) {
+    return this.gachaService.setFeatured(req.user.id, dto.userCardId);
+  }
+
+  @Delete('featured')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  removeFeatured(@Req() req: AuthenticatedRequest) {
+    return this.gachaService.removeFeatured(req.user.id);
+  }
+
+  @Get('cards/:id')
+  publicCard(@Param('id') id: string) {
+    return this.gachaService.publicCard(id);
+  }
+
+  @Get('featured/:userId')
+  publicFeatured(@Param('userId') userId: string) {
+    return this.gachaService.publicFeatured(userId);
   }
 
   @Get('admin/cards')

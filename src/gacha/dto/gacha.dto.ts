@@ -1,4 +1,4 @@
-import { IsOptional, IsString } from 'class-validator';
+import { IsNotEmpty, IsOptional, IsString } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class RollGachaDto {
@@ -9,4 +9,11 @@ export class RollGachaDto {
   @IsOptional()
   @IsString()
   turnstileToken?: string;
+}
+
+export class SetFeaturedGachaCardDto {
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  userCardId!: string;
 }

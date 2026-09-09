@@ -192,7 +192,15 @@ export class GachaService {
     };
   }
 
-  async collection(ownerId: string, viewerId: string, page = 1, limit = 24) {
+  async collection(
+    ownerId: string,
+    viewerId: string,
+    page = 1,
+    limit = 24,
+    sort = 'value',
+    rarity?: string,
+    foil?: string,
+  ) {
     if (ownerId !== viewerId) {
       const privacy = await this.prisma.privacySettings.findUnique({
         where: { userId: ownerId },
@@ -205,17 +213,32 @@ export class GachaService {
 
     const safeLimit = Math.min(Math.max(limit, 1), 100);
     const safePage = Math.max(page, 1);
+    const where: Prisma.UserCardWhereInput = {
+      userId: ownerId,
+      ...(rarity && (GACHA_TIERS as readonly string[]).includes(rarity)
+        ? { card: { rarity } }
+        : {}),
+      ...(foil && ['NORMAL', 'HOLO', 'GOLD'].includes(foil) ? { foil } : {}),
+    };
+    const orderBy: Prisma.UserCardOrderByWithRelationInput =
+      sort === 'recent'
+        ? { obtainedAt: 'desc' }
+        : sort === 'rarity'
+          ? { card: { rarity: 'desc' } }
+          : sort === 'edition'
+            ? { edition: 'asc' }
+            : { value: 'desc' };
     const [pulls, total, stats] = await this.prisma.$transaction([
       this.prisma.userCard.findMany({
-        where: { userId: ownerId },
+        where,
         skip: (safePage - 1) * safeLimit,
         take: safeLimit,
-        orderBy: { value: 'desc' },
+        orderBy,
         select: PULL_SELECT,
       }),
-      this.prisma.userCard.count({ where: { userId: ownerId } }),
+      this.prisma.userCard.count({ where }),
       this.prisma.userCard.aggregate({
-        where: { userId: ownerId },
+        where,
         _sum: { value: true },
       }),
     ]);
@@ -233,6 +256,73 @@ export class GachaService {
         totalPages: Math.ceil(total / safeLimit),
       },
     };
+  }
+
+  async featured(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { featuredUserCard: { select: PULL_SELECT } },
+    });
+    const pull = user?.featuredUserCard;
+    return pull
+      ? { ...pull, conditionLabel: conditionLabel(pull.condition) }
+      : null;
+  }
+
+  async setFeatured(userId: string, userCardId: string) {
+    const card = await this.prisma.userCard.findFirst({
+      where: { id: userCardId, userId },
+      select: { id: true },
+    });
+    if (!card) throw new NotFoundException('Carta não encontrada.');
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { featuredUserCardId: card.id },
+    });
+    return this.featured(userId);
+  }
+
+  async removeFeatured(userId: string) {
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { featuredUserCardId: null },
+    });
+    return { featuredUserCardId: null };
+  }
+
+  async publicCard(id: string) {
+    const pull = await this.prisma.userCard.findFirst({
+      where: {
+        id,
+        user: {
+          OR: [
+            { privacySettings: null },
+            { privacySettings: { is: { showGacha: true } } },
+          ],
+        },
+      },
+      select: PULL_SELECT,
+    });
+    if (!pull) throw new NotFoundException('Carta não encontrada.');
+    return { ...pull, conditionLabel: conditionLabel(pull.condition) };
+  }
+
+  async publicFeatured(userId: string) {
+    const user = await this.prisma.user.findFirst({
+      where: {
+        id: userId,
+        OR: [
+          { privacySettings: null },
+          { privacySettings: { is: { showGacha: true } } },
+        ],
+      },
+      select: { featuredUserCard: { select: PULL_SELECT } },
+    });
+    if (!user) throw new NotFoundException('Carta não encontrada.');
+    const pull = user.featuredUserCard;
+    return pull
+      ? { ...pull, conditionLabel: conditionLabel(pull.condition) }
+      : null;
   }
 
   async recent(limit = 20) {
@@ -432,7 +522,13 @@ export class GachaService {
   }
 
   adminDeleteUserCard(id: string) {
-    return this.prisma.userCard.delete({ where: { id } });
+    return this.prisma.$transaction(async (tx) => {
+      await tx.user.updateMany({
+        where: { featuredUserCardId: id },
+        data: { featuredUserCardId: null },
+      });
+      return tx.userCard.delete({ where: { id } });
+    });
   }
 
   adminResetRoll(userId: string) {

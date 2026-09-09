@@ -23,12 +23,19 @@ describe('GachaService', () => {
       create: jest.fn(),
       aggregate: jest.fn(),
       groupBy: jest.fn(),
+      delete: jest.fn(),
     },
     gachaRollDay: { count: jest.fn(), create: jest.fn() },
     card: { count: jest.fn(), findFirst: jest.fn(), update: jest.fn() },
     privacySettings: { findUnique: jest.fn() },
     post: { create: jest.fn() },
-    user: { findMany: jest.fn() },
+    user: {
+      findMany: jest.fn(),
+      findFirst: jest.fn(),
+      findUnique: jest.fn(),
+      update: jest.fn(),
+      updateMany: jest.fn(),
+    },
     $transaction: jest.fn(),
   };
 
@@ -69,6 +76,35 @@ describe('GachaService', () => {
     }).compile();
 
     service = module.get<GachaService>(GachaService);
+  });
+
+  describe('featured cards', () => {
+    it('só permite destacar carta própria', async () => {
+      mockPrisma.userCard.findFirst.mockResolvedValue(null);
+      await expect(service.setFeatured('u1', 'foreign')).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('retorna 404 para carta pública privada', async () => {
+      mockPrisma.userCard.findFirst.mockResolvedValue(null);
+      await expect(service.publicCard('hidden')).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+    });
+
+    it('limpa destaque antes do delete administrativo', async () => {
+      mockPrisma.userCard.delete.mockResolvedValue({ id: 'p1' });
+      await service.adminDeleteUserCard('p1');
+      expect(mockPrisma.user.updateMany).toHaveBeenCalledWith({
+        where: { featuredUserCardId: 'p1' },
+        data: { featuredUserCardId: null },
+      });
+      expect(mockPrisma.userCard.delete).toHaveBeenCalledWith({
+        where: { id: 'p1' },
+      });
+    });
   });
 
   describe('status', () => {
@@ -297,6 +333,23 @@ describe('GachaService', () => {
       const result = await service.collection('u2', 'u1');
 
       expect(result.stats).toEqual({ total: 0, totalValue: 0 });
+    });
+
+    it('aplica filtros, ordenação e limites seguros', async () => {
+      mockPrisma.userCard.findMany.mockResolvedValue([]);
+      mockPrisma.userCard.count.mockResolvedValue(0);
+      mockPrisma.userCard.aggregate.mockResolvedValue({ _sum: { value: 0 } });
+
+      await service.collection('u1', 'u1', -2, 999, 'recent', 'RARA', 'HOLO');
+
+      expect(mockPrisma.userCard.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { userId: 'u1', card: { rarity: 'RARA' }, foil: 'HOLO' },
+          skip: 0,
+          take: 100,
+          orderBy: { obtainedAt: 'desc' },
+        }),
+      );
     });
   });
 

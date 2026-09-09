@@ -611,16 +611,31 @@ export class SocialService {
     limit: number,
     page: number,
   ) {
+    const postWhere: Prisma.PostWhereInput = {
+      userId: { in: userIds },
+      status: ContentStatus.VISIBLE,
+      OR: [
+        { kind: { not: 'GACHA_PULL' } },
+        {
+          user: {
+            OR: [
+              { privacySettings: null },
+              { privacySettings: { is: { showGacha: true } } },
+            ],
+          },
+        },
+      ],
+    };
     const [posts, totalPosts, watchIds, ratingIds, favIds] = await Promise.all([
       this.prisma.post.findMany({
-        where: { userId: { in: userIds }, status: ContentStatus.VISIBLE },
+        where: postWhere,
         skip,
         take: limit,
         orderBy: { createdAt: 'desc' },
         select: POST_SELECT,
       }),
       this.prisma.post.count({
-        where: { userId: { in: userIds }, status: ContentStatus.VISIBLE },
+        where: postWhere,
       }),
       this.getUserIdsWithFlag('showActivity', userIds),
       this.getUserIdsWithFlag('showRatings', userIds),
