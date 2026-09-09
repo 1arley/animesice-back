@@ -1,7 +1,10 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
+  Param,
+  Patch,
   Post,
   Query,
   Req,
@@ -12,6 +15,9 @@ import { GachaService } from '@/gacha/gacha.service';
 import { RollGachaDto } from '@/gacha/dto/gacha.dto';
 import { JwtAuthGuard } from '@/auth/jwt-auth.guard';
 import { VerifiedGuard } from '@/auth/verified.guard';
+import { RolesGuard } from '@/auth/roles.guard';
+import { Roles } from '@/auth/roles.decorators';
+import { Audit } from '@/auth/decorators/audit.decorator';
 import { DEFAULT_PAGE } from '@/common/constants';
 import type { AuthenticatedRequest } from '@/common/interfaces/request.interface';
 
@@ -52,6 +58,76 @@ export class GachaController {
       parseInt(page ?? '1', 10) || DEFAULT_PAGE,
       parseInt(limit ?? '24', 10) || 24,
     );
+  }
+
+  @Get('admin/cards')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  adminCards(
+    @Query('page') page: string,
+    @Query('limit') limit: string,
+    @Query('search') search?: string,
+  ) {
+    return this.gachaService.adminCards(
+      Number(page) || 1,
+      Number(limit) || 24,
+      search,
+    );
+  }
+
+  @Post('admin/cards')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  @Audit('CREATE_GACHA_CARD', 'Card')
+  adminCreateCard(
+    @Body() body: { name: string; image?: string; rarity: string },
+  ) {
+    return this.gachaService.adminCreateCard(body);
+  }
+
+  @Patch('admin/cards/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  @Audit('UPDATE_GACHA_CARD', 'Card')
+  adminUpdateCard(
+    @Param('id') id: string,
+    @Body() body: { name?: string; image?: string; rarity?: string },
+  ) {
+    return this.gachaService.adminUpdateCard(id, body);
+  }
+
+  @Get('admin/users/:userId/cards')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  adminUserCards(@Param('userId') userId: string) {
+    return this.gachaService.adminUserCards(userId);
+  }
+
+  @Post('admin/users/:userId/cards')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  @Audit('GRANT_GACHA_CARD', 'UserCard')
+  adminGrantUserCard(
+    @Param('userId') userId: string,
+    @Body() body: { cardId: string },
+  ) {
+    return this.gachaService.adminGrantUserCard(userId, body.cardId);
+  }
+
+  @Delete('admin/user-cards/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  @Audit('DELETE_GACHA_USER_CARD', 'UserCard')
+  adminDeleteUserCard(@Param('id') id: string) {
+    return this.gachaService.adminDeleteUserCard(id);
+  }
+
+  @Post('admin/users/:userId/reset-roll')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  @Audit('RESET_GACHA_ROLL', 'GachaRollDay')
+  adminResetRoll(@Param('userId') userId: string) {
+    return this.gachaService.adminResetRoll(userId);
   }
 
   @Get('recent')

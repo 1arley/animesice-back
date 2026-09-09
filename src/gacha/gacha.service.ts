@@ -341,6 +341,88 @@ export class GachaService {
     }
   }
 
+  async adminCards(page = 1, limit = 24, search?: string) {
+    const where = search
+      ? { name: { contains: search, mode: 'insensitive' as const } }
+      : {};
+    const [data, total] = await this.prisma.$transaction([
+      this.prisma.card.findMany({
+        where,
+        skip: (page - 1) * limit,
+        take: limit,
+        orderBy: { name: 'asc' },
+      }),
+      this.prisma.card.count({ where }),
+    ]);
+    return {
+      data,
+      meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+    };
+  }
+
+  adminCreateCard(data: { name: string; image?: string; rarity: string }) {
+    return this.prisma.card.create({ data });
+  }
+
+  adminUpdateCard(
+    id: string,
+    data: { name?: string; image?: string; rarity?: string },
+  ) {
+    return this.prisma.card.update({ where: { id }, data });
+  }
+
+  adminUserCards(userId: string) {
+    return this.prisma.userCard.findMany({
+      where: { userId },
+      orderBy: { obtainedAt: 'desc' },
+      select: PULL_SELECT,
+    });
+  }
+
+  async adminGrantUserCard(userId: string, cardId: string) {
+    const card = await this.prisma.card.findUnique({
+      where: { id: cardId },
+      select: { id: true, rarity: true, editionCounter: true },
+    });
+    if (!card) throw new NotFoundException('Carta não encontrada.');
+
+    const condition = Math.random();
+    const foil = pickWeighted(GACHA_FOIL_WEIGHTS);
+    return this.prisma.$transaction(async (tx) => {
+      const counter = await tx.card.update({
+        where: { id: card.id },
+        data: { editionCounter: { increment: 1 } },
+        select: { editionCounter: true },
+      });
+      return tx.userCard.create({
+        data: {
+          userId,
+          cardId: card.id,
+          condition,
+          foil,
+          edition: counter.editionCounter,
+          value: cardValue(
+            card.rarity as GachaTier,
+            condition,
+            foil,
+            counter.editionCounter,
+          ),
+        },
+        select: PULL_SELECT,
+      });
+    });
+  }
+
+  adminDeleteUserCard(id: string) {
+    return this.prisma.userCard.delete({ where: { id } });
+  }
+
+  adminResetRoll(userId: string) {
+    return this.prisma.gachaRollDay.deleteMany({
+      where: { userId, day: this.dayStartUtc() },
+    });
+  }
+
   private async publishPullPost(userId: string, pull: Pull) {
     const privacy = await this.prisma.privacySettings.findUnique({
       where: { userId },
