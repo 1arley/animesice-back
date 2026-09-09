@@ -1,17 +1,17 @@
 #!/usr/bin/env ts-node
 /**
  * seed-gacha.ts — popula o pool do gacha com personagens do MyAnimeList
- * via Jikan v4 (não-oficial, sem auth, 3 req/s e 60 req/min). Entra
- * personagem de todo tipo: Luffy, Ichigo, Levi etc. — raridade vem dos
- * favorites do MAL (escala própria, bem maior que a do AniList).
+ * via API oficial v2 (X-MAL-CLIENT-ID; registrar app em myanimelist.net/
+ * apiconfig). Entra personagem de todo tipo: Luffy, Ichigo, Levi etc. —
+ * raridade vem de num_favorites (escala do MAL: Luffy ~150k).
  *
- * Passo 1: ranking global /top/characters (--pages páginas de 25) —
- *          cobre personagens de animes fora do catálogo (animeId null).
- * Passo 2: para cada anime do catálogo: resolve malId via busca Jikan
- *          (cacheia em Anime.malId) e sobe o top N por favorites.
+ * Fluxo por anime do catálogo: resolve mal_id (cache em Anime.malId; senão
+ * busca por título com match de similaridade) → /anime/{id}/characters
+ * (página 1: os 10 primeiros, que são os Main cadastrados primeiro) →
+ * /characters/{id} com num_favorites → top por favorites → upsert.
  *
- * Uso: ts-node scripts/seed-gacha.ts [--limit N] [--pages N] [--dry]
- * Env: DATABASE_URL
+ * Uso: ts-node scripts/seed-gacha.ts [--limit N] [--dry]
+ * Env: DATABASE_URL, MAL_CLIENT_ID
  */
 import 'dotenv/config';
 import { Agent, fetch as undiciFetch } from 'undici';
@@ -19,34 +19,26 @@ import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
 
-const JIKAN = 'https://api.jikan.moe/v4';
-// ponytail: 1,1s respeita 60 req/min do Jikan; catálogo completo roda em ~1h.
+const MAL = 'https://api.myanimelist.net/v2';
+// ponytail: 1,1s/req sem limite documentado — a comunidade reporta ~1-2 rps
+// seguro; backoff cobre 429. Catálogo completo (~2.9k animes) ≈ 10h.
 const SLEEP_MS = 1100;
-const PER_ANIME = 10;
-const TOP_PAGES = 40;
 const RETRIES = 3;
 
-// ponytail: Agent family 4 fixa IPv4 — o fetch global do Node tenta AAAA
-// primeiro e trava em redes sem rota v6. accept-encoding "gzip" apenas:
-// o nginx do Jikan devolve 504 para "gzip, deflate" (testado byte a byte,
-// igual ao curl que funciona). Revisar se o Jikan consertar isso.
-const jikanAgent = new Agent({ connect: { family: 4 } });
-const JIKAN_HEADERS = { 'accept-encoding': 'gzip' };
-
-interface JikanCharacter {
-  mal_id: number;
-  name: string;
-  images?: {
-    jpg?: { image_url?: string | null; large_image_url?: string | null } | null;
-  } | null;
-  favorites?: number;
+interface MalCharacterDetail {
+  id: number;
+  first_name?: string | null;
+  last_name?: string | null;
+  main_picture?: { medium?: string | null; large?: string | null } | null;
+  num_favorites?: number;
 }
 
-interface JikanAnime {
-  mal_id: number;
-  title?: string | null;
-  title_english?: string | null;
-  titles?: Array<{ type: string; title: string }>;
+interface MalAnimeHit {
+  node: {
+    id: number;
+    title?: string | null;
+    alternative_titles?: { en?: string | null; synonyms?: string[] } | null;
+  };
 }
 
 function createPrismaClient(): PrismaClient {
@@ -67,7 +59,21 @@ function rarityFor(favourites: number): string {
   return 'COMUM';
 }
 
-async function jikan<T>(path: string): Promise<T | null> {
+// ponytail: Agent family 4 fixa IPv4 — redes sem rota v6 travam o fetch
+// do Node (o DNS do MAL resolve AAAA antes).
+const malAgent = new Agent({ connect: { family: 4 } });
+
+function malHeaders(): Record<string, string> {
+  if (!process.env.MAL_CLIENT_ID) {
+    throw new Error(
+      'MAL_CLIENT_ID ausente — registre o app em myanimelist.net/apiconfig',
+    );
+  }
+  return { 'X-MAL-CLIENT-ID': process.env.MAL_CLIENT_ID };
+}
+
+async function mal<T>(path: string): Promise<T | null> {
+  const headers = malHeaders();
   for (let attempt = 1; attempt <= RETRIES; attempt++) {
     await sleep(SLEEP_MS);
     try {
@@ -75,16 +81,16 @@ async function jikan<T>(path: string): Promise<T | null> {
       const timer = setTimeout(() => controller.abort(), 20_000);
       let res;
       try {
-        res = await undiciFetch(`${JIKAN}${path}`, {
+        res = await undiciFetch(`${MAL}${path}`, {
           signal: controller.signal,
-          dispatcher: jikanAgent,
-          headers: JIKAN_HEADERS,
+          dispatcher: malAgent,
+          headers,
         });
       } finally {
         clearTimeout(timer);
       }
       if (res.ok) return (await res.json()) as T;
-      if (res.status === 404 || res.status === 400) return null;
+      if (res.status === 400 || res.status === 404) return null;
       console.warn(
         `[seed:gacha] ${path}: HTTP ${res.status} (tentativa ${attempt})`,
       );
@@ -98,12 +104,16 @@ async function jikan<T>(path: string): Promise<T | null> {
   return null;
 }
 
-function imageOf(character: JikanCharacter): string | null {
-  return (
-    character.images?.jpg?.large_image_url ??
-    character.images?.jpg?.image_url ??
-    null
-  );
+function characterName(detail: MalCharacterDetail): string {
+  const first = detail.first_name?.trim();
+  const last = detail.last_name?.trim();
+  // Formato MAL: "Monkey D., Luffy" (sobrenome, nome); nomes únicos
+  // ("Naruto" id 17) têm só first_name.
+  return last ? `${last}, ${first}` : (first ?? '');
+}
+
+function imageOf(detail: MalCharacterDetail): string | null {
+  return detail.main_picture?.large ?? detail.main_picture?.medium ?? null;
 }
 
 function normalizeTitle(title: string): string {
@@ -115,36 +125,35 @@ function normalizeTitle(title: string): string {
     .trim();
 }
 
-// Busca o anime por título e exige que o match bata com algum título
-// conhecido do MAL — evita linkar o card a um anime homônimo errado.
+// Busca o anime por título na API oficial e exige match de similaridade
+// com algum título conhecido — evita linkar o card a um homônimo errado.
 async function searchMalId(title: string): Promise<number | null> {
-  const json = await jikan<{ data: JikanAnime[] }>(
-    `/anime?q=${encodeURIComponent(title)}&limit=1&sfw=true`,
+  const json = await mal<{ data: MalAnimeHit[] }>(
+    `/anime?q=${encodeURIComponent(title)}&limit=5&fields=alternative_titles`,
   );
-  const hit = json?.data?.[0];
-  if (!hit) return null;
   const target = normalizeTitle(title);
-  const candidates = [
-    hit.title,
-    hit.title_english,
-    ...(hit.titles?.map((t) => t.title) ?? []),
-  ].filter((candidate): candidate is string => Boolean(candidate));
-  const matches = candidates.some((candidate) => {
-    const normalized = normalizeTitle(candidate);
-    return (
-      normalized === target ||
-      normalized.includes(target) ||
-      target.includes(normalized)
-    );
-  });
-  return matches ? hit.mal_id : null;
+  for (const hit of json?.data ?? []) {
+    const candidates = [
+      hit.node.title,
+      hit.node.alternative_titles?.en,
+      ...(hit.node.alternative_titles?.synonyms ?? []),
+    ].filter((candidate): candidate is string => Boolean(candidate));
+    const matches = candidates.some((candidate) => {
+      const normalized = normalizeTitle(candidate);
+      return (
+        normalized === target ||
+        normalized.includes(target) ||
+        target.includes(normalized)
+      );
+    });
+    if (matches) return hit.node.id;
+  }
+  return null;
 }
 
 async function main(): Promise<void> {
   const limitArg = process.argv.indexOf('--limit');
   const limit = limitArg >= 0 ? Number(process.argv[limitArg + 1]) || 0 : 0;
-  const pagesArg = process.argv.indexOf('--pages');
-  const pages = pagesArg >= 0 ? Number(process.argv[pagesArg + 1]) : TOP_PAGES;
   const dry = process.argv.includes('--dry');
   const prisma = createPrismaClient();
 
@@ -152,50 +161,40 @@ async function main(): Promise<void> {
   const rarityCount: Record<string, number> = {};
 
   const upsert = async (
-    character: JikanCharacter,
-    anime?: { id: string; title: string } | null,
+    detail: MalCharacterDetail,
+    role: string,
+    anime: { id: string; title: string },
   ): Promise<void> => {
-    if (!character.name?.trim()) return;
-    const favourites = character.favorites ?? 0;
+    const name = characterName(detail);
+    if (!name) return;
+    const favourites = detail.num_favorites ?? 0;
     seeded += 1;
     const rarity = rarityFor(favourites);
     rarityCount[rarity] = (rarityCount[rarity] ?? 0) + 1;
     if (dry) return;
-    const animeData = anime
-      ? { animeId: anime.id, animeTitle: anime.title }
-      : {};
     await prisma.card.upsert({
-      where: { malCharacterId: character.mal_id },
+      where: { malCharacterId: detail.id },
       update: {
-        name: character.name,
-        image: imageOf(character),
+        name,
+        image: imageOf(detail),
         favourites,
         rarity,
-        ...animeData,
+        animeId: anime.id,
+        animeTitle: anime.title,
       },
       create: {
-        malCharacterId: character.mal_id,
-        name: character.name,
-        image: imageOf(character),
+        malCharacterId: detail.id,
+        name,
+        image: imageOf(detail),
         favourites,
         rarity,
-        ...animeData,
+        animeId: anime.id,
+        animeTitle: anime.title,
       },
     });
   };
 
   try {
-    // Passo 1 — ranking global (personagens de animes fora do catálogo).
-    for (let page = 1; page <= pages; page++) {
-      const json = await jikan<{ data: JikanCharacter[] }>(
-        `/top/characters?page=${page}&limit=25`,
-      );
-      if (!json) break;
-      for (const character of json.data ?? []) await upsert(character);
-      console.log(`[seed:gacha] top global: página ${page}/${pages}`);
-    }
-
-    // Passo 2 — catálogo do site.
     const animes = await prisma.anime.findMany({
       select: { id: true, title: true, malId: true },
       orderBy: { rating: 'desc' },
@@ -207,7 +206,9 @@ async function main(): Promise<void> {
       if (!malId) {
         malId = await searchMalId(anime.title);
         if (malId === null) {
-          console.warn(`[seed:gacha] ${anime.title}: mal_id não encontrado`);
+          console.warn(
+            `[seed:gacha] [${index + 1}/${animes.length}] ${anime.title}: mal_id não encontrado`,
+          );
           continue;
         }
         try {
@@ -217,27 +218,37 @@ async function main(): Promise<void> {
           });
         } catch {
           console.warn(
-            `[seed:gacha] ${anime.title}: mal_id ${malId} já usado por outro anime`,
+            `[seed:gacha] [${index + 1}/${animes.length}] ${anime.title}: mal_id ${malId} já usado por outro anime`,
           );
           continue;
         }
       }
 
-      const json = await jikan<{
-        data: Array<{ character: JikanCharacter; favorites?: number }>;
+      // Página 1: 10 personagens (os Main entram primeiro no MAL).
+      const list = await mal<{
+        data: Array<{ node: { id: number }; role: string }>;
       }>(`/anime/${malId}/characters`);
-      if (!json) continue;
-      const top = (json.data ?? [])
-        .sort((a, b) => (b.favorites ?? 0) - (a.favorites ?? 0))
-        .slice(0, PER_ANIME);
-      for (const row of top) {
-        await upsert(
-          { ...row.character, favorites: row.favorites },
-          { id: anime.id, title: anime.title },
+      const candidates = (list?.data ?? []).slice(0, 10);
+      if (candidates.length === 0) continue;
+
+      const detailed: Array<{ detail: MalCharacterDetail; role: string }> = [];
+      for (const candidate of candidates) {
+        const detail = await mal<MalCharacterDetail>(
+          `/characters/${candidate.node.id}?fields=first_name,last_name,main_picture,num_favorites`,
         );
+        if (detail) detailed.push({ detail, role: candidate.role });
+      }
+      detailed.sort(
+        (a, b) => (b.detail.num_favorites ?? 0) - (a.detail.num_favorites ?? 0),
+      );
+      for (const entry of detailed) {
+        await upsert(entry.detail, entry.role, {
+          id: anime.id,
+          title: anime.title,
+        });
       }
       console.log(
-        `[seed:gacha] [${index + 1}/${animes.length}] ${anime.title}: top ${top.length} upserted`,
+        `[seed:gacha] [${index + 1}/${animes.length}] ${anime.title}: ${detailed.length} personagens`,
       );
     }
 
