@@ -360,8 +360,15 @@ export class GachaService {
     };
   }
 
-  adminCreateCard(data: { name: string; image?: string; rarity: string }) {
-    return this.prisma.card.create({ data });
+  async adminCreateCard(data: {
+    name: string;
+    image?: string;
+    rarity: string;
+  }) {
+    // ponytail: malCharacterId negativo sintético p/ carta manual; colidir
+    // com carta real do MAL é impossível (IDs MAL são positivos).
+    const malCharacterId = -Date.now();
+    return this.prisma.card.create({ data: { ...data, malCharacterId } });
   }
 
   adminUpdateCard(
