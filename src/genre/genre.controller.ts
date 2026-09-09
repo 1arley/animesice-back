@@ -29,13 +29,15 @@ export class GenreController {
   @ApiOperation({ summary: 'Listar animes de um gênero (paginado)' })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'includeHentai', required: false, type: String })
   @ApiResponse({ status: 200, description: 'Animes do gênero retornados' })
   @ApiResponse({ status: 404, description: 'Gênero não encontrado' })
   findAnimesBySlug(
     @Param('slug') slug: string,
     @Query('page') page: string,
     @Query('limit') limit: string,
+    @Query('includeHentai') includeHentai: string,
   ) {
-    return this.genreService.findAnimesBySlug(slug, page, limit);
+    return this.genreService.findAnimesBySlug(slug, page, limit, includeHentai);
   }
 }
