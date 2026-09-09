@@ -2,21 +2,35 @@ export const GACHA_ROLLS_PER_DAY = 1;
 export const GACHA_PITY_DAYS = 30;
 export const GACHA_POOL_PER_ANIME = 8;
 
-export const GACHA_TIERS = ['COMUM', 'RARA', 'EPICA', 'LENDARIA'] as const;
+export const GACHA_TIERS = [
+  'COMUM',
+  'INCOMUM',
+  'RARA',
+  'EPICA',
+  'LENDARIA',
+  'MITICA',
+  'GALACTICA',
+] as const;
 export type GachaTier = (typeof GACHA_TIERS)[number];
 
 export const GACHA_TIER_WEIGHTS: Record<GachaTier, number> = {
-  COMUM: 70,
-  RARA: 22,
-  EPICA: 6.5,
-  LENDARIA: 1.5,
+  COMUM: 55,
+  INCOMUM: 25,
+  RARA: 12,
+  EPICA: 5.5,
+  LENDARIA: 2,
+  MITICA: 0.4,
+  GALACTICA: 0.1,
 };
 
 export const GACHA_PITY_WEIGHTS: Record<GachaTier, number> = {
   COMUM: 0,
+  INCOMUM: 0,
   RARA: 0,
-  EPICA: 85,
-  LENDARIA: 15,
+  EPICA: 70,
+  LENDARIA: 20,
+  MITICA: 8,
+  GALACTICA: 2,
 };
 
 export const GACHA_FOILS = ['NORMAL', 'HOLO', 'GOLD'] as const;
@@ -30,9 +44,12 @@ export const GACHA_FOIL_WEIGHTS: Record<GachaFoil, number> = {
 
 export const GACHA_BASE_VALUE: Record<GachaTier, number> = {
   COMUM: 10,
+  INCOMUM: 25,
   RARA: 50,
   EPICA: 200,
   LENDARIA: 1000,
+  MITICA: 5000,
+  GALACTICA: 25000,
 };
 
 export const GACHA_FOIL_MULT: Record<GachaFoil, number> = {
@@ -86,5 +103,5 @@ export function pickWeighted<T extends string>(
 }
 
 export function isEpicTier(tier: string): boolean {
-  return tier === 'EPICA' || tier === 'LENDARIA';
+  return GACHA_TIERS.indexOf(tier as GachaTier) >= GACHA_TIERS.indexOf('EPICA');
 }

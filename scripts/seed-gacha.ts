@@ -53,9 +53,12 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // Zoro 116k, Sanji 33k, Franky 6,8k); rodar --dry e recalibrar se um
 // tier secar ou inundar.
 function rarityFor(favourites: number): string {
-  if (favourites >= 40_000) return 'LENDARIA';
-  if (favourites >= 10_000) return 'EPICA';
-  if (favourites >= 3_000) return 'RARA';
+  if (favourites >= 50_000) return 'GALACTICA';
+  if (favourites >= 20_000) return 'MITICA';
+  if (favourites >= 10_000) return 'LENDARIA';
+  if (favourites >= 3_000) return 'EPICA';
+  if (favourites >= 800) return 'RARA';
+  if (favourites >= 300) return 'INCOMUM';
   return 'COMUM';
 }
 

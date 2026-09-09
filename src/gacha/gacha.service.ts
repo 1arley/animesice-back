@@ -13,6 +13,7 @@ import {
   GACHA_PITY_WEIGHTS,
   GACHA_ROLLS_PER_DAY,
   GACHA_TIER_WEIGHTS,
+  GACHA_TIERS,
   GachaTier,
   cardValue,
   conditionLabel,
@@ -21,7 +22,7 @@ import {
 } from '@/gacha/gacha.constants';
 
 const DAY_MS = 86_400_000;
-const EPIC_RARITIES = ['EPICA', 'LENDARIA'];
+const EPIC_RARITIES = ['EPICA', 'LENDARIA', 'MITICA', 'GALACTICA'];
 
 const PULL_SELECT = {
   id: true,
@@ -341,10 +342,14 @@ export class GachaService {
     }
   }
 
-  async adminCards(page = 1, limit = 24, search?: string) {
-    const where = search
-      ? { name: { contains: search, mode: 'insensitive' as const } }
-      : {};
+  async adminCards(page = 1, limit = 24, search?: string, rarity?: string) {
+    const where: Prisma.CardWhereInput = {};
+    if (search) {
+      where.name = { contains: search, mode: 'insensitive' };
+    }
+    if (rarity && (GACHA_TIERS as readonly string[]).includes(rarity)) {
+      where.rarity = rarity;
+    }
     const [data, total] = await this.prisma.$transaction([
       this.prisma.card.findMany({
         where,
@@ -360,11 +365,7 @@ export class GachaService {
     };
   }
 
-  async adminCreateCard(data: {
-    name: string;
-    image?: string;
-    rarity: string;
-  }) {
+  adminCreateCard(data: { name: string; image?: string; rarity: string }) {
     // ponytail: malCharacterId negativo sintético p/ carta manual; colidir
     // com carta real do MAL é impossível (IDs MAL são positivos).
     const malCharacterId = -Date.now();
@@ -378,12 +379,22 @@ export class GachaService {
     return this.prisma.card.update({ where: { id }, data });
   }
 
-  adminUserCards(userId: string) {
-    return this.prisma.userCard.findMany({
-      where: { userId },
-      orderBy: { obtainedAt: 'desc' },
-      select: PULL_SELECT,
-    });
+  adminUserCards(userId: string, page = 1, limit = 50) {
+    return this.prisma
+      .$transaction([
+        this.prisma.userCard.findMany({
+          where: { userId },
+          orderBy: { obtainedAt: 'desc' },
+          skip: (page - 1) * limit,
+          take: limit,
+          select: PULL_SELECT,
+        }),
+        this.prisma.userCard.count({ where: { userId } }),
+      ])
+      .then(([data, total]) => ({
+        data,
+        meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+      }));
   }
 
   async adminGrantUserCard(userId: string, cardId: string) {

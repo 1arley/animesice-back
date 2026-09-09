@@ -18,6 +18,8 @@ import { VerifiedGuard } from '@/auth/verified.guard';
 import { RolesGuard } from '@/auth/roles.guard';
 import { Roles } from '@/auth/roles.decorators';
 import { Audit } from '@/auth/decorators/audit.decorator';
+import { GACHA_TIERS } from '@/gacha/gacha.constants';
+import { BadRequestException } from '@nestjs/common';
 import { DEFAULT_PAGE } from '@/common/constants';
 import type { AuthenticatedRequest } from '@/common/interfaces/request.interface';
 
@@ -67,11 +69,13 @@ export class GachaController {
     @Query('page') page: string,
     @Query('limit') limit: string,
     @Query('search') search?: string,
+    @Query('rarity') rarity?: string,
   ) {
     return this.gachaService.adminCards(
       Number(page) || 1,
       Number(limit) || 24,
       search,
+      rarity,
     );
   }
 
@@ -82,6 +86,11 @@ export class GachaController {
   adminCreateCard(
     @Body() body: { name: string; image?: string; rarity: string },
   ) {
+    if (!(GACHA_TIERS as readonly string[]).includes(body.rarity)) {
+      throw new BadRequestException(
+        `Raridade inválida. Use: ${GACHA_TIERS.join(', ')}`,
+      );
+    }
     return this.gachaService.adminCreateCard(body);
   }
 
@@ -93,14 +102,30 @@ export class GachaController {
     @Param('id') id: string,
     @Body() body: { name?: string; image?: string; rarity?: string },
   ) {
+    if (
+      body.rarity !== undefined &&
+      !(GACHA_TIERS as readonly string[]).includes(body.rarity)
+    ) {
+      throw new BadRequestException(
+        `Raridade inválida. Use: ${GACHA_TIERS.join(', ')}`,
+      );
+    }
     return this.gachaService.adminUpdateCard(id, body);
   }
 
   @Get('admin/users/:userId/cards')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN', 'SUPERADMIN')
-  adminUserCards(@Param('userId') userId: string) {
-    return this.gachaService.adminUserCards(userId);
+  adminUserCards(
+    @Param('userId') userId: string,
+    @Query('page') page: string,
+    @Query('limit') limit: string,
+  ) {
+    return this.gachaService.adminUserCards(
+      userId,
+      Number(page) || 1,
+      Number(limit) || 50,
+    );
   }
 
   @Post('admin/users/:userId/cards')
