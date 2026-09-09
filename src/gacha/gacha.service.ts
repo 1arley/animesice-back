@@ -31,7 +31,7 @@ const PULL_SELECT = {
   value: true,
   obtainedAt: true,
   user: { select: { id: true, name: true, userName: true, avatar: true } },
-  waifu: {
+  card: {
     select: {
       id: true,
       name: true,
@@ -45,9 +45,9 @@ const PULL_SELECT = {
       },
     },
   },
-} satisfies Prisma.UserWaifuSelect;
+} satisfies Prisma.UserCardSelect;
 
-type Pull = Prisma.UserWaifuGetPayload<{ select: typeof PULL_SELECT }>;
+type Pull = Prisma.UserCardGetPayload<{ select: typeof PULL_SELECT }>;
 
 @Injectable()
 export class GachaService {
@@ -71,12 +71,12 @@ export class GachaService {
       this.prisma.gachaRollDay.count({
         where: { userId, day: start },
       }),
-      this.prisma.userWaifu.findFirst({
-        where: { userId, waifu: { rarity: { in: EPIC_RARITIES } } },
+      this.prisma.userCard.findFirst({
+        where: { userId, card: { rarity: { in: EPIC_RARITIES } } },
         orderBy: { obtainedAt: 'desc' },
         select: { obtainedAt: true },
       }),
-      this.prisma.userWaifu.findFirst({
+      this.prisma.userCard.findFirst({
         where: { userId },
         orderBy: { obtainedAt: 'asc' },
         select: { obtainedAt: true },
@@ -114,10 +114,10 @@ export class GachaService {
     const tier = await this.pickTierWithStock(
       state.pityDue ? GACHA_PITY_WEIGHTS : GACHA_TIER_WEIGHTS,
     );
-    const poolSize = await this.prisma.waifu.count({
+    const poolSize = await this.prisma.card.count({
       where: { rarity: tier },
     });
-    const waifu = await this.prisma.waifu.findFirst({
+    const card = await this.prisma.card.findFirst({
       where: { rarity: tier },
       skip: Math.floor(Math.random() * poolSize),
       select: {
@@ -130,7 +130,7 @@ export class GachaService {
         animeTitle: true,
       },
     });
-    if (!waifu) {
+    if (!card) {
       throw new NotFoundException('Pool do gacha vazio. Seed pendente.');
     }
 
@@ -143,16 +143,16 @@ export class GachaService {
         await tx.gachaRollDay.create({
           data: { userId, day: this.dayStartUtc() },
         });
-        const counter = await tx.waifu.update({
-          where: { id: waifu.id },
+        const counter = await tx.card.update({
+          where: { id: card.id },
           data: { editionCounter: { increment: 1 } },
           select: { editionCounter: true },
         });
         const edition = counter.editionCounter;
-        return tx.userWaifu.create({
+        return tx.userCard.create({
           data: {
             userId,
-            waifuId: waifu.id,
+            cardId: card.id,
             condition,
             foil,
             edition,
@@ -205,15 +205,15 @@ export class GachaService {
     const safeLimit = Math.min(Math.max(limit, 1), 100);
     const safePage = Math.max(page, 1);
     const [pulls, total, stats] = await this.prisma.$transaction([
-      this.prisma.userWaifu.findMany({
+      this.prisma.userCard.findMany({
         where: { userId: ownerId },
         skip: (safePage - 1) * safeLimit,
         take: safeLimit,
         orderBy: { value: 'desc' },
         select: PULL_SELECT,
       }),
-      this.prisma.userWaifu.count({ where: { userId: ownerId } }),
-      this.prisma.userWaifu.aggregate({
+      this.prisma.userCard.count({ where: { userId: ownerId } }),
+      this.prisma.userCard.aggregate({
         where: { userId: ownerId },
         _sum: { value: true },
       }),
@@ -236,7 +236,7 @@ export class GachaService {
 
   async recent(limit = 20) {
     const safeLimit = Math.min(Math.max(limit, 1), 50);
-    const pulls = await this.prisma.userWaifu.findMany({
+    const pulls = await this.prisma.userCard.findMany({
       take: safeLimit * 2,
       orderBy: { obtainedAt: 'desc' },
       select: {
@@ -273,7 +273,7 @@ export class GachaService {
 
   async ranking(limit = 20) {
     const safeLimit = Math.min(Math.max(limit, 1), 50);
-    const sums = await this.prisma.userWaifu.groupBy({
+    const sums = await this.prisma.userCard.groupBy({
       by: ['userId'],
       _sum: { value: true },
       _count: { _all: true },
@@ -333,7 +333,7 @@ export class GachaService {
           tiers.map((tier) => [tier, remaining[tier]]),
         ) as Record<GachaTier, number>,
       );
-      const count = await this.prisma.waifu.count({
+      const count = await this.prisma.card.count({
         where: { rarity: tier },
       });
       if (count > 0) return tier;
@@ -352,14 +352,14 @@ export class GachaService {
       data: {
         userId,
         kind: 'GACHA_PULL',
-        content: `Tirou ${pull.waifu.name} — ${pull.waifu.rarity} ${pull.foil} ${conditionLabel(pull.condition)} #${pull.edition}`,
-        animeId: pull.waifu.animeId,
+        content: `Tirou ${pull.card.name} — ${pull.card.rarity} ${pull.foil} ${conditionLabel(pull.condition)} #${pull.edition}`,
+        animeId: pull.card.animeId,
         meta: {
-          userWaifuId: pull.id,
-          waifuId: pull.waifu.id,
-          name: pull.waifu.name,
-          image: pull.waifu.image,
-          rarity: pull.waifu.rarity,
+          userCardId: pull.id,
+          cardId: pull.card.id,
+          name: pull.card.name,
+          image: pull.card.image,
+          rarity: pull.card.rarity,
           foil: pull.foil,
           condition: pull.condition,
           edition: pull.edition,

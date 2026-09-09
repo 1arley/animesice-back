@@ -16,7 +16,7 @@ describe('GachaService', () => {
   const mockTurnstile = { verify: jest.fn().mockResolvedValue(undefined) };
 
   const mockPrisma = {
-    userWaifu: {
+    userCard: {
       count: jest.fn(),
       findFirst: jest.fn(),
       findMany: jest.fn(),
@@ -25,16 +25,16 @@ describe('GachaService', () => {
       groupBy: jest.fn(),
     },
     gachaRollDay: { count: jest.fn(), create: jest.fn() },
-    waifu: { count: jest.fn(), findFirst: jest.fn(), update: jest.fn() },
+    card: { count: jest.fn(), findFirst: jest.fn(), update: jest.fn() },
     privacySettings: { findUnique: jest.fn() },
     post: { create: jest.fn() },
     user: { findMany: jest.fn() },
     $transaction: jest.fn(),
   };
 
-  const waifuComum = {
+  const cardComum = {
     id: 'w1',
-    name: 'Waifu Comum',
+    name: 'Card Comum',
     image: 'https://cdn.anilist.co/img/w1.jpg',
     rarity: 'COMUM',
     favourites: 100,
@@ -42,10 +42,10 @@ describe('GachaService', () => {
     animeTitle: 'Anime 1',
   };
 
-  const waifuEpica = {
-    ...waifuComum,
+  const cardEpica = {
+    ...cardComum,
     id: 'w2',
-    name: 'Waifu Épica',
+    name: 'Card Épica',
     rarity: 'EPICA',
     favourites: 5000,
   };
@@ -58,7 +58,7 @@ describe('GachaService', () => {
         typeof input === 'function' ? input(mockPrisma) : Promise.all(input),
     );
     mockPrisma.gachaRollDay.count.mockResolvedValue(0);
-    mockPrisma.waifu.update.mockResolvedValue({ editionCounter: 1 });
+    mockPrisma.card.update.mockResolvedValue({ editionCounter: 1 });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -73,8 +73,8 @@ describe('GachaService', () => {
 
   describe('status', () => {
     it('libera roll com pity cheio quando nunca rolou', async () => {
-      mockPrisma.userWaifu.count.mockResolvedValue(0);
-      mockPrisma.userWaifu.findFirst.mockResolvedValue(null);
+      mockPrisma.userCard.count.mockResolvedValue(0);
+      mockPrisma.userCard.findFirst.mockResolvedValue(null);
 
       const result = await service.status('u1');
 
@@ -87,7 +87,7 @@ describe('GachaService', () => {
 
     it('bloqueia segundo roll no mesmo dia com nextRollAt', async () => {
       mockPrisma.gachaRollDay.count.mockResolvedValue(1);
-      mockPrisma.userWaifu.findFirst.mockResolvedValue({
+      mockPrisma.userCard.findFirst.mockResolvedValue({
         obtainedAt: new Date(),
       });
 
@@ -100,8 +100,8 @@ describe('GachaService', () => {
 
     it('marca pityDue após 30 dias sem Épica+', async () => {
       const old = new Date(Date.now() - 40 * 86_400_000);
-      mockPrisma.userWaifu.count.mockResolvedValue(0);
-      mockPrisma.userWaifu.findFirst.mockResolvedValue({ obtainedAt: old });
+      mockPrisma.userCard.count.mockResolvedValue(0);
+      mockPrisma.userCard.findFirst.mockResolvedValue({ obtainedAt: old });
 
       const result = await service.status('u1');
 
@@ -112,20 +112,20 @@ describe('GachaService', () => {
 
   describe('roll', () => {
     function stockOnly(rarity: string, size = 5) {
-      mockPrisma.waifu.count.mockImplementation(
+      mockPrisma.card.count.mockImplementation(
         (args: { where: { rarity: string } }) =>
           Promise.resolve(args.where.rarity === rarity ? size : 0),
       );
     }
 
     function freshAccount() {
-      mockPrisma.userWaifu.count.mockResolvedValue(0);
-      mockPrisma.userWaifu.findFirst.mockResolvedValue(null);
+      mockPrisma.userCard.count.mockResolvedValue(0);
+      mockPrisma.userCard.findFirst.mockResolvedValue(null);
     }
 
     it('barra roll repetido no dia', async () => {
       mockPrisma.gachaRollDay.count.mockResolvedValue(1);
-      mockPrisma.userWaifu.findFirst.mockResolvedValue({
+      mockPrisma.userCard.findFirst.mockResolvedValue({
         obtainedAt: new Date(),
       });
 
@@ -133,30 +133,30 @@ describe('GachaService', () => {
         ForbiddenException,
       );
       expect(mockTurnstile.verify).toHaveBeenCalledWith('token');
-      expect(mockPrisma.userWaifu.create).not.toHaveBeenCalled();
+      expect(mockPrisma.userCard.create).not.toHaveBeenCalled();
     });
 
     it('cria pull COMUM sem post no feed', async () => {
       freshAccount();
       stockOnly('COMUM');
-      mockPrisma.waifu.findFirst.mockResolvedValue(waifuComum);
-      mockPrisma.userWaifu.create.mockImplementation((args: { data: object }) =>
+      mockPrisma.card.findFirst.mockResolvedValue(cardComum);
+      mockPrisma.userCard.create.mockImplementation((args: { data: object }) =>
         Promise.resolve({
           id: 'p1',
           obtainedAt: new Date(),
           user: { id: 'u1', name: 'U', userName: 'u', avatar: null },
-          waifu: waifuComum,
+          card: cardComum,
           ...args.data,
         }),
       );
 
       const pull = await service.roll('u1');
 
-      expect(pull.waifu.id).toBe('w1');
+      expect(pull.card.id).toBe('w1');
       expect(pull.edition).toBe(1);
       expect(pull.conditionLabel).toBeDefined();
       expect(mockPrisma.gachaRollDay.create).toHaveBeenCalled();
-      expect(mockPrisma.waifu.update).toHaveBeenCalledWith(
+      expect(mockPrisma.card.update).toHaveBeenCalledWith(
         expect.objectContaining({
           data: { editionCounter: { increment: 1 } },
         }),
@@ -167,13 +167,13 @@ describe('GachaService', () => {
     it('publica Épica+ no feed quando privacidade permite', async () => {
       freshAccount();
       stockOnly('EPICA');
-      mockPrisma.waifu.findFirst.mockResolvedValue(waifuEpica);
-      mockPrisma.userWaifu.create.mockImplementation((args: { data: object }) =>
+      mockPrisma.card.findFirst.mockResolvedValue(cardEpica);
+      mockPrisma.userCard.create.mockImplementation((args: { data: object }) =>
         Promise.resolve({
           id: 'p2',
           obtainedAt: new Date(),
           user: { id: 'u1', name: 'U', userName: 'u', avatar: null },
-          waifu: waifuEpica,
+          card: cardEpica,
           ...args.data,
         }),
       );
@@ -184,7 +184,7 @@ describe('GachaService', () => {
 
       const pull = await service.roll('u1');
 
-      expect(pull.waifu.rarity).toBe('EPICA');
+      expect(pull.card.rarity).toBe('EPICA');
       expect(mockPrisma.post.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({ userId: 'u1', kind: 'GACHA_PULL' }),
@@ -195,13 +195,13 @@ describe('GachaService', () => {
     it('pula feed quando usuário escondeu pulls', async () => {
       freshAccount();
       stockOnly('EPICA');
-      mockPrisma.waifu.findFirst.mockResolvedValue(waifuEpica);
-      mockPrisma.userWaifu.create.mockImplementation((args: { data: object }) =>
+      mockPrisma.card.findFirst.mockResolvedValue(cardEpica);
+      mockPrisma.userCard.create.mockImplementation((args: { data: object }) =>
         Promise.resolve({
           id: 'p3',
           obtainedAt: new Date(),
           user: { id: 'u1', name: 'U', userName: 'u', avatar: null },
-          waifu: waifuEpica,
+          card: cardEpica,
           ...args.data,
         }),
       );
@@ -216,20 +216,20 @@ describe('GachaService', () => {
 
     it('pity força tier Épica+', async () => {
       const old = new Date(Date.now() - 40 * 86_400_000);
-      mockPrisma.userWaifu.count.mockResolvedValue(0);
-      mockPrisma.userWaifu.findFirst.mockResolvedValue({ obtainedAt: old });
+      mockPrisma.userCard.count.mockResolvedValue(0);
+      mockPrisma.userCard.findFirst.mockResolvedValue({ obtainedAt: old });
       stockOnly('LENDARIA');
-      mockPrisma.waifu.findFirst.mockResolvedValue({
-        ...waifuEpica,
+      mockPrisma.card.findFirst.mockResolvedValue({
+        ...cardEpica,
         id: 'w9',
         rarity: 'LENDARIA',
       });
-      mockPrisma.userWaifu.create.mockImplementation((args: { data: object }) =>
+      mockPrisma.userCard.create.mockImplementation((args: { data: object }) =>
         Promise.resolve({
           id: 'p4',
           obtainedAt: new Date(),
           user: { id: 'u1', name: 'U', userName: 'u', avatar: null },
-          waifu: { ...waifuEpica, id: 'w9', rarity: 'LENDARIA' },
+          card: { ...cardEpica, id: 'w9', rarity: 'LENDARIA' },
           ...args.data,
         }),
       );
@@ -238,13 +238,13 @@ describe('GachaService', () => {
       const pull = await service.roll('u1');
 
       expect(pull.pityDue).toBe(true);
-      expect(pull.waifu.rarity).toBe('LENDARIA');
+      expect(pull.card.rarity).toBe('LENDARIA');
       expect(mockPrisma.post.create).toHaveBeenCalled();
     });
 
     it('falha quando pool está vazio', async () => {
       freshAccount();
-      mockPrisma.waifu.count.mockResolvedValue(0);
+      mockPrisma.card.count.mockResolvedValue(0);
 
       await expect(service.roll('u1')).rejects.toBeInstanceOf(
         NotFoundException,
@@ -261,11 +261,11 @@ describe('GachaService', () => {
         edition: 1,
         value: 100,
         obtainedAt: new Date(),
-        waifu: waifuComum,
+        card: cardComum,
       };
-      mockPrisma.userWaifu.findMany.mockResolvedValue([pull]);
-      mockPrisma.userWaifu.count.mockResolvedValue(1);
-      mockPrisma.userWaifu.aggregate.mockResolvedValue({
+      mockPrisma.userCard.findMany.mockResolvedValue([pull]);
+      mockPrisma.userCard.count.mockResolvedValue(1);
+      mockPrisma.userCard.aggregate.mockResolvedValue({
         _sum: { value: 100 },
       });
 
@@ -288,9 +288,9 @@ describe('GachaService', () => {
 
     it('permite visitante quando privacidade ausente (público)', async () => {
       mockPrisma.privacySettings.findUnique.mockResolvedValue(null);
-      mockPrisma.userWaifu.findMany.mockResolvedValue([]);
-      mockPrisma.userWaifu.count.mockResolvedValue(0);
-      mockPrisma.userWaifu.aggregate.mockResolvedValue({
+      mockPrisma.userCard.findMany.mockResolvedValue([]);
+      mockPrisma.userCard.count.mockResolvedValue(0);
+      mockPrisma.userCard.aggregate.mockResolvedValue({
         _sum: { value: null },
       });
 
@@ -309,9 +309,9 @@ describe('GachaService', () => {
         edition: 7,
         value: 12,
         obtainedAt: new Date(),
-        waifu: waifuComum,
+        card: cardComum,
       };
-      mockPrisma.userWaifu.findMany.mockResolvedValue([
+      mockPrisma.userCard.findMany.mockResolvedValue([
         {
           ...base,
           id: 'hidden',
@@ -346,7 +346,7 @@ describe('GachaService', () => {
 
   describe('ranking', () => {
     it('ordena por valor e respeita opt-out', async () => {
-      mockPrisma.userWaifu.groupBy.mockResolvedValue([
+      mockPrisma.userCard.groupBy.mockResolvedValue([
         { userId: 'u1', _sum: { value: 500 }, _count: { _all: 3 } },
         { userId: 'u2', _sum: { value: 900 }, _count: { _all: 1 } },
       ]);
@@ -378,7 +378,7 @@ describe('GachaService', () => {
     });
 
     it('retorna vazio sem pulls', async () => {
-      mockPrisma.userWaifu.groupBy.mockResolvedValue([]);
+      mockPrisma.userCard.groupBy.mockResolvedValue([]);
 
       await expect(service.ranking()).resolves.toEqual([]);
     });

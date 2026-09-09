@@ -23,7 +23,7 @@ export class GachaController {
   @Post('roll')
   @UseGuards(JwtAuthGuard, VerifiedGuard)
   @ApiBearerAuth('JWT-auth')
-  @ApiOperation({ summary: 'Roll diário do gacha waifu (1/dia)' })
+  @ApiOperation({ summary: 'Roll diário do gacha (1/dia)' })
   roll(@Req() req: AuthenticatedRequest, @Body() dto: RollGachaDto) {
     return this.gachaService.roll(req.user.id, dto.turnstileToken);
   }

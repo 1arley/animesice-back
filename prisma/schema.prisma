@@ -148,7 +148,7 @@ model User {
   siteFeedbacks           SiteFeedback[]           @relation("SiteFeedbackUser")
   siteFeedbackUpvotes     SiteFeedbackUpvote[]
   privacySettings         PrivacySettings?
-  userWaifus              UserWaifu[]
+  userCards              UserCard[]
   gachaRollDays           GachaRollDay[]
   posts                   Post[]
   postLikes               PostLike[]
@@ -266,6 +266,7 @@ model Anime {
   endDate           DateTime?
   episodeCount      Int?
   anilistId         Int?            @unique
+  malId             Int?            @unique
   published         Boolean         @default(true)
   editorialSynopsis      String?
   editorialWhereToWatch  String?
@@ -279,7 +280,7 @@ model Anime {
   animeSchedules    AnimeSchedule[]
   animeList         UserAnimeList[]
   posts             Post[]
-  waifus            Waifu[]
+  cards             Card[]
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
 
@@ -744,10 +745,11 @@ model PostShare {
   @@index([postId])
 }
 
-/// Personagem cacheado do AniList — o "card" do gacha waifu.
-model Waifu {
+/// Personagem cacheado do MAL — o "card" do gacha (qualquer personagem,
+/// não só mulheres; raridade vem dos favorites do MAL).
+model Card {
   id                   String      @id @default(uuid())
-  anilistCharacterId   Int         @unique
+  malCharacterId       Int         @unique
   name                 String
   image                String?
   favourites           Int         @default(0)
@@ -755,7 +757,7 @@ model Waifu {
   animeId              String?
   anime                Anime?      @relation(fields: [animeId], references: [id], onDelete: SetNull)
   animeTitle           String?
-  owners               UserWaifu[]
+  owners               UserCard[]
   editionCounter       Int         @default(0)
   createdAt            DateTime    @default(now())
   updatedAt            DateTime    @updatedAt
@@ -766,12 +768,12 @@ model Waifu {
 
 /// Cópia de carta de um usuário — non-unique, individualizada por
 /// condition/foil/edition (o "float" das skins de CS).
-model UserWaifu {
+model UserCard {
   id         String   @id @default(uuid())
   userId     String
   user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  waifuId    String
-  waifu      Waifu    @relation(fields: [waifuId], references: [id], onDelete: Cascade)
+  cardId     String
+  card       Card     @relation(fields: [cardId], references: [id], onDelete: Cascade)
   condition  Float
   foil       String   @default("NORMAL")
   edition    Int
@@ -779,7 +781,7 @@ model UserWaifu {
   obtainedAt DateTime @default(now())
 
   @@index([userId, obtainedAt(sort: Desc)])
-  @@index([waifuId, edition])
+  @@index([cardId, edition])
   @@index([userId, value(sort: Desc)])
 }
 
