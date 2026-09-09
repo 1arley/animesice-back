@@ -1,3 +1,15 @@
+# [1.28.0](https://github.com/1arley/animesice-back/compare/v1.27.2...v1.28.0) (2026-09-09)
+
+
+### Bug Fixes
+
+* **watchtower:** sync adult catalog on startup ([089315f](https://github.com/1arley/animesice-back/commit/089315f514b1af3387ad062a87775e9c602e84f6))
+
+
+### Features
+
+* **catalog:** oculta catalogo adulto da vitrine com opt-in na busca ([c9a9bf6](https://github.com/1arley/animesice-back/commit/c9a9bf6f1d2f88de26f7c940ac999d4668f758ab))
+
 ## [1.27.2](https://github.com/1arley/animesice-back/compare/v1.27.1...v1.27.2) (2026-09-08)
 
 
