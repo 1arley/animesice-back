@@ -32,10 +32,15 @@ describe('SocialService', () => {
       findMany: jest.fn(),
       create: jest.fn(),
       delete: jest.fn(),
+      deleteMany: jest.fn(),
     },
     postComment: {
       findMany: jest.fn(),
       count: jest.fn(),
+      create: jest.fn(),
+    },
+    postShare: {
+      findUnique: jest.fn(),
       create: jest.fn(),
     },
     follow: {
@@ -43,8 +48,10 @@ describe('SocialService', () => {
       findMany: jest.fn(),
       create: jest.fn(),
       delete: jest.fn(),
+      deleteMany: jest.fn(),
       count: jest.fn(),
     },
+    notification: { deleteMany: jest.fn() },
     user: {
       findUnique: jest.fn(),
       findFirst: jest.fn(),
@@ -63,6 +70,12 @@ describe('SocialService', () => {
     // resetAllMocks (e não clearAllMocks) limpa também as filas de
     // mockResolvedValueOnce — evita vazamento de valores entre testes.
     jest.resetAllMocks();
+    mockPrisma.$transaction.mockImplementation(
+      (input: Promise<unknown>[] | ((tx: typeof mockPrisma) => unknown)) =>
+        typeof input === 'function' ? input(mockPrisma) : Promise.all(input),
+    );
+    // Cleanup de notificação é fire-and-forget — precisa resolver por padrão.
+    mockPrisma.notification.deleteMany.mockResolvedValue({ count: 0 });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -174,21 +187,35 @@ describe('SocialService', () => {
     });
 
     it('descurte e NÃO notifica', async () => {
-      mockPrisma.post.findFirst.mockResolvedValue({
-        id: 'p1',
-        userId: 'owner',
-        content: 'x',
-      });
       mockPrisma.postLike.findUnique.mockResolvedValue({
         createdAt: new Date(),
       });
-      mockPrisma.postLike.delete.mockResolvedValue({});
+      mockPrisma.postLike.deleteMany.mockResolvedValue({ count: 1 });
 
       const result = await service.togglePostLike('fan', 'p1');
 
       expect(result).toEqual({ liked: false });
-      expect(prisma.postLike.delete).toHaveBeenCalled();
+      expect(prisma.postLike.deleteMany).toHaveBeenCalledWith({
+        where: { userId: 'fan', postId: 'p1' },
+      });
       expect(mockNotifications.create).not.toHaveBeenCalled();
+    });
+
+    it('descurte remove a notificação de like do dono (F3)', async () => {
+      mockPrisma.post.findUnique.mockResolvedValue({ userId: 'owner' });
+      mockPrisma.postLike.deleteMany.mockResolvedValue({ count: 1 });
+      mockPrisma.notification.deleteMany.mockResolvedValue({ count: 1 });
+
+      await service.unlikePost('fan', 'p1');
+
+      expect(prisma.notification.deleteMany).toHaveBeenCalledWith({
+        where: {
+          userId: 'owner',
+          type: 'POST_LIKE',
+          actorId: 'fan',
+          targetId: 'p1',
+        },
+      });
     });
 
     it('curtir o próprio post não gera notificação', async () => {
@@ -241,6 +268,24 @@ describe('SocialService', () => {
     });
   });
 
+  describe('sharePost', () => {
+    it('cria o compartilhamento e incrementa o contador na mesma transação', async () => {
+      mockPrisma.post.findFirst.mockResolvedValue({ id: 'p1' });
+      mockPrisma.postShare.findUnique.mockResolvedValue(null);
+      mockPrisma.post.update.mockResolvedValue({ shareCount: 3 });
+
+      await expect(service.sharePost('u1', 'p1')).resolves.toEqual({
+        shared: true,
+        shareCount: 3,
+      });
+      expect(mockPrisma.post.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { shareCount: { increment: 1 } },
+        }),
+      );
+    });
+  });
+
   // ------------------------------------------------------------------
   // Follow
   // ------------------------------------------------------------------
@@ -287,17 +332,35 @@ describe('SocialService', () => {
     });
 
     it('deixa de seguir (sem notificação)', async () => {
-      mockPrisma.user.findUnique.mockResolvedValue({ id: 'u2' });
       mockPrisma.follow.findUnique.mockResolvedValue({
         createdAt: new Date(),
       });
-      mockPrisma.follow.delete.mockResolvedValue({});
+      mockPrisma.follow.deleteMany.mockResolvedValue({ count: 1 });
 
       const result = await service.toggleFollow('u1', 'u2');
 
       expect(result).toEqual({ following: false });
-      expect(prisma.follow.delete).toHaveBeenCalled();
+      expect(prisma.follow.deleteMany).toHaveBeenCalledWith({
+        where: { followerId: 'u1', followeeId: 'u2' },
+      });
       expect(mockNotifications.create).not.toHaveBeenCalled();
+    });
+
+    it('unfollow remove a notificação de follow do seguido (F3)', async () => {
+      mockPrisma.follow.deleteMany.mockResolvedValue({ count: 1 });
+      mockPrisma.notification.deleteMany.mockResolvedValue({ count: 1 });
+
+      const result = await service.unfollowUser('u1', 'u2');
+
+      expect(result).toEqual({ following: false });
+      expect(prisma.notification.deleteMany).toHaveBeenCalledWith({
+        where: {
+          userId: 'u2',
+          type: 'NEW_FOLLOW',
+          actorId: 'u1',
+          targetId: 'u2',
+        },
+      });
     });
   });
 

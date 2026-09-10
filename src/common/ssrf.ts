@@ -1,7 +1,7 @@
 import { BadRequestException, BadGatewayException } from '@nestjs/common';
 import { lookup } from 'dns/promises';
 import net, { LookupFunction } from 'net';
-import { Agent, Dispatcher, fetch as undiciFetch } from 'undici';
+import { Agent, Dispatcher, ProxyAgent, fetch as undiciFetch } from 'undici';
 
 const BLOCKED_MESSAGE =
   'Destino bloqueado: não é permitido acesso a redes internas ou metadata.';
@@ -147,6 +147,44 @@ export function pinnedDispatcher(resolution: SafeUrlResolution): Dispatcher {
   return new Agent({ connect: { lookup: resolution.lookup } });
 }
 
+/** Proxy residencial opcional para provedores que bloqueiam datacenters. */
+const PROXY_URL =
+  process.env.HTTPS_PROXY ||
+  process.env.https_proxy ||
+  process.env.HTTP_PROXY ||
+  process.env.http_proxy ||
+  '';
+
+/**
+ * Cria dispatcher SSRF-safe: valida DNS + IPs internos, depois decide:
+ * - Com proxy: usa ProxyAgent (rota pelo IP residencial do proxy)
+ * - Sem proxy: usa Agent pinado (conecta direto no IP validado)
+ *
+ * Com proxy, a URL usa o IP já validado; Host e SNI preservam o domínio
+ * original para HTTP/TLS sem permitir nova resolução DNS no proxy.
+ */
+function createSSRFDispatcher(resolution: SafeUrlResolution): {
+  dispatcher: Dispatcher;
+  url: string;
+  host?: string;
+} {
+  if (PROXY_URL) {
+    const url = new URL(resolution.url);
+    const address = resolution.addresses[0]!.address;
+    const host = url.host;
+    url.hostname = net.isIP(address) === 6 ? `[${address}]` : address;
+    return {
+      dispatcher: new ProxyAgent({
+        uri: PROXY_URL,
+        requestTls: { servername: resolution.hostname },
+      }),
+      url: url.toString(),
+      host,
+    };
+  }
+  return { dispatcher: pinnedDispatcher(resolution), url: resolution.url };
+}
+
 /** Compatibilidade para callers que só precisam validar, sem fazer request. */
 export async function assertHostResolvesSafely(urlStr: string): Promise<void> {
   await resolveSafeUrl(urlStr);
@@ -170,14 +208,18 @@ export async function fetchSafeRaw(
 
   for (let i = 0; i <= MAX_REDIRECTS; i++) {
     const resolution = await resolveSafeUrl(current);
-    const dispatcher = pinnedDispatcher(resolution);
+    const request = createSSRFDispatcher(resolution);
+    const dispatcher = request.dispatcher;
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     let response: Response;
     try {
-      response = await undiciFetch(resolution.url, {
+      const headers = new Headers(init.headers);
+      if (request.host) headers.set('host', request.host);
+      response = await undiciFetch(request.url, {
         ...init,
+        headers,
         signal: controller.signal,
         redirect: 'manual',
         dispatcher,

@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
@@ -38,6 +39,7 @@ function sniffImageExt(buffer: Buffer): 'jpg' | 'png' | null {
 
 @Injectable()
 export class SupabaseService {
+  private readonly logger = new Logger(SupabaseService.name);
   private readonly client: SupabaseClient | null;
   private readonly bucket: string;
 
@@ -201,6 +203,13 @@ export class SupabaseService {
 
     await this.s3
       .send(new DeleteObjectCommand({ Bucket: this.avatarBucket, Key: key }))
-      .catch(() => undefined);
+      .catch((error: unknown) => {
+        // Best-effort: mantém contrato (resolve) mas dá visibilidade ao órfão.
+        this.logger.warn(
+          `deleteAvatar falhou p/ ${key}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      });
   }
 }

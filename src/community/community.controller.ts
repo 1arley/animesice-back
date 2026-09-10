@@ -108,9 +108,9 @@ export class CommunityController {
   @Post('feedback/:id/upvote')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('JWT-auth')
-  @ApiOperation({ summary: 'Upvote em feedback' })
-  upvoteFeedback(@Param('id') id: string) {
-    return this.communityService.upvoteFeedback(id);
+  @ApiOperation({ summary: 'Upvote em feedback (toggle)' })
+  upvoteFeedback(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.communityService.upvoteFeedback(req.user.id, id);
   }
 
   @Patch('admin/feedback/:id')

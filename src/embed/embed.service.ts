@@ -260,7 +260,8 @@ export class EmbedService {
         body,
       };
     } finally {
-      await dispatcher.close();
+      // Não mascarar resposta/erro original se o close falhar.
+      await dispatcher.close().catch(() => undefined);
     }
   }
 
@@ -335,7 +336,7 @@ export class EmbedService {
     // 403 = anti-hotlinking real; 404 = token/segmento expirado; 5xx = CDN fora.
     if (!response.ok) {
       const errorBody = await response.text().catch(() => '');
-      await dispatcher.close();
+      await dispatcher.close().catch(() => undefined);
       return {
         status: response.status,
         headers: {
@@ -349,7 +350,7 @@ export class EmbedService {
 
     // Stream raw — nao usar .text()/.arrayBuffer() (midia grande).
     if (!response.body) {
-      await dispatcher.close();
+      await dispatcher.close().catch(() => undefined);
       throw new BadGatewayException('Resposta da CDN sem corpo.');
     }
 
@@ -462,7 +463,7 @@ export class EmbedService {
           dispatcher,
         });
       } catch (err) {
-        await dispatcher.close();
+        await dispatcher.close().catch(() => undefined);
         throw err;
       } finally {
         clearTimeout(timer);
@@ -474,7 +475,7 @@ export class EmbedService {
       if (!isRedirect) return { response, dispatcher };
 
       await response.body?.cancel();
-      await dispatcher.close();
+      await dispatcher.close().catch(() => undefined);
       try {
         current = new URL(location, resolution.url).toString();
       } catch {

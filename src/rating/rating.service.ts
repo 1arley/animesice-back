@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '@/prisma/prisma.service';
 import { RateAnimeDto } from '@/rating/dto/rate-anime.dto';
 
@@ -7,51 +8,61 @@ export class RatingService {
   constructor(private readonly prisma: PrismaService) {}
 
   async rate(userId: string, animeSlug: string, dto: RateAnimeDto) {
-    const anime = await this.prisma.anime.findUnique({
-      where: { slug: animeSlug },
-      select: { id: true },
-    });
+    return this.prisma.$transaction(async (tx) => {
+      const anime = await tx.anime.findUnique({
+        where: { slug: animeSlug },
+        select: { id: true },
+      });
 
-    if (!anime) {
-      throw new NotFoundException('Anime não encontrado.');
-    }
+      if (!anime) {
+        throw new NotFoundException('Anime não encontrado.');
+      }
 
-    const rating = await this.prisma.rating.upsert({
-      where: {
-        userId_animeId: { userId, animeId: anime.id },
-      },
-      update: { score: dto.score },
-      create: { userId, animeId: anime.id, score: dto.score },
-    });
+      // Serializa recomputes concorrentes: sem o lock, o snapshot do AVG
+      // pode perder um voto commitado entre o upsert e o UPDATE (F1).
+      await tx.$executeRaw`SELECT 1 FROM "Anime" WHERE "id" = ${anime.id} FOR UPDATE`;
 
-    await this.updateAnimeRating(anime.id);
-
-    return rating;
-  }
-
-  async remove(userId: string, animeSlug: string) {
-    const anime = await this.prisma.anime.findUnique({
-      where: { slug: animeSlug },
-      select: { id: true },
-    });
-
-    if (!anime) {
-      throw new NotFoundException('Anime não encontrado.');
-    }
-
-    try {
-      await this.prisma.rating.delete({
+      const rating = await tx.rating.upsert({
         where: {
           userId_animeId: { userId, animeId: anime.id },
         },
+        update: { score: dto.score },
+        create: { userId, animeId: anime.id, score: dto.score },
       });
-    } catch {
-      throw new NotFoundException('Avaliação não encontrada.');
-    }
 
-    await this.updateAnimeRating(anime.id);
+      await this.recomputeAnimeRating(tx, anime.id);
 
-    return { message: 'Avaliação removida.' };
+      return rating;
+    });
+  }
+
+  async remove(userId: string, animeSlug: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const anime = await tx.anime.findUnique({
+        where: { slug: animeSlug },
+        select: { id: true },
+      });
+
+      if (!anime) {
+        throw new NotFoundException('Anime não encontrado.');
+      }
+
+      await tx.$executeRaw`SELECT 1 FROM "Anime" WHERE "id" = ${anime.id} FOR UPDATE`;
+
+      try {
+        await tx.rating.delete({
+          where: {
+            userId_animeId: { userId, animeId: anime.id },
+          },
+        });
+      } catch {
+        throw new NotFoundException('Avaliação não encontrada.');
+      }
+
+      await this.recomputeAnimeRating(tx, anime.id);
+
+      return { message: 'Avaliação removida.' };
+    });
   }
 
   async getUserRating(userId: string, animeSlug: string) {
@@ -103,15 +114,22 @@ export class RatingService {
     };
   }
 
-  private async updateAnimeRating(animeId: string) {
-    const agg = await this.prisma.rating.aggregate({
+  /**
+   * Chamada somente dentro de $transaction, após SELECT ... FOR UPDATE no
+   * Anime: o lock garante que toda escrita concorrente já comitou antes do
+   * aggregate — o valor persistido é exato, não apenas "último a vencer".
+   */
+  private async recomputeAnimeRating(
+    tx: Prisma.TransactionClient,
+    animeId: string,
+  ) {
+    const { _avg } = await tx.rating.aggregate({
       where: { animeId },
       _avg: { score: true },
     });
-
-    await this.prisma.anime.update({
+    await tx.anime.update({
       where: { id: animeId },
-      data: { rating: agg._avg.score ?? 0 },
+      data: { rating: _avg.score ?? 0 },
     });
   }
 }

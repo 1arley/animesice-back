@@ -57,3 +57,5 @@ docker-compose.override.yml
 #Bun
 bun.lock
 /generated/prisma
+
+.agents/

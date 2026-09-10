@@ -97,40 +97,32 @@ export class CommunityService {
   }
 
   async voteRequest(requestId: string, userId: string) {
-    const request = await this.prisma.animeRequest.findUnique({
-      where: { id: requestId },
-      select: { id: true, status: true, voteCount: true },
-    });
-
-    if (!request) {
-      throw new NotFoundException('Solicitação não encontrada.');
-    }
-
-    const existingVote = await this.prisma.animeRequestVote.findUnique({
-      where: {
-        requestId_userId: { requestId, userId },
-      },
-    });
-
-    if (existingVote) {
-      await this.prisma.animeRequestVote.delete({
-        where: { requestId_userId: { requestId, userId } },
-      });
-      await this.prisma.animeRequest.update({
+    return this.prisma.$transaction(async (tx) => {
+      const request = await tx.animeRequest.findUnique({
         where: { id: requestId },
-        data: { voteCount: { decrement: 1 } },
+        select: { id: true },
       });
-      return { voted: false, voteCount: request.voteCount - 1 };
-    }
+      if (!request) throw new NotFoundException('Solicitação não encontrada.');
 
-    await this.prisma.animeRequestVote.create({
-      data: { requestId, userId },
+      const where = { requestId_userId: { requestId, userId } };
+      const existingVote = await tx.animeRequestVote.findUnique({ where });
+      if (existingVote) {
+        await tx.animeRequestVote.delete({ where });
+      } else {
+        await tx.animeRequestVote.create({ data: { requestId, userId } });
+      }
+      const requestWithCount = await tx.animeRequest.update({
+        where: { id: requestId },
+        data: {
+          voteCount: existingVote ? { decrement: 1 } : { increment: 1 },
+        },
+        select: { voteCount: true },
+      });
+      return {
+        voted: !existingVote,
+        voteCount: requestWithCount.voteCount,
+      };
     });
-    await this.prisma.animeRequest.update({
-      where: { id: requestId },
-      data: { voteCount: { increment: 1 } },
-    });
-    return { voted: true, voteCount: request.voteCount + 1 };
   }
 
   async adminUpdateRequestStatus(
@@ -211,7 +203,7 @@ export class CommunityService {
     };
   }
 
-  async upvoteFeedback(feedbackId: string) {
+  async upvoteFeedback(userId: string, feedbackId: string) {
     const feedback = await this.prisma.siteFeedback.findUnique({
       where: { id: feedbackId },
       select: { id: true },
@@ -221,10 +213,33 @@ export class CommunityService {
       throw new NotFoundException('Feedback não encontrado.');
     }
 
-    return this.prisma.siteFeedback.update({
+    const existing = await this.prisma.siteFeedbackUpvote.findUnique({
+      where: {
+        userId_feedbackId: { userId, feedbackId },
+      },
+    });
+
+    if (existing) {
+      await this.prisma.siteFeedbackUpvote.delete({
+        where: {
+          userId_feedbackId: { userId, feedbackId },
+        },
+      });
+      await this.prisma.siteFeedback.update({
+        where: { id: feedbackId },
+        data: { upvotes: { decrement: 1 } },
+      });
+      return { upvoted: false };
+    }
+
+    await this.prisma.siteFeedbackUpvote.create({
+      data: { userId, feedbackId },
+    });
+    await this.prisma.siteFeedback.update({
       where: { id: feedbackId },
       data: { upvotes: { increment: 1 } },
     });
+    return { upvoted: true };
   }
 
   async adminUpdateFeedbackStatus(

@@ -84,6 +84,7 @@ export class SettingsService {
           showActivity: true,
           showFavorites: true,
           showRatings: true,
+          showGacha: true,
         },
       }),
       this.prisma.userAnimeList.count({
@@ -113,6 +114,7 @@ export class SettingsService {
         ...(dto.showRatings !== undefined
           ? { showRatings: dto.showRatings }
           : {}),
+        ...(dto.showGacha !== undefined ? { showGacha: dto.showGacha } : {}),
       },
       create: { userId },
     });

@@ -34,6 +34,8 @@ import { SettingsModule } from '@/settings/settings.module';
 import { AuditService } from '@/common/services/audit.service';
 import { AuditInterceptor } from '@/common/interceptors/audit.interceptor';
 import { BlogModule } from '@/blog/blog.module';
+import { GachaModule } from '@/gacha/gacha.module';
+import { BillingModule } from '@/billing/billing.module';
 
 @Module({
   imports: [
@@ -78,6 +80,8 @@ import { BlogModule } from '@/blog/blog.module';
     UsersModule,
     SettingsModule,
     BlogModule,
+    GachaModule,
+    BillingModule,
   ],
   controllers: [AppController, MetricsController],
   providers: [

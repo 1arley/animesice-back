@@ -10,13 +10,22 @@
  * depois dele é considerada morta. Isso evita acrescentar até 5s de rede a
  * cada abertura quando um token googlevideo ainda válido está perto do fim.
  * URLs sem expiração conhecida usam GET (Range bytes=0-0).
- * Trata 401/403/404/410 como morta; demais
- * (5xx, 429, timeout, erro de rede) como viva, evitando re-extração por
- * problema transitório.
+ * Trata 401/403/404/410 e 5xx como indisponível. Em recuperação/validação
+ * forçada, somente 200/206 confirma disponibilidade, inclusive após timeout.
  */
 
+import { fetch as undiciFetch } from 'undici';
 import { pinnedDispatcher, resolveSafeUrl } from '@/common/ssrf';
 import { refererForMediaUrl } from '@/common/url-utils';
+
+const outboundFetch: typeof undiciFetch = (...args) =>
+  process.env.NODE_ENV === 'test'
+    ? (globalThis.fetch as unknown as typeof undiciFetch)(...args)
+    : undiciFetch(...args);
+
+export function shouldReextractMedia(status: number): boolean {
+  return [401, 403, 404, 410].includes(status) || status >= 500;
+}
 
 const MAX_REDIRECTS = 5;
 const LIVENESS_CACHE_TTL_MS = 1_800_000; // 30 min — reduz probes de rede em 6x
@@ -134,7 +143,7 @@ async function performMediaUrlProbe(
       const resolution = await resolveSafeUrl(current);
       const dispatcher = pinnedDispatcher(resolution);
 
-      const res = await fetch(resolution.url, {
+      const res = await outboundFetch(resolution.url, {
         method: 'GET',
         headers: {
           'user-agent':
@@ -148,6 +157,9 @@ async function performMediaUrlProbe(
         redirect: 'manual',
         signal: controller.signal,
         dispatcher,
+      }).catch(async (error: unknown) => {
+        await dispatcher.close();
+        throw error;
       });
 
       const location = res.headers.get('location');
@@ -165,16 +177,13 @@ async function performMediaUrlProbe(
 
       await res.body?.cancel();
       await dispatcher.close();
-      return (
-        res.status === 401 ||
-        res.status === 403 ||
-        res.status === 404 ||
-        res.status === 410
-      );
+      return forceNetwork
+        ? res.status !== 200 && res.status !== 206
+        : shouldReextractMedia(res.status);
     }
     return true;
   } catch {
-    return false;
+    return forceNetwork;
   } finally {
     clearTimeout(timer);
   }
@@ -191,7 +200,7 @@ export function probeMediaUrlDead(
   const now = Date.now();
   const cacheKey = forceNetwork ? `network:${url}` : url;
   const cached = livenessCache.get(cacheKey);
-  if (cached) {
+  if (cached && !forceNetwork) {
     if (cached.expiresAt > now) return Promise.resolve(cached.dead);
     livenessCache.delete(cacheKey);
   }
@@ -201,10 +210,12 @@ export function probeMediaUrlDead(
 
   const probe = performMediaUrlProbe(url, forceNetwork)
     .then((dead) => {
-      livenessCache.set(cacheKey, {
+      const entry = {
         dead,
-        expiresAt: Date.now() + LIVENESS_CACHE_TTL_MS,
-      });
+        expiresAt: Date.now() + (dead ? 15_000 : LIVENESS_CACHE_TTL_MS),
+      };
+      livenessCache.set(cacheKey, entry);
+      if (forceNetwork) livenessCache.set(url, entry);
       return dead;
     })
     .finally(() => {

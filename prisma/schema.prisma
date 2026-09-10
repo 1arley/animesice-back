@@ -146,10 +146,19 @@ model User {
   animeRequests           AnimeRequest[]           @relation("AnimeRequestUser")
   animeRequestVotes       AnimeRequestVote[]       @relation("AnimeRequestVoteUser")
   siteFeedbacks           SiteFeedback[]           @relation("SiteFeedbackUser")
+  siteFeedbackUpvotes     SiteFeedbackUpvote[]
   privacySettings         PrivacySettings?
+  userCards              UserCard[]
+  featuredUserCardId     String?                  @unique
+  featuredUserCard       UserCard?                @relation("FeaturedUserCard", fields: [featuredUserCardId], references: [id], onDelete: SetNull)
+  gachaRollDays           GachaRollDay[]
+  gachaSpins              GachaSpin[]
+  gachaClaimLock          GachaClaimLock?
+  gachaBypasses           GachaBypass[]
   posts                   Post[]
   postLikes               PostLike[]
   postComments            PostComment[]
+  postShares              PostShare[]
   following               Follow[]                 @relation("Follower")
   followers               Follow[]                 @relation("Followee")
 }
@@ -186,6 +195,7 @@ model PrivacySettings {
   showActivity  Boolean @default(true)
   showFavorites Boolean @default(true)
   showRatings   Boolean @default(true)
+  showGacha     Boolean @default(true)
 }
 
 model EmailVerificationCode {
@@ -261,6 +271,7 @@ model Anime {
   endDate           DateTime?
   episodeCount      Int?
   anilistId         Int?            @unique
+  malId             Int?            @unique
   published         Boolean         @default(true)
   editorialSynopsis      String?
   editorialWhereToWatch  String?
@@ -274,6 +285,7 @@ model Anime {
   animeSchedules    AnimeSchedule[]
   animeList         UserAnimeList[]
   posts             Post[]
+  cards             Card[]
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
 
@@ -459,10 +471,13 @@ model Notification {
   linkUrl   String?
   read      Boolean  @default(false)
   createdAt DateTime @default(now())
+  actorId   String?
+  targetId  String?
 
   @@index([userId, read])
   @@index([userId, createdAt])
   @@index([userId, read, createdAt(sort: Desc)])
+  @@index([userId, type, actorId, targetId, createdAt])
 }
 
 model Room {
@@ -576,17 +591,18 @@ model AnimeRequestVote {
 }
 
 model SiteFeedback {
-  id          String         @id @default(uuid())
+  id          String              @id @default(uuid())
   userId      String
-  user        User           @relation("SiteFeedbackUser", fields: [userId], references: [id], onDelete: Cascade)
+  user        User                @relation("SiteFeedbackUser", fields: [userId], references: [id], onDelete: Cascade)
   type        FeedbackType
   title       String
   description String
-  status      FeedbackStatus @default(OPEN)
+  status      FeedbackStatus      @default(OPEN)
   adminNote   String?
-  upvotes     Int            @default(0)
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
+  upvotes     Int                 @default(0)
+  upvoters    SiteFeedbackUpvote[]
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
 
   @@index([type, status, createdAt])
   @@index([userId])
@@ -598,9 +614,12 @@ model Post {
   userId     String
   user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   content    String
+  kind       String        @default("TEXT")
+  meta       Json?
   animeId    String?
   anime      Anime?        @relation(fields: [animeId], references: [id], onDelete: SetNull)
   shareCount Int           @default(0)
+  shares     PostShare[]
   status     ContentStatus @default(VISIBLE)
   likes      PostLike[]
   comments   PostComment[]
@@ -676,6 +695,29 @@ model WatchtowerJob {
   @@index([type, status])
 }
 
+/// Extrações iniciadas pelo player. Diferente da fila Watchtower, esta fila é
+/// respondida em tempo real pelo endpoint de streaming e precisa sobreviver a
+/// reinícios e a múltiplas réplicas da API.
+model StreamExtractionJob {
+  id            String   @id @default(uuid())
+  activeKey     String?  @unique
+  animeSlug     String
+  episodeNumber Int
+  season        Int
+  status        String   @default("pending")
+  videoUrl      String?
+  playerEmbed   String?
+  error         String?
+  lockedBy      String?
+  lockedUntil   DateTime?
+  createdAt     DateTime @default(now())
+  completedAt   DateTime?
+  updatedAt     DateTime @updatedAt
+
+  @@index([animeSlug, episodeNumber, season, status])
+  @@index([status, lockedUntil])
+}
+
 /// Saúde por fonte (adapter de scrape). Watchtower prioriza fontes saudáveis
 /// e desabilita automaticamente as que falham N vezes seguidas (canário 1x/h
 /// reabilita).
@@ -710,4 +752,117 @@ model AdminAuditLog {
   @@index([adminId, createdAt])
   @@index([action, createdAt])
   @@index([resourceType])
+}
+
+model SiteFeedbackUpvote {
+  userId     String
+  feedbackId String
+  user       User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  feedback   SiteFeedback @relation(fields: [feedbackId], references: [id], onDelete: Cascade)
+  createdAt  DateTime     @default(now())
+
+  @@id([userId, feedbackId])
+  @@index([feedbackId])
+}
+
+model PostShare {
+  userId    String
+  postId    String
+  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post      Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([userId, postId])
+  @@index([postId])
+}
+
+/// Personagem cacheado do MAL — o "card" do gacha (qualquer personagem,
+/// não só mulheres; raridade vem dos favorites do MAL).
+model Card {
+  id                   String      @id @default(uuid())
+  malCharacterId       Int         @unique
+  name                 String
+  image                String?
+  favourites           Int         @default(0)
+  rarity               String      @default("COMUM")
+  animeId              String?
+  anime                Anime?      @relation(fields: [animeId], references: [id], onDelete: SetNull)
+  animeTitle           String?
+  owners               UserCard[]
+  spins                GachaSpin[]
+  editionCounter       Int         @default(0)
+  createdAt            DateTime    @default(now())
+  updatedAt            DateTime    @updatedAt
+
+  @@index([rarity])
+  @@index([animeId])
+}
+
+/// Cópia de carta de um usuário — non-unique, individualizada por
+/// condition/foil/edition (o "float" das skins de CS).
+model UserCard {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  featuredBy User?    @relation("FeaturedUserCard")
+  cardId     String
+  card       Card     @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  condition  Float
+  foil       String   @default("NORMAL")
+  edition    Int
+  value      Int
+  obtainedAt DateTime @default(now())
+
+  @@index([userId, obtainedAt(sort: Desc)])
+  @@index([cardId, edition])
+  @@index([userId, value(sort: Desc)])
+}
+
+model GachaRollDay {
+  userId String
+  user   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  day    DateTime @db.Date
+
+  @@id([userId, day])
+}
+
+/// Preview de giro — sorteio sem ownership. Só vira UserCard no claim.
+model GachaSpin {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  hour      DateTime  @db.Timestamptz(6)
+  slot      Int
+  cardId    String
+  card      Card      @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  condition Float
+  foil      String    @default("NORMAL")
+  value     Int
+  claimedAt DateTime? @db.Timestamptz(6)
+  expiresAt DateTime  @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@unique([userId, hour, slot])
+  @@index([userId, createdAt(sort: Desc)])
+}
+
+/// Lock de 12h após claim — 1 claim por janela.
+model GachaClaimLock {
+  userId      String   @id
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lockedUntil DateTime @db.Timestamptz(6)
+}
+
+/// Intenção de bypass via LivePix — uso único por reference.
+model GachaBypass {
+  reference String   @id
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount    Int
+  status    String   @default("PENDING")
+  expiresAt DateTime @db.Timestamptz(6)
+  paidAt    DateTime? @db.Timestamptz(6)
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([userId, status])
 }

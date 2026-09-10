@@ -259,8 +259,23 @@ export async function extractPlayerVideoEventDriven(
   page: Page,
   playerTokenUrl: string,
 ): Promise<string[]> {
+  return (await resolvePlayerToken(page, playerTokenUrl)).videos;
+}
+
+/**
+ * Mesmo fluxo do extractPlayerVideoEventDriven, mas informa se a página do
+ * token ao menos carregou (`loaded`). Quando nem o `goto` completa (rede ou
+ * egress bloqueado p/ blogger.com), repetir a tentativa com Xvfb/headless:false
+ * falha do mesmo jeito — o caller usa o sinal p/ pular o retry e liberar o
+ * slot do scraper em vez de pendurar a fila por +30s.
+ */
+export async function resolvePlayerToken(
+  page: Page,
+  playerTokenUrl: string,
+): Promise<{ videos: string[]; loaded: boolean }> {
   const captured: string[] = [];
   const seen = new Set<string>();
+  let loaded = false;
 
   const onMediaRequest = (req: PlaywrightRequest) => {
     const u = req.url();
@@ -278,6 +293,7 @@ export async function extractPlayerVideoEventDriven(
       waitUntil: 'domcontentloaded',
       timeout: 30_000,
     });
+    loaded = true;
 
     // 1) Prontidão do player (event-driven, sem sleep fixo). Se o player já
     //    disparou o videoplayback no load (captured.populado), pula direto para
@@ -309,15 +325,18 @@ export async function extractPlayerVideoEventDriven(
         .catch(() => undefined);
     }
 
-    return [...new Set(captured)].filter((u) =>
-      /videoplayback|\.mp4($|\?|#)/i.test(u),
-    );
+    return {
+      videos: [...new Set(captured)].filter((u) =>
+        /videoplayback|\.mp4($|\?|#)/i.test(u),
+      ),
+      loaded,
+    };
   } catch (err) {
     console.error(
       '[PLAYER-EVENT] erro:',
       err instanceof Error ? err.message : String(err),
     );
-    return [];
+    return { videos: [], loaded };
   } finally {
     page.off('request', onMediaRequest);
     await page.close().catch(() => undefined);

@@ -96,12 +96,14 @@ describe('CommunityController', () => {
 
   it('deve dar upvote em feedback', async () => {
     mockCommunityService.upvoteFeedback.mockResolvedValue({
-      id: 'f1',
-      upvotes: 1,
+      upvoted: true,
     });
-    const result = await controller.upvoteFeedback('f1');
-    expect(result).toHaveProperty('upvotes', 1);
-    expect(communityService.upvoteFeedback).toHaveBeenCalledWith('f1');
+    const result = await controller.upvoteFeedback(req, 'f1');
+    expect(result).toHaveProperty('upvoted', true);
+    expect(communityService.upvoteFeedback).toHaveBeenCalledWith(
+      'user-1',
+      'f1',
+    );
   });
 
   it('deve atualizar status de feedback como admin', async () => {

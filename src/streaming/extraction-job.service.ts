@@ -1,185 +1,182 @@
 import { Injectable } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { PrismaService } from '@/prisma/prisma.service';
 
 export type ExtractionJobStatus =
   'pending' | 'processing' | 'completed' | 'failed';
-
 export interface ExtractionJob {
   id: string;
   animeSlug: string;
   episodeNumber: number;
   season: number;
   status: ExtractionJobStatus;
-  result: {
-    videoUrl: string | null;
-    playerEmbed: string | null;
-  } | null;
+  result: { videoUrl: string | null; playerEmbed: string | null } | null;
   error: string | null;
   createdAt: number;
   completedAt: number | null;
 }
-
 type ExtractionFn = () => Promise<{
   videoUrl: string | null;
   playerEmbed: string | null;
 }>;
-
-type JobCompletionListener = (job: ExtractionJob) => void;
-
-const JOB_TTL_MS = 5 * 60_000;
-const MAX_CONCURRENT_JOBS = parseInt(
-  process.env.MAX_EXTRACTION_JOBS ?? '5',
-  10,
-);
+type Listener = (job: ExtractionJob) => void;
+const TTL_MS = 5 * 60_000;
 
 @Injectable()
 export class ExtractionJobService {
-  private readonly jobs = new Map<string, ExtractionJob>();
-  private activeJobs = 0;
-  private readonly queue: Array<{
-    job: ExtractionJob;
-    fn: ExtractionFn;
-    resolve: () => void;
-  }> = [];
-  private readonly completionListeners = new Map<
-    string,
-    Set<JobCompletionListener>
-  >();
+  private readonly workerId = crypto.randomUUID();
+  private readonly listeners = new Map<string, Set<Listener>>();
+  constructor(private readonly prisma: PrismaService) {}
 
   @Cron(CronExpression.EVERY_MINUTE)
-  cleanup(): void {
-    const now = Date.now();
-    for (const [id, job] of this.jobs) {
-      if (job.completedAt && now - job.completedAt > JOB_TTL_MS) {
-        this.jobs.delete(id);
-      }
-    }
+  async cleanup(): Promise<void> {
+    await this.prisma.streamExtractionJob.deleteMany({
+      where: { completedAt: { lt: new Date(Date.now() - TTL_MS) } },
+    });
   }
-
-  private generateId(
-    animeSlug: string,
-    episodeNumber: number,
-    season: number,
-  ): string {
-    return `ext:${animeSlug}:s${season}:ep${episodeNumber}:${Date.now()}`;
+  async getJob(id: string): Promise<ExtractionJob | undefined> {
+    const job = await this.prisma.streamExtractionJob.findUnique({
+      where: { id },
+    });
+    return job ? this.toJob(job) : undefined;
   }
-
-  getJob(id: string): ExtractionJob | undefined {
-    return this.jobs.get(id);
-  }
-
-  /**
-   * Registra um callback chamado quando o job completa (completed ou failed).
-   * Se o job já está em estado terminal, chama imediatamente.
-   * Retorna uma função de cleanup que remove o listener.
-   */
-  onComplete(jobId: string, listener: JobCompletionListener): () => void {
-    const job = this.jobs.get(jobId);
+  async onComplete(id: string, listener: Listener): Promise<() => void> {
+    const job = await this.getJob(id);
     if (job && (job.status === 'completed' || job.status === 'failed')) {
       listener(job);
       return () => {};
     }
-    let listeners = this.completionListeners.get(jobId);
-    if (!listeners) {
-      listeners = new Set();
-      this.completionListeners.set(jobId, listeners);
-    }
+    const listeners = this.listeners.get(id) ?? new Set<Listener>();
     listeners.add(listener);
+    this.listeners.set(id, listeners);
     return () => {
       listeners.delete(listener);
-      if (listeners.size === 0) this.completionListeners.delete(jobId);
+      if (!listeners.size) this.listeners.delete(id);
     };
   }
-
-  findByEpisode(
+  async findByEpisode(
     animeSlug: string,
     episodeNumber: number,
     season: number,
-  ): ExtractionJob | undefined {
-    for (const [, job] of this.jobs) {
-      if (
-        job.animeSlug === animeSlug &&
-        job.episodeNumber === episodeNumber &&
-        job.season === season &&
-        (job.status === 'pending' || job.status === 'processing')
-      ) {
-        return job;
-      }
-    }
-    return undefined;
+  ): Promise<ExtractionJob | undefined> {
+    const job = await this.prisma.streamExtractionJob.findFirst({
+      where: {
+        animeSlug,
+        episodeNumber,
+        season,
+        status: { in: ['pending', 'processing'] },
+      },
+    });
+    return job ? this.toJob(job) : undefined;
   }
-
-  submit(
+  async submit(
     animeSlug: string,
     episodeNumber: number,
     season: number,
     fn: ExtractionFn,
-  ): ExtractionJob {
-    const existing = this.findByEpisode(animeSlug, episodeNumber, season);
-    if (existing) return existing;
-
-    const id = this.generateId(animeSlug, episodeNumber, season);
-    const job: ExtractionJob = {
-      id,
-      animeSlug,
-      episodeNumber,
-      season,
-      status: 'pending',
-      result: null,
-      error: null,
-      createdAt: Date.now(),
-      completedAt: null,
-    };
-    this.jobs.set(id, job);
-
-    void this.processNext(job, fn);
+  ): Promise<ExtractionJob> {
+    const activeKey = `${animeSlug}:s${season}:ep${episodeNumber}`;
+    let job = await this.findByEpisode(animeSlug, episodeNumber, season);
+    if (!job) {
+      try {
+        job = this.toJob(
+          await this.prisma.streamExtractionJob.create({
+            data: { activeKey, animeSlug, episodeNumber, season },
+          }),
+        );
+      } catch (error) {
+        if ((error as { code?: string }).code !== 'P2002') throw error;
+        job = await this.findByEpisode(animeSlug, episodeNumber, season);
+        if (!job) throw error;
+      }
+    }
+    void this.start(job, fn);
     return job;
   }
-
-  private processNext(job: ExtractionJob, fn: ExtractionFn): void {
-    if (this.activeJobs >= MAX_CONCURRENT_JOBS) {
-      this.queue.push({ job, fn, resolve: () => {} });
-      return;
-    }
-    void this.runJob(job, fn);
-  }
-
-  private async runJob(job: ExtractionJob, fn: ExtractionFn): Promise<void> {
-    this.activeJobs++;
-    job.status = 'processing';
+  private async start(job: ExtractionJob, fn: ExtractionFn): Promise<void> {
+    const claim = await this.prisma.streamExtractionJob.updateMany({
+      where: {
+        id: job.id,
+        OR: [
+          { status: 'pending' },
+          { status: 'processing', lockedUntil: { lt: new Date() } },
+        ],
+      },
+      data: {
+        status: 'processing',
+        lockedBy: this.workerId,
+        lockedUntil: new Date(Date.now() + TTL_MS),
+      },
+    });
+    if (!claim.count) return;
     try {
-      const result = await fn();
-      job.result = result;
-      job.status = 'completed';
-    } catch (err) {
-      job.status = 'failed';
-      job.error = err instanceof Error ? err.message : String(err);
-    } finally {
-      job.completedAt = Date.now();
-      this.activeJobs--;
-      this.emitCompletion(job);
-      this.drainQueue();
+      await this.finish(job.id, 'completed', await fn(), null);
+    } catch (error) {
+      await this.finish(
+        job.id,
+        'failed',
+        null,
+        error instanceof Error ? error.message : String(error),
+      );
     }
   }
-
-  private emitCompletion(job: ExtractionJob): void {
-    const listeners = this.completionListeners.get(job.id);
-    if (listeners && listeners.size > 0) {
+  private async finish(
+    id: string,
+    status: 'completed' | 'failed',
+    result: ExtractionJob['result'],
+    error: string | null,
+  ): Promise<void> {
+    const updated = await this.prisma.streamExtractionJob.updateMany({
+      where: { id, status: 'processing', lockedBy: this.workerId },
+      data: {
+        activeKey: null,
+        status,
+        videoUrl: result?.videoUrl ?? null,
+        playerEmbed: result?.playerEmbed ?? null,
+        error,
+        lockedBy: null,
+        lockedUntil: null,
+        completedAt: new Date(),
+      },
+    });
+    if (!updated.count) return;
+    const job = await this.getJob(id);
+    const listeners = this.listeners.get(id);
+    if (job && listeners)
       for (const listener of listeners) {
         try {
           listener(job);
         } catch {
-          /* listener error doesn't break the loop */
+          /* ignored */
         }
       }
-      this.completionListeners.delete(job.id);
-    }
+    this.listeners.delete(id);
   }
-
-  private drainQueue(): void {
-    while (this.queue.length > 0 && this.activeJobs < MAX_CONCURRENT_JOBS) {
-      const next = this.queue.shift()!;
-      void this.runJob(next.job, next.fn);
-    }
+  private toJob(job: {
+    id: string;
+    animeSlug: string;
+    episodeNumber: number;
+    season: number;
+    status: string;
+    videoUrl: string | null;
+    playerEmbed: string | null;
+    error: string | null;
+    createdAt: Date;
+    completedAt: Date | null;
+  }): ExtractionJob {
+    return {
+      id: job.id,
+      animeSlug: job.animeSlug,
+      episodeNumber: job.episodeNumber,
+      season: job.season,
+      status: job.status as ExtractionJobStatus,
+      result:
+        job.videoUrl || job.playerEmbed
+          ? { videoUrl: job.videoUrl, playerEmbed: job.playerEmbed }
+          : null,
+      error: job.error,
+      createdAt: job.createdAt.getTime(),
+      completedAt: job.completedAt?.getTime() ?? null,
+    };
   }
 }

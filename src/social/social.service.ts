@@ -17,6 +17,8 @@ const MAX_POST_LENGTH = 2000;
 const POST_SELECT = {
   id: true,
   content: true,
+  kind: true,
+  meta: true,
   animeId: true,
   shareCount: true,
   status: true,
@@ -138,6 +140,16 @@ export class SocialService {
   }
 
   async togglePostLike(userId: string, postId: string) {
+    const existing = await this.prisma.postLike.findUnique({
+      where: { userId_postId: { userId, postId } },
+      select: { userId: true },
+    });
+    return existing
+      ? this.unlikePost(userId, postId)
+      : this.likePost(userId, postId);
+  }
+
+  async likePost(userId: string, postId: string) {
     const post = await this.prisma.post.findFirst({
       where: { id: postId, status: ContentStatus.VISIBLE },
       select: { id: true, userId: true, content: true },
@@ -147,38 +159,63 @@ export class SocialService {
       throw new NotFoundException('Post não encontrado.');
     }
 
-    const existing = await this.prisma.postLike.findUnique({
-      where: { userId_postId: { userId, postId } },
-      select: { createdAt: true },
-    });
-
-    if (existing) {
-      await this.prisma.postLike.delete({
-        where: { userId_postId: { userId, postId } },
-      });
-      return { liked: false };
+    try {
+      await this.prisma.postLike.create({ data: { userId, postId } });
+    } catch (error) {
+      if ((error as { code?: string }).code !== 'P2002') throw error;
+      return { liked: true };
     }
-
-    await this.prisma.postLike.create({ data: { userId, postId } });
 
     if (post.userId !== userId) {
       const liker = await this.prisma.user.findUnique({
         where: { id: userId },
         select: { name: true, userName: true },
       });
-      void this.notificationService.create({
-        userId: post.userId,
-        type: NotificationType.POST_LIKE,
-        title: `${liker?.name ?? liker?.userName ?? 'Alguém'} curtiu seu post`,
-        body:
-          post.content.length > 80
-            ? `${post.content.slice(0, 80)}…`
-            : post.content,
-        linkUrl: '/comunidade/feed',
-      });
+      void Promise.resolve(
+        this.notificationService.create({
+          userId: post.userId,
+          type: NotificationType.POST_LIKE,
+          title: `${liker?.name ?? liker?.userName ?? 'Alguém'} curtiu seu post`,
+          body:
+            post.content.length > 80
+              ? `${post.content.slice(0, 80)}…`
+              : post.content,
+          linkUrl: '/comunidade/feed',
+          actorId: userId,
+          targetId: postId,
+        }),
+      ).catch(() => undefined);
     }
 
     return { liked: true };
+  }
+
+  async unlikePost(userId: string, postId: string) {
+    const post = await this.prisma.post.findUnique({
+      where: { id: postId },
+      select: { userId: true },
+    });
+
+    const removed = await this.prisma.postLike.deleteMany({
+      where: { userId, postId },
+    });
+
+    // Desfaz o resíduo derivado: sem isso, retry invertido deixa o dono com
+    // notificação de like que não existe mais (F3).
+    if (removed.count > 0 && post && post.userId !== userId) {
+      void this.prisma.notification
+        .deleteMany({
+          where: {
+            userId: post.userId,
+            type: NotificationType.POST_LIKE,
+            actorId: userId,
+            targetId: postId,
+          },
+        })
+        .catch(() => undefined);
+    }
+
+    return { liked: false };
   }
 
   async getPostComments(postId: string, page = 1, limit = 20) {
@@ -245,20 +282,24 @@ export class SocialService {
         where: { id: userId },
         select: { name: true, userName: true },
       });
-      void this.notificationService.create({
-        userId: post.userId,
-        type: NotificationType.POST_COMMENT,
-        title: `${
-          author?.name ?? author?.userName ?? 'Alguém'
-        } comentou no seu post`,
-        linkUrl: '/comunidade/feed',
-      });
+      void Promise.resolve(
+        this.notificationService.create({
+          userId: post.userId,
+          type: NotificationType.POST_COMMENT,
+          title: `${
+            author?.name ?? author?.userName ?? 'Alguém'
+          } comentou no seu post`,
+          linkUrl: '/comunidade/feed',
+          actorId: userId,
+          targetId: postId,
+        }),
+      ).catch(() => undefined);
     }
 
     return comment;
   }
 
-  async sharePost(postId: string) {
+  async sharePost(userId: string, postId: string) {
     const post = await this.prisma.post.findFirst({
       where: { id: postId, status: ContentStatus.VISIBLE },
       select: { id: true },
@@ -267,11 +308,42 @@ export class SocialService {
       throw new NotFoundException('Post não encontrado.');
     }
 
-    const updated = await this.prisma.post.update({
-      where: { id: postId },
-      data: { shareCount: { increment: 1 } },
-      select: { shareCount: true },
+    const existing = await this.prisma.postShare.findUnique({
+      where: {
+        userId_postId: { userId, postId },
+      },
     });
+
+    if (existing) {
+      // Already shared — idempotent, return current count.
+      const current = await this.prisma.post.findUnique({
+        where: { id: postId },
+        select: { shareCount: true },
+      });
+      return { shared: true, shareCount: current?.shareCount ?? 0 };
+    }
+
+    const updated = await this.prisma
+      .$transaction(async (tx) => {
+        await tx.postShare.create({ data: { userId, postId } });
+        return tx.post.update({
+          where: { id: postId },
+          data: { shareCount: { increment: 1 } },
+          select: { shareCount: true },
+        });
+      })
+      .catch(async (error) => {
+        // Corrida: outro request criou o share entre o check e o create.
+        // Retorna o estado idempotente em vez de 500 (P2002).
+        if ((error as { code?: string }).code === 'P2002') {
+          const current = await this.prisma.post.findUnique({
+            where: { id: postId },
+            select: { shareCount: true },
+          });
+          return { shareCount: current?.shareCount ?? 0 };
+        }
+        throw error;
+      });
 
     return { shared: true, shareCount: updated.shareCount };
   }
@@ -281,6 +353,19 @@ export class SocialService {
   // ------------------------------------------------------------------
 
   async toggleFollow(userId: string, targetUserId: string) {
+    const existing = await this.prisma.follow.findUnique({
+      where: {
+        followerId_followeeId: { followerId: userId, followeeId: targetUserId },
+      },
+      select: { createdAt: true },
+    });
+
+    return existing
+      ? this.unfollowUser(userId, targetUserId)
+      : this.followUser(userId, targetUserId);
+  }
+
+  async followUser(userId: string, targetUserId: string) {
     if (userId === targetUserId) {
       throw new BadRequestException('Você não pode seguir a si mesmo.');
     }
@@ -293,43 +378,57 @@ export class SocialService {
       throw new NotFoundException('Usuário não encontrado.');
     }
 
-    const existing = await this.prisma.follow.findUnique({
-      where: {
-        followerId_followeeId: { followerId: userId, followeeId: targetUserId },
-      },
-      select: { createdAt: true },
-    });
-
-    if (existing) {
-      await this.prisma.follow.delete({
-        where: {
-          followerId_followeeId: {
-            followerId: userId,
-            followeeId: targetUserId,
-          },
-        },
+    try {
+      await this.prisma.follow.create({
+        data: { followerId: userId, followeeId: targetUserId },
       });
-      return { following: false };
+    } catch (error) {
+      // Corrida/duplo clique: já seguido entre o check e o create (P2002).
+      if ((error as { code?: string }).code !== 'P2002') throw error;
+      return { following: true };
     }
-
-    await this.prisma.follow.create({
-      data: { followerId: userId, followeeId: targetUserId },
-    });
 
     const follower = await this.prisma.user.findUnique({
       where: { id: userId },
       select: { name: true, userName: true },
     });
-    void this.notificationService.create({
-      userId: targetUserId,
-      type: NotificationType.NEW_FOLLOW,
-      title: `${
-        follower?.name ?? follower?.userName ?? 'Alguém'
-      } começou a seguir você`,
-      linkUrl: `/users/${target.userName ?? targetUserId}`,
-    });
+    void Promise.resolve(
+      this.notificationService.create({
+        userId: targetUserId,
+        type: NotificationType.NEW_FOLLOW,
+        title: `${
+          follower?.name ?? follower?.userName ?? 'Alguém'
+        } começou a seguir você`,
+        linkUrl: `/users/${target.userName ?? targetUserId}`,
+        actorId: userId,
+        targetId: targetUserId,
+      }),
+    ).catch(() => undefined);
 
     return { following: true };
+  }
+
+  async unfollowUser(userId: string, targetUserId: string) {
+    const removed = await this.prisma.follow.deleteMany({
+      where: { followerId: userId, followeeId: targetUserId },
+    });
+
+    // Desfaz o resíduo derivado: retry invertido não pode deixar o alvo com
+    // notificação de follow que não existe mais (F3).
+    if (removed.count > 0) {
+      void this.prisma.notification
+        .deleteMany({
+          where: {
+            userId: targetUserId,
+            type: NotificationType.NEW_FOLLOW,
+            actorId: userId,
+            targetId: targetUserId,
+          },
+        })
+        .catch(() => undefined);
+    }
+
+    return { following: false };
   }
 
   async checkFollow(userId: string, targetUserId: string) {
@@ -552,16 +651,31 @@ export class SocialService {
     limit: number,
     page: number,
   ) {
+    const postWhere: Prisma.PostWhereInput = {
+      userId: { in: userIds },
+      status: ContentStatus.VISIBLE,
+      OR: [
+        { kind: { not: 'GACHA_PULL' } },
+        {
+          user: {
+            OR: [
+              { privacySettings: null },
+              { privacySettings: { is: { showGacha: true } } },
+            ],
+          },
+        },
+      ],
+    };
     const [posts, totalPosts, watchIds, ratingIds, favIds] = await Promise.all([
       this.prisma.post.findMany({
-        where: { userId: { in: userIds }, status: ContentStatus.VISIBLE },
+        where: postWhere,
         skip,
         take: limit,
         orderBy: { createdAt: 'desc' },
         select: POST_SELECT,
       }),
       this.prisma.post.count({
-        where: { userId: { in: userIds }, status: ContentStatus.VISIBLE },
+        where: postWhere,
       }),
       this.getUserIdsWithFlag('showActivity', userIds),
       this.getUserIdsWithFlag('showRatings', userIds),
