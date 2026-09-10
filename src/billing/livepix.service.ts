@@ -108,7 +108,7 @@ export class LivePixService {
         grant_type: 'client_credentials',
         client_id: clientId,
         client_secret: clientSecret,
-        scope: 'messages:write payments:read',
+        scope: 'payments:write payments:read',
       }),
     });
     if (!res.ok) {
