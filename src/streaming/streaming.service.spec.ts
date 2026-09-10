@@ -1244,7 +1244,7 @@ describe('StreamingService.getSourceAsync', () => {
     probeSpy.mockRestore();
   });
 
-  it('retorna jobId existente quando já há job em andamento', async () => {
+  it('delega o job existente ao claim persistido', async () => {
     const { prisma, extractionJobs, svc } = makeMocks();
     prisma.anime.findUnique.mockResolvedValue({ id: 'a1', slug: 'anime' });
     prisma.episode.findUnique.mockResolvedValue({
@@ -1254,10 +1254,15 @@ describe('StreamingService.getSourceAsync', () => {
       embedUrl: null,
       thumbnailUrl: null,
     });
-    extractionJobs.findByEpisode.mockReturnValue({ id: 'job-1' });
+    extractionJobs.submit.mockResolvedValue({ id: 'job-1' });
     const result = await svc.getSourceAsync('anime', 1);
     expect(result).toEqual({ jobId: 'job-1' });
-    expect(extractionJobs.submit).not.toHaveBeenCalled();
+    expect(extractionJobs.submit).toHaveBeenCalledWith(
+      'anime',
+      1,
+      1,
+      expect.any(Function),
+    );
   });
 
   it('submete novo job quando extração é necessária', async () => {

@@ -348,12 +348,13 @@ export class StreamingController {
 
     // 3. Inscreve no completion do job
     let cleanup: (() => void) | null = null;
+    let timeout: ReturnType<typeof setTimeout> | null = null;
     let finished = false;
 
     const finish = (job: ExtractionJob) => {
       if (finished) return;
       finished = true;
-      clearTimeout(timeout);
+      if (timeout) clearTimeout(timeout);
       cleanup?.();
       void (async () => {
         try {
@@ -378,13 +379,13 @@ export class StreamingController {
       })();
     };
 
-    cleanup = this.streamingService.onJobComplete(jobId, finish);
+    cleanup = await this.streamingService.onJobComplete(jobId, finish);
 
     // Se o job já completou (race condition), finish já foi chamado
     if (finished) return;
 
     // 4. Timeout de 60s
-    const timeout = setTimeout(() => {
+    timeout = setTimeout(() => {
       if (!finished) {
         finished = true;
         cleanup?.();

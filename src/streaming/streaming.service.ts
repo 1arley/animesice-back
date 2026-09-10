@@ -101,7 +101,7 @@ export class StreamingService {
   onJobComplete(
     jobId: string,
     listener: (job: ExtractionJob) => void,
-  ): () => void {
+  ): Promise<() => void> {
     return this.extractionJobs.onComplete(jobId, listener);
   }
 
@@ -659,16 +659,9 @@ export class StreamingService {
       if (!dead) return null; // vídeo já existe e está vivo
     }
 
-    // Verifica se já existe um job em andamento
-    const existing = this.extractionJobs.findByEpisode(
-      animeSlug,
-      episodeNumber,
-      season,
-    );
-    if (existing) return { jobId: existing.id };
-
-    // Dispara extração assíncrona
-    const job = this.extractionJobs.submit(
+    // Cria ou reclama o job persistido. O claim é atômico: em múltiplas
+    // réplicas só uma executa; após queda, um lease vencido pode ser retomado.
+    const job = await this.extractionJobs.submit(
       animeSlug,
       episodeNumber,
       season,
@@ -702,7 +695,7 @@ export class StreamingService {
     result: StreamSourceResponse | null;
     error: string | null;
   } | null> {
-    const job = this.extractionJobs.getJob(jobId);
+    const job = await this.extractionJobs.getJob(jobId);
     if (!job) return null;
 
     if (

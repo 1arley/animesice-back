@@ -689,6 +689,29 @@ model WatchtowerJob {
   @@index([type, status])
 }
 
+/// Extrações iniciadas pelo player. Diferente da fila Watchtower, esta fila é
+/// respondida em tempo real pelo endpoint de streaming e precisa sobreviver a
+/// reinícios e a múltiplas réplicas da API.
+model StreamExtractionJob {
+  id            String   @id @default(uuid())
+  activeKey     String?  @unique
+  animeSlug     String
+  episodeNumber Int
+  season        Int
+  status        String   @default("pending")
+  videoUrl      String?
+  playerEmbed   String?
+  error         String?
+  lockedBy      String?
+  lockedUntil   DateTime?
+  createdAt     DateTime @default(now())
+  completedAt   DateTime?
+  updatedAt     DateTime @updatedAt
+
+  @@index([animeSlug, episodeNumber, season, status])
+  @@index([status, lockedUntil])
+}
+
 /// Saúde por fonte (adapter de scrape). Watchtower prioriza fontes saudáveis
 /// e desabilita automaticamente as que falham N vezes seguidas (canário 1x/h
 /// reabilita).
