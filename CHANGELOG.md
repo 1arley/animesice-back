@@ -1,3 +1,56 @@
+# [1.28.0](https://github.com/1arley/animesice-back/compare/v1.27.2...v1.28.0) (2026-09-09)
+
+
+### Bug Fixes
+
+* **watchtower:** sync adult catalog on startup ([089315f](https://github.com/1arley/animesice-back/commit/089315f514b1af3387ad062a87775e9c602e84f6))
+
+
+### Features
+
+* **catalog:** oculta catalogo adulto da vitrine com opt-in na busca ([c9a9bf6](https://github.com/1arley/animesice-back/commit/c9a9bf6f1d2f88de26f7c940ac999d4668f758ab))
+
+## [1.27.2](https://github.com/1arley/animesice-back/compare/v1.27.1...v1.27.2) (2026-09-08)
+
+
+### Bug Fixes
+
+* **embed:** allow vidcache.net:8161 media port in proxy allowlist ([f27e233](https://github.com/1arley/animesice-back/commit/f27e23364d150cea6d3263f923cf500e5b6484b1))
+
+## [1.27.1](https://github.com/1arley/animesice-back/compare/v1.27.0...v1.27.1) (2026-09-08)
+
+
+### Bug Fixes
+
+* **scrape:** pass outbound proxy to Chromium via playwrightProxy() ([e9731d8](https://github.com/1arley/animesice-back/commit/e9731d8bd1ed0a45206c575ac26c08f0d31224be))
+
+# [1.27.0](https://github.com/1arley/animesice-back/compare/v1.26.0...v1.27.0) (2026-09-08)
+
+
+### Bug Fixes
+
+* **ci:** restore dev CI — episode specs, coverage gate, npm audit ([5af8e9c](https://github.com/1arley/animesice-back/commit/5af8e9ced8591258eb1ce94216c25ac37ca69e10))
+* **scrape:** resolve regressão na extração de player tokens Blogger ([8f66f00](https://github.com/1arley/animesice-back/commit/8f66f008529d9e00d8ee6958df9ae810a0530577)), closes [#42](https://github.com/1arley/animesice-back/issues/42)
+
+
+### Features
+
+* **streaming:** extração assíncrona, browser pool, waits event-based, prefetch ([1bfaf11](https://github.com/1arley/animesice-back/commit/1bfaf1107baba4d3ddae4db54d227d65f8b89925))
+* **streaming:** sse, poll com src, completion callback, max-jobs configuravel ([796da5c](https://github.com/1arley/animesice-back/commit/796da5c053ae07fcd842aa19f752346f48176bfa))
+
+
+### Performance Improvements
+
+* **episode:** merge queries, inject episode numbers, simplify incrementViews ([176a84e](https://github.com/1arley/animesice-back/commit/176a84ea65767507f1298ee4a18293b7fa7cd185))
+* **probe:** expand liveness cache TTL from 5min to 30min ([97db903](https://github.com/1arley/animesice-back/commit/97db903fe770a2a2e8a023ee8a9bfa6d54d63dcd))
+
+# [1.26.0](https://github.com/1arley/animesice-back/compare/v1.25.1...v1.26.0) (2026-09-08)
+
+
+### Features
+
+* **streaming:** add async source extraction endpoint with job polling ([b7c6009](https://github.com/1arley/animesice-back/commit/b7c60091b65b3fcdd60d42fe6b74c37c082223f6))
+
 ## [1.25.1](https://github.com/1arley/animesice-back/compare/v1.25.0...v1.25.1) (2026-09-08)
 
 
