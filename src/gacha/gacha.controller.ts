@@ -12,7 +12,11 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { GachaService } from '@/gacha/gacha.service';
-import { RollGachaDto, SetFeaturedGachaCardDto } from '@/gacha/dto/gacha.dto';
+import {
+  ClaimGachaDto,
+  RollGachaDto,
+  SetFeaturedGachaCardDto,
+} from '@/gacha/dto/gacha.dto';
 import { JwtAuthGuard } from '@/auth/jwt-auth.guard';
 import { VerifiedGuard } from '@/auth/verified.guard';
 import { RolesGuard } from '@/auth/roles.guard';
@@ -31,9 +35,35 @@ export class GachaController {
   @Post('roll')
   @UseGuards(JwtAuthGuard, VerifiedGuard)
   @ApiBearerAuth('JWT-auth')
-  @ApiOperation({ summary: 'Roll diário do gacha (1/dia)' })
+  @ApiOperation({
+    summary: 'Roll diário do gacha (legado: spin + claim imediato)',
+  })
   roll(@Req() req: AuthenticatedRequest, @Body() dto: RollGachaDto) {
     return this.gachaService.roll(req.user.id, dto.turnstileToken);
+  }
+
+  @Post('spin')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Gira preview (5/hora, sem ownership)' })
+  spin(@Req() req: AuthenticatedRequest) {
+    return this.gachaService.spin(req.user.id);
+  }
+
+  @Post('claim')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Resgata preview (1 a cada 12h)' })
+  claim(@Req() req: AuthenticatedRequest, @Body() dto: ClaimGachaDto) {
+    return this.gachaService.claim(req.user.id, dto.spinId, dto.turnstileToken);
+  }
+
+  @Get('spins')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Previews da hora atual' })
+  spins(@Req() req: AuthenticatedRequest) {
+    return this.gachaService.spins(req.user.id);
   }
 
   @Get('status')

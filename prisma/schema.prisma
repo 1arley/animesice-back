@@ -152,6 +152,9 @@ model User {
   featuredUserCardId     String?                  @unique
   featuredUserCard       UserCard?                @relation("FeaturedUserCard", fields: [featuredUserCardId], references: [id], onDelete: SetNull)
   gachaRollDays           GachaRollDay[]
+  gachaSpins              GachaSpin[]
+  gachaClaimLock          GachaClaimLock?
+  gachaBypasses           GachaBypass[]
   posts                   Post[]
   postLikes               PostLike[]
   postComments            PostComment[]
@@ -786,6 +789,7 @@ model Card {
   anime                Anime?      @relation(fields: [animeId], references: [id], onDelete: SetNull)
   animeTitle           String?
   owners               UserCard[]
+  spins                GachaSpin[]
   editionCounter       Int         @default(0)
   createdAt            DateTime    @default(now())
   updatedAt            DateTime    @updatedAt
@@ -820,4 +824,45 @@ model GachaRollDay {
   day    DateTime @db.Date
 
   @@id([userId, day])
+}
+
+/// Preview de giro — sorteio sem ownership. Só vira UserCard no claim.
+model GachaSpin {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  hour      DateTime  @db.Timestamptz(6)
+  slot      Int
+  cardId    String
+  card      Card      @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  condition Float
+  foil      String    @default("NORMAL")
+  value     Int
+  claimedAt DateTime? @db.Timestamptz(6)
+  expiresAt DateTime  @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@unique([userId, hour, slot])
+  @@index([userId, createdAt(sort: Desc)])
+}
+
+/// Lock de 12h após claim — 1 claim por janela.
+model GachaClaimLock {
+  userId      String   @id
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lockedUntil DateTime @db.Timestamptz(6)
+}
+
+/// Intenção de bypass via LivePix — uso único por reference.
+model GachaBypass {
+  reference String   @id
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount    Int
+  status    String   @default("PENDING")
+  expiresAt DateTime @db.Timestamptz(6)
+  paidAt    DateTime? @db.Timestamptz(6)
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([userId, status])
 }

@@ -8,12 +8,16 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '@/prisma/prisma.service';
 import { TurnstileService } from '@/auth/turnstile/turnstile.service';
 import {
+  GACHA_BYPASS_PRICE_CENTS,
+  GACHA_CLAIM_LOCK_MS,
   GACHA_FOIL_WEIGHTS,
   GACHA_PITY_DAYS,
   GACHA_PITY_WEIGHTS,
   GACHA_ROLLS_PER_DAY,
+  GACHA_SPINS_PER_HOUR,
   GACHA_TIER_WEIGHTS,
   GACHA_TIERS,
+  GachaFoil,
   GachaTier,
   cardValue,
   conditionLabel,
@@ -22,6 +26,7 @@ import {
 } from '@/gacha/gacha.constants';
 
 const DAY_MS = 86_400_000;
+const HOUR_MS = 3_600_000;
 const EPIC_RARITIES = ['EPICA', 'LENDARIA', 'MITICA', 'GALACTICA'];
 
 const PULL_SELECT = {
@@ -50,6 +55,29 @@ const PULL_SELECT = {
 
 type Pull = Prisma.UserCardGetPayload<{ select: typeof PULL_SELECT }>;
 
+const SPIN_SELECT = {
+  id: true,
+  hour: true,
+  slot: true,
+  condition: true,
+  foil: true,
+  value: true,
+  claimedAt: true,
+  expiresAt: true,
+  createdAt: true,
+  card: {
+    select: {
+      id: true,
+      name: true,
+      image: true,
+      rarity: true,
+      favourites: true,
+      animeId: true,
+      animeTitle: true,
+    },
+  },
+} satisfies Prisma.GachaSpinSelect;
+
 @Injectable()
 export class GachaService {
   private readonly logger = new Logger(GachaService.name);
@@ -66,12 +94,14 @@ export class GachaService {
     return start;
   }
 
-  async status(userId: string) {
-    const start = this.dayStartUtc();
-    const [today, lastEpic, first] = await this.prisma.$transaction([
-      this.prisma.gachaRollDay.count({
-        where: { userId, day: start },
-      }),
+  private hourStartUtc(now = new Date()): Date {
+    const start = new Date(now);
+    start.setUTCMinutes(0, 0, 0);
+    return start;
+  }
+
+  private async pityState(userId: string) {
+    const [lastEpic, first] = await this.prisma.$transaction([
       this.prisma.userCard.findFirst({
         where: { userId, card: { rarity: { in: EPIC_RARITIES } } },
         orderBy: { obtainedAt: 'desc' },
@@ -83,14 +113,63 @@ export class GachaService {
         select: { obtainedAt: true },
       }),
     ]);
-
     const since = lastEpic?.obtainedAt ?? first?.obtainedAt ?? null;
+    const daysSince = since
+      ? Math.floor((Date.now() - since.getTime()) / DAY_MS)
+      : 0;
+    return {
+      pityDaysLeft: since
+        ? Math.max(0, GACHA_PITY_DAYS - daysSince)
+        : GACHA_PITY_DAYS,
+      pityDue: since !== null && daysSince >= GACHA_PITY_DAYS,
+    };
+  }
+
+  private async claimState(userId: string) {
+    const lock = await this.prisma.gachaClaimLock.findUnique({
+      where: { userId },
+    });
+    const locked = lock !== null && lock.lockedUntil.getTime() > Date.now();
+    return {
+      canClaim: !locked,
+      nextClaimAt: locked ? lock.lockedUntil.toISOString() : null,
+    };
+  }
+
+  async status(userId: string) {
+    const start = this.dayStartUtc();
+    const hour = this.hourStartUtc();
+    const [today, spinsUsed, claim, pity, first] =
+      await this.prisma.$transaction([
+        this.prisma.gachaRollDay.count({
+          where: { userId, day: start },
+        }),
+        this.prisma.gachaSpin.count({
+          where: { userId, hour },
+        }),
+        this.prisma.gachaClaimLock.findUnique({ where: { userId } }),
+        this.prisma.userCard.findFirst({
+          where: { userId, card: { rarity: { in: EPIC_RARITIES } } },
+          orderBy: { obtainedAt: 'desc' },
+          select: { obtainedAt: true },
+        }),
+        this.prisma.userCard.findFirst({
+          where: { userId },
+          orderBy: { obtainedAt: 'asc' },
+          select: { obtainedAt: true },
+        }),
+      ]);
+
+    const since = pity?.obtainedAt ?? first?.obtainedAt ?? null;
     const daysSince = since
       ? Math.floor((Date.now() - since.getTime()) / DAY_MS)
       : 0;
     const pityDaysLeft = since
       ? Math.max(0, GACHA_PITY_DAYS - daysSince)
       : GACHA_PITY_DAYS;
+
+    const locked = claim !== null && claim.lockedUntil.getTime() > Date.now();
+    const spinsLeft = Math.max(0, GACHA_SPINS_PER_HOUR - spinsUsed);
 
     return {
       canRoll: today < GACHA_ROLLS_PER_DAY,
@@ -99,22 +178,182 @@ export class GachaService {
         today < GACHA_ROLLS_PER_DAY
           ? null
           : new Date(start.getTime() + DAY_MS).toISOString(),
+      spinsLeft,
+      canSpin: spinsLeft > 0,
+      nextSpinAt:
+        spinsLeft > 0 ? null : new Date(hour.getTime() + HOUR_MS).toISOString(),
+      canClaim: !locked,
+      nextClaimAt: locked ? claim.lockedUntil.toISOString() : null,
+      claimWarning: locked
+        ? 'Você já guardou uma carta. Girar continua liberado, mas a próxima só pode ser guardada após o fim do bloqueio.'
+        : null,
+      bypassPriceCents: locked ? GACHA_BYPASS_PRICE_CENTS : null,
       pityDaysLeft,
       pityDue: since !== null && daysSince >= GACHA_PITY_DAYS,
     };
   }
 
-  async roll(userId: string, turnstileToken?: string) {
-    await this.turnstile.verify(turnstileToken);
+  async spins(userId: string) {
+    const hour = this.hourStartUtc();
+    const spins = await this.prisma.gachaSpin.findMany({
+      where: { userId, hour },
+      orderBy: { createdAt: 'asc' },
+      select: SPIN_SELECT,
+    });
+    return spins.map((spin) => ({
+      ...spin,
+      conditionLabel: conditionLabel(spin.condition),
+    }));
+  }
 
-    const state = await this.status(userId);
-    if (!state.canRoll) {
-      throw new ForbiddenException('Você já fez seu roll hoje. Volte amanhã.');
+  async spin(userId: string) {
+    const hour = this.hourStartUtc();
+
+    const pity = await this.pityState(userId);
+    const tier = await this.pickTierWithStock(
+      pity.pityDue ? GACHA_PITY_WEIGHTS : GACHA_TIER_WEIGHTS,
+    );
+    const card = await this.drawFromTier(tier);
+
+    const condition = Math.random();
+    const foil = pickWeighted(GACHA_FOIL_WEIGHTS);
+    // ponytail: slot único (userId,hour,slot) torna giro concorrente
+    // race-safe; P2002 = slot ocupado, tenta o próximo.
+    for (let slot = 0; slot < GACHA_SPINS_PER_HOUR; slot++) {
+      try {
+        const spin = await this.prisma.gachaSpin.create({
+          data: {
+            userId,
+            hour,
+            slot,
+            cardId: card.id,
+            condition,
+            foil,
+            value: cardValue(tier, condition, foil, 1),
+            expiresAt: new Date(hour.getTime() + HOUR_MS),
+          },
+          select: SPIN_SELECT,
+        });
+        return {
+          ...spin,
+          conditionLabel: conditionLabel(spin.condition),
+          pityDue: pity.pityDue,
+        };
+      } catch (error) {
+        if ((error as { code?: string }).code !== 'P2002') throw error;
+      }
+    }
+    throw new ForbiddenException(
+      'Você já usou seus 5 giros desta hora. Volte na próxima hora.',
+    );
+  }
+
+  async claim(userId: string, spinId: string, turnstileToken?: string) {
+    await this.turnstile.verify(turnstileToken);
+    return this.doClaim(userId, spinId);
+  }
+
+  private async doClaim(userId: string, spinId: string) {
+    const spin = await this.prisma.gachaSpin.findFirst({
+      where: { id: spinId, userId },
+      select: SPIN_SELECT,
+    });
+    if (!spin || spin.claimedAt !== null) {
+      throw new NotFoundException('Preview expirada ou já resgatada.');
+    }
+    if (spin.expiresAt.getTime() <= Date.now()) {
+      throw new ForbiddenException('Preview expirou na virada da hora.');
     }
 
-    const tier = await this.pickTierWithStock(
-      state.pityDue ? GACHA_PITY_WEIGHTS : GACHA_TIER_WEIGHTS,
-    );
+    const claim = await this.claimState(userId);
+    if (!claim.canClaim) {
+      throw new ForbiddenException(
+        'Você já guardou uma carta nas últimas 12h. Desbloqueie via Pix ou aguarde.',
+      );
+    }
+
+    let pull: Pull;
+    try {
+      pull = await this.prisma.$transaction(async (tx) => {
+        const lock = await tx.gachaClaimLock.findUnique({
+          where: { userId },
+        });
+        if (lock !== null && lock.lockedUntil.getTime() > Date.now()) {
+          throw new ForbiddenException(
+            'Você já guardou uma carta nas últimas 12h.',
+          );
+        }
+        const counter = await tx.card.update({
+          where: { id: spin.card.id },
+          data: { editionCounter: { increment: 1 } },
+          select: { editionCounter: true },
+        });
+        const edition = counter.editionCounter;
+        const created = await tx.userCard.create({
+          data: {
+            userId,
+            cardId: spin.card.id,
+            condition: spin.condition,
+            foil: spin.foil,
+            edition,
+            value: cardValue(
+              spin.card.rarity as GachaTier,
+              spin.condition,
+              spin.foil as GachaFoil,
+              edition,
+            ),
+          },
+          select: PULL_SELECT,
+        });
+        await tx.gachaSpin.update({
+          where: { id: spin.id },
+          data: { claimedAt: new Date() },
+        });
+        await tx.gachaClaimLock.upsert({
+          where: { userId },
+          create: {
+            userId,
+            lockedUntil: new Date(Date.now() + GACHA_CLAIM_LOCK_MS),
+          },
+          update: { lockedUntil: new Date(Date.now() + GACHA_CLAIM_LOCK_MS) },
+        });
+        return created;
+      });
+    } catch (error) {
+      if (error instanceof ForbiddenException) throw error;
+      throw error;
+    }
+
+    if (isEpicTier(pull.card.rarity)) {
+      try {
+        await this.publishPullPost(userId, pull);
+      } catch (error) {
+        this.logger.warn(
+          `publishPullPost falhou p/ user ${userId} pull ${pull.id}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
+
+    return {
+      ...pull,
+      conditionLabel: conditionLabel(pull.condition),
+    };
+  }
+
+  async unlockClaim(userId: string) {
+    const lock = await this.prisma.gachaClaimLock.findUnique({
+      where: { userId },
+    });
+    if (lock === null || lock.lockedUntil.getTime() <= Date.now()) {
+      return { unlocked: false as const };
+    }
+    await this.prisma.gachaClaimLock.delete({ where: { userId } });
+    return { unlocked: true as const };
+  }
+
+  private async drawFromTier(tier: GachaTier) {
     const poolSize = await this.prisma.card.count({
       where: { rarity: tier },
     });
@@ -134,33 +373,23 @@ export class GachaService {
     if (!card) {
       throw new NotFoundException('Pool do gacha vazio. Seed pendente.');
     }
+    return card;
+  }
 
-    const condition = Math.random();
-    const foil = pickWeighted(GACHA_FOIL_WEIGHTS);
+  async roll(userId: string, turnstileToken?: string) {
+    await this.turnstile.verify(turnstileToken);
 
-    let pull: Pull;
+    // Compat legada: 1 roll = spin + claim imediato.
+    const state = await this.status(userId);
+    if (!state.canRoll) {
+      throw new ForbiddenException('Você já fez seu roll hoje. Volte amanhã.');
+    }
+    const preview = await this.spin(userId);
+    const pull = await this.doClaim(userId, preview.id);
+
     try {
-      pull = await this.prisma.$transaction(async (tx) => {
-        await tx.gachaRollDay.create({
-          data: { userId, day: this.dayStartUtc() },
-        });
-        const counter = await tx.card.update({
-          where: { id: card.id },
-          data: { editionCounter: { increment: 1 } },
-          select: { editionCounter: true },
-        });
-        const edition = counter.editionCounter;
-        return tx.userCard.create({
-          data: {
-            userId,
-            cardId: card.id,
-            condition,
-            foil,
-            edition,
-            value: cardValue(tier, condition, foil, edition),
-          },
-          select: PULL_SELECT,
-        });
+      await this.prisma.gachaRollDay.create({
+        data: { userId, day: this.dayStartUtc() },
       });
     } catch (error) {
       if ((error as { code?: string }).code === 'P2002') {
@@ -171,24 +400,9 @@ export class GachaService {
       throw error;
     }
 
-    if (isEpicTier(tier)) {
-      // Best-effort pós-commit: falha no post não pode transformar
-      // um roll commitado em 500 (caller retry veria 403 confuso).
-      try {
-        await this.publishPullPost(userId, pull);
-      } catch (error) {
-        this.logger.warn(
-          `publishPullPost falhou p/ user ${userId} pull ${pull.id}: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
-      }
-    }
-
     return {
       ...pull,
-      conditionLabel: conditionLabel(pull.condition),
-      pityDue: state.pityDue,
+      pityDue: preview.pityDue,
     };
   }
 
@@ -531,10 +745,17 @@ export class GachaService {
     });
   }
 
-  adminResetRoll(userId: string) {
-    return this.prisma.gachaRollDay.deleteMany({
-      where: { userId, day: this.dayStartUtc() },
-    });
+  async adminResetRoll(userId: string) {
+    const [day, spins, lock] = await this.prisma.$transaction([
+      this.prisma.gachaRollDay.deleteMany({
+        where: { userId, day: this.dayStartUtc() },
+      }),
+      this.prisma.gachaSpin.deleteMany({
+        where: { userId, hour: this.hourStartUtc() },
+      }),
+      this.prisma.gachaClaimLock.deleteMany({ where: { userId } }),
+    ]);
+    return { day, spins, lock };
   }
 
   private async publishPullPost(userId: string, pull: Pull) {

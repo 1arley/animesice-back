@@ -30,6 +30,26 @@ describe('GachaService', () => {
       create: jest.fn(),
       deleteMany: jest.fn(),
     },
+    gachaSpin: {
+      count: jest.fn(),
+      create: jest.fn(),
+      findFirst: jest.fn(),
+      findMany: jest.fn(),
+      update: jest.fn(),
+      deleteMany: jest.fn(),
+    },
+    gachaClaimLock: {
+      findUnique: jest.fn(),
+      upsert: jest.fn(),
+      delete: jest.fn(),
+      deleteMany: jest.fn(),
+    },
+    gachaBypass: {
+      findFirst: jest.fn(),
+      findUnique: jest.fn(),
+      upsert: jest.fn(),
+      updateMany: jest.fn(),
+    },
     card: {
       count: jest.fn(),
       findFirst: jest.fn(),
@@ -67,6 +87,20 @@ describe('GachaService', () => {
     favourites: 5000,
   };
 
+  function mockPullCreate(pullId = 'p1', rarity: string = 'COMUM') {
+    mockPrisma.userCard.create.mockImplementation((args: { data: object }) =>
+      Promise.resolve({
+        id: pullId,
+        obtainedAt: new Date(),
+        user: { id: 'u1', name: 'U', userName: 'u', avatar: null },
+        card: { ...cardComum, rarity },
+        ...args.data,
+      }),
+    );
+    mockPrisma.gachaSpin.update.mockResolvedValue({});
+    mockPrisma.gachaClaimLock.upsert.mockResolvedValue({});
+  }
+
   beforeEach(async () => {
     jest.resetAllMocks();
     mockTurnstile.verify.mockResolvedValue(undefined);
@@ -75,6 +109,8 @@ describe('GachaService', () => {
         typeof input === 'function' ? input(mockPrisma) : Promise.all(input),
     );
     mockPrisma.gachaRollDay.count.mockResolvedValue(0);
+    mockPrisma.gachaSpin.count.mockResolvedValue(0);
+    mockPrisma.gachaClaimLock.findUnique.mockResolvedValue(null);
     mockPrisma.card.update.mockResolvedValue({ editionCounter: 1 });
 
     const module: TestingModule = await Test.createTestingModule({
@@ -160,35 +196,55 @@ describe('GachaService', () => {
   });
 
   describe('status', () => {
-    it('libera roll com pity cheio quando nunca rolou', async () => {
-      mockPrisma.userCard.count.mockResolvedValue(0);
+    it('libera spin e claim com pity inicial', async () => {
       mockPrisma.userCard.findFirst.mockResolvedValue(null);
 
       const result = await service.status('u1');
 
-      expect(result.canRoll).toBe(true);
-      expect(result.rollsLeft).toBe(1);
-      expect(result.nextRollAt).toBeNull();
+      expect(result.canSpin).toBe(true);
+      expect(result.spinsLeft).toBe(5);
+      expect(result.nextSpinAt).toBeNull();
+      expect(result.canClaim).toBe(true);
+      expect(result.nextClaimAt).toBeNull();
+      expect(result.claimWarning).toBeNull();
+      expect(result.bypassPriceCents).toBeNull();
       expect(result.pityDaysLeft).toBe(30);
       expect(result.pityDue).toBe(false);
     });
 
-    it('bloqueia segundo roll no mesmo dia com nextRollAt', async () => {
-      mockPrisma.gachaRollDay.count.mockResolvedValue(1);
+    it('esgota spins da hora com nextSpinAt', async () => {
+      mockPrisma.gachaSpin.count.mockResolvedValue(5);
       mockPrisma.userCard.findFirst.mockResolvedValue({
         obtainedAt: new Date(),
       });
 
       const result = await service.status('u1');
 
-      expect(result.canRoll).toBe(false);
-      expect(result.rollsLeft).toBe(0);
-      expect(result.nextRollAt).not.toBeNull();
+      expect(result.canSpin).toBe(false);
+      expect(result.spinsLeft).toBe(0);
+      expect(result.nextSpinAt).not.toBeNull();
+    });
+
+    it('marca lock de claim com aviso e preço de bypass', async () => {
+      mockPrisma.gachaClaimLock.findUnique.mockResolvedValue({
+        userId: 'u1',
+        lockedUntil: new Date(Date.now() + 6 * 3_600_000),
+      });
+      mockPrisma.userCard.findFirst.mockResolvedValue({
+        obtainedAt: new Date(),
+      });
+
+      const result = await service.status('u1');
+
+      expect(result.canClaim).toBe(false);
+      expect(result.nextClaimAt).not.toBeNull();
+      expect(result.claimWarning).toContain('Girar continua liberado');
+      expect(result.bypassPriceCents).toBe(299);
+      expect(result.canSpin).toBe(true);
     });
 
     it('marca pityDue após 30 dias sem Épica+', async () => {
       const old = new Date(Date.now() - 40 * 86_400_000);
-      mockPrisma.userCard.count.mockResolvedValue(0);
       mockPrisma.userCard.findFirst.mockResolvedValue({ obtainedAt: old });
 
       const result = await service.status('u1');
@@ -198,7 +254,7 @@ describe('GachaService', () => {
     });
   });
 
-  describe('roll', () => {
+  describe('spin', () => {
     function stockOnly(rarity: string, size = 5) {
       mockPrisma.card.count.mockImplementation(
         (args: { where: { rarity: string } }) =>
@@ -207,7 +263,215 @@ describe('GachaService', () => {
     }
 
     function freshAccount() {
-      mockPrisma.userCard.count.mockResolvedValue(0);
+      mockPrisma.userCard.findFirst.mockResolvedValue(null);
+    }
+
+    it('cria preview sem ownership (sem editionCounter, sem UserCard)', async () => {
+      freshAccount();
+      stockOnly('COMUM');
+      mockPrisma.card.findFirst.mockResolvedValue(cardComum);
+      mockPrisma.gachaSpin.create.mockImplementation((args: { data: object }) =>
+        Promise.resolve({
+          id: 's1',
+          slot: 0,
+          hour: new Date(),
+          claimedAt: null,
+          expiresAt: new Date(Date.now() + 3_600_000),
+          createdAt: new Date(),
+          card: cardComum,
+          ...args.data,
+        }),
+      );
+
+      const preview = await service.spin('u1');
+
+      expect(preview.card.id).toBe('w1');
+      expect(preview.conditionLabel).toBeDefined();
+      expect(mockPrisma.gachaSpin.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ userId: 'u1', slot: 0 }),
+        }),
+      );
+      expect(mockPrisma.card.update).not.toHaveBeenCalled();
+      expect(mockPrisma.userCard.create).not.toHaveBeenCalled();
+      expect(mockPrisma.post.create).not.toHaveBeenCalled();
+    });
+
+    it('barra sexto spin da hora', async () => {
+      freshAccount();
+      stockOnly('COMUM');
+      mockPrisma.card.findFirst.mockResolvedValue(cardComum);
+      mockPrisma.gachaSpin.create.mockRejectedValue({ code: 'P2002' });
+
+      await expect(service.spin('u1')).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      expect(mockPrisma.gachaSpin.create).toHaveBeenCalledTimes(5);
+    });
+
+    it('pity força tier Épica+ no preview', async () => {
+      const old = new Date(Date.now() - 40 * 86_400_000);
+      mockPrisma.userCard.findFirst.mockResolvedValue({ obtainedAt: old });
+      stockOnly('LENDARIA');
+      mockPrisma.card.findFirst.mockResolvedValue({
+        ...cardEpica,
+        id: 'w9',
+        rarity: 'LENDARIA',
+      });
+      mockPrisma.gachaSpin.create.mockImplementation((args: { data: object }) =>
+        Promise.resolve({
+          id: 's2',
+          slot: 0,
+          hour: new Date(),
+          claimedAt: null,
+          expiresAt: new Date(Date.now() + 3_600_000),
+          createdAt: new Date(),
+          card: { ...cardEpica, id: 'w9', rarity: 'LENDARIA' },
+          ...args.data,
+        }),
+      );
+
+      const preview = await service.spin('u1');
+
+      expect(preview.pityDue).toBe(true);
+      expect(preview.card.rarity).toBe('LENDARIA');
+    });
+
+    it('falha quando pool está vazio', async () => {
+      freshAccount();
+      mockPrisma.card.count.mockResolvedValue(0);
+
+      await expect(service.spin('u1')).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+    });
+  });
+
+  describe('claim', () => {
+    const previewComum = {
+      id: 's1',
+      slot: 0,
+      hour: new Date(),
+      condition: 0.05,
+      foil: 'NORMAL',
+      value: 30,
+      claimedAt: null,
+      expiresAt: new Date(Date.now() + 3_600_000),
+      createdAt: new Date(),
+      card: cardComum,
+    };
+
+    function mockClaimCreate(pullId = 'p1', rarity: string = 'COMUM') {
+      mockPullCreate(pullId, rarity);
+    }
+
+    it('resgata preview criando UserCard e lock de 12h', async () => {
+      mockPrisma.gachaSpin.findFirst.mockResolvedValue(previewComum);
+      mockClaimCreate();
+
+      const pull = await service.claim('u1', 's1', 'token');
+
+      expect(mockTurnstile.verify).toHaveBeenCalledWith('token');
+      expect(pull.card.id).toBe('w1');
+      expect(pull.edition).toBe(1);
+      expect(pull.conditionLabel).toBeDefined();
+      expect(mockPrisma.gachaClaimLock.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { userId: 'u1' },
+          create: expect.objectContaining({ userId: 'u1' }),
+        }),
+      );
+      expect(mockPrisma.post.create).not.toHaveBeenCalled();
+    });
+
+    it('publica Épica+ no feed quando privacidade permite', async () => {
+      mockPrisma.gachaSpin.findFirst.mockResolvedValue({
+        ...previewComum,
+        id: 's2',
+        card: cardEpica,
+      });
+      mockClaimCreate('p2', 'EPICA');
+      mockPrisma.privacySettings.findUnique.mockResolvedValue({
+        showGacha: true,
+      });
+      mockPrisma.post.create.mockResolvedValue({ id: 'post1' });
+
+      const pull = await service.claim('u1', 's2');
+
+      expect(pull.card.rarity).toBe('EPICA');
+      expect(mockPrisma.post.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ userId: 'u1', kind: 'GACHA_PULL' }),
+        }),
+      );
+    });
+
+    it('barra claim durante lock de 12h', async () => {
+      mockPrisma.gachaSpin.findFirst.mockResolvedValue(previewComum);
+      mockPrisma.gachaClaimLock.findUnique.mockResolvedValue({
+        userId: 'u1',
+        lockedUntil: new Date(Date.now() + 6 * 3_600_000),
+      });
+
+      await expect(service.claim('u1', 's1')).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      expect(mockPrisma.userCard.create).not.toHaveBeenCalled();
+    });
+
+    it('rejeita preview expirada ou já resgatada', async () => {
+      mockPrisma.gachaSpin.findFirst.mockResolvedValue(null);
+      await expect(service.claim('u1', 'ghost')).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+
+      mockPrisma.gachaSpin.findFirst.mockResolvedValue({
+        ...previewComum,
+        claimedAt: new Date(),
+      });
+      await expect(service.claim('u1', 's1')).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+
+      mockPrisma.gachaSpin.findFirst.mockResolvedValue({
+        ...previewComum,
+        expiresAt: new Date(Date.now() - 1000),
+      });
+      await expect(service.claim('u1', 's1')).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+    });
+
+    it('unlockClaim libera lock vigente e retorna false sem lock', async () => {
+      mockPrisma.gachaClaimLock.findUnique.mockResolvedValue({
+        userId: 'u1',
+        lockedUntil: new Date(Date.now() + 6 * 3_600_000),
+      });
+      mockPrisma.gachaClaimLock.delete.mockResolvedValue({});
+
+      await expect(service.unlockClaim('u1')).resolves.toEqual({
+        unlocked: true,
+      });
+      expect(mockPrisma.gachaClaimLock.delete).toHaveBeenCalledWith({
+        where: { userId: 'u1' },
+      });
+
+      mockPrisma.gachaClaimLock.findUnique.mockResolvedValue(null);
+      await expect(service.unlockClaim('u1')).resolves.toEqual({
+        unlocked: false,
+      });
+    });
+  });
+
+  describe('roll (alias legado)', () => {
+    function stockOnly(rarity: string, size = 5) {
+      mockPrisma.card.count.mockImplementation(
+        (args: { where: { rarity: string } }) =>
+          Promise.resolve(args.where.rarity === rarity ? size : 0),
+      );
+    }
+
+    function freshAccount() {
       mockPrisma.userCard.findFirst.mockResolvedValue(null);
     }
 
@@ -224,19 +488,35 @@ describe('GachaService', () => {
       expect(mockPrisma.userCard.create).not.toHaveBeenCalled();
     });
 
-    it('cria pull COMUM sem post no feed', async () => {
+    it('cria pull COMUM via spin+claim sem post no feed', async () => {
       freshAccount();
       stockOnly('COMUM');
       mockPrisma.card.findFirst.mockResolvedValue(cardComum);
-      mockPrisma.userCard.create.mockImplementation((args: { data: object }) =>
+      mockPrisma.gachaSpin.create.mockImplementation((args: { data: object }) =>
         Promise.resolve({
-          id: 'p1',
-          obtainedAt: new Date(),
-          user: { id: 'u1', name: 'U', userName: 'u', avatar: null },
+          id: 's1',
+          slot: 0,
+          hour: new Date(),
+          claimedAt: null,
+          expiresAt: new Date(Date.now() + 3_600_000),
+          createdAt: new Date(),
           card: cardComum,
           ...args.data,
         }),
       );
+      mockPrisma.gachaSpin.findFirst.mockResolvedValue({
+        id: 's1',
+        slot: 0,
+        hour: new Date(),
+        condition: 0.05,
+        foil: 'NORMAL',
+        value: 30,
+        claimedAt: null,
+        expiresAt: new Date(Date.now() + 3_600_000),
+        createdAt: new Date(),
+        card: cardComum,
+      });
+      mockPullCreate();
 
       const pull = await service.roll('u1');
 
@@ -244,106 +524,39 @@ describe('GachaService', () => {
       expect(pull.edition).toBe(1);
       expect(pull.conditionLabel).toBeDefined();
       expect(mockPrisma.gachaRollDay.create).toHaveBeenCalled();
-      expect(mockPrisma.card.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: { editionCounter: { increment: 1 } },
-        }),
-      );
       expect(mockPrisma.post.create).not.toHaveBeenCalled();
     });
 
-    it('publica Épica+ no feed quando privacidade permite', async () => {
-      freshAccount();
-      stockOnly('EPICA');
-      mockPrisma.card.findFirst.mockResolvedValue(cardEpica);
-      mockPrisma.userCard.create.mockImplementation((args: { data: object }) =>
-        Promise.resolve({
-          id: 'p2',
-          obtainedAt: new Date(),
-          user: { id: 'u1', name: 'U', userName: 'u', avatar: null },
-          card: cardEpica,
-          ...args.data,
-        }),
-      );
-      mockPrisma.privacySettings.findUnique.mockResolvedValue({
-        showGacha: true,
-      });
-      mockPrisma.post.create.mockResolvedValue({ id: 'post1' });
-
-      const pull = await service.roll('u1');
-
-      expect(pull.card.rarity).toBe('EPICA');
-      expect(mockPrisma.post.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ userId: 'u1', kind: 'GACHA_PULL' }),
-        }),
-      );
-    });
-
-    it('pula feed quando usuário escondeu pulls', async () => {
-      freshAccount();
-      stockOnly('EPICA');
-      mockPrisma.card.findFirst.mockResolvedValue(cardEpica);
-      mockPrisma.userCard.create.mockImplementation((args: { data: object }) =>
-        Promise.resolve({
-          id: 'p3',
-          obtainedAt: new Date(),
-          user: { id: 'u1', name: 'U', userName: 'u', avatar: null },
-          card: cardEpica,
-          ...args.data,
-        }),
-      );
-      mockPrisma.privacySettings.findUnique.mockResolvedValue({
-        showGacha: false,
-      });
-
-      await service.roll('u1');
-
-      expect(mockPrisma.post.create).not.toHaveBeenCalled();
-    });
-
-    it('pity força tier Épica+', async () => {
-      const old = new Date(Date.now() - 40 * 86_400_000);
-      mockPrisma.userCard.count.mockResolvedValue(0);
-      mockPrisma.userCard.findFirst.mockResolvedValue({ obtainedAt: old });
-      stockOnly('LENDARIA');
-      mockPrisma.card.findFirst.mockResolvedValue({
-        ...cardEpica,
-        id: 'w9',
-        rarity: 'LENDARIA',
-      });
-      mockPrisma.userCard.create.mockImplementation((args: { data: object }) =>
-        Promise.resolve({
-          id: 'p4',
-          obtainedAt: new Date(),
-          user: { id: 'u1', name: 'U', userName: 'u', avatar: null },
-          card: { ...cardEpica, id: 'w9', rarity: 'LENDARIA' },
-          ...args.data,
-        }),
-      );
-      mockPrisma.privacySettings.findUnique.mockResolvedValue(null);
-
-      const pull = await service.roll('u1');
-
-      expect(pull.pityDue).toBe(true);
-      expect(pull.card.rarity).toBe('LENDARIA');
-      expect(mockPrisma.post.create).toHaveBeenCalled();
-    });
-
-    it('falha quando pool está vazio', async () => {
-      freshAccount();
-      mockPrisma.card.count.mockResolvedValue(0);
-
-      await expect(service.roll('u1')).rejects.toBeInstanceOf(
-        NotFoundException,
-      );
-    });
-
-    it('rejeita P2002 como ForbiddenException', async () => {
+    it('rejeita P2002 do dia como ForbiddenException', async () => {
       freshAccount();
       stockOnly('COMUM');
       mockPrisma.card.findFirst.mockResolvedValue(cardComum);
-      mockPrisma.userCard.create.mockRejectedValueOnce({ code: 'P2002' });
+      mockPrisma.gachaSpin.create.mockImplementation((args: { data: object }) =>
+        Promise.resolve({
+          id: 's1',
+          slot: 0,
+          hour: new Date(),
+          claimedAt: null,
+          expiresAt: new Date(Date.now() + 3_600_000),
+          createdAt: new Date(),
+          card: cardComum,
+          ...args.data,
+        }),
+      );
+      mockPrisma.gachaSpin.findFirst.mockResolvedValue({
+        id: 's1',
+        slot: 0,
+        hour: new Date(),
+        condition: 0.05,
+        foil: 'NORMAL',
+        value: 30,
+        claimedAt: null,
+        expiresAt: new Date(Date.now() + 3_600_000),
+        createdAt: new Date(),
+        card: cardComum,
+      });
+      mockPullCreate();
+      mockPrisma.gachaRollDay.create.mockRejectedValueOnce({ code: 'P2002' });
 
       await expect(service.roll('u1')).rejects.toBeInstanceOf(
         ForbiddenException,
@@ -354,15 +567,31 @@ describe('GachaService', () => {
       freshAccount();
       stockOnly('EPICA');
       mockPrisma.card.findFirst.mockResolvedValue(cardEpica);
-      mockPrisma.userCard.create.mockImplementation((args: { data: object }) =>
+      mockPrisma.gachaSpin.create.mockImplementation((args: { data: object }) =>
         Promise.resolve({
-          id: 'p9',
-          obtainedAt: new Date(),
-          user: { id: 'u1', name: 'U', userName: 'u', avatar: null },
+          id: 's9',
+          slot: 0,
+          hour: new Date(),
+          claimedAt: null,
+          expiresAt: new Date(Date.now() + 3_600_000),
+          createdAt: new Date(),
           card: cardEpica,
           ...args.data,
         }),
       );
+      mockPrisma.gachaSpin.findFirst.mockResolvedValue({
+        id: 's9',
+        slot: 0,
+        hour: new Date(),
+        condition: 0.05,
+        foil: 'NORMAL',
+        value: 30,
+        claimedAt: null,
+        expiresAt: new Date(Date.now() + 3_600_000),
+        createdAt: new Date(),
+        card: cardEpica,
+      });
+      mockPullCreate('p9', 'EPICA');
       mockPrisma.privacySettings.findUnique.mockResolvedValue(null);
       mockPrisma.post.create.mockRejectedValue(new Error('boom'));
 
@@ -656,6 +885,12 @@ describe('GachaService', () => {
       await service.adminResetRoll('u1');
       expect(mockPrisma.gachaRollDay.deleteMany).toHaveBeenCalledWith({
         where: { userId: 'u1', day: expect.any(Date) },
+      });
+      expect(mockPrisma.gachaSpin.deleteMany).toHaveBeenCalledWith({
+        where: { userId: 'u1', hour: expect.any(Date) },
+      });
+      expect(mockPrisma.gachaClaimLock.deleteMany).toHaveBeenCalledWith({
+        where: { userId: 'u1' },
       });
     });
   });

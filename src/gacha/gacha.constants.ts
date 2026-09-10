@@ -1,6 +1,10 @@
 export const GACHA_ROLLS_PER_DAY = 1;
 export const GACHA_PITY_DAYS = 30;
 export const GACHA_POOL_PER_ANIME = 8;
+export const GACHA_SPINS_PER_HOUR = 5;
+export const GACHA_CLAIM_LOCK_MS = 12 * 60 * 60 * 1000;
+export const GACHA_BYPASS_PRICE_CENTS = 299;
+export const GACHA_BYPASS_TTL_MS = 30 * 60 * 1000;
 
 export const GACHA_TIERS = [
   'COMUM',

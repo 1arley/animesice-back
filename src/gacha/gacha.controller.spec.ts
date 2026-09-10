@@ -4,6 +4,9 @@ function makeMocks() {
   return {
     gachaService: {
       roll: jest.fn(),
+      spin: jest.fn(),
+      claim: jest.fn(),
+      spins: jest.fn(),
       status: jest.fn(),
       collection: jest.fn(),
       featured: jest.fn(),
@@ -44,6 +47,25 @@ describe('GachaController', () => {
       });
       expect(m.gachaService.roll).toHaveBeenCalledWith('u1', 'tok');
       expect(result).toEqual({ ok: true });
+    });
+  });
+
+  describe('spin and claim', () => {
+    it('delega spin, claim e spins com userId', async () => {
+      m.gachaService.spin.mockResolvedValue({ ok: true });
+      m.gachaService.claim.mockResolvedValue({ ok: true });
+      m.gachaService.spins.mockResolvedValue([]);
+
+      await controller.spin(req('u1'));
+      await controller.claim(req('u1'), {
+        spinId: 's1',
+        turnstileToken: 'tok',
+      });
+      await controller.spins(req('u1'));
+
+      expect(m.gachaService.spin).toHaveBeenCalledWith('u1');
+      expect(m.gachaService.claim).toHaveBeenCalledWith('u1', 's1', 'tok');
+      expect(m.gachaService.spins).toHaveBeenCalledWith('u1');
     });
   });
 
