@@ -1,5 +1,6 @@
 import {
   ForbiddenException,
+  GoneException,
   Injectable,
   Logger,
   NotFoundException,
@@ -13,7 +14,6 @@ import {
   GACHA_FOIL_WEIGHTS,
   GACHA_PITY_DAYS,
   GACHA_PITY_WEIGHTS,
-  GACHA_ROLLS_PER_DAY,
   GACHA_SPINS_PER_HOUR,
   GACHA_TIER_WEIGHTS,
   GACHA_TIERS,
@@ -74,6 +74,9 @@ const SPIN_SELECT = {
       favourites: true,
       animeId: true,
       animeTitle: true,
+      anime: {
+        select: { id: true, slug: true, title: true, coverImage: true },
+      },
     },
   },
 } satisfies Prisma.GachaSpinSelect;
@@ -137,28 +140,21 @@ export class GachaService {
   }
 
   async status(userId: string) {
-    const start = this.dayStartUtc();
     const hour = this.hourStartUtc();
-    const [today, spinsUsed, claim, pity, first] =
-      await this.prisma.$transaction([
-        this.prisma.gachaRollDay.count({
-          where: { userId, day: start },
-        }),
-        this.prisma.gachaSpin.count({
-          where: { userId, hour },
-        }),
-        this.prisma.gachaClaimLock.findUnique({ where: { userId } }),
-        this.prisma.userCard.findFirst({
-          where: { userId, card: { rarity: { in: EPIC_RARITIES } } },
-          orderBy: { obtainedAt: 'desc' },
-          select: { obtainedAt: true },
-        }),
-        this.prisma.userCard.findFirst({
-          where: { userId },
-          orderBy: { obtainedAt: 'asc' },
-          select: { obtainedAt: true },
-        }),
-      ]);
+    const [spinsUsed, claim, pity, first] = await this.prisma.$transaction([
+      this.prisma.gachaSpin.count({ where: { userId, hour } }),
+      this.prisma.gachaClaimLock.findUnique({ where: { userId } }),
+      this.prisma.userCard.findFirst({
+        where: { userId, card: { rarity: { in: EPIC_RARITIES } } },
+        orderBy: { obtainedAt: 'desc' },
+        select: { obtainedAt: true },
+      }),
+      this.prisma.userCard.findFirst({
+        where: { userId },
+        orderBy: { obtainedAt: 'asc' },
+        select: { obtainedAt: true },
+      }),
+    ]);
 
     const since = pity?.obtainedAt ?? first?.obtainedAt ?? null;
     const daysSince = since
@@ -172,12 +168,9 @@ export class GachaService {
     const spinsLeft = Math.max(0, GACHA_SPINS_PER_HOUR - spinsUsed);
 
     return {
-      canRoll: today < GACHA_ROLLS_PER_DAY,
-      rollsLeft: Math.max(0, GACHA_ROLLS_PER_DAY - today),
-      nextRollAt:
-        today < GACHA_ROLLS_PER_DAY
-          ? null
-          : new Date(start.getTime() + DAY_MS).toISOString(),
+      canRoll: false,
+      rollsLeft: 0,
+      nextRollAt: null,
       spinsLeft,
       canSpin: spinsLeft > 0,
       nextSpinAt:
@@ -377,33 +370,12 @@ export class GachaService {
   }
 
   async roll(userId: string, turnstileToken?: string) {
-    await this.turnstile.verify(turnstileToken);
-
-    // Compat legada: 1 roll = spin + claim imediato.
-    const state = await this.status(userId);
-    if (!state.canRoll) {
-      throw new ForbiddenException('Você já fez seu roll hoje. Volte amanhã.');
-    }
-    const preview = await this.spin(userId);
-    const pull = await this.doClaim(userId, preview.id);
-
-    try {
-      await this.prisma.gachaRollDay.create({
-        data: { userId, day: this.dayStartUtc() },
-      });
-    } catch (error) {
-      if ((error as { code?: string }).code === 'P2002') {
-        throw new ForbiddenException(
-          'Você já fez seu roll hoje. Volte amanhã.',
-        );
-      }
-      throw error;
-    }
-
-    return {
-      ...pull,
-      pityDue: preview.pityDue,
-    };
+    void userId;
+    void turnstileToken;
+    await Promise.resolve();
+    throw new GoneException(
+      'A carta diária foi desativada. Use os 5 giros por hora.',
+    );
   }
 
   async collection(
