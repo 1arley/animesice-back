@@ -1,3 +1,11 @@
+## [1.28.1](https://github.com/1arley/animesice-back/compare/v1.28.0...v1.28.1) (2026-09-10)
+
+
+### Bug Fixes
+
+* **deps:** override multer vulnerability ([3786f20](https://github.com/1arley/animesice-back/commit/3786f202f9cb440aea41a8d8016e7e86daa79d8e))
+* **watchtower:** select shared adult source fields ([ec5a267](https://github.com/1arley/animesice-back/commit/ec5a2670d2f1e79d2880df997e2d638bebbca2f2))
+
 # [1.28.0](https://github.com/1arley/animesice-back/compare/v1.27.2...v1.28.0) (2026-09-09)
 
 
