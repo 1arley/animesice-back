@@ -11,6 +11,13 @@ function makeMocks() {
       removeFeatured: jest.fn(),
       publicCard: jest.fn(),
       publicFeatured: jest.fn(),
+      adminCards: jest.fn(),
+      adminCreateCard: jest.fn(),
+      adminUpdateCard: jest.fn(),
+      adminUserCards: jest.fn(),
+      adminGrantUserCard: jest.fn(),
+      adminDeleteUserCard: jest.fn(),
+      adminResetRoll: jest.fn(),
       recent: jest.fn(),
       ranking: jest.fn(),
     },
@@ -114,6 +121,64 @@ describe('GachaController', () => {
         undefined,
         undefined,
       );
+    });
+  });
+
+  describe('featured and public cards', () => {
+    it('delega ações de destaque e rotas públicas', async () => {
+      await controller.featured(req('u1'));
+      await controller.setFeatured(req('u1'), { userCardId: 'c1' });
+      await controller.removeFeatured(req('u1'));
+      await controller.publicCard('c1');
+      await controller.publicFeatured('u2');
+
+      expect(m.gachaService.featured).toHaveBeenCalledWith('u1');
+      expect(m.gachaService.setFeatured).toHaveBeenCalledWith('u1', 'c1');
+      expect(m.gachaService.removeFeatured).toHaveBeenCalledWith('u1');
+      expect(m.gachaService.publicCard).toHaveBeenCalledWith('c1');
+      expect(m.gachaService.publicFeatured).toHaveBeenCalledWith('u2');
+    });
+  });
+
+  describe('admin', () => {
+    it('delega listagem e ações administrativas', async () => {
+      await controller.adminCards('2', '10', 'card', 'RARA');
+      await controller.adminCreateCard({ name: 'Card', rarity: 'COMUM' });
+      await controller.adminUpdateCard('c1', { rarity: 'RARA' });
+      await controller.adminUserCards('u1', '2', '10');
+      await controller.adminGrantUserCard('u1', { cardId: 'c1' });
+      await controller.adminDeleteUserCard('p1');
+      await controller.adminResetRoll('u1');
+
+      expect(m.gachaService.adminCards).toHaveBeenCalledWith(
+        2,
+        10,
+        'card',
+        'RARA',
+      );
+      expect(m.gachaService.adminCreateCard).toHaveBeenCalledWith({
+        name: 'Card',
+        rarity: 'COMUM',
+      });
+      expect(m.gachaService.adminUpdateCard).toHaveBeenCalledWith('c1', {
+        rarity: 'RARA',
+      });
+      expect(m.gachaService.adminUserCards).toHaveBeenCalledWith('u1', 2, 10);
+      expect(m.gachaService.adminGrantUserCard).toHaveBeenCalledWith(
+        'u1',
+        'c1',
+      );
+      expect(m.gachaService.adminDeleteUserCard).toHaveBeenCalledWith('p1');
+      expect(m.gachaService.adminResetRoll).toHaveBeenCalledWith('u1');
+    });
+
+    it('rejeita raridades inválidas', () => {
+      expect(() =>
+        controller.adminCreateCard({ name: 'Card', rarity: 'INVALIDA' }),
+      ).toThrow('Raridade inválida');
+      expect(() =>
+        controller.adminUpdateCard('c1', { rarity: 'INVALIDA' }),
+      ).toThrow('Raridade inválida');
     });
   });
 
