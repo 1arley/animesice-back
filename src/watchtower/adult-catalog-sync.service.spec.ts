@@ -116,7 +116,7 @@ describe('AdultCatalogSyncService', () => {
         .spyOn(service, 'sync')
         .mockResolvedValue({ imported: 0, updated: 0 });
 
-      await service.onApplicationBootstrap();
+      service.onApplicationBootstrap();
 
       expect(sync).toHaveBeenCalledTimes(1);
     });

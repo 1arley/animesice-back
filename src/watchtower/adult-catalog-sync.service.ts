@@ -22,8 +22,13 @@ export class AdultCatalogSyncService implements OnApplicationBootstrap {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  async onApplicationBootstrap(): Promise<void> {
-    await this.handleCron();
+  onApplicationBootstrap(): void {
+    // Fire-and-forget de propósito: o sync varre o catálogo adulto inteiro
+    // (paginado + upserts) e o Nest aguarda onApplicationBootstrap antes do
+    // app.listen() — dar await aqui deixava o HTTP fechado por minutos,
+    // healthcheck falhava e o Traefik devolvia 502 sem headers CORS.
+    // O cron diário (04:00) cobre a sincronização.
+    void this.handleCron();
   }
 
   @Cron('0 4 * * *')
