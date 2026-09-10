@@ -1,3 +1,10 @@
+# [1.29.0](https://github.com/1arley/animesice-back/compare/v1.28.1...v1.29.0) (2026-09-10)
+
+
+### Features
+
+* **gacha:** 5 giros/hora com preview, claim 1/12h e bypass LivePix ([#62](https://github.com/1arley/animesice-back/issues/62)) ([570fd13](https://github.com/1arley/animesice-back/commit/570fd1346e7232937bdc467d06f93a03d4fb4110))
+
 ## [1.28.1](https://github.com/1arley/animesice-back/compare/v1.28.0...v1.28.1) (2026-09-10)
 
 
