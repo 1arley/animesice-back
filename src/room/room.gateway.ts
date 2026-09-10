@@ -127,39 +127,62 @@ export class RoomGateway implements OnGatewayConnection, OnGatewayDisconnect {
     try {
       const room = await this.roomService.getRoomBySlug(data.slug);
 
-      if (!client.rooms.has(`room:${room.id}`)) {
-        const participants = this.roomParticipants.get(room.id);
-        const uniqueUsers = new Set(
-          Array.from(participants?.values() ?? []).map((item) => item.userId),
-        );
-        if (
-          !uniqueUsers.has(userId) &&
-          uniqueUsers.size >= room.maxParticipants
-        ) {
-          client.emit('roomFull', {
-            message: 'Sala cheia.',
-          });
-          return;
-        }
+      // Seção crítica síncrona (sem awaits): check + reserva na mesma volta
+      // do event loop — evita oversell quando dois joinRoom passam o check
+      // antes de qualquer um gravar (F2).
+      const participants = this.roomParticipants.get(room.id);
+      const uniqueUsers = new Set(
+        Array.from(participants?.values() ?? []).map((item) => item.userId),
+      );
+      if (
+        !client.rooms.has(`room:${room.id}`) &&
+        !uniqueUsers.has(userId) &&
+        uniqueUsers.size >= room.maxParticipants
+      ) {
+        client.emit('roomFull', {
+          message: 'Sala cheia.',
+        });
+        return;
       }
 
-      await client.join(`room:${room.id}`);
-
-      const user = await this.prisma.user.findUnique({
-        where: { id: userId },
-        select: { id: true, name: true, userName: true, avatar: true },
-      });
-
+      // Reserva o slot antes de qualquer await; os dados de perfil entram na
+      // atualização logo após a consulta.
       this.addParticipant(room.id, {
         roomSlug: room.slug,
         userId,
         socketId: client.id,
-        userName: user?.userName ?? null,
-        name: user?.name ?? null,
-        avatar: user?.avatar ?? null,
+        userName: null,
+        name: null,
+        avatar: null,
         isHost: room.creatorId === userId,
       });
 
+      try {
+        await client.join(`room:${room.id}`);
+
+        const user = await this.prisma.user.findUnique({
+          where: { id: userId },
+          select: { id: true, name: true, userName: true, avatar: true },
+        });
+
+        this.addParticipant(room.id, {
+          roomSlug: room.slug,
+          userId,
+          socketId: client.id,
+          userName: user?.userName ?? null,
+          name: user?.name ?? null,
+          avatar: user?.avatar ?? null,
+          isHost: room.creatorId === userId,
+        });
+      } catch (error) {
+        this.removeParticipant(room.id, client.id);
+        throw error;
+      }
+
+      // ponytail: presença/ocupação é por processo — >1 réplica = capacity ×N
+      // e participant list fragmentada. Upgrade path: Redis adapter do
+      // socket.io + estado compartilhado quando o deploy deixar de ser
+      // single-container.
       if (room.creatorId === userId) {
         await this.roomService.touchActivity(room.id);
       }

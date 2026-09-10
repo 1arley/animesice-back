@@ -468,10 +468,13 @@ model Notification {
   linkUrl   String?
   read      Boolean  @default(false)
   createdAt DateTime @default(now())
+  actorId   String?
+  targetId  String?
 
   @@index([userId, read])
   @@index([userId, createdAt])
   @@index([userId, read, createdAt(sort: Desc)])
+  @@index([userId, type, actorId, targetId, createdAt])
 }
 
 model Room {

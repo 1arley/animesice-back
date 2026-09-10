@@ -26,6 +26,20 @@ describe('TurnstileService', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('falha fechado em produção sem segredo (F5)', async () => {
+    const original = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      await expect(service.verify('token')).rejects.toBeInstanceOf(
+        UnauthorizedException,
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      if (original === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = original;
+    }
+  });
+
   it('lança UnauthorizedException quando o token está ausente', async () => {
     process.env.TURNSTILE_SECRET = 'secret';
 

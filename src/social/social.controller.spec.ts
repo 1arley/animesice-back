@@ -11,10 +11,12 @@ describe('SocialController', () => {
     getPost: jest.fn(),
     deletePost: jest.fn(),
     togglePostLike: jest.fn(),
+    unlikePost: jest.fn(),
     getPostComments: jest.fn(),
     createPostComment: jest.fn(),
     sharePost: jest.fn(),
     toggleFollow: jest.fn(),
+    unfollowUser: jest.fn(),
     checkFollow: jest.fn(),
     getFollowing: jest.fn(),
     getFollowingForUser: jest.fn(),
@@ -97,6 +99,14 @@ describe('SocialController', () => {
     });
   });
 
+  describe('unlikePost', () => {
+    it('remove curtida (idempotente)', async () => {
+      mockSocialService.unlikePost.mockResolvedValue({ liked: false });
+      await controller.unlikePost(mockReq(), 'p1');
+      expect(mockSocialService.unlikePost).toHaveBeenCalledWith('user-1', 'p1');
+    });
+  });
+
   describe('getPostComments', () => {
     it('retorna comentários de um post', async () => {
       mockSocialService.getPostComments.mockResolvedValue([]);
@@ -135,6 +145,17 @@ describe('SocialController', () => {
       mockSocialService.toggleFollow.mockResolvedValue({ following: true });
       await controller.toggleFollow(mockReq(), 'user-2');
       expect(mockSocialService.toggleFollow).toHaveBeenCalledWith(
+        'user-1',
+        'user-2',
+      );
+    });
+  });
+
+  describe('unfollowUser', () => {
+    it('deixa de seguir (idempotente)', async () => {
+      mockSocialService.unfollowUser.mockResolvedValue({ following: false });
+      await controller.unfollowUser(mockReq(), 'user-2');
+      expect(mockSocialService.unfollowUser).toHaveBeenCalledWith(
         'user-1',
         'user-2',
       );

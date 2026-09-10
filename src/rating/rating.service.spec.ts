@@ -19,13 +19,16 @@ function makePrisma() {
     count: jest.fn(async () => 0) as jest.Mock,
   };
   const $executeRaw = jest.fn(async () => 1) as jest.Mock;
-  return { anime, rating, $executeRaw };
+  // rate/remove rodam dentro de $transaction com os mesmos delegates.
+  const prisma: any = { anime, rating, $executeRaw };
+  prisma.$transaction = jest.fn((fn: (tx: any) => unknown) => fn(prisma));
+  return prisma;
 }
 
 describe('RatingService', () => {
   function build() {
     const prisma = makePrisma();
-    const svc = new RatingService(prisma as any);
+    const svc = new RatingService(prisma);
     return { svc, prisma };
   }
 
@@ -39,8 +42,7 @@ describe('RatingService', () => {
         animeId: 'a1',
         score: 8,
       });
-      prisma.rating.count.mockResolvedValue(1);
-      prisma.$executeRaw.mockResolvedValue(1);
+      prisma.rating.aggregate.mockResolvedValue({ _avg: { score: 8 } });
 
       const dto: RateAnimeDto = { score: 8 };
       const result = await svc.rate('u1', 'anime-slug', dto);
@@ -51,7 +53,12 @@ describe('RatingService', () => {
         update: { score: 8 },
         create: { userId: 'u1', animeId: 'a1', score: 8 },
       });
+      // F1: lock da linha do Anime antes do recompute.
       expect(prisma.$executeRaw).toHaveBeenCalled();
+      expect(prisma.anime.update).toHaveBeenCalledWith({
+        where: { id: 'a1' },
+        data: { rating: 8 },
+      });
     });
 
     it('deve lançar NotFoundException quando o anime não existe', async () => {
@@ -69,7 +76,7 @@ describe('RatingService', () => {
       const { svc, prisma } = build();
       prisma.anime.findUnique.mockResolvedValue({ id: 'a1' });
       prisma.rating.delete.mockResolvedValue({});
-      prisma.$executeRaw.mockResolvedValue(1);
+      prisma.rating.aggregate.mockResolvedValue({ _avg: { score: 7.5 } });
 
       const result = await svc.remove('u1', 'anime-slug');
 
@@ -77,7 +84,10 @@ describe('RatingService', () => {
       expect(prisma.rating.delete).toHaveBeenCalledWith({
         where: { userId_animeId: { userId: 'u1', animeId: 'a1' } },
       });
-      expect(prisma.$executeRaw).toHaveBeenCalled();
+      expect(prisma.anime.update).toHaveBeenCalledWith({
+        where: { id: 'a1' },
+        data: { rating: 7.5 },
+      });
     });
 
     it('deve lançar NotFoundException quando o anime não existe', async () => {

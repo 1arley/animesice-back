@@ -332,6 +332,31 @@ describe('RoomGateway', () => {
       expect(socket.join).not.toHaveBeenCalled();
     });
 
+    it('dois joins concorrentes não vendem mais vagas que o limite (F2)', async () => {
+      mocks.roomService.getRoomBySlug.mockResolvedValue(
+        makeRoom({ maxParticipants: 1, creatorId: 'creator-1' }),
+      );
+      mocks.prisma.user.findUnique.mockResolvedValue({
+        id: 'user-1',
+        name: 'A',
+        userName: 'a',
+        avatar: null,
+      });
+      const s1 = authedSocket();
+      const s2 = makeSocket({ id: 'sock2' });
+      (gateway as any).userMap.set('sock2', 'user-2');
+
+      await Promise.all([
+        gateway.handleJoinRoom(s1, { slug: 'abc' }),
+        gateway.handleJoinRoom(s2, { slug: 'abc' }),
+      ]);
+
+      const rejected = [s1, s2].filter((s) =>
+        s.emit.mock.calls.some(([event]: [string]) => event === 'roomFull'),
+      );
+      expect(rejected).toHaveLength(1);
+    });
+
     it('permite nova conexão de usuário já presente na sala', async () => {
       const socket = authedSocket({ rooms: new Set(['room:r1']) });
       mocks.roomService.getRoomBySlug.mockResolvedValue(makeRoom());

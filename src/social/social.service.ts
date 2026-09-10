@@ -140,6 +140,16 @@ export class SocialService {
   }
 
   async togglePostLike(userId: string, postId: string) {
+    const existing = await this.prisma.postLike.findUnique({
+      where: { userId_postId: { userId, postId } },
+      select: { userId: true },
+    });
+    return existing
+      ? this.unlikePost(userId, postId)
+      : this.likePost(userId, postId);
+  }
+
+  async likePost(userId: string, postId: string) {
     const post = await this.prisma.post.findFirst({
       where: { id: postId, status: ContentStatus.VISIBLE },
       select: { id: true, userId: true, content: true },
@@ -147,22 +157,6 @@ export class SocialService {
 
     if (!post) {
       throw new NotFoundException('Post não encontrado.');
-    }
-
-    const existing = await this.prisma.postLike.findUnique({
-      where: { userId_postId: { userId, postId } },
-      select: { createdAt: true },
-    });
-
-    if (existing) {
-      try {
-        await this.prisma.postLike.delete({
-          where: { userId_postId: { userId, postId } },
-        });
-      } catch (error) {
-        if ((error as { code?: string }).code !== 'P2025') throw error;
-      }
-      return { liked: false };
     }
 
     try {
@@ -187,11 +181,41 @@ export class SocialService {
               ? `${post.content.slice(0, 80)}…`
               : post.content,
           linkUrl: '/comunidade/feed',
+          actorId: userId,
+          targetId: postId,
         }),
       ).catch(() => undefined);
     }
 
     return { liked: true };
+  }
+
+  async unlikePost(userId: string, postId: string) {
+    const post = await this.prisma.post.findUnique({
+      where: { id: postId },
+      select: { userId: true },
+    });
+
+    const removed = await this.prisma.postLike.deleteMany({
+      where: { userId, postId },
+    });
+
+    // Desfaz o resíduo derivado: sem isso, retry invertido deixa o dono com
+    // notificação de like que não existe mais (F3).
+    if (removed.count > 0 && post && post.userId !== userId) {
+      void this.prisma.notification
+        .deleteMany({
+          where: {
+            userId: post.userId,
+            type: NotificationType.POST_LIKE,
+            actorId: userId,
+            targetId: postId,
+          },
+        })
+        .catch(() => undefined);
+    }
+
+    return { liked: false };
   }
 
   async getPostComments(postId: string, page = 1, limit = 20) {
@@ -266,6 +290,8 @@ export class SocialService {
             author?.name ?? author?.userName ?? 'Alguém'
           } comentou no seu post`,
           linkUrl: '/comunidade/feed',
+          actorId: userId,
+          targetId: postId,
         }),
       ).catch(() => undefined);
     }
@@ -327,6 +353,19 @@ export class SocialService {
   // ------------------------------------------------------------------
 
   async toggleFollow(userId: string, targetUserId: string) {
+    const existing = await this.prisma.follow.findUnique({
+      where: {
+        followerId_followeeId: { followerId: userId, followeeId: targetUserId },
+      },
+      select: { createdAt: true },
+    });
+
+    return existing
+      ? this.unfollowUser(userId, targetUserId)
+      : this.followUser(userId, targetUserId);
+  }
+
+  async followUser(userId: string, targetUserId: string) {
     if (userId === targetUserId) {
       throw new BadRequestException('Você não pode seguir a si mesmo.');
     }
@@ -337,30 +376,6 @@ export class SocialService {
     });
     if (!target) {
       throw new NotFoundException('Usuário não encontrado.');
-    }
-
-    const existing = await this.prisma.follow.findUnique({
-      where: {
-        followerId_followeeId: { followerId: userId, followeeId: targetUserId },
-      },
-      select: { createdAt: true },
-    });
-
-    if (existing) {
-      try {
-        await this.prisma.follow.delete({
-          where: {
-            followerId_followeeId: {
-              followerId: userId,
-              followeeId: targetUserId,
-            },
-          },
-        });
-      } catch (error) {
-        // Corrida: já removido entre o check e o delete (P2025).
-        if ((error as { code?: string }).code !== 'P2025') throw error;
-      }
-      return { following: false };
     }
 
     try {
@@ -385,10 +400,35 @@ export class SocialService {
           follower?.name ?? follower?.userName ?? 'Alguém'
         } começou a seguir você`,
         linkUrl: `/users/${target.userName ?? targetUserId}`,
+        actorId: userId,
+        targetId: targetUserId,
       }),
     ).catch(() => undefined);
 
     return { following: true };
+  }
+
+  async unfollowUser(userId: string, targetUserId: string) {
+    const removed = await this.prisma.follow.deleteMany({
+      where: { followerId: userId, followeeId: targetUserId },
+    });
+
+    // Desfaz o resíduo derivado: retry invertido não pode deixar o alvo com
+    // notificação de follow que não existe mais (F3).
+    if (removed.count > 0) {
+      void this.prisma.notification
+        .deleteMany({
+          where: {
+            userId: targetUserId,
+            type: NotificationType.NEW_FOLLOW,
+            actorId: userId,
+            targetId: targetUserId,
+          },
+        })
+        .catch(() => undefined);
+    }
+
+    return { following: false };
   }
 
   async checkFollow(userId: string, targetUserId: string) {

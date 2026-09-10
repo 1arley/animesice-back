@@ -2,6 +2,8 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '@/prisma/prisma.service';
 import { NotificationType, NotificationChannel } from '@prisma/client';
 
+const DEDUPE_WINDOW_MS = 60_000;
+
 @Injectable()
 export class NotificationService {
   constructor(private readonly prisma: PrismaService) {}
@@ -94,8 +96,26 @@ export class NotificationService {
     title: string;
     body?: string;
     linkUrl?: string;
+    actorId?: string;
+    targetId?: string;
   }) {
     const typeId = data.type as NotificationType;
+
+    // Dedupe best-effort por (userId, type, actor, target) em janela curta:
+    // bloqueia amplificação de ciclos like/unlike e refollow (F3/F4).
+    if (data.actorId && data.targetId) {
+      const recent = await this.prisma.notification.findFirst({
+        where: {
+          userId: data.userId,
+          type: data.type,
+          actorId: data.actorId,
+          targetId: data.targetId,
+          createdAt: { gt: new Date(Date.now() - DEDUPE_WINDOW_MS) },
+        },
+        select: { id: true },
+      });
+      if (recent) return null;
+    }
 
     const enabled = await this.isPreferenceEnabled(data.userId, typeId);
     if (!enabled) return null;
@@ -107,6 +127,8 @@ export class NotificationService {
         title: data.title,
         body: data.body,
         linkUrl: data.linkUrl,
+        actorId: data.actorId,
+        targetId: data.targetId,
       },
     });
   }

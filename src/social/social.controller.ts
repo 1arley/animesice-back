@@ -76,9 +76,19 @@ export class SocialController {
   @Post('posts/:id/like')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('JWT-auth')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @ApiOperation({ summary: 'Curtir/descurtir post (toggle)' })
   togglePostLike(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
     return this.socialService.togglePostLike(req.user.id, id);
+  }
+
+  @Delete('posts/:id/like')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @ApiOperation({ summary: 'Remover curtida do post (idempotente)' })
+  unlikePost(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.socialService.unlikePost(req.user.id, id);
   }
 
   @Get('posts/:id/comments')
@@ -99,6 +109,7 @@ export class SocialController {
   @Post('posts/:id/comments')
   @UseGuards(JwtAuthGuard, VerifiedGuard)
   @ApiBearerAuth('JWT-auth')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @ApiOperation({ summary: 'Comentar em um post' })
   createPostComment(
     @Req() req: AuthenticatedRequest,
@@ -111,6 +122,7 @@ export class SocialController {
   @Post('posts/:id/share')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('JWT-auth')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @ApiOperation({ summary: 'Contabilizar compartilhamento de um post' })
   sharePost(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
     return this.socialService.sharePost(req.user.id, id);
@@ -121,12 +133,25 @@ export class SocialController {
   @Post('follow/:userId')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('JWT-auth')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @ApiOperation({ summary: 'Seguir/deixar de seguir usuário (toggle)' })
   toggleFollow(
     @Req() req: AuthenticatedRequest,
     @Param('userId') userId: string,
   ) {
     return this.socialService.toggleFollow(req.user.id, userId);
+  }
+
+  @Delete('follow/:userId')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @ApiOperation({ summary: 'Deixar de seguir usuário (idempotente)' })
+  unfollowUser(
+    @Req() req: AuthenticatedRequest,
+    @Param('userId') userId: string,
+  ) {
+    return this.socialService.unfollowUser(req.user.id, userId);
   }
 
   @Get('follow/check/:userId')
