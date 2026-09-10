@@ -40,6 +40,7 @@ describe('GachaService', () => {
       findFirst: jest.fn(),
       findMany: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       deleteMany: jest.fn(),
     },
     gachaClaimLock: {
@@ -102,6 +103,7 @@ describe('GachaService', () => {
       }),
     );
     mockPrisma.gachaSpin.update.mockResolvedValue({});
+    mockPrisma.gachaSpin.updateMany.mockResolvedValue({ count: 1 });
     mockPrisma.gachaClaimLock.upsert.mockResolvedValue({});
   }
 
@@ -444,6 +446,19 @@ describe('GachaService', () => {
       await expect(service.claim('u1', 's1')).rejects.toBeInstanceOf(
         ForbiddenException,
       );
+    });
+
+    it('converte conflito transacional concorrente em erro controlado', async () => {
+      mockPrisma.$transaction.mockRejectedValue({
+        code: 'P2034',
+      });
+
+      await expect(service.claim('u1', 's1')).rejects.toMatchObject({
+        response: {
+          message: 'Este preview já está sendo resgatado. Tente novamente.',
+        },
+        status: 403,
+      });
     });
 
     it('unlockClaim libera lock vigente e retorna false sem lock', async () => {

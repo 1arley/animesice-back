@@ -247,73 +247,84 @@ export class GachaService {
   }
 
   private async doClaim(userId: string, spinId: string) {
-    const spin = await this.prisma.gachaSpin.findFirst({
-      where: { id: spinId, userId },
-      select: SPIN_SELECT,
-    });
-    if (!spin || spin.claimedAt !== null) {
-      throw new NotFoundException('Preview expirada ou já resgatada.');
-    }
-    if (spin.expiresAt.getTime() <= Date.now()) {
-      throw new ForbiddenException('Preview expirou na virada da hora.');
-    }
-
-    const claim = await this.claimState(userId);
-    if (!claim.canClaim) {
-      throw new ForbiddenException(
-        'Você já guardou uma carta nas últimas 12h. Desbloqueie via Pix ou aguarde.',
-      );
-    }
-
     let pull: Pull;
     try {
-      pull = await this.prisma.$transaction(async (tx) => {
-        const lock = await tx.gachaClaimLock.findUnique({
-          where: { userId },
-        });
-        if (lock !== null && lock.lockedUntil.getTime() > Date.now()) {
-          throw new ForbiddenException(
-            'Você já guardou uma carta nas últimas 12h.',
-          );
-        }
-        const counter = await tx.card.update({
-          where: { id: spin.card.id },
-          data: { editionCounter: { increment: 1 } },
-          select: { editionCounter: true },
-        });
-        const edition = counter.editionCounter;
-        const created = await tx.userCard.create({
-          data: {
-            userId,
-            cardId: spin.card.id,
-            condition: spin.condition,
-            foil: spin.foil,
-            edition,
-            value: cardValue(
-              spin.card.rarity as GachaTier,
-              spin.condition,
-              spin.foil as GachaFoil,
+      pull = await this.prisma.$transaction(
+        async (tx) => {
+          const spin = await tx.gachaSpin.findFirst({
+            where: { id: spinId, userId },
+            select: SPIN_SELECT,
+          });
+          if (!spin || spin.claimedAt !== null) {
+            throw new NotFoundException('Preview expirada ou já resgatada.');
+          }
+          if (spin.expiresAt.getTime() <= Date.now()) {
+            throw new ForbiddenException('Preview expirou na virada da hora.');
+          }
+
+          const lock = await tx.gachaClaimLock.findUnique({
+            where: { userId },
+          });
+          if (lock !== null && lock.lockedUntil.getTime() > Date.now()) {
+            throw new ForbiddenException(
+              'Você já guardou uma carta nas últimas 12h.',
+            );
+          }
+          const counter = await tx.card.update({
+            where: { id: spin.card.id },
+            data: { editionCounter: { increment: 1 } },
+            select: { editionCounter: true },
+          });
+          const edition = counter.editionCounter;
+          const created = await tx.userCard.create({
+            data: {
+              userId,
+              cardId: spin.card.id,
+              condition: spin.condition,
+              foil: spin.foil,
               edition,
-            ),
-          },
-          select: PULL_SELECT,
-        });
-        await tx.gachaSpin.update({
-          where: { id: spin.id },
-          data: { claimedAt: new Date() },
-        });
-        await tx.gachaClaimLock.upsert({
-          where: { userId },
-          create: {
-            userId,
-            lockedUntil: new Date(Date.now() + GACHA_CLAIM_LOCK_MS),
-          },
-          update: { lockedUntil: new Date(Date.now() + GACHA_CLAIM_LOCK_MS) },
-        });
-        return created;
-      });
+              value: cardValue(
+                spin.card.rarity as GachaTier,
+                spin.condition,
+                spin.foil as GachaFoil,
+                edition,
+              ),
+            },
+            select: PULL_SELECT,
+          });
+          const claimed = await tx.gachaSpin.updateMany({
+            where: { id: spin.id, claimedAt: null },
+            data: { claimedAt: new Date() },
+          });
+          if (claimed.count !== 1) {
+            throw new NotFoundException('Preview expirada ou já resgatada.');
+          }
+          await tx.gachaClaimLock.upsert({
+            where: { userId },
+            create: {
+              userId,
+              lockedUntil: new Date(Date.now() + GACHA_CLAIM_LOCK_MS),
+            },
+            update: { lockedUntil: new Date(Date.now() + GACHA_CLAIM_LOCK_MS) },
+          });
+          return created;
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      );
     } catch (error) {
       if (error instanceof ForbiddenException) throw error;
+      if (error instanceof NotFoundException) throw error;
+      const code =
+        error instanceof Prisma.PrismaClientKnownRequestError
+          ? error.code
+          : typeof error === 'object' && error !== null && 'code' in error
+            ? error.code
+            : undefined;
+      if (code === 'P2002' || code === 'P2034') {
+        throw new ForbiddenException(
+          'Este preview já está sendo resgatado. Tente novamente.',
+        );
+      }
       throw error;
     }
 

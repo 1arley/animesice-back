@@ -43,20 +43,18 @@ export class LivePixService {
   }
 
   async createBypassCharge(
-    username: string,
+    _username: string,
     amountCents: number,
     redirectUrl: string,
   ): Promise<LivePixCheckout> {
     const token = await this.accessToken();
-    const res = await fetch(`${API_URL}/v2/messages`, {
+    const res = await fetch(`${API_URL}/v2/payments`, {
       method: 'POST',
       headers: {
         authorization: `Bearer ${token}`,
         'content-type': 'application/json',
       },
       body: JSON.stringify({
-        username,
-        message: 'Desbloqueio de claim do gacha — AnimesIce',
         amount: amountCents,
         currency: 'BRL',
         redirectUrl,
