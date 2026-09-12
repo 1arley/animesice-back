@@ -1,3 +1,10 @@
+## [1.29.2](https://github.com/1arley/animesice-back/compare/v1.29.1...v1.29.2) (2026-09-12)
+
+
+### Bug Fixes
+
+* **admin:** rota de leitura por slug retorna anime desabilitado ([a99be0d](https://github.com/1arley/animesice-back/commit/a99be0d67cbc141ef6decdcfe1abccb46a2e8a7b))
+
 ## [1.29.1](https://github.com/1arley/animesice-back/compare/v1.29.0...v1.29.1) (2026-09-12)
 
 
