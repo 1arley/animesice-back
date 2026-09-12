@@ -18,6 +18,7 @@ import {
   SetFeaturedGachaCardDto,
 } from '@/gacha/dto/gacha.dto';
 import { JwtAuthGuard } from '@/auth/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from '@/auth/optional-jwt-auth.guard';
 import { VerifiedGuard } from '@/auth/verified.guard';
 import { RolesGuard } from '@/auth/roles.guard';
 import { Roles } from '@/auth/roles.decorators';
@@ -26,6 +27,9 @@ import { GACHA_TIERS } from '@/gacha/gacha.constants';
 import { BadRequestException } from '@nestjs/common';
 import { DEFAULT_PAGE } from '@/common/constants';
 import type { AuthenticatedRequest } from '@/common/interfaces/request.interface';
+import type { Request } from 'express';
+
+type OptionalAuthRequest = Request & { user?: AuthenticatedRequest['user'] };
 
 @ApiTags('gacha')
 @Controller('gacha')
@@ -75,11 +79,10 @@ export class GachaController {
   }
 
   @Get('collection')
-  @UseGuards(JwtAuthGuard, VerifiedGuard)
-  @ApiBearerAuth('JWT-auth')
+  @UseGuards(OptionalJwtAuthGuard)
   @ApiOperation({ summary: 'Coleção de cartas (própria ou pública)' })
   collection(
-    @Req() req: AuthenticatedRequest,
+    @Req() req: OptionalAuthRequest,
     @Query('userId') userId: string,
     @Query('page') page: string,
     @Query('limit') limit: string,
@@ -87,9 +90,13 @@ export class GachaController {
     @Query('rarity') rarity?: string,
     @Query('foil') foil?: string,
   ) {
+    const viewerId = req.user?.id ?? null;
+    const ownerId = userId || viewerId;
+    if (!ownerId)
+      throw new BadRequestException('Informe o usuário da coleção.');
     return this.gachaService.collection(
-      userId || req.user.id,
-      req.user.id,
+      ownerId,
+      viewerId,
       parseInt(page ?? '1', 10) || DEFAULT_PAGE,
       parseInt(limit ?? '24', 10) || 24,
       sort,

@@ -391,7 +391,7 @@ export class GachaService {
 
   async collection(
     ownerId: string,
-    viewerId: string,
+    viewerId: string | null,
     page = 1,
     limit = 24,
     sort = 'value',

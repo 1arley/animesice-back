@@ -51,6 +51,57 @@ describe('GachaController (e2e)', () => {
     await prisma.card.deleteMany({ where: { name: 'Gacha Card' } });
   });
 
+  it('expõe coleção pública sem login e preserva a privacidade e as escritas protegidas', async () => {
+    const prisma = getPrismaService();
+    const card = await prisma.card.findFirstOrThrow({
+      where: { name: 'Gacha Card' },
+    });
+    const owned = await prisma.userCard.create({
+      data: {
+        userId,
+        cardId: card.id,
+        condition: 0.05,
+        edition: 1,
+        value: 100,
+      },
+    });
+    const url = `/gacha/collection?userId=${userId}`;
+    const visible = await request(getHttpServer()).get(url).expect(200);
+    expect(visible.body.data[0].id).toBe(owned.id);
+    expect(visible.body.stats).toEqual({ total: 1, totalValue: 100 });
+    await request(getHttpServer()).get('/gacha/collection').expect(400);
+
+    await prisma.privacySettings.upsert({
+      where: { userId },
+      create: { userId, showGacha: false },
+      update: { showGacha: false },
+    });
+    await request(getHttpServer()).get(url).expect(403);
+    await request(getHttpServer())
+      .get(url)
+      .set('Authorization', 'Bearer invalid')
+      .expect(403);
+    const owner = await request(getHttpServer())
+      .get('/gacha/collection')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .expect(200);
+    expect(owner.body.data[0].id).toBe(owned.id);
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: { isVerified: false },
+    });
+    await request(getHttpServer())
+      .get(url)
+      .set('Authorization', `Bearer ${accessToken}`)
+      .expect(200);
+    await request(getHttpServer())
+      .post('/gacha/spin')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .expect(403);
+    await request(getHttpServer()).post('/gacha/spin').expect(401);
+  });
+
   it('permite no máximo um claim concorrente para o mesmo preview', async () => {
     const spin = await request(getHttpServer())
       .post('/gacha/spin')
