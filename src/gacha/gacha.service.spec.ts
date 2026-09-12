@@ -112,6 +112,8 @@ describe('GachaService', () => {
     );
     mockPrisma.gachaRollDay.count.mockResolvedValue(0);
     mockPrisma.gachaSpin.count.mockResolvedValue(0);
+    mockPrisma.card.count.mockResolvedValue(0);
+    mockPrisma.userCard.findMany.mockResolvedValue([]);
     mockPrisma.gachaClaimLock.findUnique.mockResolvedValue(null);
     mockPrisma.card.update.mockResolvedValue({ editionCounter: 1 });
 
