@@ -444,15 +444,33 @@ export class GachaService {
     };
   }
 
+  /** True se o dono possui pelo menos uma cópia de cada carta do set do anime. */
+  private async setCompleteFor(userId: string, animeId: string | null) {
+    if (!animeId) return false;
+    const [total, owned] = await this.prisma.$transaction([
+      this.prisma.card.count({ where: { animeId } }),
+      this.prisma.userCard.findMany({
+        where: { userId, card: { animeId } },
+        select: { cardId: true },
+      }),
+    ]);
+    if (total === 0) return false;
+    return new Set(owned.map((row) => row.cardId)).size >= total;
+  }
+
   async featured(userId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: { featuredUserCard: { select: PULL_SELECT } },
     });
     const pull = user?.featuredUserCard;
-    return pull
-      ? { ...pull, conditionLabel: conditionLabel(pull.condition) }
-      : null;
+    if (!pull) return null;
+    const setComplete = await this.setCompleteFor(userId, pull.card.animeId);
+    return {
+      ...pull,
+      conditionLabel: conditionLabel(pull.condition),
+      setComplete,
+    };
   }
 
   async setFeatured(userId: string, userCardId: string) {
@@ -506,9 +524,93 @@ export class GachaService {
     });
     if (!user) throw new NotFoundException('Carta não encontrada.');
     const pull = user.featuredUserCard;
-    return pull
-      ? { ...pull, conditionLabel: conditionLabel(pull.condition) }
-      : null;
+    if (!pull) return null;
+    const setComplete = await this.setCompleteFor(userId, pull.card.animeId);
+    return {
+      ...pull,
+      conditionLabel: conditionLabel(pull.condition),
+      setComplete,
+    };
+  }
+
+  /**
+   * Catálogo completo (pool por anime) com flag de posse do usuário — usado
+   * pela enciclopédia "quais faltam" da coleção. Sem usuário, tudo owned=false.
+   */
+  async encyclopedia(userId: string | null) {
+    const cards = await this.prisma.card.findMany({
+      orderBy: [{ animeTitle: 'asc' }, { name: 'asc' }],
+      include: { anime: { select: { id: true, slug: true, title: true } } },
+    });
+    const ownedRows = userId
+      ? await this.prisma.userCard.findMany({
+          where: { userId },
+          select: { cardId: true },
+          distinct: ['cardId'],
+        })
+      : [];
+    const ownedIds = new Set(ownedRows.map((row) => row.cardId));
+
+    const byAnime = new Map<
+      string | null,
+      {
+        animeId: string | null;
+        animeTitle: string | null;
+        animeSlug: string | null;
+        total: number;
+        owned: number;
+        cards: Array<{
+          id: string;
+          name: string;
+          image: string | null;
+          rarity: string;
+          favourites: number;
+          owned: boolean;
+        }>;
+      }
+    >();
+    for (const card of cards) {
+      const key = card.animeId;
+      if (!byAnime.has(key)) {
+        byAnime.set(key, {
+          animeId: key,
+          animeTitle: key
+            ? (card.anime?.title ?? card.animeTitle ?? null)
+            : null,
+          animeSlug: card.anime?.slug ?? null,
+          total: 0,
+          owned: 0,
+          cards: [],
+        });
+      }
+      const set = byAnime.get(key)!;
+      set.total += 1;
+      const has = ownedIds.has(card.id);
+      if (has) set.owned += 1;
+      set.cards.push({
+        id: card.id,
+        name: card.name,
+        image: card.image,
+        rarity: card.rarity,
+        favourites: card.favourites,
+        owned: has,
+      });
+    }
+
+    const sets = [...byAnime.values()].map((set) => ({
+      ...set,
+      complete: set.total > 0 && set.owned === set.total,
+    }));
+
+    return {
+      stats: {
+        totalCards: cards.length,
+        ownedCards: ownedIds.size,
+        totalSets: sets.length,
+        completeSets: sets.filter((set) => set.complete).length,
+      },
+      sets,
+    };
   }
 
   async recent(limit = 20) {

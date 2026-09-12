@@ -135,6 +135,16 @@ export class GachaController {
     return this.gachaService.publicFeatured(userId);
   }
 
+  @Get('encyclopedia')
+  @UseGuards(OptionalJwtAuthGuard)
+  @ApiOperation({
+    summary:
+      'Catálogo completo por anime com flag de posse (enciclopédia da coleção)',
+  })
+  encyclopedia(@Req() req: OptionalAuthRequest) {
+    return this.gachaService.encyclopedia(req.user?.id ?? null);
+  }
+
   @Get('admin/cards')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN', 'SUPERADMIN')
