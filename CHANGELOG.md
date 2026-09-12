@@ -1,3 +1,10 @@
+## [1.29.1](https://github.com/1arley/animesice-back/compare/v1.29.0...v1.29.1) (2026-09-12)
+
+
+### Bug Fixes
+
+* **watchtower:** adult sync em background sem bloquear app.listen() ([#64](https://github.com/1arley/animesice-back/issues/64)) ([f1821fd](https://github.com/1arley/animesice-back/commit/f1821fdf9cb5ba0574f31ad4cc45d6f24d67f7f5))
+
 # [1.29.0](https://github.com/1arley/animesice-back/compare/v1.28.1...v1.29.0) (2026-09-10)
 
 
