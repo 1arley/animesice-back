@@ -6,7 +6,6 @@ import {
 } from '@nestjs/common';
 import { GachaService } from '@/gacha/gacha.service';
 import { PrismaService } from '@/prisma/prisma.service';
-import { TurnstileService } from '@/auth/turnstile/turnstile.service';
 import {
   cardValue,
   conditionLabel,
@@ -16,8 +15,6 @@ import {
 
 describe('GachaService', () => {
   let service: GachaService;
-
-  const mockTurnstile = { verify: jest.fn().mockResolvedValue(undefined) };
 
   const mockPrisma = {
     userCard: {
@@ -109,7 +106,6 @@ describe('GachaService', () => {
 
   beforeEach(async () => {
     jest.resetAllMocks();
-    mockTurnstile.verify.mockResolvedValue(undefined);
     mockPrisma.$transaction.mockImplementation(
       (input: Promise<unknown>[] | ((tx: typeof mockPrisma) => unknown)) =>
         typeof input === 'function' ? input(mockPrisma) : Promise.all(input),
@@ -123,7 +119,6 @@ describe('GachaService', () => {
       providers: [
         GachaService,
         { provide: PrismaService, useValue: mockPrisma },
-        { provide: TurnstileService, useValue: mockTurnstile },
       ],
     }).compile();
 
@@ -375,9 +370,8 @@ describe('GachaService', () => {
       mockPrisma.gachaSpin.findFirst.mockResolvedValue(previewComum);
       mockClaimCreate();
 
-      const pull = await service.claim('u1', 's1', 'token');
+      const pull = await service.claim('u1', 's1');
 
-      expect(mockTurnstile.verify).toHaveBeenCalledWith('token');
       expect(pull.card.id).toBe('w1');
       expect(pull.edition).toBe(1);
       expect(pull.conditionLabel).toBeDefined();
@@ -483,11 +477,8 @@ describe('GachaService', () => {
   });
 
   describe('roll (desativado)', () => {
-    it('rejeita a carta diária sem consumir giro ou captcha', async () => {
-      await expect(service.roll('u1', 'token')).rejects.toBeInstanceOf(
-        GoneException,
-      );
-      expect(mockTurnstile.verify).not.toHaveBeenCalled();
+    it('rejeita a carta diária sem consumir giro', async () => {
+      await expect(service.roll()).rejects.toBeInstanceOf(GoneException);
       expect(mockPrisma.gachaSpin.create).not.toHaveBeenCalled();
     });
   });
@@ -782,7 +773,7 @@ describe('GachaService', () => {
 describe('gacha constants', () => {
   it('precifica carta: base × condition × foil + bônus low edition', () => {
     expect(cardValue('COMUM', 0.05, 'NORMAL', 500)).toBe(30);
-    expect(cardValue('LENDARIA', 0.05, 'GOLD', 1)).toBe(30000 + 1000);
+    expect(cardValue('LENDARIA', 0.05, 'GOLD', 1)).toBe(30000 + 30000);
     expect(cardValue('RARA', 0.9, 'HOLO', 11)).toBe(150);
   });
 

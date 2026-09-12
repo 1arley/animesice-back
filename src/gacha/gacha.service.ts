@@ -7,7 +7,6 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '@/prisma/prisma.service';
-import { TurnstileService } from '@/auth/turnstile/turnstile.service';
 import {
   GACHA_BYPASS_PRICE_CENTS,
   GACHA_CLAIM_LOCK_MS,
@@ -85,10 +84,7 @@ const SPIN_SELECT = {
 export class GachaService {
   private readonly logger = new Logger(GachaService.name);
 
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly turnstile: TurnstileService,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
   // ponytail: dia em UTC; migrar p/ TZ do usuário se houver reclamação BR.
   private dayStartUtc(now = new Date()): Date {
@@ -241,12 +237,7 @@ export class GachaService {
     );
   }
 
-  async claim(userId: string, spinId: string, turnstileToken?: string) {
-    await this.turnstile.verify(turnstileToken);
-    return this.doClaim(userId, spinId);
-  }
-
-  private async doClaim(userId: string, spinId: string) {
+  async claim(userId: string, spinId: string) {
     let pull: Pull;
     try {
       pull = await this.prisma.$transaction(
@@ -380,9 +371,7 @@ export class GachaService {
     return card;
   }
 
-  async roll(userId: string, turnstileToken?: string) {
-    void userId;
-    void turnstileToken;
+  async roll() {
     await Promise.resolve();
     throw new GoneException(
       'A carta diária foi desativada. Use os 5 giros por hora.',

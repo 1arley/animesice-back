@@ -12,11 +12,7 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { GachaService } from '@/gacha/gacha.service';
-import {
-  ClaimGachaDto,
-  RollGachaDto,
-  SetFeaturedGachaCardDto,
-} from '@/gacha/dto/gacha.dto';
+import { ClaimGachaDto, SetFeaturedGachaCardDto } from '@/gacha/dto/gacha.dto';
 import { JwtAuthGuard } from '@/auth/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from '@/auth/optional-jwt-auth.guard';
 import { VerifiedGuard } from '@/auth/verified.guard';
@@ -42,8 +38,8 @@ export class GachaController {
   @ApiOperation({
     summary: 'Roll diário do gacha (legado: spin + claim imediato)',
   })
-  roll(@Req() req: AuthenticatedRequest, @Body() dto: RollGachaDto) {
-    return this.gachaService.roll(req.user.id, dto.turnstileToken);
+  roll() {
+    return this.gachaService.roll();
   }
 
   @Post('spin')
@@ -59,7 +55,7 @@ export class GachaController {
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({ summary: 'Resgata preview (1 a cada 12h)' })
   claim(@Req() req: AuthenticatedRequest, @Body() dto: ClaimGachaDto) {
-    return this.gachaService.claim(req.user.id, dto.spinId, dto.turnstileToken);
+    return this.gachaService.claim(req.user.id, dto.spinId);
   }
 
   @Get('spins')

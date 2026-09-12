@@ -40,12 +40,10 @@ describe('GachaController', () => {
   });
 
   describe('roll', () => {
-    it('delega para o service com userId e turnstileToken', async () => {
+    it('delega para o service legado (410)', async () => {
       m.gachaService.roll.mockResolvedValue({ ok: true });
-      const result = await controller.roll(req('u1'), {
-        turnstileToken: 'tok',
-      });
-      expect(m.gachaService.roll).toHaveBeenCalledWith('u1', 'tok');
+      const result = await controller.roll();
+      expect(m.gachaService.roll).toHaveBeenCalled();
       expect(result).toEqual({ ok: true });
     });
   });
@@ -57,14 +55,11 @@ describe('GachaController', () => {
       m.gachaService.spins.mockResolvedValue([]);
 
       await controller.spin(req('u1'));
-      await controller.claim(req('u1'), {
-        spinId: 's1',
-        turnstileToken: 'tok',
-      });
+      await controller.claim(req('u1'), { spinId: 's1' });
       await controller.spins(req('u1'));
 
       expect(m.gachaService.spin).toHaveBeenCalledWith('u1');
-      expect(m.gachaService.claim).toHaveBeenCalledWith('u1', 's1', 'tok');
+      expect(m.gachaService.claim).toHaveBeenCalledWith('u1', 's1');
       expect(m.gachaService.spins).toHaveBeenCalledWith('u1');
     });
   });
