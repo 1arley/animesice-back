@@ -42,6 +42,7 @@
     "enrich:synopsis": "ts-node scripts/enrich-synopsis.ts",
     "enrich:synopsis:dry": "ts-node scripts/enrich-synopsis.ts --dry --limit 10",
     "diagnose:anime": "ts-node scripts/diagnose-anime.ts",
+    "sync:status-mal": "ts-node scripts/sync-status-mal.ts",
     "fuzzy:dry": "ts-node scripts/fuzzy-dry-run.ts",
     "docker:build": "docker compose build",
     "docker:up": "docker compose up -d",
