@@ -37,6 +37,8 @@
     "seed:animefire:dry": "ts-node scripts/seed-animefire.ts --limit 5",
     "backfill:anilist": "ts-node scripts/backfill-anilist-id.ts",
     "backfill:anilist:dry": "ts-node scripts/backfill-anilist-id.ts --dry --limit 10",
+    "backfill:gacha-values": "ts-node scripts/backfill-gacha-values.ts",
+    "backfill:gacha-values:dry": "ts-node scripts/backfill-gacha-values.ts --dry",
     "enrich:synopsis": "ts-node scripts/enrich-synopsis.ts",
     "enrich:synopsis:dry": "ts-node scripts/enrich-synopsis.ts --dry --limit 10",
     "diagnose:anime": "ts-node scripts/diagnose-anime.ts",

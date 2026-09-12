@@ -773,8 +773,8 @@ describe('GachaService', () => {
 describe('gacha constants', () => {
   it('precifica carta: base × condition × foil + bônus low edition', () => {
     expect(cardValue('COMUM', 0.05, 'NORMAL', 500)).toBe(30);
-    expect(cardValue('LENDARIA', 0.05, 'GOLD', 1)).toBe(30000 + 30000);
-    expect(cardValue('RARA', 0.9, 'HOLO', 11)).toBe(150);
+    expect(cardValue('LENDARIA', 0.05, 'GOLD', 1)).toBe(12000 + 12000);
+    expect(cardValue('RARA', 0.9, 'HOLO', 11)).toBe(180);
   });
 
   it('rotula condition nas fronteiras', () => {

@@ -49,11 +49,11 @@ export const GACHA_FOIL_WEIGHTS: Record<GachaFoil, number> = {
 export const GACHA_BASE_VALUE: Record<GachaTier, number> = {
   COMUM: 10,
   INCOMUM: 25,
-  RARA: 50,
-  EPICA: 200,
-  LENDARIA: 1000,
-  MITICA: 5000,
-  GALACTICA: 25000,
+  RARA: 60,
+  EPICA: 150,
+  LENDARIA: 400,
+  MITICA: 1000,
+  GALACTICA: 2500,
 };
 
 export const GACHA_FOIL_MULT: Record<GachaFoil, number> = {
@@ -86,7 +86,7 @@ export function cardValue(
 ): number {
   const base =
     GACHA_BASE_VALUE[tier] * conditionMult(condition) * GACHA_FOIL_MULT[foil];
-  const lowEditionBonus = edition <= 10 ? (11 - edition) * 100 : 0;
+  const lowEditionBonus = edition <= 10 ? (base * (11 - edition)) / 10 : 0;
   return Math.round(base + lowEditionBonus);
 }
 
