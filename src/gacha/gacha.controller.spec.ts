@@ -23,6 +23,12 @@ function makeMocks() {
       adminResetRoll: jest.fn(),
       recent: jest.fn(),
       ranking: jest.fn(),
+      encyclopedia: jest.fn(),
+      createTrade: jest.fn(),
+      myTrades: jest.fn(),
+      acceptTrade: jest.fn(),
+      cancelTrade: jest.fn(),
+      declineTrade: jest.fn(),
     },
   };
 }
@@ -228,6 +234,40 @@ describe('GachaController', () => {
       expect(m.gachaService.ranking).toHaveBeenCalledWith(7);
       await controller.ranking('abc');
       expect(m.gachaService.ranking).toHaveBeenCalledWith(20);
+    });
+  });
+
+  describe('encyclopedia e trades', () => {
+    it('delegam com userId da sessão', async () => {
+      m.gachaService.encyclopedia.mockResolvedValue({ sets: [] });
+      m.gachaService.createTrade.mockResolvedValue({ id: 't1' });
+      m.gachaService.myTrades.mockResolvedValue([]);
+      m.gachaService.acceptTrade.mockResolvedValue({ id: 't1' });
+      m.gachaService.cancelTrade.mockResolvedValue({ id: 't1' });
+      m.gachaService.declineTrade.mockResolvedValue({ id: 't1' });
+
+      await controller.encyclopedia(req('u1'));
+      await controller.encyclopedia({} as any);
+      await controller.createTrade(req('u1'), {
+        offeredUserCardId: 'oc1',
+        requestedUserCardId: 'rc1',
+      });
+      await controller.myTrades(req('u1'));
+      await controller.acceptTrade(req('u1'), 't1');
+      await controller.cancelTrade(req('u1'), 't1');
+      await controller.declineTrade(req('u1'), 't1');
+
+      expect(m.gachaService.encyclopedia).toHaveBeenCalledWith('u1');
+      expect(m.gachaService.encyclopedia).toHaveBeenCalledWith(null);
+      expect(m.gachaService.createTrade).toHaveBeenCalledWith(
+        'u1',
+        'oc1',
+        'rc1',
+      );
+      expect(m.gachaService.myTrades).toHaveBeenCalledWith('u1');
+      expect(m.gachaService.acceptTrade).toHaveBeenCalledWith('u1', 't1');
+      expect(m.gachaService.cancelTrade).toHaveBeenCalledWith('u1', 't1');
+      expect(m.gachaService.declineTrade).toHaveBeenCalledWith('u1', 't1');
     });
   });
 });

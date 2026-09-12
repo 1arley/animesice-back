@@ -1,9 +1,12 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import {
+  BadRequestException,
+  ConflictException,
   ForbiddenException,
   GoneException,
   NotFoundException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { GachaService } from '@/gacha/gacha.service';
 import { PrismaService } from '@/prisma/prisma.service';
 import {
@@ -20,11 +23,20 @@ describe('GachaService', () => {
     userCard: {
       count: jest.fn(),
       findFirst: jest.fn(),
+      findUnique: jest.fn(),
       findMany: jest.fn(),
       create: jest.fn(),
+      updateMany: jest.fn(),
       aggregate: jest.fn(),
       groupBy: jest.fn(),
       delete: jest.fn(),
+    },
+    gachaTrade: {
+      count: jest.fn(),
+      findUnique: jest.fn(),
+      findMany: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
     },
     gachaRollDay: {
       count: jest.fn(),
@@ -114,6 +126,7 @@ describe('GachaService', () => {
     mockPrisma.gachaSpin.count.mockResolvedValue(0);
     mockPrisma.card.count.mockResolvedValue(0);
     mockPrisma.userCard.findMany.mockResolvedValue([]);
+    mockPrisma.gachaTrade.count.mockResolvedValue(0);
     mockPrisma.gachaClaimLock.findUnique.mockResolvedValue(null);
     mockPrisma.card.update.mockResolvedValue({ editionCounter: 1 });
 
@@ -767,6 +780,451 @@ describe('GachaService', () => {
       });
       expect(mockPrisma.gachaClaimLock.deleteMany).toHaveBeenCalledWith({
         where: { userId: 'u1' },
+      });
+    });
+  });
+
+  describe('encyclopedia', () => {
+    const encCard = (
+      id: string,
+      animeId: string | null,
+      animeTitle: string | null = null,
+    ) => ({
+      id,
+      name: id,
+      image: `https://img/${id}.jpg`,
+      rarity: 'COMUM',
+      favourites: 10,
+      animeId,
+      animeTitle,
+      anime:
+        animeId && !animeTitle
+          ? { id: animeId, slug: `slug-${animeId}`, title: `T-${animeId}` }
+          : null,
+    });
+
+    const catalog = [
+      encCard('c1', 'a1'),
+      encCard('c2', 'a1'),
+      encCard('c3', null),
+      encCard('c4', 'a2', 'Fallback'),
+    ];
+
+    beforeEach(() => {
+      mockPrisma.card.findMany.mockResolvedValue(catalog);
+    });
+
+    it('sem usuário: tudo owned=false, anime sem relação usa animeTitle', async () => {
+      const res = await service.encyclopedia(null);
+
+      expect(res.stats).toEqual({
+        totalCards: 4,
+        ownedCards: 0,
+        totalSets: 3,
+        completeSets: 0,
+      });
+      const a2 = res.sets.find((s) => s.animeId === 'a2');
+      expect(a2).toMatchObject({ animeTitle: 'Fallback', owned: 0 });
+      const semAnime = res.sets.find((s) => s.animeId === null);
+      expect(semAnime).toMatchObject({ animeTitle: null, animeSlug: null });
+      expect(mockPrisma.userCard.findMany).not.toHaveBeenCalled();
+    });
+
+    it('com usuário: marca owned e set incompleto', async () => {
+      mockPrisma.userCard.findMany.mockResolvedValue([{ cardId: 'c1' }]);
+
+      const res = await service.encyclopedia('u1');
+
+      const a1 = res.sets.find((s) => s.animeId === 'a1');
+      expect(a1).toMatchObject({ owned: 1, total: 2, complete: false });
+      expect(res.stats).toMatchObject({ ownedCards: 1, completeSets: 0 });
+    });
+
+    it('set completo quando todas as cartas pertencem ao usuário', async () => {
+      mockPrisma.userCard.findMany.mockResolvedValue([
+        { cardId: 'c1' },
+        { cardId: 'c2' },
+      ]);
+
+      const res = await service.encyclopedia('u1');
+
+      const a1 = res.sets.find((s) => s.animeId === 'a1');
+      expect(a1?.complete).toBe(true);
+      expect(res.stats.completeSets).toBe(1);
+    });
+  });
+
+  describe('trades', () => {
+    const pullCard = (id: string) => ({
+      id,
+      condition: 0.5,
+      foil: 'NORMAL',
+      edition: 1,
+      value: 10,
+      obtainedAt: new Date(),
+      user: { id: 'u1', name: 'U', userName: 'u', avatar: null },
+      card: cardComum,
+    });
+
+    function tradeRow(overrides: Record<string, unknown> = {}) {
+      return {
+        id: 't1',
+        status: 'PENDING',
+        expiresAt: new Date(Date.now() + 3_600_000),
+        createdAt: new Date(),
+        completedAt: null,
+        offeredUserId: 'u1',
+        requestedUserId: 'u2',
+        offeredUserCardId: 'oc1',
+        requestedUserCardId: 'rc1',
+        offeredUserCard: pullCard('oc1'),
+        requestedUserCard: pullCard('rc1'),
+        ...overrides,
+      };
+    }
+
+    function mockTradeOwners() {
+      mockPrisma.userCard.findUnique.mockImplementation(
+        (args: { where: { id: string } }) =>
+          Promise.resolve(
+            args.where.id === 'oc1'
+              ? { id: 'oc1', userId: 'u1' }
+              : { id: 'rc1', userId: 'u2' },
+          ),
+      );
+    }
+
+    describe('createTrade', () => {
+      it('rejeita trocar uma carta com ela mesma', async () => {
+        await expect(
+          service.createTrade('u1', 'oc1', 'oc1'),
+        ).rejects.toBeInstanceOf(BadRequestException);
+        expect(mockPrisma.userCard.findUnique).not.toHaveBeenCalled();
+      });
+
+      it('404 quando carta oferecida não existe', async () => {
+        mockPrisma.userCard.findUnique
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce({ id: 'rc1', userId: 'u2' });
+
+        await expect(
+          service.createTrade('u1', 'oc1', 'rc1'),
+        ).rejects.toBeInstanceOf(NotFoundException);
+      });
+
+      it('404 quando carta pedida não existe', async () => {
+        mockPrisma.userCard.findUnique
+          .mockResolvedValueOnce({ id: 'oc1', userId: 'u1' })
+          .mockResolvedValueOnce(null);
+
+        await expect(
+          service.createTrade('u1', 'oc1', 'rc1'),
+        ).rejects.toBeInstanceOf(NotFoundException);
+      });
+
+      it('403 quando oferecida não é minha', async () => {
+        mockPrisma.userCard.findUnique
+          .mockResolvedValueOnce({ id: 'oc1', userId: 'u9' })
+          .mockResolvedValueOnce({ id: 'rc1', userId: 'u2' });
+
+        await expect(
+          service.createTrade('u1', 'oc1', 'rc1'),
+        ).rejects.toBeInstanceOf(ForbiddenException);
+      });
+
+      it('400 quando carta pedida é minha também', async () => {
+        mockPrisma.userCard.findUnique
+          .mockResolvedValueOnce({ id: 'oc1', userId: 'u1' })
+          .mockResolvedValueOnce({ id: 'rc1', userId: 'u1' });
+
+        await expect(
+          service.createTrade('u1', 'oc1', 'rc1'),
+        ).rejects.toBeInstanceOf(BadRequestException);
+      });
+
+      it('403 quando coleção pedida é privada', async () => {
+        mockTradeOwners();
+        mockPrisma.privacySettings.findUnique.mockResolvedValue({
+          showGacha: false,
+        });
+
+        await expect(
+          service.createTrade('u1', 'oc1', 'rc1'),
+        ).rejects.toBeInstanceOf(ForbiddenException);
+      });
+
+      it('cria proposta com TTL e formata conditionLabel', async () => {
+        mockTradeOwners();
+        mockPrisma.privacySettings.findUnique.mockResolvedValue(null);
+        mockPrisma.gachaTrade.create.mockResolvedValue(tradeRow());
+
+        const res = await service.createTrade('u1', 'oc1', 'rc1');
+
+        expect(mockPrisma.gachaTrade.create).toHaveBeenCalledWith({
+          data: {
+            offeredUserId: 'u1',
+            offeredUserCardId: 'oc1',
+            requestedUserId: 'u2',
+            requestedUserCardId: 'rc1',
+            expiresAt: expect.any(Date),
+          },
+          select: expect.any(Object),
+        });
+        expect(res).toMatchObject({
+          id: 't1',
+          status: 'PENDING',
+          offeredUserCard: { conditionLabel: 'PLAYED' },
+          requestedUserCard: { conditionLabel: 'PLAYED' },
+        });
+      });
+
+      it('409 quando uma das cartas já está em troca pendente', async () => {
+        mockTradeOwners();
+        mockPrisma.gachaTrade.count
+          .mockResolvedValueOnce(1)
+          .mockResolvedValue(0);
+
+        await expect(
+          service.createTrade('u1', 'oc1', 'rc1'),
+        ).rejects.toBeInstanceOf(ConflictException);
+      });
+
+      it('409 quando a carta pedida já tem troca pendente', async () => {
+        mockTradeOwners();
+        mockPrisma.gachaTrade.count
+          .mockResolvedValueOnce(0)
+          .mockResolvedValueOnce(1)
+          .mockResolvedValue(0);
+
+        await expect(
+          service.createTrade('u1', 'oc1', 'rc1'),
+        ).rejects.toBeInstanceOf(ConflictException);
+      });
+
+      it('409 ao estourar limite de propostas enviadas', async () => {
+        mockTradeOwners();
+        mockPrisma.gachaTrade.count
+          .mockResolvedValueOnce(0)
+          .mockResolvedValueOnce(0)
+          .mockResolvedValueOnce(3)
+          .mockResolvedValue(0);
+
+        await expect(
+          service.createTrade('u1', 'oc1', 'rc1'),
+        ).rejects.toBeInstanceOf(ConflictException);
+      });
+
+      it('409 ao estourar limite de propostas recebidas', async () => {
+        mockTradeOwners();
+        mockPrisma.gachaTrade.count
+          .mockResolvedValueOnce(0)
+          .mockResolvedValueOnce(0)
+          .mockResolvedValueOnce(2)
+          .mockResolvedValueOnce(3);
+
+        await expect(
+          service.createTrade('u1', 'oc1', 'rc1'),
+        ).rejects.toBeInstanceOf(ConflictException);
+      });
+
+      it('409 quando unique de carta pendente falha em corrida (P2002)', async () => {
+        mockTradeOwners();
+        mockPrisma.gachaTrade.create.mockRejectedValue(
+          new Prisma.PrismaClientKnownRequestError('dup', {
+            code: 'P2002',
+            clientVersion: '7.0.0',
+          }),
+        );
+
+        await expect(
+          service.createTrade('u1', 'oc1', 'rc1'),
+        ).rejects.toBeInstanceOf(ConflictException);
+      });
+
+      it('repropaga erro que não é P2002', async () => {
+        mockTradeOwners();
+        mockPrisma.gachaTrade.create.mockRejectedValue(new Error('boom'));
+
+        await expect(service.createTrade('u1', 'oc1', 'rc1')).rejects.toThrow(
+          'boom',
+        );
+      });
+    });
+
+    it('myTrades lista e formata as duas pontas', async () => {
+      mockPrisma.gachaTrade.findMany.mockResolvedValue([
+        tradeRow(),
+        tradeRow({ id: 't2' }),
+      ]);
+
+      const res = await service.myTrades('u1');
+
+      expect(mockPrisma.gachaTrade.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { OR: [{ offeredUserId: 'u1' }, { requestedUserId: 'u1' }] },
+        }),
+      );
+      expect(res).toHaveLength(2);
+      expect(res[1]?.offeredUserCard.conditionLabel).toBe('PLAYED');
+    });
+
+    describe('acceptTrade', () => {
+      it('troca donos, limpa destaque e conclui', async () => {
+        mockPrisma.gachaTrade.findUnique.mockResolvedValue(tradeRow());
+        mockTradeOwners();
+        mockPrisma.gachaTrade.update.mockResolvedValue(
+          tradeRow({ status: 'COMPLETED' }),
+        );
+
+        const res = await service.acceptTrade('u2', 't1');
+
+        expect(mockPrisma.userCard.updateMany).toHaveBeenCalledWith({
+          where: { id: 'oc1' },
+          data: { userId: 'u2' },
+        });
+        expect(mockPrisma.userCard.updateMany).toHaveBeenCalledWith({
+          where: { id: 'rc1' },
+          data: { userId: 'u1' },
+        });
+        expect(mockPrisma.user.updateMany).toHaveBeenCalledWith({
+          where: { id: 'u1', featuredUserCardId: 'oc1' },
+          data: { featuredUserCardId: null },
+        });
+        expect(res.status).toBe('COMPLETED');
+      });
+
+      it('404 quando troca não existe', async () => {
+        mockPrisma.gachaTrade.findUnique.mockResolvedValue(null);
+        await expect(service.acceptTrade('u2', 't1')).rejects.toBeInstanceOf(
+          NotFoundException,
+        );
+      });
+
+      it('403 quando quem aceita não é o receptor', async () => {
+        mockPrisma.gachaTrade.findUnique.mockResolvedValue(tradeRow());
+        await expect(service.acceptTrade('u1', 't1')).rejects.toBeInstanceOf(
+          ForbiddenException,
+        );
+      });
+
+      it('409 quando já expirada antes de aceitar', async () => {
+        mockPrisma.gachaTrade.findUnique.mockResolvedValue(
+          tradeRow({ status: 'EXPIRED' }),
+        );
+        await expect(service.acceptTrade('u2', 't1')).rejects.toBeInstanceOf(
+          ConflictException,
+        );
+      });
+
+      it('409 quando já concluída antes de aceitar', async () => {
+        mockPrisma.gachaTrade.findUnique.mockResolvedValue(
+          tradeRow({ status: 'CANCELLED' }),
+        );
+        await expect(service.acceptTrade('u2', 't1')).rejects.toBeInstanceOf(
+          ConflictException,
+        );
+      });
+
+      it('expira no aceite quando TTL venceu no relógio', async () => {
+        mockPrisma.gachaTrade.findUnique.mockResolvedValue(
+          tradeRow({ expiresAt: new Date(Date.now() - 1000) }),
+        );
+
+        await expect(service.acceptTrade('u2', 't1')).rejects.toBeInstanceOf(
+          ConflictException,
+        );
+        expect(mockPrisma.gachaTrade.update).toHaveBeenCalledWith(
+          expect.objectContaining({ data: { status: 'EXPIRED' } }),
+        );
+      });
+
+      it('409 quando carta mudou de dono', async () => {
+        mockPrisma.gachaTrade.findUnique.mockResolvedValue(tradeRow());
+        mockPrisma.userCard.findUnique.mockResolvedValue({
+          id: 'oc1',
+          userId: 'u99',
+        });
+
+        await expect(service.acceptTrade('u2', 't1')).rejects.toBeInstanceOf(
+          ConflictException,
+        );
+      });
+    });
+
+    describe('settleTrade (cancel/decline)', () => {
+      it('cancelar troca pendente', async () => {
+        mockPrisma.gachaTrade.findUnique.mockResolvedValue(tradeRow());
+
+        await expect(service.cancelTrade('u1', 't1')).resolves.toEqual({
+          id: 't1',
+          status: 'CANCELLED',
+        });
+        expect(mockPrisma.gachaTrade.update).toHaveBeenCalledWith({
+          where: { id: 't1' },
+          data: { status: 'CANCELLED' },
+        });
+      });
+
+      it('recusar troca pendente', async () => {
+        mockPrisma.gachaTrade.findUnique.mockResolvedValue(tradeRow());
+
+        await expect(service.declineTrade('u2', 't1')).resolves.toEqual({
+          id: 't1',
+          status: 'CANCELLED',
+        });
+      });
+
+      it('404 quando troca não existe', async () => {
+        mockPrisma.gachaTrade.findUnique.mockResolvedValue(null);
+        await expect(service.cancelTrade('u1', 't1')).rejects.toBeInstanceOf(
+          NotFoundException,
+        );
+      });
+
+      it('403 quando quem cancela não é o ofertante', async () => {
+        mockPrisma.gachaTrade.findUnique.mockResolvedValue(tradeRow());
+        await expect(service.cancelTrade('u9', 't1')).rejects.toBeInstanceOf(
+          ForbiddenException,
+        );
+      });
+
+      it('403 quando quem recusa não é o receptor', async () => {
+        mockPrisma.gachaTrade.findUnique.mockResolvedValue(tradeRow());
+        await expect(service.declineTrade('u9', 't1')).rejects.toBeInstanceOf(
+          ForbiddenException,
+        );
+      });
+
+      it('409 quando já expirada', async () => {
+        mockPrisma.gachaTrade.findUnique.mockResolvedValue(
+          tradeRow({ status: 'EXPIRED' }),
+        );
+        await expect(service.cancelTrade('u1', 't1')).rejects.toBeInstanceOf(
+          ConflictException,
+        );
+      });
+
+      it('409 quando não está mais pendente', async () => {
+        mockPrisma.gachaTrade.findUnique.mockResolvedValue(
+          tradeRow({ status: 'COMPLETED' }),
+        );
+        await expect(service.declineTrade('u2', 't1')).rejects.toBeInstanceOf(
+          ConflictException,
+        );
+      });
+
+      it('expira quando TTL venceu no relógio', async () => {
+        mockPrisma.gachaTrade.findUnique.mockResolvedValue(
+          tradeRow({ expiresAt: new Date(Date.now() - 1000) }),
+        );
+
+        await expect(service.cancelTrade('u1', 't1')).rejects.toBeInstanceOf(
+          ConflictException,
+        );
+        expect(mockPrisma.gachaTrade.update).toHaveBeenCalledWith({
+          where: { id: 't1' },
+          data: { status: 'EXPIRED' },
+        });
       });
     });
   });
