@@ -152,7 +152,7 @@ export class JobsService {
         ("id", "type", "dedupeKey", "payload", "priority", "maxAttempts",
          "nextRunAt", "createdAt", "updatedAt")
       SELECT gen_random_uuid()::text, v.type, v.dedupe_key, v.payload,
-             v.priority, v.max_attempts, v.next_run_at, NOW(), NOW()
+             v.priority::int, v.max_attempts::int, v.next_run_at, NOW(), NOW()
       FROM (VALUES ${Prisma.join(rows)})
         AS v(type, dedupe_key, payload, priority, max_attempts, next_run_at)
       ON CONFLICT ("type", "dedupeKey") DO UPDATE SET
