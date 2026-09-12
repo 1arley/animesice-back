@@ -356,7 +356,14 @@ export class WorkerService {
     }
 
     // Batch insert: uma única ida ao PostgreSQL para todos os jobs.
-    await this.jobs.enqueueMany(enqueueInputs);
+    // Dedup por dedupeKey: mesmo anime pode aparecer em gaps E incompleto.
+    const seen = new Map<string, (typeof enqueueInputs)[number]>();
+    for (const input of enqueueInputs) {
+      const prev = seen.get(input.dedupeKey);
+      if (!prev || input.priority < prev.priority)
+        seen.set(input.dedupeKey, input);
+    }
+    await this.jobs.enqueueMany([...seen.values()]);
 
     console.error(
       `[GAP_CHECK] ${gaps.length} animes com gaps, ${incomplete.filter((a) => a._count.episodes < (a.episodeCount ?? 0)).length} incompletos, ${enqueueInputs.length} jobs enfileirados`,

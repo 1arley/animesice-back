@@ -130,6 +130,28 @@ describe('AdminService', () => {
     });
   });
 
+  describe('getAnimeForAdmin', () => {
+    it('retorna o anime mesmo quando published=false (sem filtro published)', async () => {
+      prisma.anime.findUnique.mockResolvedValue({ ...anime, published: false });
+
+      const result = await service.getAnimeForAdmin('naruto');
+
+      expect(result.published).toBe(false);
+      // A rota admin de leitura não pode filtrar published, senão o painel não reabre desabilitados.
+      expect(prisma.anime.findUnique.mock.calls[0][0].where).toEqual({
+        slug: 'naruto',
+      });
+    });
+
+    it('lança NotFoundException quando o anime não existe', async () => {
+      prisma.anime.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.getAnimeForAdmin('inexistente'),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
   describe('deleteAnime', () => {
     it('remove anime com sucesso', async () => {
       prisma.anime.findUnique.mockResolvedValue(anime);

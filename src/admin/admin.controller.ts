@@ -90,6 +90,14 @@ export class AdminController {
   }
 
   // --- Anime CRUD ---------------------------------------------------------
+  @Get('anime/:slug')
+  @ApiOperation({
+    summary: 'Obter anime por slug (admin, incluindo desabilitados)',
+  })
+  getAnime(@Param('slug') slug: string) {
+    return this.adminService.getAnimeForAdmin(slug);
+  }
+
   @Post('anime')
   @ApiOperation({ summary: 'Criar anime' })
   createAnime(@Body() dto: CreateAnimeDto) {

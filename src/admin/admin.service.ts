@@ -91,6 +91,17 @@ export class AdminService {
     });
   }
 
+  async getAnimeForAdmin(slug: string) {
+    const anime = await this.prisma.anime.findUnique({
+      where: { slug },
+      include: { genres: true, _count: { select: { episodes: true } } },
+    });
+    if (!anime) {
+      throw new NotFoundException('Anime não encontrado.');
+    }
+    return anime;
+  }
+
   async updateAnime(slug: string, dto: UpdateAnimeDto) {
     const anime = await this.prisma.anime.findUnique({ where: { slug } });
     if (!anime) {
