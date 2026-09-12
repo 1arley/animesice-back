@@ -12,7 +12,11 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { GachaService } from '@/gacha/gacha.service';
-import { ClaimGachaDto, SetFeaturedGachaCardDto } from '@/gacha/dto/gacha.dto';
+import {
+  ClaimGachaDto,
+  NewTradeDto,
+  SetFeaturedGachaCardDto,
+} from '@/gacha/dto/gacha.dto';
 import { JwtAuthGuard } from '@/auth/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from '@/auth/optional-jwt-auth.guard';
 import { VerifiedGuard } from '@/auth/verified.guard';
@@ -143,6 +147,54 @@ export class GachaController {
   })
   encyclopedia(@Req() req: OptionalAuthRequest) {
     return this.gachaService.encyclopedia(req.user?.id ?? null);
+  }
+
+  @Post('trades')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Propõe troca 1:1 (válida por 48h)' })
+  createTrade(@Req() req: AuthenticatedRequest, @Body() dto: NewTradeDto) {
+    return this.gachaService.createTrade(
+      req.user.id,
+      dto.offeredUserCardId,
+      dto.requestedUserCardId,
+    );
+  }
+
+  @Get('trades/mine')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Trocas em que sou parte (enviadas e recebidas, recentes)',
+  })
+  myTrades(@Req() req: AuthenticatedRequest) {
+    return this.gachaService.myTrades(req.user.id);
+  }
+
+  @Post('trades/:id/accept')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Receptor aceita e a troca é aplicada atomically (swap de dono)',
+  })
+  acceptTrade(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.gachaService.acceptTrade(req.user.id, id);
+  }
+
+  @Post('trades/:id/cancel')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Quem propôs desiste da troca' })
+  cancelTrade(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.gachaService.cancelTrade(req.user.id, id);
+  }
+
+  @Post('trades/:id/decline')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Receptor recusa a troca' })
+  declineTrade(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.gachaService.declineTrade(req.user.id, id);
   }
 
   @Get('admin/cards')

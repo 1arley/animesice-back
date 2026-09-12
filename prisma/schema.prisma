@@ -1,5 +1,6 @@
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["partialIndexes"]
 }
 
 datasource db {
@@ -816,6 +817,9 @@ model UserCard {
   @@index([userId, obtainedAt(sort: Desc)])
   @@index([cardId, edition])
   @@index([userId, value(sort: Desc)])
+
+  tradeOffered   GachaTrade[] @relation("TradeOffered")
+  tradeRequested GachaTrade[] @relation("TradeRequested")
 }
 
 model GachaRollDay {
@@ -865,4 +869,34 @@ model GachaBypass {
   createdAt DateTime @default(now()) @db.Timestamptz(6)
 
   @@index([userId, status])
+}
+
+/// Troca 1:1 entre dois usuários — escrow confirmado, aplicada numa única
+/// transação (swap de UserCard.userId). Vale por 48h após criada.
+model GachaTrade {
+  id                  String            @id @default(uuid())
+  offeredUserId       String
+  offeredUserCardId   String
+  requestedUserId     String
+  requestedUserCardId String
+  status              GachaTradeStatus @default(PENDING)
+  expiresAt           DateTime         @db.Timestamptz(6)
+  createdAt           DateTime         @default(now()) @db.Timestamptz(6)
+  completedAt         DateTime?        @db.Timestamptz(6)
+
+  offeredUserCard   UserCard @relation("TradeOffered", fields: [offeredUserCardId], references: [id], onDelete: Cascade)
+  requestedUserCard UserCard @relation("TradeRequested", fields: [requestedUserCardId], references: [id], onDelete: Cascade)
+
+  // Cada carta participa de no máximo UMA troca PENDING (defesa no banco).
+  @@unique([offeredUserCardId], where: raw("status = 'PENDING'"))
+  @@unique([requestedUserCardId], where: raw("status = 'PENDING'"))
+  @@index([offeredUserId, status])
+  @@index([requestedUserId, status])
+}
+
+enum GachaTradeStatus {
+  PENDING
+  COMPLETED
+  CANCELLED
+  EXPIRED
 }

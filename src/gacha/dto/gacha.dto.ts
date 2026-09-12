@@ -14,3 +14,15 @@ export class SetFeaturedGachaCardDto {
   @IsNotEmpty()
   userCardId!: string;
 }
+
+export class NewTradeDto {
+  @ApiProperty({ description: 'ID da UserCard oferecida (sua própria).' })
+  @IsString()
+  @IsNotEmpty()
+  offeredUserCardId!: string;
+
+  @ApiProperty({ description: 'ID da UserCard pedida (do outro usuário).' })
+  @IsString()
+  @IsNotEmpty()
+  requestedUserCardId!: string;
+}
