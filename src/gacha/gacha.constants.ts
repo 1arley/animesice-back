@@ -52,8 +52,8 @@ export const GACHA_BASE_VALUE: Record<GachaTier, number> = {
   RARA: 60,
   EPICA: 150,
   LENDARIA: 400,
-  MITICA: 1000,
-  GALACTICA: 2500,
+  MITICA: 800,
+  GALACTICA: 1600,
 };
 
 export const GACHA_FOIL_MULT: Record<GachaFoil, number> = {
