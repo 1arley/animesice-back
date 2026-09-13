@@ -34,6 +34,9 @@ function makeMockPrisma() {
         return existing;
       }),
       findMany: jest.fn(async () => [...store.values()]),
+      findUnique: jest.fn(
+        async (args: any) => store.get(args?.where?.sourceId) ?? null,
+      ),
       findFirst: jest.fn(async (args: any) => {
         const want =
           args.where?.disabled?.equals ?? args.where?.disabled ?? false;
@@ -165,6 +168,20 @@ describe('HealthMonitor', () => {
     });
     const result = await health.rankedSources();
     expect(result[0]).toBe('meusanimes');
+  });
+
+  it('isDisabled retorna true quando a fonte está marcada disabled', async () => {
+    mock.store.set('animefire', {
+      sourceId: 'animefire',
+      disabled: true,
+    });
+    expect(await health.isDisabled('animefire')).toBe(true);
+  });
+
+  it('isDisabled retorna false quando ativa ou quando não há registro', async () => {
+    mock.store.set('meusanimes', { sourceId: 'meusanimes', disabled: false });
+    expect(await health.isDisabled('meusanimes')).toBe(false);
+    expect(await health.isDisabled('inexistente')).toBe(false);
   });
 
   it('reviveOne reabilita 1 fonte disabled', async () => {

@@ -65,6 +65,40 @@ function prisma() {
 const flush = () => new Promise((resolve) => setTimeout(resolve, 10));
 
 describe('ExtractionJobService', () => {
+  it.each(['completed', 'failed'])(
+    'notifies listeners on another replica: %s',
+    async (status) => {
+      jest.useFakeTimers();
+      try {
+        const db = prisma();
+        const first = new ExtractionJobService(db as any);
+        const second = new ExtractionJobService(db as any);
+        let release!: () => void;
+        const pending = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const job = await first.submit('naruto', 1, 1, async () => {
+          await pending;
+          if (status === 'failed') throw new Error('extraction failed');
+          return { videoUrl: 'ok', playerEmbed: null };
+        });
+        const listener = jest.fn();
+        const unsubscribe = await second.onComplete(job.id, listener);
+        release();
+        await jest.advanceTimersByTimeAsync(2_000);
+        expect(listener).toHaveBeenCalledTimes(1);
+        expect(listener).toHaveBeenCalledWith(
+          expect.objectContaining({ status }),
+        );
+        unsubscribe();
+        await jest.advanceTimersByTimeAsync(2_000);
+        expect(listener).toHaveBeenCalledTimes(1);
+      } finally {
+        jest.useRealTimers();
+      }
+    },
+  );
+
   it('persiste resultado para outra instância', async () => {
     const db = prisma();
     const first = new ExtractionJobService(db as any);

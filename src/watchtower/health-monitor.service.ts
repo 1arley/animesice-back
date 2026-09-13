@@ -101,6 +101,15 @@ export class HealthMonitor {
     return result;
   }
 
+  /** true se a fonte está marcada disabled pelo auto-desativação (>= N falhas). */
+  async isDisabled(sourceId: string): Promise<boolean> {
+    const row = await this.prisma.watchtowerSourceHealth.findUnique({
+      where: { sourceId },
+      select: { disabled: true },
+    });
+    return row?.disabled === true;
+  }
+
   /** Canário: reabilita 1 fonte disabled p/ testar recuperação. */
   async reviveOne(): Promise<string | null> {
     const candidate = await this.prisma.watchtowerSourceHealth.findFirst({

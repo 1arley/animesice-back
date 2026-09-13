@@ -11,8 +11,13 @@ const PAGE_SIZE = 100;
 /** Marcador de "full-copy já concluído" em SiteSetting — shared entre réplicas. */
 const SYNC_MARKER_KEY = 'adultSync.completedAt';
 
-/** Cursor incremental: último `updatedAt` já importado. Sem ele => full-copy. */
+/** Cursor incremental: último par (updatedAt, slug) importado. Sem ele => full-copy. */
 const SYNC_CURSOR_KEY = 'adultSync.lastUpdatedAt';
+
+interface SyncCursor {
+  updatedAt: Date;
+  slug: string;
+}
 
 function syncEnabled(): boolean {
   return (
@@ -93,27 +98,41 @@ export class AdultCatalogSyncService implements OnApplicationBootstrap {
   }
 
   /** Lê o cursor incremental; null => ainda não sincronizou (full-copy). */
-  private async readCursor(): Promise<Date | null> {
+  private async readCursor(): Promise<SyncCursor | null> {
     try {
       const row = await this.prisma.siteSetting.findUnique({
         where: { key: SYNC_CURSOR_KEY },
         select: { value: true },
       });
       if (!row?.value) return null;
-      const d = new Date(row.value);
-      return Number.isNaN(d.getTime()) ? null : d;
+      try {
+        const parsed = JSON.parse(row.value) as { at?: string; slug?: string };
+        const updatedAt = new Date(String(parsed.at));
+        return Number.isNaN(updatedAt.getTime())
+          ? null
+          : { updatedAt, slug: String(parsed.slug ?? '') };
+      } catch {
+        const updatedAt = new Date(row.value);
+        return Number.isNaN(updatedAt.getTime())
+          ? null
+          : { updatedAt, slug: '' };
+      }
     } catch {
       return null;
     }
   }
 
-  /** Avança o cursor para o maior `updatedAt` já importado. */
-  private async writeCursor(at: Date): Promise<void> {
+  /** Avança o cursor para o último par (updatedAt, slug) já importado. */
+  private async writeCursor(cursor: SyncCursor): Promise<void> {
+    const value = JSON.stringify({
+      at: cursor.updatedAt.toISOString(),
+      slug: cursor.slug,
+    });
     try {
       await this.prisma.siteSetting.upsert({
         where: { key: SYNC_CURSOR_KEY },
-        update: { value: at.toISOString() },
-        create: { key: SYNC_CURSOR_KEY, value: at.toISOString() },
+        update: { value },
+        create: { key: SYNC_CURSOR_KEY, value },
       });
     } catch (e) {
       console.error(
@@ -121,6 +140,16 @@ export class AdultCatalogSyncService implements OnApplicationBootstrap {
         e instanceof Error ? e.message : String(e),
       );
     }
+  }
+
+  /** Filtro keyset: tudo após `at`, inclusive empates com slug maior. */
+  private keysetWhere(at: SyncCursor) {
+    return {
+      OR: [
+        { updatedAt: { gt: at.updatedAt } },
+        { updatedAt: at.updatedAt, slug: { gt: at.slug } },
+      ],
+    };
   }
 
   async sync(opts?: { dryRun?: boolean; limit?: number }) {
@@ -136,20 +165,19 @@ export class AdultCatalogSyncService implements OnApplicationBootstrap {
     // mudança exclusiva de um episódio na origem não re-puxa (catálogo hentai é
     // estático). Upgrade: diffar episodes[] por updatedAt também se virar ruído.
     const useCursor = !opts?.limit && !opts?.dryRun;
-    const since = useCursor ? await this.readCursor() : null;
-    let lastUpdatedAt: Date | null = null;
+    let since = useCursor ? await this.readCursor() : null;
+    let lastSeen: SyncCursor | null = null;
     try {
       await this.prisma.genre.upsert({
         where: { slug: ADULT_GENRE_SLUG },
         update: {},
         create: { slug: ADULT_GENRE_SLUG, name: 'Hentai' },
       });
-      let skip = 0;
       for (;;) {
         const batch = await source.anime.findMany({
           where: {
             published: true,
-            ...(since ? { updatedAt: { gt: since } } : {}),
+            ...(since ? this.keysetWhere(since) : {}),
           },
           select: {
             slug: true,
@@ -187,15 +215,14 @@ export class AdultCatalogSyncService implements OnApplicationBootstrap {
               },
             },
           },
-          orderBy: { updatedAt: 'asc' },
-          take: Math.min(PAGE_SIZE, (opts?.limit ?? PAGE_SIZE) - imported),
-          skip,
+          orderBy: [{ updatedAt: 'asc' }, { slug: 'asc' }],
+          take: opts?.limit
+            ? Math.min(PAGE_SIZE, opts.limit - imported - updated)
+            : PAGE_SIZE,
         });
         if (batch.length === 0) break;
         for (const src of batch) {
-          if (!lastUpdatedAt || src.updatedAt > lastUpdatedAt) {
-            lastUpdatedAt = src.updatedAt;
-          }
+          lastSeen = { updatedAt: src.updatedAt, slug: src.slug };
           const res = await this.upsertOne(src, opts?.dryRun);
           if (res === 'created') imported += 1;
           else if (res === 'updated') updated += 1;
@@ -203,10 +230,10 @@ export class AdultCatalogSyncService implements OnApplicationBootstrap {
         }
         if (opts?.limit && imported + updated >= opts.limit) break;
         if (batch.length < PAGE_SIZE) break;
-        skip += batch.length;
+        since = lastSeen;
       }
-      if (useCursor && lastUpdatedAt) {
-        await this.writeCursor(lastUpdatedAt);
+      if (useCursor && lastSeen) {
+        await this.writeCursor(lastSeen);
       }
     } finally {
       await source.$disconnect().catch(() => undefined);

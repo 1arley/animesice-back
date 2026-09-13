@@ -204,42 +204,42 @@ export class CommunityService {
   }
 
   async upvoteFeedback(userId: string, feedbackId: string) {
-    const feedback = await this.prisma.siteFeedback.findUnique({
-      where: { id: feedbackId },
-      select: { id: true },
-    });
-
-    if (!feedback) {
-      throw new NotFoundException('Feedback não encontrado.');
-    }
-
-    const existing = await this.prisma.siteFeedbackUpvote.findUnique({
-      where: {
-        userId_feedbackId: { userId, feedbackId },
-      },
-    });
-
-    if (existing) {
-      await this.prisma.siteFeedbackUpvote.delete({
-        where: {
-          userId_feedbackId: { userId, feedbackId },
-        },
-      });
-      await this.prisma.siteFeedback.update({
+    return this.prisma.$transaction(async (tx) => {
+      const feedback = await tx.siteFeedback.findUnique({
         where: { id: feedbackId },
-        data: { upvotes: { decrement: 1 } },
+        select: { id: true },
       });
-      return { upvoted: false };
-    }
 
-    await this.prisma.siteFeedbackUpvote.create({
-      data: { userId, feedbackId },
+      if (!feedback) {
+        throw new NotFoundException('Feedback não encontrado.');
+      }
+
+      const removed = await tx.siteFeedbackUpvote.deleteMany({
+        where: { userId, feedbackId },
+      });
+
+      if (removed.count > 0) {
+        await tx.siteFeedback.update({
+          where: { id: feedbackId },
+          data: { upvotes: { decrement: 1 } },
+        });
+        return { upvoted: false };
+      }
+
+      const created = await tx.siteFeedbackUpvote.createMany({
+        data: { userId, feedbackId },
+        skipDuplicates: true,
+      });
+
+      if (created.count > 0) {
+        await tx.siteFeedback.update({
+          where: { id: feedbackId },
+          data: { upvotes: { increment: 1 } },
+        });
+      }
+
+      return { upvoted: true };
     });
-    await this.prisma.siteFeedback.update({
-      where: { id: feedbackId },
-      data: { upvotes: { increment: 1 } },
-    });
-    return { upvoted: true };
   }
 
   async adminUpdateFeedbackStatus(

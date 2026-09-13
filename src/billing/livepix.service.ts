@@ -20,6 +20,7 @@ interface CreateMessageResponse {
 interface PaymentRecord {
   reference?: string;
   amount?: number;
+  currency?: string;
 }
 
 export interface LivePixCheckout {
@@ -77,6 +78,7 @@ export class LivePixService {
     const token = await this.accessToken();
     const url = new URL(`${API_URL}/v2/payments`);
     url.searchParams.set('reference', reference);
+    url.searchParams.set('currency', 'BRL');
     url.searchParams.set('limit', '5');
     const res = await fetch(url, {
       headers: { authorization: `Bearer ${token}` },
@@ -86,6 +88,7 @@ export class LivePixService {
     return data.data.some(
       (payment) =>
         payment.reference === reference &&
+        payment.currency === 'BRL' &&
         (payment.amount ?? 0) >= minAmountCents,
     );
   }

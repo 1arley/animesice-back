@@ -390,6 +390,38 @@ describe('fetchSafeRaw', () => {
     ).rejects.toThrow('aborted');
   });
 
+  it('keeps the deadline active while consuming a stalled body', async () => {
+    lookupSuccess(['8.8.8.8', 4]);
+    mockedUndiciFetch.mockImplementationOnce(async (_url, init) => {
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('partial'));
+            init!.signal!.addEventListener('abort', () =>
+              controller.error(new Error('body aborted')),
+            );
+          },
+        }),
+      ) as any;
+    });
+    const { response, dispatcher } = await fetchSafeRaw(
+      'https://cdn.example/a.mp4',
+      {},
+      20,
+    );
+    try {
+      await expect(
+        Promise.race([
+          response.text(),
+          new Promise((resolve) => setTimeout(() => resolve('stalled'), 100)),
+        ]),
+      ).rejects.toThrow('body aborted');
+    } finally {
+      await response.body?.cancel().catch(() => undefined);
+      await dispatcher.close();
+    }
+  });
+
   it('não segue redirecionamento sem header location', async () => {
     lookupSuccess(['8.8.8.8', 4]);
     mockedUndiciFetch.mockResolvedValueOnce(okResponse(302));

@@ -193,6 +193,54 @@ export async function assertHostResolvesSafely(urlStr: string): Promise<void> {
 /** Máximo de redirecionamentos antes de abortar (anti-loop SSRF). */
 const MAX_REDIRECTS = 5;
 
+function bindBodyTimeout(response: Response, clear: () => void): Response {
+  const body = response.body;
+  if (!body) {
+    clear();
+    return response;
+  }
+  const reader = body.getReader();
+  let finished = false;
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    clear();
+  };
+  const stream = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const result = (await reader.read()) as {
+          done: boolean;
+          value?: Uint8Array;
+        };
+        if (result.done) {
+          finish();
+          controller.close();
+          return;
+        }
+        if (result.value) controller.enqueue(result.value);
+      } catch (error) {
+        finish();
+        controller.error(error);
+      }
+    },
+    async cancel(reason) {
+      try {
+        await reader.cancel(reason);
+      } finally {
+        finish();
+      }
+    },
+  });
+  const wrapped = new Response(stream, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
+  Object.defineProperty(wrapped, 'url', { value: response.url });
+  return wrapped;
+}
+
 /**
  * Fetch SSRF-safe standalone: valida cada hop via DNS-pinned resolution,
  * bloqueia IPs internos e segue redirecionamentos com revalidação manual.
@@ -213,6 +261,9 @@ export async function fetchSafeRaw(
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const signal = init.signal
+      ? AbortSignal.any([init.signal, controller.signal])
+      : controller.signal;
     let response: Response;
     try {
       const headers = new Headers(init.headers);
@@ -220,24 +271,32 @@ export async function fetchSafeRaw(
       response = await undiciFetch(request.url, {
         ...init,
         headers,
-        signal: controller.signal,
+        signal,
         redirect: 'manual',
         dispatcher,
       });
     } catch (err) {
+      clearTimeout(timer);
       await dispatcher.close();
       throw err;
-    } finally {
-      clearTimeout(timer);
     }
 
     const location = response.headers.get('location');
     const isRedirect =
       response.status >= 300 && response.status < 400 && !!location;
-    if (!isRedirect) return { response, dispatcher };
+    if (!isRedirect) {
+      return {
+        response: bindBodyTimeout(response, () => clearTimeout(timer)),
+        dispatcher,
+      };
+    }
 
-    await response.body?.cancel();
-    await dispatcher.close();
+    try {
+      await response.body?.cancel();
+      clearTimeout(timer);
+    } finally {
+      await dispatcher.close();
+    }
     try {
       current = new URL(location, resolution.url).toString();
     } catch {

@@ -55,8 +55,14 @@ export class RatingService {
             userId_animeId: { userId, animeId: anime.id },
           },
         });
-      } catch {
-        throw new NotFoundException('Avaliação não encontrada.');
+      } catch (error) {
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2025'
+        ) {
+          throw new NotFoundException('Avaliação não encontrada.');
+        }
+        throw error;
       }
 
       await this.recomputeAnimeRating(tx, anime.id);

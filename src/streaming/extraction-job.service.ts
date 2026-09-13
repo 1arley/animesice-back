@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '@/prisma/prisma.service';
 
@@ -23,9 +23,55 @@ type Listener = (job: ExtractionJob) => void;
 const TTL_MS = 5 * 60_000;
 
 @Injectable()
-export class ExtractionJobService {
+export class ExtractionJobService implements OnModuleDestroy {
   private readonly workerId = crypto.randomUUID();
   private readonly listeners = new Map<string, Set<Listener>>();
+  private pollTimer?: ReturnType<typeof setTimeout>;
+
+  onModuleDestroy(): void {
+    clearTimeout(this.pollTimer);
+    this.listeners.clear();
+  }
+
+  // ponytail: DB poll a cada 1s enquanto houver listeners pendentes entrega o
+  // finish de jobs concluídos em outra réplica; custo = 1 find/job/s.
+  // Upgrade: Redis pub/sub na finalização se o volume justificar.
+  private schedulePoll(): void {
+    if (this.pollTimer || !this.listeners.size) return;
+    this.pollTimer = setTimeout(() => {
+      void (async () => {
+        try {
+          for (const id of this.listeners.keys()) {
+            const job = await this.getJob(id);
+            if (job) this.notify(job);
+          }
+        } catch {
+          return;
+        } finally {
+          this.pollTimer = undefined;
+          this.schedulePoll();
+        }
+      })();
+    }, 1_000);
+    this.pollTimer.unref();
+  }
+
+  private notify(job: ExtractionJob): void {
+    if (job.status !== 'completed' && job.status !== 'failed') return;
+    const listeners = this.listeners.get(job.id);
+    this.listeners.delete(job.id);
+    if (!this.listeners.size) {
+      clearTimeout(this.pollTimer);
+      this.pollTimer = undefined;
+    }
+    for (const listener of listeners ?? []) {
+      try {
+        listener(job);
+      } catch {
+        continue;
+      }
+    }
+  }
   constructor(private readonly prisma: PrismaService) {}
 
   @Cron(CronExpression.EVERY_MINUTE)
@@ -41,18 +87,28 @@ export class ExtractionJobService {
     return job ? this.toJob(job) : undefined;
   }
   async onComplete(id: string, listener: Listener): Promise<() => void> {
-    const job = await this.getJob(id);
-    if (job && (job.status === 'completed' || job.status === 'failed')) {
-      listener(job);
-      return () => {};
-    }
     const listeners = this.listeners.get(id) ?? new Set<Listener>();
     listeners.add(listener);
     this.listeners.set(id, listeners);
-    return () => {
+    const unsubscribe = () => {
       listeners.delete(listener);
-      if (!listeners.size) this.listeners.delete(id);
+      if (!listeners.size && this.listeners.get(id) === listeners) {
+        this.listeners.delete(id);
+      }
+      if (!this.listeners.size) {
+        clearTimeout(this.pollTimer);
+        this.pollTimer = undefined;
+      }
     };
+    try {
+      const job = await this.getJob(id);
+      if (job) this.notify(job);
+      this.schedulePoll();
+      return unsubscribe;
+    } catch (error) {
+      unsubscribe();
+      throw error;
+    }
   }
   async findByEpisode(
     animeSlug: string,
@@ -141,16 +197,7 @@ export class ExtractionJobService {
     });
     if (!updated.count) return;
     const job = await this.getJob(id);
-    const listeners = this.listeners.get(id);
-    if (job && listeners)
-      for (const listener of listeners) {
-        try {
-          listener(job);
-        } catch {
-          /* ignored */
-        }
-      }
-    this.listeners.delete(id);
+    if (job) this.notify(job);
   }
   private toJob(job: {
     id: string;

@@ -32,6 +32,7 @@ function srcAnime(overrides: Record<string, unknown> = {}) {
     endDate: null,
     episodeCount: 1,
     published: true,
+    updatedAt: new Date('2026-01-01T00:00:00.000Z'),
     genres: [{ slug: 'romance', name: 'Romance' }],
     episodes: [
       {
@@ -175,6 +176,50 @@ describe('AdultCatalogSyncService', () => {
   });
 
   describe('sync', () => {
+    it('replays cursor timestamp ties with stable page ordering', async () => {
+      const at = new Date('2026-01-01T00:00:00.000Z');
+      prisma.siteSetting.findUnique.mockResolvedValue({
+        value: at.toISOString(),
+      });
+      const rows = Array.from({ length: 101 }, (_, i) =>
+        srcAnime({
+          slug: `anime-${String(i).padStart(3, '0')}`,
+          updatedAt: at,
+          episodes: [],
+        }),
+      );
+      mockSourceFindMany.mockImplementation(
+        async ({ where, take, orderBy }) => {
+          expect(orderBy).toEqual([{ updatedAt: 'asc' }, { slug: 'asc' }]);
+          let eligible = rows;
+          if (where.OR) {
+            const [after, tie] = where.OR;
+            eligible = rows.filter(
+              (r) =>
+                r.updatedAt > after.updatedAt.gt ||
+                (r.updatedAt.getTime() === tie.updatedAt.getTime() &&
+                  r.slug > tie.slug.gt),
+            );
+          }
+          return eligible.slice(0, take);
+        },
+      );
+      await expect(service.sync()).resolves.toEqual({
+        imported: 101,
+        updated: 0,
+      });
+      expect(prisma.anime.upsert).toHaveBeenCalledTimes(101);
+      expect(mockSourceFindMany.mock.calls[0][0].where.OR).toBeDefined();
+      expect(prisma.siteSetting.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { key: 'adultSync.lastUpdatedAt' },
+          create: expect.objectContaining({
+            value: JSON.stringify({ at: at.toISOString(), slug: 'anime-100' }),
+          }),
+        }),
+      );
+    });
+
     it('retorna zeros com fonte vazia e desconecta', async () => {
       mockSourceFindMany.mockResolvedValue([]);
       const result = await service.sync();

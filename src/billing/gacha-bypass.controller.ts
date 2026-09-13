@@ -56,17 +56,12 @@ export class GachaBypassController {
       },
       orderBy: { createdAt: 'desc' },
     });
-    // ponytail: 1 intenção pendente por vez; paga-não-reconciliada libera
-    // direto, pendente antiga é substituída pela nova cobrança.
     if (active !== null) {
       const paid = await this.livepix.isPaid(active.reference, active.amount);
       if (paid) {
         await this.settle(active.reference, req.user.id);
         return { unlocked: true as const };
       }
-      await this.prisma.gachaBypass.delete({
-        where: { reference: active.reference },
-      });
     }
     const frontend =
       this.config.get<string>('FRONTEND_URL') || 'http://localhost:3000';
@@ -106,13 +101,13 @@ export class GachaBypassController {
     });
     if (!intent) throw new NotFoundException('Intenção não encontrada.');
     if (intent.status === 'PAID') return { status: 'PAID' as const };
-    if (intent.expiresAt.getTime() <= Date.now()) {
-      return { status: 'EXPIRED' as const };
-    }
     const paid = await this.livepix.isPaid(intent.reference, intent.amount);
     if (paid) {
       await this.settle(intent.reference, intent.userId);
       return { status: 'PAID' as const };
+    }
+    if (intent.expiresAt.getTime() <= Date.now()) {
+      return { status: 'EXPIRED' as const };
     }
     return { status: 'PENDING' as const };
   }
@@ -144,10 +139,12 @@ export class GachaBypassController {
   }
 
   private async settle(reference: string, userId: string): Promise<void> {
-    await this.prisma.gachaBypass.updateMany({
-      where: { reference, status: 'PENDING' },
-      data: { status: 'PAID', paidAt: new Date() },
+    await this.prisma.$transaction(async (tx) => {
+      const settled = await tx.gachaBypass.updateMany({
+        where: { reference, userId, status: 'PENDING' },
+        data: { status: 'PAID', paidAt: new Date() },
+      });
+      if (settled.count === 1) await this.gacha.unlockClaim(userId, tx);
     });
-    await this.gacha.unlockClaim(userId);
   }
 }

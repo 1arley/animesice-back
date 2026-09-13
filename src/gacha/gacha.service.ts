@@ -369,15 +369,14 @@ export class GachaService {
     };
   }
 
-  async unlockClaim(userId: string) {
-    const lock = await this.prisma.gachaClaimLock.findUnique({
-      where: { userId },
+  async unlockClaim(
+    userId: string,
+    tx: Prisma.TransactionClient = this.prisma,
+  ) {
+    const deleted = await tx.gachaClaimLock.deleteMany({
+      where: { userId, lockedUntil: { gt: new Date() } },
     });
-    if (lock === null || lock.lockedUntil.getTime() <= Date.now()) {
-      return { unlocked: false as const };
-    }
-    await this.prisma.gachaClaimLock.delete({ where: { userId } });
-    return { unlocked: true as const };
+    return { unlocked: deleted.count > 0 };
   }
 
   private async drawFromTier(tier: GachaTier) {
@@ -995,7 +994,15 @@ export class GachaService {
         throw new ConflictException('Troca expirada.');
       }
 
-      const [offeredOwner, requestedOwner] = await this.prisma.$transaction([
+      const accepted = await tx.gachaTrade.updateMany({
+        where: { id: tradeId, status: 'PENDING' },
+        data: { status: 'COMPLETED', completedAt: new Date() },
+      });
+      if (accepted.count !== 1) {
+        throw new ConflictException('Troca não está mais pendente.');
+      }
+
+      const [offeredOwner, requestedOwner] = await Promise.all([
         tx.userCard.findUnique({
           where: { id: trade.offeredUserCardId },
           select: { userId: true },
@@ -1030,14 +1037,20 @@ export class GachaService {
         data: { featuredUserCardId: null },
       });
 
-      await tx.userCard.updateMany({
-        where: { id: trade.offeredUserCard.id },
+      const offered = await tx.userCard.updateMany({
+        where: { id: trade.offeredUserCard.id, userId: trade.offeredUserId },
         data: { userId: trade.requestedUserId },
       });
-      await tx.userCard.updateMany({
-        where: { id: trade.requestedUserCard.id },
+      const requested = await tx.userCard.updateMany({
+        where: {
+          id: trade.requestedUserCard.id,
+          userId: trade.requestedUserId,
+        },
         data: { userId: trade.offeredUserId },
       });
+      if (offered.count !== 1 || requested.count !== 1) {
+        throw new ConflictException('Uma das cartas mudou de dono.');
+      }
 
       const done = await tx.gachaTrade.update({
         where: { id: tradeId },
@@ -1090,10 +1103,13 @@ export class GachaService {
         });
         throw new ConflictException('Troca expirada.');
       }
-      await tx.gachaTrade.update({
-        where: { id: tradeId },
+      const cancelled = await tx.gachaTrade.updateMany({
+        where: { id: tradeId, status: 'PENDING' },
         data: { status: 'CANCELLED' },
       });
+      if (cancelled.count !== 1) {
+        throw new ConflictException('Troca não está mais pendente.');
+      }
       return { id: tradeId, status: 'CANCELLED' };
     });
   }

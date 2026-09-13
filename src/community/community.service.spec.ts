@@ -28,6 +28,8 @@ function makePrisma() {
     findUnique: jest.fn(async () => null) as jest.Mock,
     delete: jest.fn(async () => ({})) as jest.Mock,
     create: jest.fn(async () => ({})) as jest.Mock,
+    deleteMany: jest.fn(async () => ({ count: 0 })) as jest.Mock,
+    createMany: jest.fn(async () => ({ count: 1 })) as jest.Mock,
   };
   const prisma: any = {
     animeRequest,
@@ -230,14 +232,23 @@ describe('CommunityService', () => {
   });
 
   describe('upvoteFeedback', () => {
-    it('deve criar upvote e incrementar contagem', async () => {
+    it('deve criar upvote e incrementar contagem dentro de transação', async () => {
       const { svc, prisma } = build();
       prisma.siteFeedback.findUnique.mockResolvedValue({ id: 'f1' });
-      prisma.siteFeedbackUpvote.findUnique.mockResolvedValue(null);
-      prisma.siteFeedback.update.mockResolvedValue({ id: 'f1', upvotes: 1 });
+      prisma.siteFeedbackUpvote.deleteMany.mockResolvedValue({ count: 0 });
+      prisma.siteFeedbackUpvote.createMany.mockResolvedValue({ count: 1 });
       const result = await svc.upvoteFeedback('user-1', 'f1');
       expect(result).toEqual({ upvoted: true });
-      expect(prisma.siteFeedbackUpvote.create).toHaveBeenCalled();
+      expect(prisma.$transaction).toHaveBeenCalled();
+      expect(prisma.siteFeedbackUpvote.deleteMany).toHaveBeenCalledWith({
+        where: { userId: 'user-1', feedbackId: 'f1' },
+      });
+      expect(prisma.siteFeedbackUpvote.createMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { userId: 'user-1', feedbackId: 'f1' },
+          skipDuplicates: true,
+        }),
+      );
       expect(prisma.siteFeedback.update).toHaveBeenCalledWith(
         expect.objectContaining({
           data: { upvotes: { increment: 1 } },
@@ -248,14 +259,11 @@ describe('CommunityService', () => {
     it('deve remover upvote existente e decrementar contagem', async () => {
       const { svc, prisma } = build();
       prisma.siteFeedback.findUnique.mockResolvedValue({ id: 'f1' });
-      prisma.siteFeedbackUpvote.findUnique.mockResolvedValue({
-        userId: 'user-1',
-        feedbackId: 'f1',
-      });
-      prisma.siteFeedback.update.mockResolvedValue({ id: 'f1', upvotes: 0 });
+      prisma.siteFeedbackUpvote.deleteMany.mockResolvedValue({ count: 1 });
       const result = await svc.upvoteFeedback('user-1', 'f1');
       expect(result).toEqual({ upvoted: false });
-      expect(prisma.siteFeedbackUpvote.delete).toHaveBeenCalled();
+      expect(prisma.$transaction).toHaveBeenCalled();
+      expect(prisma.siteFeedbackUpvote.createMany).not.toHaveBeenCalled();
       expect(prisma.siteFeedback.update).toHaveBeenCalledWith(
         expect.objectContaining({
           data: { upvotes: { decrement: 1 } },
@@ -263,11 +271,24 @@ describe('CommunityService', () => {
       );
     });
 
+    it('não deve duplicar voto quando outro request concorrente vence o create', async () => {
+      const { svc, prisma } = build();
+      prisma.siteFeedback.findUnique.mockResolvedValue({ id: 'f1' });
+      prisma.siteFeedbackUpvote.deleteMany.mockResolvedValue({ count: 0 });
+      prisma.siteFeedbackUpvote.createMany.mockResolvedValue({ count: 0 });
+      const result = await svc.upvoteFeedback('user-1', 'f1');
+      expect(result).toEqual({ upvoted: true });
+      expect(prisma.siteFeedback.update).not.toHaveBeenCalled();
+    });
+
     it('deve lançar NotFoundException se feedback não existir', async () => {
-      const { svc } = build();
+      const { svc, prisma } = build();
+      prisma.siteFeedback.findUnique.mockResolvedValue(null);
       await expect(svc.upvoteFeedback('user-1', 'x')).rejects.toThrow(
         NotFoundException,
       );
+      expect(prisma.$transaction).toHaveBeenCalled();
+      expect(prisma.siteFeedbackUpvote.deleteMany).not.toHaveBeenCalled();
     });
   });
 

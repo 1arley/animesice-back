@@ -723,6 +723,12 @@ export class ScrapeService {
     episodeNumber: number,
     season: number = 1,
   ): Promise<string | null> {
+    if (await this.sourceDisabled('meusanimes')) {
+      dbg(
+        `[MEUSANIMES] fonte disabled (health), pulando ${animeSlug}/${episodeNumber}`,
+      );
+      return null;
+    }
     const candidates = [
       this.meusanimesEpisodeUrl(animeSlug, episodeNumber, season),
       `https://meusanimes.blog/e/${animeSlug}/`,
@@ -776,6 +782,14 @@ export class ScrapeService {
     animeSlug: string,
     episodeNumber: number,
   ): Promise<string | null> {
+    // Fonte desabilitada (ex: 403 ao IP da VPS sem proxy residencial) => pula
+    // em vez de queimar slot de chromium/rede numa extração sabidamente morta.
+    if (await this.sourceDisabled('animefire')) {
+      dbg(
+        `[ANIMEFIRE] fonte disabled (health), pulando ${animeSlug}/${episodeNumber}`,
+      );
+      return null;
+    }
     const episodeUrl = this.animefireEpisodeUrl(animeSlug, episodeNumber);
     dbg(`[ANIMEFIRE] try ${animeSlug}/${episodeNumber} -> ${episodeUrl}`);
     try {
@@ -1010,6 +1024,16 @@ export class ScrapeService {
       }
     }
     if (oldestKey) this.cache.delete(oldestKey);
+  }
+
+  /** true se o HealthMonitor marcou a fonte disabled (falhas consecutivas).
+   *  Na dúvida/erro trata como NÃO disabled (degrada pra tentar, como antes). */
+  private async sourceDisabled(id: string): Promise<boolean> {
+    try {
+      return await this.health.isDisabled(id);
+    } catch {
+      return false;
+    }
   }
 
   /** Registra success no HealthMonitor (só p/ fontes rastreadas em SOURCE_IDS). */

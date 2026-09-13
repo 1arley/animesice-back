@@ -1,6 +1,7 @@
 import { NotFoundException } from '@nestjs/common';
 import { RatingService } from '@/rating/rating.service';
 import { RateAnimeDto } from '@/rating/dto/rate-anime.dto';
+import { Prisma } from '@prisma/client';
 
 function makePrisma() {
   const anime = {
@@ -72,6 +73,20 @@ describe('RatingService', () => {
   });
 
   describe('remove', () => {
+    it.each([
+      new Error('connection lost'),
+      new Prisma.PrismaClientKnownRequestError('transaction failed', {
+        code: 'P2034',
+        clientVersion: '7',
+      }),
+    ])('propagates database failures unchanged: %s', async (error) => {
+      const { svc, prisma } = build();
+      prisma.anime.findUnique.mockResolvedValue({ id: 'a1' });
+      prisma.rating.delete.mockRejectedValue(error);
+      await expect(svc.remove('u1', 'anime-slug')).rejects.toBe(error);
+      expect(prisma.rating.aggregate).not.toHaveBeenCalled();
+    });
+
     it('deve remover a avaliação e recalcular o rating', async () => {
       const { svc, prisma } = build();
       prisma.anime.findUnique.mockResolvedValue({ id: 'a1' });
@@ -102,7 +117,10 @@ describe('RatingService', () => {
       const { svc, prisma } = build();
       prisma.anime.findUnique.mockResolvedValue({ id: 'a1' });
       prisma.rating.delete.mockRejectedValue(
-        new Error('Record to delete does not exist'),
+        new Prisma.PrismaClientKnownRequestError('Record not found', {
+          code: 'P2025',
+          clientVersion: '7',
+        }),
       );
 
       await expect(svc.remove('u1', 'anime-slug')).rejects.toThrow(

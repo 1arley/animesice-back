@@ -13,6 +13,7 @@ function makeMocks() {
       isPaid: jest.fn(),
     },
     prisma: {
+      $transaction: jest.fn(),
       user: { findUnique: jest.fn() },
       gachaBypass: {
         findFirst: jest.fn(),
@@ -43,6 +44,10 @@ describe('GachaBypassController', () => {
       m.config as never,
     );
     jest.clearAllMocks();
+    m.prisma.$transaction.mockImplementation(
+      (callback: (tx: typeof m.prisma) => unknown) => callback(m.prisma),
+    );
+    m.prisma.gachaBypass.updateMany.mockResolvedValue({ count: 1 });
     m.config.get.mockReturnValue('http://localhost:3000');
     m.prisma.user.findUnique.mockResolvedValue({
       userName: 'u',
@@ -100,10 +105,10 @@ describe('GachaBypassController', () => {
       });
       expect(m.livepix.createBypassCharge).not.toHaveBeenCalled();
       expect(m.prisma.gachaBypass.updateMany).toHaveBeenCalledWith({
-        where: { reference: 'old', status: 'PENDING' },
+        where: { reference: 'old', userId: 'u1', status: 'PENDING' },
         data: { status: 'PAID', paidAt: expect.any(Date) },
       });
-      expect(m.gacha.unlockClaim).toHaveBeenCalledWith('u1');
+      expect(m.gacha.unlockClaim).toHaveBeenCalledWith('u1', m.prisma);
     });
 
     it('intenção pendente antiga é substituída', async () => {
@@ -120,9 +125,7 @@ describe('GachaBypassController', () => {
 
       const result = await controller.create(req('u1'));
 
-      expect(m.prisma.gachaBypass.delete).toHaveBeenCalledWith({
-        where: { reference: 'old' },
-      });
+      expect(m.prisma.gachaBypass.delete).not.toHaveBeenCalled();
       expect(result).toMatchObject({ reference: 'new' });
     });
   });
@@ -151,7 +154,7 @@ describe('GachaBypassController', () => {
       expect(m.livepix.isPaid).not.toHaveBeenCalled();
     });
 
-    it('expirada retorna EXPIRED sem checar LivePix', async () => {
+    it('expirada sem pagamento retorna EXPIRED após checar LivePix', async () => {
       m.prisma.gachaBypass.findFirst.mockResolvedValue({
         reference: 'r',
         userId: 'u1',
@@ -163,7 +166,23 @@ describe('GachaBypassController', () => {
       await expect(controller.poll(req('u1'), 'r')).resolves.toEqual({
         status: 'EXPIRED',
       });
-      expect(m.livepix.isPaid).not.toHaveBeenCalled();
+      expect(m.livepix.isPaid).toHaveBeenCalledWith('r', 299);
+    });
+
+    it('reconcilia pagamento mesmo após expiração local', async () => {
+      m.prisma.gachaBypass.findFirst.mockResolvedValue({
+        reference: 'r',
+        userId: 'u1',
+        amount: 299,
+        status: 'PENDING',
+        expiresAt: new Date(Date.now() - 1000),
+      });
+      m.livepix.isPaid.mockResolvedValue(true);
+
+      await expect(controller.poll(req('u1'), 'r')).resolves.toEqual({
+        status: 'PAID',
+      });
+      expect(m.gacha.unlockClaim).toHaveBeenCalledWith('u1', m.prisma);
     });
 
     it('pagamento confirmado liquida e libera claim', async () => {
@@ -179,7 +198,7 @@ describe('GachaBypassController', () => {
       await expect(controller.poll(req('u1'), 'r')).resolves.toEqual({
         status: 'PAID',
       });
-      expect(m.gacha.unlockClaim).toHaveBeenCalledWith('u1');
+      expect(m.gacha.unlockClaim).toHaveBeenCalledWith('u1', m.prisma);
     });
 
     it('pendente segue PENDING sem liberar', async () => {
@@ -231,7 +250,39 @@ describe('GachaBypassController', () => {
         controller.webhook({ resource: { reference: 'r' } }),
       ).resolves.toEqual({ ok: true });
       expect(m.livepix.isPaid).toHaveBeenCalledWith('r', 299);
-      expect(m.gacha.unlockClaim).toHaveBeenCalledWith('u1');
+      expect(m.gacha.unlockClaim).toHaveBeenCalledWith('u1', m.prisma);
+    });
+
+    it('não libera novamente quando outra liquidação já venceu', async () => {
+      m.prisma.gachaBypass.findUnique.mockResolvedValue({
+        reference: 'r',
+        userId: 'u1',
+        amount: 299,
+        status: 'PENDING',
+      });
+      m.livepix.isPaid.mockResolvedValue(true);
+      m.prisma.gachaBypass.updateMany.mockResolvedValue({ count: 0 });
+
+      await controller.webhook({ resource: { reference: 'r' } });
+
+      expect(m.gacha.unlockClaim).not.toHaveBeenCalled();
+    });
+
+    it('propaga falha no desbloqueio pela mesma transação', async () => {
+      m.prisma.gachaBypass.findUnique.mockResolvedValue({
+        reference: 'r',
+        userId: 'u1',
+        amount: 299,
+        status: 'PENDING',
+      });
+      m.livepix.isPaid.mockResolvedValue(true);
+      m.gacha.unlockClaim.mockRejectedValue(new Error('unlock failed'));
+
+      await expect(
+        controller.webhook({ resource: { reference: 'r' } }),
+      ).rejects.toThrow('unlock failed');
+      expect(m.prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(m.gacha.unlockClaim).toHaveBeenCalledWith('u1', m.prisma);
     });
 
     it('não libera quando API não confirma', async () => {

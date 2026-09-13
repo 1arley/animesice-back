@@ -70,6 +70,7 @@ function makeHealth() {
     ]),
     recordSuccess: jest.fn(async () => undefined),
     recordFailure: jest.fn(async () => undefined),
+    isDisabled: jest.fn(async (_id: string): Promise<boolean> => false),
   };
 }
 
@@ -1589,6 +1590,39 @@ describe('ScrapeService (cobertura de recuperação)', () => {
     const { svc } = build();
     jest.spyOn(svc, 'scrapeEpisodeVideo').mockRejectedValue('nope string');
     await expect(svc.scrapeFromAnimefire('foo', 1)).resolves.toBeNull();
+  });
+
+  it('scrapeFromAnimefire pula sem tentar quando a fonte está disabled', async () => {
+    const { svc, health } = build();
+    health.isDisabled.mockImplementation(
+      async (id: string) => id === 'animefire',
+    );
+    const spy = jest.spyOn(svc, 'scrapeEpisodeVideo');
+    await expect(svc.scrapeFromAnimefire('foo', 1)).resolves.toBeNull();
+    expect(spy).not.toHaveBeenCalled(); // não queima slot/chromium numa fonte morta
+  });
+
+  it('scrapeFromMeusanimes pula sem tentar quando a fonte está disabled', async () => {
+    const { svc, health } = build();
+    health.isDisabled.mockImplementation(
+      async (id: string) => id === 'meusanimes',
+    );
+    const spy = jest.spyOn(svc, 'scrapeEpisodeVideo');
+    await expect(svc.scrapeFromMeusanimes('foo', 1, 1)).resolves.toBeNull();
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('scrapeFromAnimefire tenta normalmente quando a fonte NÃO está disabled', async () => {
+    const { svc } = build();
+    const spy = jest.spyOn(svc, 'scrapeEpisodeVideo').mockResolvedValue({
+      videos: ['https://cdn/v.mp4'],
+      iframes: [],
+      cloudflare: false,
+    });
+    await expect(svc.scrapeFromAnimefire('foo', 1)).resolves.toBe(
+      'https://cdn/v.mp4',
+    );
+    expect(spy).toHaveBeenCalled();
   });
 
   it('scrapeFromTioanime retorna vídeo quando resolve', async () => {

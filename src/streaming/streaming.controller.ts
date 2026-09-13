@@ -240,6 +240,42 @@ export class StreamingController {
 
   @Get('source/async')
   @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  @ApiOperation({
+    summary:
+      'Inicia extração assíncrona; retorna 202 com jobId ou 200 com o source quando o vídeo já está pronto.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Vídeo já pronto — source resolvido diretamente.',
+    schema: {
+      type: 'object',
+      properties: {
+        animeSlug: { type: 'string' },
+        episodeNumber: { type: 'number' },
+        src: { type: 'string' },
+        rawVideoUrl: { type: 'string', nullable: true },
+        embedUrl: { type: 'string', nullable: true },
+        reextracted: { type: 'boolean' },
+        thumbnailUrl: { type: 'string', nullable: true },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 202,
+    description: 'Extração assíncrona em andamento',
+    schema: {
+      type: 'object',
+      properties: {
+        jobId: { type: 'string' },
+        status: { type: 'string' },
+        message: { type: 'string' },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Anime/episódio/vídeo não encontrado.',
+  })
   async getSourceAsync(
     @Query('anime') animeSlug: string,
     @Query('episode') episodeSlug: string,
