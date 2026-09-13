@@ -19,6 +19,39 @@ const FUZZY_MIN_QUERY_LENGTH = 3;
 /** Teto de candidatos retornados pelo ranking fuzzy. */
 const FUZZY_MAX_CANDIDATES = 500;
 
+/**
+ * Colunas que os CARDS do frontend consomem (mapeado em src/components/common/
+ * AnimeCard). Omitir os TEXT gordos (`synopsis`/`editorial*`) e os arrays que
+ * nenhum card renderiza (`studios`/`themes`/`alternativeTitles`/`japaneseTitle`)
+ * corta egress do pooler do Supabase por linha. O detalhe (`findBySlug`) mantém
+ * todas as colunas — lá `synopsis`/`editorial*` são de fato exibidos.
+ */
+const CARD_SELECT = {
+  id: true,
+  slug: true,
+  title: true,
+  coverImage: true,
+  rating: true,
+  ageRating: true,
+  status: true,
+  audio: true,
+} satisfies Prisma.AnimeSelect;
+
+/** findAll: cards + BroadcastCard (`bannerImage`) + sitemap (`updatedAt`). */
+const LIST_SELECT = {
+  ...CARD_SELECT,
+  bannerImage: true,
+  updatedAt: true,
+} satisfies Prisma.AnimeSelect;
+
+/** findTrending: também alimenta o hero (sinopse + banner + ano). */
+const TRENDING_SELECT = {
+  ...CARD_SELECT,
+  synopsis: true,
+  bannerImage: true,
+  year: true,
+} satisfies Prisma.AnimeSelect;
+
 export type SortMode = 'recentlyAdded' | 'rating' | 'views' | 'year' | 'title';
 
 export interface AnimeFilterDto {
@@ -169,7 +202,7 @@ export class AnimeService {
       const animes = pageIds.length
         ? await this.prisma.anime.findMany({
             where: { id: { in: pageIds } },
-            include: { genres: true },
+            select: LIST_SELECT,
           })
         : [];
       const byId = new Map(animes.map((a) => [a.id, a]));
@@ -199,7 +232,7 @@ export class AnimeService {
         take: limitNumber,
         orderBy,
         where,
-        include: { genres: true },
+        select: LIST_SELECT,
       }),
       this.prisma.anime.count({ where }),
     ]);
@@ -289,7 +322,14 @@ export class AnimeService {
       where: { slug, published: true },
       include: {
         genres: true,
-        episodes: { orderBy: { number: 'asc' } },
+        // Os chips de episódio no FE usam só id/number + flag de disponibilidade
+        // (videoUrl||embedUrl). O player resolve o src por /stream/source no
+        // clique, então as outras ~11 colunas por episódio eram peso morto —
+        // em anime longo, o maior bloco de bytes por request desta rota.
+        episodes: {
+          orderBy: { number: 'asc' },
+          select: { id: true, number: true, videoUrl: true, embedUrl: true },
+        },
         animeSchedules: true,
       },
     });
@@ -347,7 +387,7 @@ export class AnimeService {
       },
       take: Math.min(limit, 12),
       orderBy: { rating: 'desc' },
-      include: { genres: true },
+      select: CARD_SELECT,
     });
 
     return related;
@@ -403,7 +443,7 @@ export class AnimeService {
       where: countWhere,
       skip,
       take: 1,
-      include: { genres: true },
+      select: CARD_SELECT,
     });
     return anime ?? null;
   }
@@ -421,7 +461,7 @@ export class AnimeService {
         : { published: true },
       orderBy: { rating: 'desc' },
       take: Math.min(limit, 100),
-      include: { genres: true },
+      select: CARD_SELECT,
     });
   }
 
@@ -462,7 +502,7 @@ export class AnimeService {
             ],
           }
         : { id: { in: ranked }, published: true },
-      include: { genres: true },
+      select: TRENDING_SELECT,
     });
 
     return ranked
@@ -483,7 +523,7 @@ export class AnimeService {
         : { published: true },
       orderBy: { createdAt: 'desc' },
       take: Math.min(limit, 100),
-      include: { genres: true },
+      select: CARD_SELECT,
     });
   }
 
@@ -501,9 +541,9 @@ export class AnimeService {
     const animes = await this.prisma.anime.findMany({
       where,
       orderBy: [{ year: 'desc' }, { title: 'asc' }],
-      include: {
-        genres: true,
-        animeSchedules: true,
+      select: {
+        ...CARD_SELECT,
+        animeSchedules: { select: { dayOfWeek: true, time: true } },
       },
     });
 

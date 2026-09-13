@@ -1,8 +1,17 @@
 # Estratégia de cache (pendente de Redis)
 
+> **Atualizado 2026-09-12:** por causa do estouro de egress do plano free, foi
+> adotado **cache local TTL curto** (120s) nas rotas públicas de catálogo
+> (`CatalogCacheInterceptor`), o que a nota original abaixo vetava. Isso vale só
+> para o **catálogo público** (monorreplica na VPS, sem dado por usuário, frescor
+> ≤2 min acordado). O plano de Redis/invalidação por evento abaixo continua o alvo
+> para quando a consistência de frescor pesar mais que o egress. Ver
+> [`docs/adr/0001-supabase-metadata-only-egress.md`](./adr/0001-supabase-metadata-only-egress.md).
+
 O projeto não possui Redis, cliente compatível nem módulo de cache configurado.
-Por isso esta otimização não adiciona cache local, que ficaria inconsistente entre
-réplicas. Quando Redis estiver disponível, os pontos recomendados são:
+Por isso as rotas **que não estão no cache TTL local** acima seguem sem cache, que
+ficaria inconsistente entre réplicas. Quando Redis estiver disponível, os pontos
+recomendados são:
 
 | Recurso    | Chave sugerida                  | TTL    | Invalidação                                 |
 | ---------- | ------------------------------- | ------ | ------------------------------------------- |

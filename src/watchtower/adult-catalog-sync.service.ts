@@ -8,6 +8,12 @@ import { ADULT_AGE_RATING, ADULT_GENRE_SLUG } from '@/common/adult';
 
 const PAGE_SIZE = 100;
 
+/** Marcador de "full-copy já concluído" em SiteSetting — shared entre réplicas. */
+const SYNC_MARKER_KEY = 'adultSync.completedAt';
+
+/** Cursor incremental: último `updatedAt` já importado. Sem ele => full-copy. */
+const SYNC_CURSOR_KEY = 'adultSync.lastUpdatedAt';
+
 function syncEnabled(): boolean {
   return (
     process.env.ADULT_CATALOG_ENABLED === 'true' &&
@@ -22,13 +28,50 @@ export class AdultCatalogSyncService implements OnApplicationBootstrap {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  onApplicationBootstrap(): void {
-    // Fire-and-forget de propósito: o sync varre o catálogo adulto inteiro
-    // (paginado + upserts) e o Nest aguarda onApplicationBootstrap antes do
-    // app.listen() — dar await aqui deixava o HTTP fechado por minutos,
-    // healthcheck falhava e o Traefik devolvia 502 sem headers CORS.
-    // O cron diário (04:00) cobre a sincronização.
-    void this.handleCron();
+  onApplicationBootstrap(): void | Promise<void> {
+    // Full-copy na 1ª boot só. Sem marcador => nunca sincronizou => roda.
+    // Com marcador => deploys seguintes pulam (o cron 04:00 mantém o refresh).
+    // Cada full-copy cruza o catálogo inteiro pelo pooler do Supabase (egress);
+    // com release automático isso re-copiava tudo a cada deploy. Fire-and-forget
+    // de propósito: o sync bloquearia app.listen() (healthcheck 502 no Traefik).
+    if (!syncEnabled()) return;
+    return (async () => {
+      if (await this.isSyncComplete()) {
+        console.log('[ADULT-SYNC] boot: já sincronizado, pulando full-copy');
+        return;
+      }
+      void this.handleCron();
+    })();
+  }
+
+  /** true => uma sincronização completa já gravou o marcador. Em erro => false
+   *  (re-tenta no boot; upserts idempotentes, sem risco de perda). */
+  private async isSyncComplete(): Promise<boolean> {
+    try {
+      const row = await this.prisma.siteSetting.findUnique({
+        where: { key: SYNC_MARKER_KEY },
+        select: { value: true },
+      });
+      return Boolean(row?.value);
+    } catch {
+      return false;
+    }
+  }
+
+  /** Grava o marcador após um full-copy bem-sucedido. Falha não derruba o boot. */
+  private async markSynced(): Promise<void> {
+    try {
+      await this.prisma.siteSetting.upsert({
+        where: { key: SYNC_MARKER_KEY },
+        update: { value: new Date().toISOString() },
+        create: { key: SYNC_MARKER_KEY, value: new Date().toISOString() },
+      });
+    } catch (e) {
+      console.error(
+        '[ADULT-SYNC] falha ao gravar marcador:',
+        e instanceof Error ? e.message : String(e),
+      );
+    }
   }
 
   @Cron('0 4 * * *')
@@ -38,6 +81,7 @@ export class AdultCatalogSyncService implements OnApplicationBootstrap {
     this.running = true;
     try {
       await this.sync();
+      await this.markSynced();
     } catch (e) {
       console.error(
         '[ADULT-SYNC] falhou:',
@@ -48,6 +92,37 @@ export class AdultCatalogSyncService implements OnApplicationBootstrap {
     }
   }
 
+  /** Lê o cursor incremental; null => ainda não sincronizou (full-copy). */
+  private async readCursor(): Promise<Date | null> {
+    try {
+      const row = await this.prisma.siteSetting.findUnique({
+        where: { key: SYNC_CURSOR_KEY },
+        select: { value: true },
+      });
+      if (!row?.value) return null;
+      const d = new Date(row.value);
+      return Number.isNaN(d.getTime()) ? null : d;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Avança o cursor para o maior `updatedAt` já importado. */
+  private async writeCursor(at: Date): Promise<void> {
+    try {
+      await this.prisma.siteSetting.upsert({
+        where: { key: SYNC_CURSOR_KEY },
+        update: { value: at.toISOString() },
+        create: { key: SYNC_CURSOR_KEY, value: at.toISOString() },
+      });
+    } catch (e) {
+      console.error(
+        '[ADULT-SYNC] falha ao gravar cursor:',
+        e instanceof Error ? e.message : String(e),
+      );
+    }
+  }
+
   async sync(opts?: { dryRun?: boolean; limit?: number }) {
     const sourceUrl = process.env.HENTAI_SOURCE_DATABASE_URL || '';
     const source = new PrismaClient({
@@ -55,6 +130,14 @@ export class AdultCatalogSyncService implements OnApplicationBootstrap {
     });
     let imported = 0;
     let updated = 0;
+    // Só o pass completo (cron diário) avança o cursor. dryRun e runs limitados
+    // (backfill manual) não tocam no estado de sincronização.
+    // ponytail: incremental por Anime.updatedAt => só pega edits no anime-pai;
+    // mudança exclusiva de um episódio na origem não re-puxa (catálogo hentai é
+    // estático). Upgrade: diffar episodes[] por updatedAt também se virar ruído.
+    const useCursor = !opts?.limit && !opts?.dryRun;
+    const since = useCursor ? await this.readCursor() : null;
+    let lastUpdatedAt: Date | null = null;
     try {
       await this.prisma.genre.upsert({
         where: { slug: ADULT_GENRE_SLUG },
@@ -64,7 +147,10 @@ export class AdultCatalogSyncService implements OnApplicationBootstrap {
       let skip = 0;
       for (;;) {
         const batch = await source.anime.findMany({
-          where: { published: true },
+          where: {
+            published: true,
+            ...(since ? { updatedAt: { gt: since } } : {}),
+          },
           select: {
             slug: true,
             title: true,
@@ -86,6 +172,7 @@ export class AdultCatalogSyncService implements OnApplicationBootstrap {
             endDate: true,
             episodeCount: true,
             published: true,
+            updatedAt: true,
             genres: { select: { slug: true, name: true } },
             episodes: {
               select: {
@@ -106,6 +193,9 @@ export class AdultCatalogSyncService implements OnApplicationBootstrap {
         });
         if (batch.length === 0) break;
         for (const src of batch) {
+          if (!lastUpdatedAt || src.updatedAt > lastUpdatedAt) {
+            lastUpdatedAt = src.updatedAt;
+          }
           const res = await this.upsertOne(src, opts?.dryRun);
           if (res === 'created') imported += 1;
           else if (res === 'updated') updated += 1;
@@ -114,6 +204,9 @@ export class AdultCatalogSyncService implements OnApplicationBootstrap {
         if (opts?.limit && imported + updated >= opts.limit) break;
         if (batch.length < PAGE_SIZE) break;
         skip += batch.length;
+      }
+      if (useCursor && lastUpdatedAt) {
+        await this.writeCursor(lastUpdatedAt);
       }
     } finally {
       await source.$disconnect().catch(() => undefined);
@@ -143,6 +236,7 @@ export class AdultCatalogSyncService implements OnApplicationBootstrap {
       endDate: Date | null;
       episodeCount: number | null;
       published: boolean;
+      updatedAt: Date;
       genres: Array<{ slug: string; name: string }>;
       episodes: Array<{
         season: number;

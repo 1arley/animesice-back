@@ -59,6 +59,10 @@ function makePrisma() {
       })),
     },
     episode: { upsert: jest.fn(async () => ({})) },
+    siteSetting: {
+      findUnique: jest.fn(async (): Promise<any> => null),
+      upsert: jest.fn(async () => ({})),
+    },
   };
 }
 
@@ -105,20 +109,36 @@ describe('AdultCatalogSyncService', () => {
       expect(sync).not.toHaveBeenCalled();
     });
 
-    it('sincroniza quando habilitado', async () => {
+    it('sincroniza quando habilitado e grava o marcador', async () => {
       mockSourceFindMany.mockResolvedValue([]);
       await service.handleCron();
       expect(prisma.genre.upsert).toHaveBeenCalled();
+      expect(prisma.siteSetting.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { key: 'adultSync.completedAt' } }),
+      );
     });
 
-    it('sincroniza no bootstrap quando habilitado', async () => {
+    it('roda o full-copy no bootstrap apenas na 1ª boot (sem marcador)', async () => {
       const sync = jest
         .spyOn(service, 'sync')
         .mockResolvedValue({ imported: 0, updated: 0 });
 
-      service.onApplicationBootstrap();
+      await service.onApplicationBootstrap();
 
       expect(sync).toHaveBeenCalledTimes(1);
+    });
+
+    it('pula o full-copy no bootstrap quando o marcador já existe', async () => {
+      prisma.siteSetting.findUnique.mockResolvedValue({
+        value: new Date().toISOString(),
+      });
+      const sync = jest
+        .spyOn(service, 'sync')
+        .mockResolvedValue({ imported: 0, updated: 0 });
+
+      await service.onApplicationBootstrap();
+
+      expect(sync).not.toHaveBeenCalled();
     });
 
     it('não executa sync concorrente', async () => {

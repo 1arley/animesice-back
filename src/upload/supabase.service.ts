@@ -184,6 +184,9 @@ export class SupabaseService {
         Key: objectPath,
         Body: buffer,
         ContentType: contentType,
+        // Avatar é imutável (chave tem UUID): cache longo no objeto para o
+        // browser/CDN não re-puxar do bucket público a cada render (egress).
+        CacheControl: 'public, max-age=2592000, immutable',
       }),
     );
 

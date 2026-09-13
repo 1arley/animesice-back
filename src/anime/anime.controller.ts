@@ -1,6 +1,18 @@
-import { Controller, Get, Param, Query } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Header,
+  Param,
+  Query,
+  UseInterceptors,
+} from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
 import { AnimeService, type AnimeFilterDto } from '@/anime/anime.service';
+import { CatalogCacheInterceptor } from '@/anime/catalog-cache.interceptor';
+
+/** Catálogo público: cacheado no processo (120s) e liberado p/ edge (CF) quando
+ *  uma cache rule apontar p/ cá. Frescor <5min acordado; sem dado por usuário. */
+const CATALOG_CACHE_HEADER = 'public, max-age=120, s-maxage=120';
 
 @ApiTags('anime')
 @Controller('anime')
@@ -8,6 +20,8 @@ export class AnimeController {
   constructor(private readonly animeService: AnimeService) {}
 
   @Get()
+  @UseInterceptors(CatalogCacheInterceptor)
+  @Header('Cache-Control', CATALOG_CACHE_HEADER)
   @ApiOperation({ summary: 'Listar animes (paginado, com filtros avançados)' })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
@@ -70,6 +84,8 @@ export class AnimeController {
   }
 
   @Get('top')
+  @UseInterceptors(CatalogCacheInterceptor)
+  @Header('Cache-Control', CATALOG_CACHE_HEADER)
   @ApiOperation({ summary: 'Top animes por nota' })
   @ApiQuery({ name: 'limit', required: false, type: Number })
   @ApiResponse({ status: 200, description: 'Top animes' })
@@ -78,6 +94,8 @@ export class AnimeController {
   }
 
   @Get('trending')
+  @UseInterceptors(CatalogCacheInterceptor)
+  @Header('Cache-Control', CATALOG_CACHE_HEADER)
   @ApiOperation({ summary: 'Animes em alta (baseado em views recentes)' })
   @ApiQuery({ name: 'limit', required: false, type: Number })
   @ApiQuery({
@@ -98,6 +116,8 @@ export class AnimeController {
   }
 
   @Get('recently-added')
+  @UseInterceptors(CatalogCacheInterceptor)
+  @Header('Cache-Control', CATALOG_CACHE_HEADER)
   @ApiOperation({ summary: 'Animes recentemente adicionados' })
   @ApiQuery({ name: 'limit', required: false, type: Number })
   @ApiResponse({ status: 200, description: 'Animes recentes' })
@@ -108,6 +128,8 @@ export class AnimeController {
   }
 
   @Get('calendar')
+  @UseInterceptors(CatalogCacheInterceptor)
+  @Header('Cache-Control', CATALOG_CACHE_HEADER)
   @ApiOperation({ summary: 'Calendário de lançamentos por dia da semana' })
   @ApiQuery({ name: 'season', required: false, type: String })
   @ApiQuery({ name: 'year', required: false, type: Number })
@@ -117,6 +139,8 @@ export class AnimeController {
   }
 
   @Get(':slug')
+  @UseInterceptors(CatalogCacheInterceptor)
+  @Header('Cache-Control', CATALOG_CACHE_HEADER)
   @ApiOperation({ summary: 'Buscar anime por slug' })
   @ApiResponse({ status: 200, description: 'Anime encontrado' })
   @ApiResponse({ status: 404, description: 'Anime não encontrado' })
@@ -125,6 +149,8 @@ export class AnimeController {
   }
 
   @Get(':slug/related')
+  @UseInterceptors(CatalogCacheInterceptor)
+  @Header('Cache-Control', CATALOG_CACHE_HEADER)
   @ApiOperation({ summary: 'Animes relacionados por gênero' })
   @ApiResponse({ status: 200, description: 'Animes relacionados retornados' })
   findRelated(@Param('slug') slug: string) {
