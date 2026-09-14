@@ -169,20 +169,25 @@ export class GachaService {
 
   async status(userId: string) {
     const hour = this.hourStartUtc();
-    const [spinsUsed, claim, pity, first] = await this.prisma.$transaction([
-      this.prisma.gachaSpin.count({ where: { userId, hour } }),
-      this.prisma.gachaClaimLock.findUnique({ where: { userId } }),
-      this.prisma.userCard.findFirst({
-        where: { userId, card: { rarity: { in: EPIC_RARITIES } } },
-        orderBy: { obtainedAt: 'desc' },
-        select: { obtainedAt: true },
-      }),
-      this.prisma.userCard.findFirst({
-        where: { userId },
-        orderBy: { obtainedAt: 'asc' },
-        select: { obtainedAt: true },
-      }),
-    ]);
+    const [spinsUsed, claim, pity, first, wallet] =
+      await this.prisma.$transaction([
+        this.prisma.gachaSpin.count({ where: { userId, hour } }),
+        this.prisma.gachaClaimLock.findUnique({ where: { userId } }),
+        this.prisma.userCard.findFirst({
+          where: { userId, card: { rarity: { in: EPIC_RARITIES } } },
+          orderBy: { obtainedAt: 'desc' },
+          select: { obtainedAt: true },
+        }),
+        this.prisma.userCard.findFirst({
+          where: { userId },
+          orderBy: { obtainedAt: 'asc' },
+          select: { obtainedAt: true },
+        }),
+        this.prisma.user.findUnique({
+          where: { id: userId },
+          select: { pointsBalance: true },
+        }),
+      ]);
 
     const since = pity?.obtainedAt ?? first?.obtainedAt ?? null;
     const daysSince = since
@@ -209,6 +214,7 @@ export class GachaService {
         ? 'Você já guardou uma carta. Girar continua liberado, mas a próxima só pode ser guardada após o fim do bloqueio.'
         : null,
       bypassPriceCents: locked ? GACHA_BYPASS_PRICE_CENTS : null,
+      pointsBalance: wallet?.pointsBalance ?? 0,
       pityDaysLeft,
       pityDue: since !== null && daysSince >= GACHA_PITY_DAYS,
     };
@@ -322,6 +328,18 @@ export class GachaService {
           if (claimed.count !== 1) {
             throw new NotFoundException('Preview expirada ou já resgatada.');
           }
+          await tx.user.update({
+            where: { id: userId },
+            data: { pointsBalance: { increment: created.value } },
+          });
+          await tx.gachaPointEvent.create({
+            data: {
+              userId,
+              delta: created.value,
+              type: 'MINT',
+              refId: created.id,
+            },
+          });
           await tx.gachaClaimLock.upsert({
             where: { userId },
             create: {
@@ -377,6 +395,71 @@ export class GachaService {
       where: { userId, lockedUntil: { gt: new Date() } },
     });
     return { unlocked: deleted.count > 0 };
+  }
+
+  async points(userId: string, page = 1, limit = 20) {
+    const safeLimit = Math.min(Math.max(limit, 1), 50);
+    const [user, events, total] = await this.prisma.$transaction([
+      this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { pointsBalance: true },
+      }),
+      this.prisma.gachaPointEvent.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * safeLimit,
+        take: safeLimit,
+      }),
+      this.prisma.gachaPointEvent.count({ where: { userId } }),
+    ]);
+    if (!user) {
+      throw new NotFoundException('Usuário não encontrado.');
+    }
+    return {
+      balance: user.pointsBalance,
+      events,
+      meta: { page, limit: safeLimit, total },
+    };
+  }
+
+  async adjustPoints(userId: string, delta: number, reason: string) {
+    if (!Number.isInteger(delta) || delta === 0) {
+      throw new BadRequestException('delta deve ser um inteiro não-zero.');
+    }
+    const trimmed = reason?.trim();
+    if (!trimmed) {
+      throw new BadRequestException('Motivo do ajuste é obrigatório.');
+    }
+    return this.prisma.$transaction(
+      async (tx) => {
+        const user = await tx.user.findUnique({
+          where: { id: userId },
+          select: { pointsBalance: true },
+        });
+        if (!user) {
+          throw new NotFoundException('Usuário não encontrado.');
+        }
+        const next = user.pointsBalance + delta;
+        if (next < 0) {
+          throw new BadRequestException('Ajuste deixaria o saldo negativo.');
+        }
+        await tx.user.update({
+          where: { id: userId },
+          data: { pointsBalance: next },
+        });
+        return tx.gachaPointEvent.create({
+          data: { userId, delta, type: 'ADMIN', reason: trimmed },
+          select: {
+            id: true,
+            delta: true,
+            type: true,
+            reason: true,
+            createdAt: true,
+          },
+        });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
   }
 
   private async drawFromTier(tier: GachaTier) {

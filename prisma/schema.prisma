@@ -156,6 +156,8 @@ model User {
   gachaSpins              GachaSpin[]
   gachaClaimLock          GachaClaimLock?
   gachaBypasses           GachaBypass[]
+  pointsBalance           Int               @default(0)
+  pointEvents             GachaPointEvent[]
   posts                   Post[]
   postLikes               PostLike[]
   postComments            PostComment[]
@@ -899,4 +901,28 @@ enum GachaTradeStatus {
   COMPLETED
   CANCELLED
   EXPIRED
+}
+
+/// Eventos da carteira de pontos do gacha — mint no claim, gasto em
+/// reroll/cosmético, transferência no mercado, ajuste admin. Saldo em
+/// User.pointsBalance é derivado mas cacheado (update transacional).
+model GachaPointEvent {
+  id        String              @id @default(uuid())
+  userId    String
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  delta     Int
+  type      GachaPointEventType
+  refId     String?
+  reason    String?
+  createdAt DateTime            @default(now())
+
+  @@index([userId, createdAt(sort: Desc)])
+}
+
+enum GachaPointEventType {
+  MINT
+  SPEND
+  SALE
+  TAX
+  ADMIN
 }

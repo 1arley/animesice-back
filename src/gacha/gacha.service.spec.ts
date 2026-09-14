@@ -65,6 +65,12 @@ describe('GachaService', () => {
       upsert: jest.fn(),
       updateMany: jest.fn(),
     },
+    gachaPointEvent: {
+      create: jest.fn(),
+      findMany: jest.fn(),
+      count: jest.fn(),
+      findFirst: jest.fn(),
+    },
     card: {
       count: jest.fn(),
       findFirst: jest.fn(),
@@ -400,6 +406,21 @@ describe('GachaService', () => {
         }),
       );
       expect(mockPrisma.post.create).not.toHaveBeenCalled();
+    });
+
+    it('crea mint de pontos no claim (delta = value da carta)', async () => {
+      mockPrisma.gachaSpin.findFirst.mockResolvedValue(previewComum);
+      mockClaimCreate();
+
+      const pull = await service.claim('u1', 's1');
+
+      expect(mockPrisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'u1' },
+        data: { pointsBalance: { increment: pull.value } },
+      });
+      expect(mockPrisma.gachaPointEvent.create).toHaveBeenCalledWith({
+        data: { userId: 'u1', delta: pull.value, type: 'MINT', refId: pull.id },
+      });
     });
 
     it('publica Épica+ no feed quando privacidade permite', async () => {
@@ -1261,6 +1282,45 @@ describe('GachaService', () => {
           data: { status: 'EXPIRED' },
         });
       });
+    });
+  });
+
+  describe('points', () => {
+    it('adjustPoints registra evento ADMIN e atualiza saldo', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue({ pointsBalance: 100 });
+      mockPrisma.user.update.mockResolvedValue({});
+      mockPrisma.gachaPointEvent.create.mockResolvedValue({ id: 'e1' });
+
+      await service.adjustPoints('u1', 50, 'estorno de bug');
+
+      expect(mockPrisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'u1' },
+        data: { pointsBalance: 150 },
+      });
+      expect(mockPrisma.gachaPointEvent.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            userId: 'u1',
+            delta: 50,
+            type: 'ADMIN',
+            reason: 'estorno de bug',
+          }),
+        }),
+      );
+    });
+
+    it('adjustPoints barra saldo negativo e delta inválido', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue({ pointsBalance: 10 });
+      await expect(
+        service.adjustPoints('u1', -50, 'punicao'),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      await expect(
+        service.adjustPoints('u1', 0, 'noop'),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      await expect(service.adjustPoints('u1', 5, '')).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
     });
   });
 });

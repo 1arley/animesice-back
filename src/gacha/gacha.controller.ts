@@ -78,6 +78,22 @@ export class GachaController {
     return this.gachaService.status(req.user.id);
   }
 
+  @Get('points')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Saldo e extrato de pontos do gacha' })
+  points(
+    @Req() req: AuthenticatedRequest,
+    @Query('page') page: string,
+    @Query('limit') limit: string,
+  ) {
+    return this.gachaService.points(
+      req.user.id,
+      parseInt(page ?? '1', 10) || DEFAULT_PAGE,
+      parseInt(limit ?? '20', 10) || 20,
+    );
+  }
+
   @Get('collection')
   @UseGuards(OptionalJwtAuthGuard)
   @ApiOperation({ summary: 'Coleção de cartas (própria ou pública)' })
@@ -288,6 +304,24 @@ export class GachaController {
   @Audit('RESET_GACHA_ROLL', 'GachaRollDay')
   adminResetRoll(@Param('userId') userId: string) {
     return this.gachaService.adminResetRoll(userId);
+  }
+
+  @Post('admin/users/:userId/points-adjust')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  @Audit('ADJUST_GACHA_POINTS', 'GachaPointEvent')
+  @ApiOperation({
+    summary: 'Ajuste manual de saldo de pontos (delta +/-, motivo obrigatório)',
+  })
+  adminAdjustPoints(
+    @Param('userId') userId: string,
+    @Body() body: { delta: number; reason: string },
+  ) {
+    return this.gachaService.adjustPoints(
+      userId,
+      Number(body.delta),
+      body.reason ?? '',
+    );
   }
 
   @Get('recent')
