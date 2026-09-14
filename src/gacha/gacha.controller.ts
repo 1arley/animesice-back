@@ -15,6 +15,7 @@ import { GachaService } from '@/gacha/gacha.service';
 import {
   BuyCosmeticDto,
   ClaimGachaDto,
+  CreateListingDto,
   NewTradeDto,
   RerollGachaCardDto,
   SetFeaturedGachaCardDto,
@@ -120,6 +121,65 @@ export class GachaController {
   @ApiOperation({ summary: 'Compra um cosmético da loja com pontos' })
   buyCosmetic(@Req() req: AuthenticatedRequest, @Body() dto: BuyCosmeticDto) {
     return this.gachaService.buyCosmetic(req.user.id, dto.key);
+  }
+
+  @Get('listings')
+  @ApiOperation({ summary: 'Mercado: anúncios ativos (buy-now por pontos)' })
+  listings(
+    @Query('page') page: string,
+    @Query('limit') limit: string,
+    @Query('sort') sort?: string,
+    @Query('rarity') rarity?: string,
+    @Query('foil') foil?: string,
+  ) {
+    return this.gachaService.listings(
+      parseInt(page ?? '1', 10) || DEFAULT_PAGE,
+      parseInt(limit ?? '24', 10) || 24,
+      sort,
+      rarity,
+      foil,
+    );
+  }
+
+  @Get('listings/mine')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Meus anúncios ativos no mercado' })
+  myListings(@Req() req: AuthenticatedRequest) {
+    return this.gachaService.myListings(req.user.id);
+  }
+
+  @Post('listings')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Anuncia uma carta sua (escrow, 48h)' })
+  createListing(
+    @Req() req: AuthenticatedRequest,
+    @Body() dto: CreateListingDto,
+  ) {
+    return this.gachaService.createListing(
+      req.user.id,
+      dto.userCardId,
+      Number(dto.price),
+    );
+  }
+
+  @Post('listings/:id/cancel')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Desanuncia (a carta volta pra você)' })
+  cancelListing(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.gachaService.cancelListing(req.user.id, id);
+  }
+
+  @Post('listings/:id/buy')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Buy-now: transfere pontos (taxa 10% queimada) e a carta',
+  })
+  buyListing(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.gachaService.buyListing(req.user.id, id);
   }
 
   @Get('collection')

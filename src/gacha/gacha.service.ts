@@ -13,7 +13,10 @@ import {
   GACHA_BYPASS_PRICE_CENTS,
   GACHA_CLAIM_LOCK_MS,
   GACHA_COSMETICS,
+  GACHA_FOILS,
   GACHA_FOIL_WEIGHTS,
+  GACHA_LISTING_ACTIVE_LIMIT,
+  GACHA_MARKET_TAX_PCT,
   GACHA_PITY_DAYS,
   GACHA_PITY_WEIGHTS,
   GACHA_REROLL_COST_PCT,
@@ -67,6 +70,20 @@ const PULL_SELECT = {
 } satisfies Prisma.UserCardSelect;
 
 type Pull = Prisma.UserCardGetPayload<{ select: typeof PULL_SELECT }>;
+
+const LISTING_SELECT = {
+  id: true,
+  userId: true,
+  userCardId: true,
+  price: true,
+  status: true,
+  expiresAt: true,
+  createdAt: true,
+  user: {
+    select: { id: true, name: true, userName: true, avatar: true },
+  },
+  userCard: { select: PULL_SELECT },
+} satisfies Prisma.GachaListingSelect;
 
 const SPIN_SELECT = {
   id: true,
@@ -602,6 +619,237 @@ export class GachaService {
     );
   }
 
+  async createListing(userId: string, userCardId: string, price: number) {
+    if (!Number.isInteger(price) || price < 1) {
+      throw new BadRequestException('Preço deve ser um inteiro positivo.');
+    }
+    return this.prisma.$transaction(
+      async (tx) => {
+        const card = await tx.userCard.findFirst({
+          where: { id: userCardId, userId },
+          select: { id: true },
+        });
+        if (!card) {
+          throw new NotFoundException('Carta não encontrada.');
+        }
+        const inTrade = await tx.gachaTrade.findFirst({
+          where: {
+            status: 'PENDING',
+            OR: [
+              { offeredUserCardId: userCardId },
+              { requestedUserCardId: userCardId },
+            ],
+          },
+          select: { id: true },
+        });
+        if (inTrade) {
+          throw new BadRequestException('Carta envolvida em troca pendente.');
+        }
+        const now = new Date();
+        await tx.gachaListing.updateMany({
+          where: { userId, status: 'ACTIVE', expiresAt: { lte: now } },
+          data: { status: 'EXPIRED' },
+        });
+        const active = await tx.gachaListing.count({
+          where: { userId, status: 'ACTIVE' },
+        });
+        if (active >= GACHA_LISTING_ACTIVE_LIMIT) {
+          throw new BadRequestException(
+            `Limite de ${GACHA_LISTING_ACTIVE_LIMIT} anúncios ativos atingido.`,
+          );
+        }
+        try {
+          return await tx.gachaListing.create({
+            data: {
+              userId,
+              userCardId,
+              price,
+              expiresAt: new Date(now.getTime() + TRADE_TTL_MS),
+            },
+            select: LISTING_SELECT,
+          });
+        } catch (error) {
+          if (
+            error instanceof Prisma.PrismaClientKnownRequestError &&
+            error.code === 'P2002'
+          ) {
+            throw new ConflictException('Esta carta já está anunciada.');
+          }
+          throw error;
+        }
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+  }
+
+  async listings(
+    page = 1,
+    limit = 24,
+    sort = 'price',
+    rarity?: string,
+    foil?: string,
+  ) {
+    const safeLimit = Math.min(Math.max(limit, 1), 50);
+    const where: Prisma.GachaListingWhereInput = {
+      status: 'ACTIVE',
+      expiresAt: { gt: new Date() },
+      user: {
+        OR: [
+          { privacySettings: null },
+          { privacySettings: { is: { showGacha: true } } },
+        ],
+      },
+    };
+    const userCardWhere: Prisma.UserCardWhereInput = {};
+    if (rarity && (GACHA_TIERS as readonly string[]).includes(rarity)) {
+      userCardWhere.card = { rarity };
+    }
+    if (foil && (GACHA_FOILS as readonly string[]).includes(foil)) {
+      userCardWhere.foil = foil;
+    }
+    if (Object.keys(userCardWhere).length > 0) {
+      where.userCard = userCardWhere;
+    }
+    const orderBy =
+      sort === 'newest'
+        ? { createdAt: 'desc' as const }
+        : sort === 'value'
+          ? { userCard: { value: 'desc' as const } }
+          : { price: 'asc' as const };
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.gachaListing.findMany({
+        where,
+        orderBy,
+        skip: (page - 1) * safeLimit,
+        take: safeLimit,
+        select: LISTING_SELECT,
+      }),
+      this.prisma.gachaListing.count({ where }),
+    ]);
+    return {
+      data: items,
+      meta: {
+        page,
+        limit: safeLimit,
+        total,
+        totalPages: Math.max(1, Math.ceil(total / safeLimit)),
+      },
+    };
+  }
+
+  async myListings(userId: string) {
+    const now = new Date();
+    await this.prisma.gachaListing.updateMany({
+      where: { userId, status: 'ACTIVE', expiresAt: { lte: now } },
+      data: { status: 'EXPIRED' },
+    });
+    return this.prisma.gachaListing.findMany({
+      where: { userId, status: 'ACTIVE' },
+      orderBy: { createdAt: 'desc' },
+      select: LISTING_SELECT,
+    });
+  }
+
+  async cancelListing(userId: string, listingId: string) {
+    const cancelled = await this.prisma.gachaListing.updateMany({
+      where: { id: listingId, userId, status: 'ACTIVE' },
+      data: { status: 'CANCELLED' },
+    });
+    if (cancelled.count !== 1) {
+      throw new ConflictException('Anúncio não está mais ativo.');
+    }
+    return { cancelled: true };
+  }
+
+  async buyListing(userId: string, listingId: string) {
+    return this.prisma.$transaction(
+      async (tx) => {
+        const listing = await tx.gachaListing.findUnique({
+          where: { id: listingId },
+          select: LISTING_SELECT,
+        });
+        if (!listing) {
+          throw new NotFoundException('Anúncio não encontrado.');
+        }
+        if (listing.userId === userId) {
+          throw new BadRequestException(
+            'Você não pode comprar o próprio anúncio.',
+          );
+        }
+        if (listing.status !== 'ACTIVE') {
+          throw new ConflictException('Anúncio não está mais ativo.');
+        }
+        if (listing.expiresAt.getTime() <= Date.now()) {
+          await tx.gachaListing.update({
+            where: { id: listingId },
+            data: { status: 'EXPIRED' },
+          });
+          throw new ConflictException('Anúncio expirado.');
+        }
+        const sold = await tx.gachaListing.updateMany({
+          where: { id: listingId, status: 'ACTIVE' },
+          data: {
+            status: 'SOLD',
+            buyerId: userId,
+            completedAt: new Date(),
+          },
+        });
+        if (sold.count !== 1) {
+          throw new ConflictException('Anúncio não está mais ativo.');
+        }
+        const moved = await tx.userCard.updateMany({
+          where: { id: listing.userCardId, userId: listing.userId },
+          data: { userId },
+        });
+        if (moved.count !== 1) {
+          throw new ConflictException(
+            'A carta mudou de dono — compra cancelada.',
+          );
+        }
+        await tx.user.updateMany({
+          where: { id: listing.userId, featuredUserCardId: listing.userCardId },
+          data: { featuredUserCardId: null },
+        });
+        await this.spendPoints(
+          tx,
+          userId,
+          listing.price,
+          'SPEND',
+          listingId,
+          `Compra no mercado: ${listing.userCard.card.name}`,
+        );
+        const fee = Math.round(listing.price * GACHA_MARKET_TAX_PCT);
+        const net = listing.price - fee;
+        await tx.user.update({
+          where: { id: listing.userId },
+          data: { pointsBalance: { increment: net } },
+        });
+        await tx.gachaPointEvent.create({
+          data: {
+            userId: listing.userId,
+            delta: listing.price,
+            type: 'SALE',
+            refId: listingId,
+            reason: `Venda: ${listing.userCard.card.name}`,
+          },
+        });
+        if (fee > 0) {
+          await tx.gachaPointEvent.create({
+            data: {
+              userId: listing.userId,
+              delta: -fee,
+              type: 'TAX',
+              refId: listingId,
+              reason: 'Taxa do mercado (10%)',
+            },
+          });
+        }
+        return { purchased: listing.id, price: listing.price };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+  }
+
   private async drawFromTier(tier: GachaTier) {
     const poolSize = await this.prisma.card.count({
       where: { rarity: tier },
@@ -1127,24 +1375,41 @@ export class GachaService {
       throw new ForbiddenException('A coleção dessa pessoa é privada.');
     }
 
-    const [offeredActive, requestedActive, sentByMe, pendingForMe] =
-      await this.prisma.$transaction([
-        this.prisma.gachaTrade.count({
-          where: { offeredUserCardId, status: 'PENDING' },
-        }),
-        this.prisma.gachaTrade.count({
-          where: { requestedUserCardId, status: 'PENDING' },
-        }),
-        this.prisma.gachaTrade.count({
-          where: { offeredUserId: userId, status: 'PENDING' },
-        }),
-        this.prisma.gachaTrade.count({
-          where: { requestedUserId: userId, status: 'PENDING' },
-        }),
-      ]);
+    const [
+      offeredActive,
+      requestedActive,
+      sentByMe,
+      pendingForMe,
+      listedCount,
+    ] = await this.prisma.$transaction([
+      this.prisma.gachaTrade.count({
+        where: { offeredUserCardId, status: 'PENDING' },
+      }),
+      this.prisma.gachaTrade.count({
+        where: { requestedUserCardId, status: 'PENDING' },
+      }),
+      this.prisma.gachaTrade.count({
+        where: { offeredUserId: userId, status: 'PENDING' },
+      }),
+      this.prisma.gachaTrade.count({
+        where: { requestedUserId: userId, status: 'PENDING' },
+      }),
+      this.prisma.gachaListing.count({
+        where: {
+          userCardId: { in: [offeredUserCardId, requestedUserCardId] },
+          status: 'ACTIVE',
+          expiresAt: { gt: new Date() },
+        },
+      }),
+    ]);
     if (offeredActive > 0 || requestedActive > 0) {
       throw new ConflictException(
         'Uma dessas cartas já está numa troca pendente.',
+      );
+    }
+    if (listedCount > 0) {
+      throw new ConflictException(
+        'Uma dessas cartas está anunciada no mercado.',
       );
     }
     if (sentByMe >= TRADE_ACTIVE_LIMIT) {

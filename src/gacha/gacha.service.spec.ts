@@ -73,6 +73,15 @@ describe('GachaService', () => {
       count: jest.fn(),
       findFirst: jest.fn(),
     },
+    gachaListing: {
+      count: jest.fn(),
+      findFirst: jest.fn(),
+      findUnique: jest.fn(),
+      findMany: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+      updateMany: jest.fn(),
+    },
     card: {
       count: jest.fn(),
       findFirst: jest.fn(),
@@ -1407,6 +1416,127 @@ describe('GachaService', () => {
         service.buyCosmetic('u1', 'FRAME_AURORA'),
       ).rejects.toBeInstanceOf(BadRequestException);
       expect(mockPrisma.user.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('market', () => {
+    it('buyListing move carta, credita venda e queima taxa de 10%', async () => {
+      mockPrisma.gachaListing.findUnique.mockResolvedValue({
+        id: 'l1',
+        userId: 'u2',
+        price: 100,
+        status: 'ACTIVE',
+        expiresAt: new Date(Date.now() + 3_600_000),
+        userCardId: 'p1',
+        userCard: { id: 'p1', card: { name: 'X' } },
+      });
+      mockPrisma.gachaListing.updateMany.mockResolvedValue({ count: 1 });
+      mockPrisma.userCard.updateMany.mockResolvedValue({ count: 1 });
+      mockPrisma.user.updateMany.mockResolvedValue({ count: 1 });
+      mockPrisma.user.update.mockResolvedValue({});
+      mockPrisma.gachaPointEvent.create.mockResolvedValue({});
+
+      await expect(service.buyListing('u1', 'l1')).resolves.toEqual({
+        purchased: 'l1',
+        price: 100,
+      });
+
+      expect(mockPrisma.user.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'u1', pointsBalance: { gte: 100 } },
+          data: { pointsBalance: { decrement: 100 } },
+        }),
+      );
+      expect(mockPrisma.userCard.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'p1', userId: 'u2' },
+          data: { userId: 'u1' },
+        }),
+      );
+      const events = mockPrisma.gachaPointEvent.create.mock.calls.map(
+        (call: [{ data: { delta: number; type: string } }]) => call[0].data,
+      );
+      expect(events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ userId: 'u1', delta: -100 }),
+          expect.objectContaining({ userId: 'u2', delta: 100, type: 'SALE' }),
+          expect.objectContaining({ userId: 'u2', delta: -10, type: 'TAX' }),
+        ]),
+      );
+    });
+
+    it('buyListing barra auto-compra, expirado e corrida', async () => {
+      mockPrisma.gachaListing.findUnique.mockResolvedValue({
+        id: 'l1',
+        userId: 'u1',
+        status: 'ACTIVE',
+        expiresAt: new Date(Date.now() + 3_600_000),
+        userCardId: 'p1',
+        userCard: { id: 'p1', card: { name: 'X' } },
+      });
+      await expect(service.buyListing('u1', 'l1')).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+
+      mockPrisma.gachaListing.findUnique.mockResolvedValue({
+        id: 'l1',
+        userId: 'u2',
+        status: 'ACTIVE',
+        expiresAt: new Date(Date.now() - 1000),
+        userCardId: 'p1',
+        userCard: { id: 'p1', card: { name: 'X' } },
+      });
+      mockPrisma.gachaListing.update.mockResolvedValue({});
+      await expect(service.buyListing('u1', 'l1')).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+
+      mockPrisma.gachaListing.findUnique.mockResolvedValue({
+        id: 'l1',
+        userId: 'u2',
+        status: 'ACTIVE',
+        expiresAt: new Date(Date.now() + 3_600_000),
+        userCardId: 'p1',
+        userCard: { id: 'p1', card: { name: 'X' } },
+      });
+      mockPrisma.gachaListing.updateMany.mockResolvedValue({ count: 0 });
+      await expect(service.buyListing('u1', 'l1')).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+      expect(mockPrisma.userCard.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('createListing barra preço inválido, troca pendente, limite e carta duplamente anunciada', async () => {
+      await expect(service.createListing('u1', 'p1', 0)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      await expect(
+        service.createListing('u1', 'p1', 1.5),
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      mockPrisma.userCard.findFirst.mockResolvedValue({ id: 'p1' });
+      mockPrisma.gachaTrade.findFirst.mockResolvedValue({ id: 't1' });
+      await expect(
+        service.createListing('u1', 'p1', 10),
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      mockPrisma.gachaTrade.findFirst.mockResolvedValue(null);
+      mockPrisma.gachaListing.updateMany.mockResolvedValue({ count: 0 });
+      mockPrisma.gachaListing.count.mockResolvedValue(5);
+      await expect(
+        service.createListing('u1', 'p1', 10),
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      mockPrisma.gachaListing.count.mockResolvedValue(0);
+      mockPrisma.gachaListing.create.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('dup', {
+          code: 'P2002',
+          clientVersion: '7',
+        }),
+      );
+      await expect(
+        service.createListing('u1', 'p1', 10),
+      ).rejects.toBeInstanceOf(ConflictException);
     });
   });
 });

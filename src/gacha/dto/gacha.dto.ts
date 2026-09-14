@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsString } from 'class-validator';
+import { IsInt, IsNotEmpty, IsString, Min } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class ClaimGachaDto {
@@ -27,6 +27,18 @@ export class BuyCosmeticDto {
   @IsString()
   @IsNotEmpty()
   key!: string;
+}
+
+export class CreateListingDto {
+  @ApiProperty({ description: 'ID da UserCard (sua) a anunciar.' })
+  @IsString()
+  @IsNotEmpty()
+  userCardId!: string;
+
+  @ApiProperty({ description: 'Preço em pontos (inteiro ≥ 1).' })
+  @IsInt()
+  @Min(1)
+  price!: number;
 }
 
 export class NewTradeDto {

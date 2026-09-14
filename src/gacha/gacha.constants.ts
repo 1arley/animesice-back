@@ -111,6 +111,8 @@ export function isEpicTier(tier: string): boolean {
 }
 
 export const GACHA_REROLL_COST_PCT = 0.1;
+export const GACHA_LISTING_ACTIVE_LIMIT = 5;
+export const GACHA_MARKET_TAX_PCT = 0.1;
 
 export const GACHA_COSMETICS = [
   {

@@ -156,6 +156,7 @@ model User {
   gachaSpins              GachaSpin[]
   gachaClaimLock          GachaClaimLock?
   gachaBypasses           GachaBypass[]
+  gachaListings           GachaListing[]
   pointsBalance           Int               @default(0)
   pointEvents             GachaPointEvent[]
   gachaCosmetics          String[]          @default([])
@@ -823,6 +824,7 @@ model UserCard {
 
   tradeOffered   GachaTrade[] @relation("TradeOffered")
   tradeRequested GachaTrade[] @relation("TradeRequested")
+  listings       GachaListing[]
 }
 
 model GachaRollDay {
@@ -900,6 +902,33 @@ model GachaTrade {
 enum GachaTradeStatus {
   PENDING
   COMPLETED
+  CANCELLED
+  EXPIRED
+}
+
+/// Listagem do mercado — carta em escrow (unique parcial enquanto ACTIVE,
+/// mesmo padrão de GachaTrade) vendida por pontos com buy-now. Vale 48h.
+model GachaListing {
+  id           String             @id @default(uuid())
+  userId       String
+  user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userCardId   String
+  userCard     UserCard           @relation(fields: [userCardId], references: [id], onDelete: Cascade)
+  price        Int
+  status       GachaListingStatus @default(ACTIVE)
+  buyerId      String?
+  expiresAt    DateTime
+  createdAt    DateTime           @default(now())
+  completedAt  DateTime?
+
+  @@unique([userCardId], where: raw("status = 'ACTIVE'"))
+  @@index([status, expiresAt])
+  @@index([userId, status])
+}
+
+enum GachaListingStatus {
+  ACTIVE
+  SOLD
   CANCELLED
   EXPIRED
 }
