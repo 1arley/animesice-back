@@ -384,7 +384,7 @@ describe('GachaService', () => {
       mockPullCreate(pullId, rarity);
     }
 
-    it('resgata preview criando UserCard e lock de 12h', async () => {
+    it('resgata preview criando UserCard e lock de 6h', async () => {
       mockPrisma.gachaSpin.findFirst.mockResolvedValue(previewComum);
       mockClaimCreate();
 
@@ -424,7 +424,7 @@ describe('GachaService', () => {
       );
     });
 
-    it('barra claim durante lock de 12h', async () => {
+    it('barra claim durante lock de 6h', async () => {
       mockPrisma.gachaSpin.findFirst.mockResolvedValue(previewComum);
       mockPrisma.gachaClaimLock.findUnique.mockResolvedValue({
         userId: 'u1',

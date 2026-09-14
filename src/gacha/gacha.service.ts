@@ -290,7 +290,7 @@ export class GachaService {
           });
           if (lock !== null && lock.lockedUntil.getTime() > Date.now()) {
             throw new ForbiddenException(
-              'Você já guardou uma carta nas últimas 12h.',
+              `Você já guardou uma carta nas últimas ${GACHA_CLAIM_LOCK_MS / 3_600_000}h.`,
             );
           }
           const counter = await tx.card.update({

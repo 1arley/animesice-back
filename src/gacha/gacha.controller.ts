@@ -57,7 +57,7 @@ export class GachaController {
   @Post('claim')
   @UseGuards(JwtAuthGuard, VerifiedGuard)
   @ApiBearerAuth('JWT-auth')
-  @ApiOperation({ summary: 'Resgata preview (1 a cada 12h)' })
+  @ApiOperation({ summary: 'Resgata preview (1 a cada 6h)' })
   claim(@Req() req: AuthenticatedRequest, @Body() dto: ClaimGachaDto) {
     return this.gachaService.claim(req.user.id, dto.spinId);
   }
