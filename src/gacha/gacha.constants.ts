@@ -109,3 +109,23 @@ export function pickWeighted<T extends string>(
 export function isEpicTier(tier: string): boolean {
   return GACHA_TIERS.indexOf(tier as GachaTier) >= GACHA_TIERS.indexOf('EPICA');
 }
+
+export const GACHA_REROLL_COST_PCT = 0.1;
+
+export const GACHA_COSMETICS = [
+  {
+    key: 'FRAME_AURORA',
+    label: 'Moldura Aurora',
+    description:
+      'Suas cartas exibem uma moldura arco-íris em todas as telas do gacha.',
+    price: 1500,
+  },
+  {
+    key: 'DESTAQUE_CARTA',
+    label: 'Destaque de Carta',
+    description:
+      'Suas cartas ganham brilho dourado na página pública compartilhada.',
+    price: 3000,
+  },
+] as const;
+export type GachaCosmetic = (typeof GACHA_COSMETICS)[number];

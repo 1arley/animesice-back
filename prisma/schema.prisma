@@ -158,6 +158,7 @@ model User {
   gachaBypasses           GachaBypass[]
   pointsBalance           Int               @default(0)
   pointEvents             GachaPointEvent[]
+  gachaCosmetics          String[]          @default([])
   posts                   Post[]
   postLikes               PostLike[]
   postComments            PostComment[]

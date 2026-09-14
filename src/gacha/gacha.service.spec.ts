@@ -26,6 +26,7 @@ describe('GachaService', () => {
       findUnique: jest.fn(),
       findMany: jest.fn(),
       create: jest.fn(),
+      update: jest.fn(),
       updateMany: jest.fn(),
       aggregate: jest.fn(),
       groupBy: jest.fn(),
@@ -33,6 +34,7 @@ describe('GachaService', () => {
     },
     gachaTrade: {
       count: jest.fn(),
+      findFirst: jest.fn(),
       findUnique: jest.fn(),
       findMany: jest.fn(),
       create: jest.fn(),
@@ -1320,6 +1322,90 @@ describe('GachaService', () => {
       await expect(service.adjustPoints('u1', 5, '')).rejects.toBeInstanceOf(
         BadRequestException,
       );
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('reroll cobra 10% do value, troca condition/foil e reprecifica', async () => {
+      const owned = {
+        id: 'p1',
+        condition: 0.5,
+        foil: 'NORMAL',
+        edition: 42,
+        value: 100,
+        obtainedAt: new Date(),
+        user: { id: 'u1', name: 'U', userName: 'u', avatar: null },
+        card: { ...cardComum, anime: null },
+      };
+      owned.card.anime = null;
+      mockPrisma.userCard.findFirst.mockResolvedValue(owned);
+      mockPrisma.gachaTrade.findFirst.mockResolvedValue(null);
+      mockPrisma.user.updateMany.mockResolvedValue({ count: 1 });
+      mockPrisma.gachaPointEvent.create.mockResolvedValue({});
+      mockPrisma.userCard.update.mockImplementation(
+        (args: {
+          data: { condition: number; foil: 'NORMAL' | 'HOLO' | 'GOLD' };
+        }) =>
+          Promise.resolve({
+            ...owned,
+            condition: args.data.condition,
+            foil: args.data.foil,
+            value: cardValue('COMUM', args.data.condition, args.data.foil, 42),
+          }),
+      );
+
+      const pull = await service.reroll('u1', 'p1');
+
+      expect(mockPrisma.user.updateMany).toHaveBeenCalledWith({
+        where: { id: 'u1', pointsBalance: { gte: 10 } },
+        data: { pointsBalance: { decrement: 10 } },
+      });
+      expect(mockPrisma.gachaPointEvent.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ delta: -10, type: 'SPEND' }),
+        }),
+      );
+      expect(pull.conditionLabel).toBeDefined();
+    });
+
+    it('reroll barra carta em troca pendente e saldo insuficiente', async () => {
+      mockPrisma.userCard.findFirst.mockResolvedValue({
+        id: 'p1',
+        condition: 0.5,
+        foil: 'NORMAL',
+        edition: 42,
+        value: 100,
+        card: cardComum,
+      });
+      mockPrisma.gachaTrade.findFirst.mockResolvedValue({ id: 't1' });
+      await expect(service.reroll('u1', 'p1')).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+
+      mockPrisma.gachaTrade.findFirst.mockResolvedValue(null);
+      mockPrisma.user.updateMany.mockResolvedValue({ count: 0 });
+      await expect(service.reroll('u1', 'p1')).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      expect(mockPrisma.userCard.update).not.toHaveBeenCalled();
+    });
+
+    it('buyCosmetic barra key inexistente, posse duplicada e saldo baixo', async () => {
+      await expect(
+        service.buyCosmetic('u1', 'NAO_EXISTE'),
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      mockPrisma.user.findUnique.mockResolvedValue({
+        gachaCosmetics: ['FRAME_AURORA'],
+      });
+      await expect(
+        service.buyCosmetic('u1', 'FRAME_AURORA'),
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      mockPrisma.user.findUnique.mockResolvedValue({ gachaCosmetics: [] });
+      mockPrisma.user.updateMany.mockResolvedValue({ count: 0 });
+      await expect(
+        service.buyCosmetic('u1', 'FRAME_AURORA'),
+      ).rejects.toBeInstanceOf(BadRequestException);
       expect(mockPrisma.user.update).not.toHaveBeenCalled();
     });
   });

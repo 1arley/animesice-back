@@ -13,8 +13,10 @@ import {
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { GachaService } from '@/gacha/gacha.service';
 import {
+  BuyCosmeticDto,
   ClaimGachaDto,
   NewTradeDto,
+  RerollGachaCardDto,
   SetFeaturedGachaCardDto,
 } from '@/gacha/dto/gacha.dto';
 import { JwtAuthGuard } from '@/auth/jwt-auth.guard';
@@ -92,6 +94,32 @@ export class GachaController {
       parseInt(page ?? '1', 10) || DEFAULT_PAGE,
       parseInt(limit ?? '20', 10) || 20,
     );
+  }
+
+  @Get('shop')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Loja de pontos: catálogo + saldo + posses' })
+  shop(@Req() req: AuthenticatedRequest) {
+    return this.gachaService.shop(req.user.id);
+  }
+
+  @Post('reroll')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Reroll de condition/foil (10% do value, pode piorar)',
+  })
+  reroll(@Req() req: AuthenticatedRequest, @Body() dto: RerollGachaCardDto) {
+    return this.gachaService.reroll(req.user.id, dto.userCardId);
+  }
+
+  @Post('cosmetics')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Compra um cosmético da loja com pontos' })
+  buyCosmetic(@Req() req: AuthenticatedRequest, @Body() dto: BuyCosmeticDto) {
+    return this.gachaService.buyCosmetic(req.user.id, dto.key);
   }
 
   @Get('collection')

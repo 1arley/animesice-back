@@ -12,9 +12,11 @@ import { PrismaService } from '@/prisma/prisma.service';
 import {
   GACHA_BYPASS_PRICE_CENTS,
   GACHA_CLAIM_LOCK_MS,
+  GACHA_COSMETICS,
   GACHA_FOIL_WEIGHTS,
   GACHA_PITY_DAYS,
   GACHA_PITY_WEIGHTS,
+  GACHA_REROLL_COST_PCT,
   GACHA_SPINS_PER_HOUR,
   GACHA_TIER_WEIGHTS,
   GACHA_TIERS,
@@ -39,7 +41,15 @@ const PULL_SELECT = {
   edition: true,
   value: true,
   obtainedAt: true,
-  user: { select: { id: true, name: true, userName: true, avatar: true } },
+  user: {
+    select: {
+      id: true,
+      name: true,
+      userName: true,
+      avatar: true,
+      gachaCosmetics: true,
+    },
+  },
   card: {
     select: {
       id: true,
@@ -185,7 +195,7 @@ export class GachaService {
         }),
         this.prisma.user.findUnique({
           where: { id: userId },
-          select: { pointsBalance: true },
+          select: { pointsBalance: true, gachaCosmetics: true },
         }),
       ]);
 
@@ -215,6 +225,7 @@ export class GachaService {
         : null,
       bypassPriceCents: locked ? GACHA_BYPASS_PRICE_CENTS : null,
       pointsBalance: wallet?.pointsBalance ?? 0,
+      pointsCosmetics: wallet?.gachaCosmetics ?? [],
       pityDaysLeft,
       pityDue: since !== null && daysSince >= GACHA_PITY_DAYS,
     };
@@ -457,6 +468,135 @@ export class GachaService {
             createdAt: true,
           },
         });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+  }
+
+  async shop(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { pointsBalance: true, gachaCosmetics: true },
+    });
+    if (!user) {
+      throw new NotFoundException('Usuário não encontrado.');
+    }
+    return {
+      balance: user.pointsBalance,
+      cosmetics: GACHA_COSMETICS.map((item) => ({
+        ...item,
+        owned: user.gachaCosmetics.includes(item.key),
+      })),
+    };
+  }
+
+  private async spendPoints(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    cost: number,
+    type: 'SPEND',
+    refId: string | null,
+    reason: string,
+  ) {
+    const paid = await tx.user.updateMany({
+      where: { id: userId, pointsBalance: { gte: cost } },
+      data: { pointsBalance: { decrement: cost } },
+    });
+    if (paid.count !== 1) {
+      throw new BadRequestException('Pontos insuficientes.');
+    }
+    await tx.gachaPointEvent.create({
+      data: { userId, delta: -cost, type, refId, reason },
+    });
+  }
+
+  async reroll(userId: string, userCardId: string) {
+    const pull = await this.prisma.$transaction(
+      async (tx) => {
+        const card = await tx.userCard.findFirst({
+          where: { id: userCardId, userId },
+          select: PULL_SELECT,
+        });
+        if (!card) {
+          throw new NotFoundException('Carta não encontrada.');
+        }
+        const pendingTrade = await tx.gachaTrade.findFirst({
+          where: {
+            status: 'PENDING',
+            OR: [
+              { offeredUserCardId: userCardId },
+              { requestedUserCardId: userCardId },
+            ],
+          },
+          select: { id: true },
+        });
+        if (pendingTrade) {
+          throw new BadRequestException('Carta envolvida em troca pendente.');
+        }
+        const cost = Math.max(
+          1,
+          Math.round(card.value * GACHA_REROLL_COST_PCT),
+        );
+        await this.spendPoints(
+          tx,
+          userId,
+          cost,
+          'SPEND',
+          userCardId,
+          `Reroll ${card.card.name} #${card.edition}`,
+        );
+        const condition = Math.random();
+        const foil = pickWeighted(GACHA_FOIL_WEIGHTS);
+        return tx.userCard.update({
+          where: { id: userCardId },
+          data: {
+            condition,
+            foil,
+            value: cardValue(
+              card.card.rarity as GachaTier,
+              condition,
+              foil,
+              card.edition,
+            ),
+          },
+          select: PULL_SELECT,
+        });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+    return { ...pull, conditionLabel: conditionLabel(pull.condition) };
+  }
+
+  async buyCosmetic(userId: string, key: string) {
+    const item = GACHA_COSMETICS.find((cosmetic) => cosmetic.key === key);
+    if (!item) {
+      throw new BadRequestException('Cosmético inexistente.');
+    }
+    return this.prisma.$transaction(
+      async (tx) => {
+        const user = await tx.user.findUnique({
+          where: { id: userId },
+          select: { gachaCosmetics: true },
+        });
+        if (!user) {
+          throw new NotFoundException('Usuário não encontrado.');
+        }
+        if (user.gachaCosmetics.includes(item.key)) {
+          throw new BadRequestException('Você já possui este cosmético.');
+        }
+        await this.spendPoints(
+          tx,
+          userId,
+          item.price,
+          'SPEND',
+          item.key,
+          item.label,
+        );
+        await tx.user.update({
+          where: { id: userId },
+          data: { gachaCosmetics: { push: item.key } },
+        });
+        return { purchased: item.key };
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     );
