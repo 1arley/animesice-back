@@ -394,6 +394,8 @@ export class WorkerService {
         return `https://animefire.io/animes/${slug}/${ep}`;
       case 'animesonlinecc':
         return `https://animesonlinecc.to/episodio/${slug}-episodio-${ep}/`;
+      case 'tioanime':
+        return `https://tioanime.com/ver/${slug}-${ep}`;
       default:
         return '';
     }

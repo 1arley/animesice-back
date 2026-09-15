@@ -1621,6 +1621,13 @@ describe('ScrapeService (cobertura de recuperação)', () => {
     );
   });
 
+  it('mapeia slug known para tioanime', () => {
+    const { svc } = build();
+    expect(svc.tioanimeEpisodeUrl('infinite-stratus', 1)).toBe(
+      'https://tioanime.com/ver/infinite-stratos-1',
+    );
+  });
+
   it('resultado sem playerTokens não é cacheado e registra failure', async () => {
     const { svc, af, metrics } = build();
     af.extractHttp.mockResolvedValueOnce({

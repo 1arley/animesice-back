@@ -801,17 +801,26 @@ export class ScrapeService {
   }
 
   /**
+   * Mapping de slugs animefire/meusanimes → tioanime.
+   * O tioanime usa romanji/japones, que frequentemente difere dos slugs
+   * padronizados do animefire. Entradas aqui resolvem slug mismatch.
+   */
+  private readonly TIOANIME_SLUG_MAP: Record<string, string> = {
+    'infinite-stratus': 'infinite-stratos',
+  };
+
+  /**
    * Constrói a URL de um episódio no tioanime.com a partir do slug do anime e
    * número do episódio.
    * Padrão: tioanime.com/ver/<slug>-<n>
    *
-   * Nota: o tioanime usa slugs em romanji/japones (ex: "fullmetal-alchemist-
-   * brotherhood"), NAO os mesmos slugs do animefire/meusanimes. O slug
-   * exato precisa ser descoberto por busca no catálogo do tioanime.
-   * Por enquanto, usa o slug do anime como tentativa direta.
+   * O tioanime usa slugs em romanji/japones (ex: "fullmetal-alchemist-
+   * brotherhood"), NAO os mesmos slugs do animefire/meusanimes. Primeiro
+   * verifica o mapping known; senão, usa o slug original como tentativa.
    */
   tioanimeEpisodeUrl(animeSlug: string, episodeNumber: number): string {
-    return `https://tioanime.com/ver/${animeSlug}-${episodeNumber}`;
+    const mapped = this.TIOANIME_SLUG_MAP[animeSlug] ?? animeSlug;
+    return `https://tioanime.com/ver/${mapped}-${episodeNumber}`;
   }
 
   /**

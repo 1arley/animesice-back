@@ -39,6 +39,8 @@
     "backfill:anilist:dry": "ts-node scripts/backfill-anilist-id.ts --dry --limit 10",
     "enrich:synopsis": "ts-node scripts/enrich-synopsis.ts",
     "enrich:synopsis:dry": "ts-node scripts/enrich-synopsis.ts --dry --limit 10",
+    "backfill:mal": "ts-node scripts/backfill-mal.ts",
+    "backfill:mal:dry": "ts-node scripts/backfill-mal.ts --dry --limit 5",
     "diagnose:anime": "ts-node scripts/diagnose-anime.ts",
     "fuzzy:dry": "ts-node scripts/fuzzy-dry-run.ts",
     "docker:build": "docker compose build",
