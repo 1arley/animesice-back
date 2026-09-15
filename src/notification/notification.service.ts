@@ -18,35 +18,49 @@ export class NotificationService {
       ...(unreadOnly ? { read: false } : {}),
     };
 
-    const [notifications, total, unreadCount, prefCount] =
-      await this.prisma.$transaction([
-        this.prisma.notification.findMany({
-          where,
-          skip,
-          take: safeLimit,
-          orderBy: { createdAt: 'desc' },
-        }),
-        this.prisma.notification.count({ where }),
-        this.prisma.notification.count({
-          where: { userId, read: false },
-        }),
-        this.prisma.notificationPreference.count({ where: { userId } }),
-      ]);
+    try {
+      const [notifications, total, unreadCount, prefCount] =
+        await this.prisma.$transaction([
+          this.prisma.notification.findMany({
+            where,
+            skip,
+            take: safeLimit,
+            orderBy: { createdAt: 'desc' },
+          }),
+          this.prisma.notification.count({ where }),
+          this.prisma.notification.count({
+            where: { userId, read: false },
+          }),
+          this.prisma.notificationPreference.count({ where: { userId } }),
+        ]);
 
-    if (prefCount === 0) {
-      void this.seedDefaultPreferences(userId);
+      if (prefCount === 0) {
+        void this.seedDefaultPreferences(userId);
+      }
+
+      return {
+        data: notifications,
+        unreadCount,
+        meta: {
+          total,
+          page: safePage,
+          limit: safeLimit,
+          totalPages: Math.ceil(total / safeLimit),
+        },
+      };
+    } catch (error) {
+      console.error('[NotificationService] list failed:', error);
+      return {
+        data: [],
+        unreadCount: 0,
+        meta: {
+          total: 0,
+          page: safePage,
+          limit: safeLimit,
+          totalPages: 0,
+        },
+      };
     }
-
-    return {
-      data: notifications,
-      unreadCount,
-      meta: {
-        total,
-        page: safePage,
-        limit: safeLimit,
-        totalPages: Math.ceil(total / safeLimit),
-      },
-    };
   }
 
   async markAsRead(userId: string, notificationId: string) {
