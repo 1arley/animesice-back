@@ -1,3 +1,10 @@
+## [1.29.3](https://github.com/1arley/animesice-back/compare/v1.29.2...v1.29.3) (2026-09-15)
+
+
+### Bug Fixes
+
+* **gacha:** recalcular value das cópias existentes ao mudar raridade no admin ([b30cca0](https://github.com/1arley/animesice-back/commit/b30cca0c3b2a52c5fbf519665fc4ba5455deaa9a))
+
 ## [1.29.2](https://github.com/1arley/animesice-back/compare/v1.29.1...v1.29.2) (2026-09-12)
 
 
