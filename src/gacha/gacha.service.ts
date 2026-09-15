@@ -415,6 +415,89 @@ export class GachaService {
     };
   }
 
+  // Resgate único de compensação: consome a Notification 'COMPENSATION'
+  // não-lerda e cunha um giro garantido (>=EPICA) sem gastar slot da hora nem
+  // o cooldown. A updateMany em read=false é a trava de idempotência.
+  async claimCompensation(userId: string) {
+    const tier = await this.pickTierWithStock(GACHA_PITY_WEIGHTS);
+    const card = await this.drawFromTier(tier);
+    const condition = Math.random();
+    const foil = pickWeighted(GACHA_FOIL_WEIGHTS);
+
+    const pull = await this.prisma.$transaction(
+      async (tx) => {
+        const pending = await tx.notification.findFirst({
+          where: { userId, type: 'COMPENSATION', read: false },
+          select: { id: true },
+        });
+        if (!pending) {
+          throw new ForbiddenException('Nada a resgatar.');
+        }
+        const marked = await tx.notification.updateMany({
+          where: { id: pending.id, read: false },
+          data: { read: true },
+        });
+        if (marked.count !== 1) {
+          throw new ForbiddenException('Compensação já resgatada.');
+        }
+        const counter = await tx.card.update({
+          where: { id: card.id },
+          data: { editionCounter: { increment: 1 } },
+          select: { editionCounter: true },
+        });
+        const edition = counter.editionCounter;
+        const created = await tx.userCard.create({
+          data: {
+            userId,
+            cardId: card.id,
+            condition,
+            foil,
+            edition,
+            value: cardValue(
+              card.rarity as GachaTier,
+              condition,
+              foil,
+              edition,
+            ),
+          },
+          select: PULL_SELECT,
+        });
+        await tx.user.update({
+          where: { id: userId },
+          data: { pointsBalance: { increment: created.value } },
+        });
+        await tx.gachaPointEvent.create({
+          data: {
+            userId,
+            delta: created.value,
+            type: 'MINT',
+            refId: created.id,
+            reason: 'Compensação de incidente',
+          },
+        });
+        return created;
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+
+    if (isEpicTier(pull.card.rarity)) {
+      try {
+        await this.publishPullPost(userId, pull);
+      } catch (error) {
+        this.logger.warn(
+          `publishPullPost falhou p/ compensacao ${userId}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
+
+    return {
+      ...pull,
+      conditionLabel: conditionLabel(pull.condition),
+    };
+  }
+
   async unlockClaim(
     userId: string,
     tx: Prisma.TransactionClient = this.prisma,

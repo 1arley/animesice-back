@@ -91,6 +91,10 @@ describe('GachaService', () => {
     },
     privacySettings: { findUnique: jest.fn() },
     post: { create: jest.fn() },
+    notification: {
+      findFirst: jest.fn(),
+      updateMany: jest.fn(),
+    },
     user: {
       findMany: jest.fn(),
       findFirst: jest.fn(),
@@ -521,6 +525,52 @@ describe('GachaService', () => {
       await expect(service.unlockClaim('u1')).resolves.toEqual({
         unlocked: false,
       });
+    });
+  });
+
+  describe('claimCompensation', () => {
+    it('cunha giro garantido e marca a notificação como resgatada', async () => {
+      mockPrisma.card.count.mockResolvedValue(1);
+      mockPrisma.card.findFirst.mockResolvedValue(cardEpica);
+      mockPrisma.notification.findFirst.mockResolvedValue({ id: 'n1' });
+      mockPrisma.notification.updateMany.mockResolvedValue({ count: 1 });
+      mockPullCreate('c1', 'EPICA');
+
+      const pull = await service.claimCompensation('u1');
+
+      expect(pull.conditionLabel).toBeDefined();
+      expect(mockPrisma.notification.updateMany).toHaveBeenCalledWith({
+        where: { id: 'n1', read: false },
+        data: { read: true },
+      });
+      expect(mockPrisma.userCard.create).toHaveBeenCalled();
+      expect(mockPrisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'u1' },
+        data: { pointsBalance: { increment: pull.value } },
+      });
+    });
+
+    it('rejeita quando não há compensação pendente', async () => {
+      mockPrisma.card.count.mockResolvedValue(1);
+      mockPrisma.card.findFirst.mockResolvedValue(cardEpica);
+      mockPrisma.notification.findFirst.mockResolvedValue(null);
+
+      await expect(service.claimCompensation('u1')).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      expect(mockPrisma.userCard.create).not.toHaveBeenCalled();
+    });
+
+    it('rejeita corrida quando a notificação já virou lida', async () => {
+      mockPrisma.card.count.mockResolvedValue(1);
+      mockPrisma.card.findFirst.mockResolvedValue(cardEpica);
+      mockPrisma.notification.findFirst.mockResolvedValue({ id: 'n1' });
+      mockPrisma.notification.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(service.claimCompensation('u1')).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      expect(mockPrisma.userCard.create).not.toHaveBeenCalled();
     });
   });
 

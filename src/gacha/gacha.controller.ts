@@ -65,6 +65,16 @@ export class GachaController {
     return this.gachaService.claim(req.user.id, dto.spinId);
   }
 
+  @Post('claim-compensation')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Resgata compensação pendente (giro garantido, uma vez)',
+  })
+  claimCompensation(@Req() req: AuthenticatedRequest) {
+    return this.gachaService.claimCompensation(req.user.id);
+  }
+
   @Get('spins')
   @UseGuards(JwtAuthGuard, VerifiedGuard)
   @ApiBearerAuth('JWT-auth')
