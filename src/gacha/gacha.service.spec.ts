@@ -24,6 +24,7 @@ describe('GachaService', () => {
       aggregate: jest.fn(),
       groupBy: jest.fn(),
       delete: jest.fn(),
+      update: jest.fn(),
     },
     gachaRollDay: {
       count: jest.fn(),
@@ -892,6 +893,35 @@ describe('GachaService', () => {
       expect(mockPrisma.gachaClaimLock.deleteMany).toHaveBeenCalledWith({
         where: { userId: 'u1' },
       });
+    });
+
+    it('adminUpdateCard reavalia value das cópias existentes ao mudar raridade', async () => {
+      mockPrisma.card.update.mockResolvedValue({
+        id: 'c1',
+        rarity: 'LENDARIA',
+      });
+      mockPrisma.userCard.findMany.mockResolvedValue([
+        { id: 'uc1', condition: 0.05, foil: 'NORMAL', edition: 1 },
+        { id: 'uc2', condition: 0.9, foil: 'GOLD', edition: 50 },
+      ]);
+
+      await service.adminUpdateCard('c1', { rarity: 'LENDARIA' });
+
+      expect(mockPrisma.userCard.update).toHaveBeenCalledWith({
+        where: { id: 'uc1' },
+        data: { value: cardValue('LENDARIA', 0.05, 'NORMAL', 1) },
+      });
+      expect(mockPrisma.userCard.update).toHaveBeenCalledWith({
+        where: { id: 'uc2' },
+        data: { value: cardValue('LENDARIA', 0.9, 'GOLD', 50) },
+      });
+      expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+    });
+
+    it('adminUpdateCard sem raridade não toca nas cópias', async () => {
+      await service.adminUpdateCard('c1', { name: 'Novo' });
+      expect(mockPrisma.userCard.findMany).not.toHaveBeenCalled();
+      expect(mockPrisma.$transaction).not.toHaveBeenCalled();
     });
   });
 });

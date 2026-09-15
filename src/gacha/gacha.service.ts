@@ -676,11 +676,37 @@ export class GachaService {
     return this.prisma.card.create({ data: { ...data, malCharacterId } });
   }
 
-  adminUpdateCard(
+  async adminUpdateCard(
     id: string,
     data: { name?: string; image?: string; rarity?: string },
   ) {
-    return this.prisma.card.update({ where: { id }, data });
+    const card = await this.prisma.card.update({ where: { id }, data });
+    // Raridade define o base value: cópias já obtidas precisam ser
+    // recalculadas, senão seguem valendo o preço da raridade antiga.
+    if (data.rarity === undefined) return card;
+
+    const owned = await this.prisma.userCard.findMany({
+      where: { cardId: id },
+      select: { id: true, condition: true, foil: true, edition: true },
+    });
+    if (owned.length === 0) return card;
+
+    await this.prisma.$transaction(
+      owned.map((uc) =>
+        this.prisma.userCard.update({
+          where: { id: uc.id },
+          data: {
+            value: cardValue(
+              card.rarity as GachaTier,
+              uc.condition,
+              uc.foil as GachaFoil,
+              uc.edition,
+            ),
+          },
+        }),
+      ),
+    );
+    return card;
   }
 
   adminUserCards(userId: string, page = 1, limit = 50) {
