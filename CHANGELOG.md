@@ -1,3 +1,10 @@
+## [1.29.4](https://github.com/1arley/animesice-back/compare/v1.29.3...v1.29.4) (2026-09-15)
+
+
+### Bug Fixes
+
+* **notification:** handle Prisma transaction failure in list endpoint ([67de46c](https://github.com/1arley/animesice-back/commit/67de46c028bca393dc57d270a2930941af3e23a8))
+
 ## [1.29.3](https://github.com/1arley/animesice-back/compare/v1.29.2...v1.29.3) (2026-09-15)
 
 
