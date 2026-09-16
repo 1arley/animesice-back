@@ -1,5 +1,5 @@
 import { Controller, Get, Param, Res, NotFoundException } from '@nestjs/common';
-import { Response } from 'express';
+import type { Response } from 'express';
 import { AvatarService } from '@/upload/avatar.service';
 
 @Controller('avatars')
