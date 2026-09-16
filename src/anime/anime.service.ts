@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { Prisma, AnimeFormat, AnimeSeason, AudioType } from '@prisma/client';
 import { PrismaService } from '@/prisma/prisma.service';
 import {
@@ -74,6 +78,12 @@ export interface AnimeFilterDto {
 
 function buildWhere(filters: AnimeFilterDto): Prisma.AnimeWhereInput {
   const where: Prisma.AnimeWhereInput = {};
+  const finite = (value: string, label: string): number => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed))
+      throw new BadRequestException(`${label} inválido.`);
+    return parsed;
+  };
 
   if (filters.search) {
     where.OR = [
@@ -96,14 +106,16 @@ function buildWhere(filters: AnimeFilterDto): Prisma.AnimeWhereInput {
   if (filters.status) where.status = filters.status;
   if (filters.audio) where.audio = filters.audio as AudioType;
   if (filters.format) where.format = filters.format as AnimeFormat;
-  if (filters.year) where.year = parseInt(filters.year, 10);
+  if (filters.year) where.year = Math.trunc(finite(filters.year, 'Ano'));
   if (filters.season) where.season = filters.season as AnimeSeason;
   if (filters.ageRating) where.ageRating = filters.ageRating;
 
   if (filters.minScore || filters.maxScore) {
     where.rating = {};
-    if (filters.minScore) where.rating.gte = parseFloat(filters.minScore);
-    if (filters.maxScore) where.rating.lte = parseFloat(filters.maxScore);
+    if (filters.minScore)
+      where.rating.gte = finite(filters.minScore, 'Nota mínima');
+    if (filters.maxScore)
+      where.rating.lte = finite(filters.maxScore, 'Nota máxima');
   }
 
   // Public catalog always shows only published anime.

@@ -154,7 +154,7 @@ describe('CommentService', () => {
       await svc.findByAnime('a1', 1, 10);
       expect(prisma.comment.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { animeId: 'a1', parentId: null },
+          where: { animeId: 'a1', parentId: null, status: 'VISIBLE' },
         }),
       );
     });
@@ -166,7 +166,7 @@ describe('CommentService', () => {
       await svc.findByEpisode('e1', 1, 10);
       expect(prisma.comment.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { episodeId: 'e1', parentId: null },
+          where: { episodeId: 'e1', parentId: null, status: 'VISIBLE' },
         }),
       );
     });
