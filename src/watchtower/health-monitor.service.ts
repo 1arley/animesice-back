@@ -42,7 +42,7 @@ export class HealthMonitor {
           ELSE ROUND(("avgLatencyMs" * "successCount" + ${Math.round(latencyMs)}) / ("successCount" + 1))
         END,
         "lastSuccessAt" = NOW(),
-        "disabled" = false
+        "disabled" = CASE WHEN "disabledByAdmin" THEN true ELSE false END
       WHERE "sourceId" = ${sourceId}
     `;
   }
@@ -113,7 +113,7 @@ export class HealthMonitor {
   /** Canário: reabilita 1 fonte disabled p/ testar recuperação. */
   async reviveOne(): Promise<string | null> {
     const candidate = await this.prisma.watchtowerSourceHealth.findFirst({
-      where: { disabled: true },
+      where: { disabled: true, disabledByAdmin: false },
       orderBy: { lastFailureAt: 'desc' },
     });
     if (!candidate) return null;

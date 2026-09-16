@@ -82,7 +82,7 @@ describe('SourceDiscovery', () => {
 
   it('allCandidates retorna todas as fontes sem probe', () => {
     const result = discovery.allCandidates('anime-slug', 5);
-    expect(result).toHaveLength(3);
+    expect(result).toHaveLength(4);
     expect(result.map((c) => c.sourceId)).toContain('meusanimes');
     expect(result.map((c) => c.sourceId)).toContain('animefire');
     expect(result.map((c) => c.sourceId)).toContain('animesonlinecc');

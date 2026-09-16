@@ -84,8 +84,16 @@ export class WatchtowerController {
   async toggle(@Param('id') id: string, @Body() body: { disabled: boolean }) {
     await this.prisma.watchtowerSourceHealth.upsert({
       where: { sourceId: id },
-      update: { disabled: body.disabled, consecutiveFailures: 0 },
-      create: { sourceId: id, disabled: body.disabled },
+      update: {
+        disabled: body.disabled,
+        disabledByAdmin: body.disabled,
+        consecutiveFailures: 0,
+      },
+      create: {
+        sourceId: id,
+        disabled: body.disabled,
+        disabledByAdmin: body.disabled,
+      },
     });
     return { sourceId: id, disabled: body.disabled };
   }

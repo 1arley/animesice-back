@@ -1,3 +1,4 @@
+import { hasActiveRestriction } from '@/common/moderation-state';
 import {
   BadRequestException,
   ForbiddenException,
@@ -74,6 +75,10 @@ export class SocialService {
   // ------------------------------------------------------------------
 
   async createPost(userId: string, dto: CreatePostDto) {
+    if (await hasActiveRestriction(this.prisma, userId)) {
+      throw new ForbiddenException('Sua conta não pode publicar conteúdo.');
+    }
+
     const content = dto.content.trim();
     if (!content) {
       throw new BadRequestException('O post não pode ser vazio.');
@@ -259,6 +264,10 @@ export class SocialService {
     postId: string,
     dto: CreatePostCommentDto,
   ) {
+    if (await hasActiveRestriction(this.prisma, userId)) {
+      throw new ForbiddenException('Sua conta não pode publicar conteúdo.');
+    }
+
     const post = await this.prisma.post.findFirst({
       where: { id: postId, status: ContentStatus.VISIBLE },
       select: { id: true, userId: true, content: true },
@@ -300,6 +309,10 @@ export class SocialService {
   }
 
   async sharePost(userId: string, postId: string) {
+    if (await hasActiveRestriction(this.prisma, userId)) {
+      throw new ForbiddenException('Sua conta não pode publicar conteúdo.');
+    }
+
     const post = await this.prisma.post.findFirst({
       where: { id: postId, status: ContentStatus.VISIBLE },
       select: { id: true },
@@ -681,6 +694,49 @@ export class SocialService {
       this.getUserIdsWithFlag('showRatings', userIds),
       this.getUserIdsWithFlag('showFavorites', userIds),
     ]);
+
+    // Resolve current card data for GACHA_PULL posts so the feed shows
+    // up-to-date rarity/value after admin repricing, without mutating the
+    // historical snapshot stored in meta.
+    const gachaPullIds = posts
+      .filter(
+        (p): p is typeof p & { meta: Record<string, unknown> } =>
+          p.kind === 'GACHA_PULL' &&
+          p.meta !== null &&
+          typeof p.meta === 'object' &&
+          'userCardId' in (p.meta as Record<string, unknown>),
+      )
+      .map((p) => (p.meta as Record<string, unknown>).userCardId as string);
+
+    let currentCardMap = new Map<string, { value: number; rarity: string }>();
+    if (gachaPullIds.length > 0) {
+      const currentCards = await this.prisma.userCard.findMany({
+        where: { id: { in: gachaPullIds } },
+        select: { id: true, value: true, card: { select: { rarity: true } } },
+      });
+      currentCardMap = new Map(
+        currentCards.map((uc) => [
+          uc.id,
+          { value: uc.value, rarity: uc.card.rarity },
+        ]),
+      );
+    }
+
+    for (const post of posts) {
+      if (
+        post.kind === 'GACHA_PULL' &&
+        post.meta !== null &&
+        typeof post.meta === 'object'
+      ) {
+        const meta = post.meta as Record<string, unknown>;
+        const ucId = meta.userCardId as string | undefined;
+        if (ucId && currentCardMap.has(ucId)) {
+          const current = currentCardMap.get(ucId)!;
+          (post.meta as Record<string, unknown>).value = current.value;
+          (post.meta as Record<string, unknown>).rarity = current.rarity;
+        }
+      }
+    }
 
     const [
       watches,
