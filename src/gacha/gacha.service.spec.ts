@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { EncyclopediaQueryDto } from '@/gacha/dto/encyclopedia-query.dto';
 import {
   BadRequestException,
   ConflictException,
@@ -868,72 +869,58 @@ describe('GachaService', () => {
   });
 
   describe('encyclopedia', () => {
-    const encCard = (
-      id: string,
-      animeId: string | null,
-      animeTitle: string | null = null,
-    ) => ({
-      id,
-      name: id,
-      image: `https://img/${id}.jpg`,
-      rarity: 'COMUM',
-      favourites: 10,
-      animeId,
-      animeTitle,
-      anime:
-        animeId && !animeTitle
-          ? { id: animeId, slug: `slug-${animeId}`, title: `T-${animeId}` }
-          : null,
-    });
-
-    const catalog = [
-      encCard('c1', 'a1'),
-      encCard('c2', 'a1'),
-      encCard('c3', null),
-      encCard('c4', 'a2', 'Fallback'),
-    ];
-
-    beforeEach(() => {
-      mockPrisma.card.findMany.mockResolvedValue(catalog);
-    });
-
-    it('sem usuário: tudo owned=false, anime sem relação usa animeTitle', async () => {
-      const res = await service.encyclopedia(null);
-
-      expect(res.stats).toEqual({
-        totalCards: 4,
-        ownedCards: 0,
-        totalSets: 3,
-        completeSets: 0,
+    it('pagina no banco e retorna posse sem expor cópias', async () => {
+      mockPrisma.card.findMany.mockResolvedValue([
+        { ...cardComum, anime: { title: 'Anime' }, owners: [{ id: 'copy' }] },
+        { ...cardEpica, anime: null, owners: [] },
+      ]);
+      mockPrisma.card.count.mockResolvedValue(30);
+      const query = Object.assign(new EncyclopediaQueryDto(), {
+        page: 2,
+        limit: 24,
+        search: 'Anime',
+        rarity: 'COMUM',
+        ownership: 'missing',
+        animeId: 'orphan',
       });
-      const a2 = res.sets.find((s) => s.animeId === 'a2');
-      expect(a2).toMatchObject({ animeTitle: 'Fallback', owned: 0 });
-      const semAnime = res.sets.find((s) => s.animeId === null);
-      expect(semAnime).toMatchObject({ animeTitle: null, animeSlug: null });
+      const res = await service.encyclopedia('u1', query);
+      expect(res.meta).toEqual({
+        page: 2,
+        limit: 24,
+        total: 30,
+        totalPages: 2,
+      });
+      expect(res.cards).toEqual([
+        { ...cardComum, animeTitle: 'Anime', owned: true },
+        { ...cardEpica, owned: false },
+      ]);
+      expect(mockPrisma.card.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          skip: 24,
+          take: 24,
+          where: expect.objectContaining({
+            animeId: null,
+            rarity: 'COMUM',
+            owners: { none: { userId: 'u1' } },
+          }),
+        }),
+      );
       expect(mockPrisma.userCard.findMany).not.toHaveBeenCalled();
     });
 
-    it('com usuário: marca owned e set incompleto', async () => {
-      mockPrisma.userCard.findMany.mockResolvedValue([{ cardId: 'c1' }]);
-
-      const res = await service.encyclopedia('u1');
-
-      const a1 = res.sets.find((s) => s.animeId === 'a1');
-      expect(a1).toMatchObject({ owned: 1, total: 2, complete: false });
-      expect(res.stats).toMatchObject({ ownedCards: 1, completeSets: 0 });
-    });
-
-    it('set completo quando todas as cartas pertencem ao usuário', async () => {
-      mockPrisma.userCard.findMany.mockResolvedValue([
-        { cardId: 'c1' },
-        { cardId: 'c2' },
-      ]);
-
-      const res = await service.encyclopedia('u1');
-
-      const a1 = res.sets.find((s) => s.animeId === 'a1');
-      expect(a1?.complete).toBe(true);
-      expect(res.stats.completeSets).toBe(1);
+    it('visitante consulta apenas primeira página, sem posse', async () => {
+      mockPrisma.card.findMany.mockResolvedValue([]);
+      const res = await service.encyclopedia(null);
+      expect(res.meta.total).toBe(0);
+      expect(mockPrisma.card.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          skip: 0,
+          take: 24,
+          select: expect.objectContaining({
+            owners: { where: { userId: '' }, take: 1, select: { id: true } },
+          }),
+        }),
+      );
     });
   });
 

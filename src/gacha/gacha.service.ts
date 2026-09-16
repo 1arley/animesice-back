@@ -7,6 +7,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { EncyclopediaQueryDto } from '@/gacha/dto/encyclopedia-query.dto';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '@/prisma/prisma.service';
 import {
@@ -1118,84 +1119,110 @@ export class GachaService {
     };
   }
 
-  /**
-   * Catálogo completo (pool por anime) com flag de posse do usuário — usado
-   * pela enciclopédia "quais faltam" da coleção. Sem usuário, tudo owned=false.
-   */
-  async encyclopedia(userId: string | null) {
-    const cards = await this.prisma.card.findMany({
-      orderBy: [{ animeTitle: 'asc' }, { name: 'asc' }],
-      include: { anime: { select: { id: true, slug: true, title: true } } },
+  async encyclopedia(
+    userId: string | null,
+    query = new EncyclopediaQueryDto(),
+  ) {
+    const { page, limit, view, ownership, progress, rarity, animeId } = query;
+    const search = query.search?.trim() ?? '';
+    const skip = (page - 1) * limit;
+    const meta = (total: number) => ({
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
     });
-    const ownedRows = userId
-      ? await this.prisma.userCard.findMany({
-          where: { userId },
-          select: { cardId: true },
-          distinct: ['cardId'],
-        })
-      : [];
-    const ownedIds = new Set(ownedRows.map((row) => row.cardId));
-
-    const byAnime = new Map<
-      string | null,
-      {
-        animeId: string | null;
-        animeTitle: string | null;
-        animeSlug: string | null;
-        total: number;
-        owned: number;
-        cards: Array<{
-          id: string;
-          name: string;
-          image: string | null;
-          rarity: string;
-          favourites: number;
-          owned: boolean;
-        }>;
-      }
-    >();
-    for (const card of cards) {
-      const key = card.animeId;
-      if (!byAnime.has(key)) {
-        byAnime.set(key, {
-          animeId: key,
-          animeTitle: key
-            ? (card.anime?.title ?? card.animeTitle ?? null)
-            : null,
-          animeSlug: card.anime?.slug ?? null,
-          total: 0,
-          owned: 0,
-          cards: [],
-        });
-      }
-      const set = byAnime.get(key)!;
-      set.total += 1;
-      const has = ownedIds.has(card.id);
-      if (has) set.owned += 1;
-      set.cards.push({
-        id: card.id,
-        name: card.name,
-        image: card.image,
-        rarity: card.rarity,
-        favourites: card.favourites,
-        owned: has,
-      });
+    if (view === 'cards') {
+      const owner = { userId: userId ?? '' };
+      const where: Prisma.CardWhereInput = {
+        ...(search
+          ? {
+              OR: [
+                { name: { contains: search, mode: 'insensitive' } },
+                { animeTitle: { contains: search, mode: 'insensitive' } },
+                { anime: { title: { contains: search, mode: 'insensitive' } } },
+              ],
+            }
+          : {}),
+        ...(rarity ? { rarity } : {}),
+        ...(animeId ? { animeId: animeId === 'orphan' ? null : animeId } : {}),
+        ...(ownership === 'owned' ? { owners: { some: owner } } : {}),
+        ...(ownership === 'missing' ? { owners: { none: owner } } : {}),
+      };
+      const [cards, total] = await this.prisma.$transaction([
+        this.prisma.card.findMany({
+          where,
+          skip,
+          take: limit,
+          orderBy: [{ name: 'asc' }, { id: 'asc' }],
+          select: {
+            id: true,
+            name: true,
+            image: true,
+            rarity: true,
+            animeId: true,
+            animeTitle: true,
+            anime: { select: { title: true } },
+            owners: { where: owner, take: 1, select: { id: true } },
+          },
+        }),
+        this.prisma.card.count({ where }),
+      ]);
+      return {
+        view,
+        cards: cards.map(({ owners, anime, ...card }) => ({
+          ...card,
+          animeTitle: anime?.title ?? card.animeTitle,
+          owned: owners.length > 0,
+        })),
+        sets: [],
+        meta: meta(total),
+      };
     }
 
-    const sets = [...byAnime.values()].map((set) => ({
-      ...set,
-      complete: set.total > 0 && set.owned === set.total,
-    }));
-
-    return {
-      stats: {
-        totalCards: cards.length,
-        ownedCards: ownedIds.size,
-        totalSets: sets.length,
-        completeSets: sets.filter((set) => set.complete).length,
-      },
-      sets,
-    };
+    const grouped = Prisma.sql`
+      WITH owned AS (
+        SELECT DISTINCT "cardId" FROM "UserCard" WHERE "userId" = ${userId ?? ''}
+      ), sets AS (
+        SELECT c."animeId", a.slug AS "animeSlug",
+          COALESCE(a.title, 'Sem anime') AS "animeTitle",
+          COUNT(*)::int AS total, COUNT(o."cardId")::int AS owned
+        FROM "Card" c
+        LEFT JOIN "Anime" a ON a.id = c."animeId"
+        LEFT JOIN owned o ON o."cardId" = c.id
+        GROUP BY c."animeId", a.slug, a.title
+        HAVING (${search} = '' OR bool_or(
+          strpos(lower(c.name), lower(${search})) > 0
+          OR strpos(lower(COALESCE(a.title, c."animeTitle", 'Sem anime')), lower(${search})) > 0
+        ))
+      ), filtered AS (
+        SELECT *, (owned = total) AS complete FROM sets
+        WHERE (${progress} = 'all'
+          OR (${progress} = 'complete' AND owned = total)
+          OR (${progress} = 'near' AND owned > 0 AND owned < total))
+      )`;
+    const order =
+      progress === 'near'
+        ? Prisma.sql`(total - owned) ASC, "animeTitle" ASC, "animeId" ASC NULLS LAST`
+        : Prisma.sql`"animeTitle" ASC, "animeId" ASC NULLS LAST`;
+    const [sets, counts] = await this.prisma.$transaction([
+      this.prisma.$queryRaw<
+        Array<{
+          animeId: string | null;
+          animeSlug: string | null;
+          animeTitle: string;
+          total: number;
+          owned: number;
+          complete: boolean;
+        }>
+      >(
+        Prisma.sql`${grouped} SELECT * FROM filtered ORDER BY ${order} LIMIT ${limit} OFFSET ${skip}`,
+      ),
+      this.prisma.$queryRaw<Array<{ total: number }>>(
+        Prisma.sql`${grouped} SELECT COUNT(*)::int AS total FROM filtered`,
+      ),
+    ]);
+    return { view, cards: [], sets, meta: meta(counts[0]?.total ?? 0) };
   }
 
   async recent(limit = 20) {

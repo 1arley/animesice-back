@@ -1,4 +1,5 @@
 import { GachaController } from './gacha.controller';
+import { EncyclopediaQueryDto } from '@/gacha/dto/encyclopedia-query.dto';
 
 function makeMocks() {
   return {
@@ -246,8 +247,8 @@ describe('GachaController', () => {
       m.gachaService.cancelTrade.mockResolvedValue({ id: 't1' });
       m.gachaService.declineTrade.mockResolvedValue({ id: 't1' });
 
-      await controller.encyclopedia(req('u1'));
-      await controller.encyclopedia({} as any);
+      await controller.encyclopedia(req('u1'), new EncyclopediaQueryDto());
+      await controller.encyclopedia({} as any, new EncyclopediaQueryDto());
       await controller.createTrade(req('u1'), {
         offeredUserCardId: 'oc1',
         requestedUserCardId: 'rc1',
@@ -257,8 +258,14 @@ describe('GachaController', () => {
       await controller.cancelTrade(req('u1'), 't1');
       await controller.declineTrade(req('u1'), 't1');
 
-      expect(m.gachaService.encyclopedia).toHaveBeenCalledWith('u1');
-      expect(m.gachaService.encyclopedia).toHaveBeenCalledWith(null);
+      expect(m.gachaService.encyclopedia).toHaveBeenCalledWith(
+        'u1',
+        new EncyclopediaQueryDto(),
+      );
+      expect(m.gachaService.encyclopedia).toHaveBeenCalledWith(
+        null,
+        new EncyclopediaQueryDto(),
+      );
       expect(m.gachaService.createTrade).toHaveBeenCalledWith(
         'u1',
         'oc1',

@@ -10,6 +10,7 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
+import { EncyclopediaQueryDto } from '@/gacha/dto/encyclopedia-query.dto';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { GachaService } from '@/gacha/gacha.service';
 import {
@@ -256,11 +257,13 @@ export class GachaController {
   @Get('encyclopedia')
   @UseGuards(OptionalJwtAuthGuard)
   @ApiOperation({
-    summary:
-      'Catálogo completo por anime com flag de posse (enciclopédia da coleção)',
+    summary: 'Enciclopédia paginada: cartas ou progresso por anime',
   })
-  encyclopedia(@Req() req: OptionalAuthRequest) {
-    return this.gachaService.encyclopedia(req.user?.id ?? null);
+  encyclopedia(
+    @Req() req: OptionalAuthRequest,
+    @Query() query: EncyclopediaQueryDto,
+  ) {
+    return this.gachaService.encyclopedia(req.user?.id ?? null, query);
   }
 
   @Post('trades')
