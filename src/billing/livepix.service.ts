@@ -49,6 +49,8 @@ export class LivePixService {
     redirectUrl: string,
   ): Promise<LivePixCheckout> {
     const token = await this.accessToken();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15_000);
     const res = await fetch(`${API_URL}/v2/payments`, {
       method: 'POST',
       headers: {
@@ -60,7 +62,9 @@ export class LivePixService {
         currency: 'BRL',
         redirectUrl,
       }),
+      signal: controller.signal,
     });
+    clearTimeout(timeout);
     if (!res.ok) {
       this.logger.warn(`LivePix create message falhou: ${res.status}`);
       throw new ServiceUnavailableException(
@@ -80,9 +84,13 @@ export class LivePixService {
     url.searchParams.set('reference', reference);
     url.searchParams.set('currency', 'BRL');
     url.searchParams.set('limit', '5');
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15_000);
     const res = await fetch(url, {
       headers: { authorization: `Bearer ${token}` },
+      signal: controller.signal,
     });
+    clearTimeout(timeout);
     if (!res.ok) return false;
     const data = (await res.json()) as { data: PaymentRecord[] };
     return data.data.some(
@@ -104,6 +112,8 @@ export class LivePixService {
         'Pagamento indisponível no momento. Tente novamente.',
       );
     }
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15_000);
     const res = await fetch(TOKEN_URL, {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
@@ -113,7 +123,9 @@ export class LivePixService {
         client_secret: clientSecret,
         scope: 'payments:write payments:read',
       }),
+      signal: controller.signal,
     });
+    clearTimeout(timeout);
     if (!res.ok) {
       this.logger.warn(`LivePix OAuth falhou: ${res.status}`);
       throw new ServiceUnavailableException(
