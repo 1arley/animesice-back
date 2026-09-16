@@ -1,3 +1,5 @@
+import { ForbiddenException } from '@nestjs/common';
+import { hasActiveRestriction } from '@/common/moderation-state';
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
@@ -49,6 +51,10 @@ export class JwtRefreshStrategy extends PassportStrategy(
     });
 
     if (!user) throw new UnauthorizedException('Usuário não encontrado.');
+
+    if (await hasActiveRestriction(this.prisma, user.id, ['BAN'])) {
+      throw new ForbiddenException('Sua conta está banida.');
+    }
 
     const refreshTokens = await this.prisma.refreshToken.findMany({
       where: {

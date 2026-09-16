@@ -3,7 +3,10 @@ import { JwtStrategy } from '@/auth/jwt.strategy';
 
 describe('JwtStrategy', () => {
   let strategy: JwtStrategy;
-  const prisma = { user: { findUnique: jest.fn() } };
+  const prisma = {
+    user: { findUnique: jest.fn() },
+    moderationAction: { findFirst: jest.fn().mockResolvedValue(null) },
+  };
   const config = { getOrThrow: jest.fn().mockReturnValue('access-secret') };
 
   beforeEach(() => {

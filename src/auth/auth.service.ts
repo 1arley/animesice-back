@@ -1,3 +1,5 @@
+import { ForbiddenException } from '@nestjs/common';
+import { hasActiveRestriction } from '@/common/moderation-state';
 import {
   Injectable,
   Logger,
@@ -102,6 +104,12 @@ export class AuthService {
   // ── Auth flows ──────────────────────────────────────────────────────
 
   async register(registerDto: RegisterDto) {
+    const registration = await this.prisma.siteSetting.findUnique({
+      where: { key: 'REGISTRATION_OPEN' },
+    });
+    if ((registration?.value ?? process.env.REGISTRATION_OPEN) === 'false') {
+      throw new ForbiddenException('Novos cadastros estão fechados.');
+    }
     const { name, userName, password } = registerDto;
     const email = this.normalizeEmail(registerDto.email);
 
@@ -204,6 +212,10 @@ export class AuthService {
 
     if (!user.isVerified) {
       throw new UnauthorizedException('Credenciais inválidas.');
+    }
+
+    if (await hasActiveRestriction(this.prisma, user.id, ['BAN'])) {
+      throw new ForbiddenException('Sua conta está banida.');
     }
 
     const tokens = await this.getTokens(user.id, user.email, user.role);

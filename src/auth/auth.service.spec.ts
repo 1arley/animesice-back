@@ -49,6 +49,12 @@ describe('AuthService', () => {
       findUnique: jest.fn(),
       delete: jest.fn(),
     },
+    siteSetting: {
+      findUnique: jest.fn(),
+    },
+    moderationAction: {
+      findFirst: jest.fn().mockResolvedValue(null),
+    },
     $transaction: jest.fn(async (ops: Promise<unknown>[]) => Promise.all(ops)),
   };
 
