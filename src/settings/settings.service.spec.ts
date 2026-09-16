@@ -180,7 +180,7 @@ describe('SettingsService.updatePrivacySettings', () => {
       expect.objectContaining({
         where: { userId: 'u1' },
         update: { profilePublic: true },
-        create: { userId: 'u1' },
+        create: { userId: 'u1', profilePublic: true },
       }),
     );
     expect(result.profilePublic).toBe(true);

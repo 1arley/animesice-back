@@ -116,7 +116,22 @@ export class SettingsService {
           : {}),
         ...(dto.showGacha !== undefined ? { showGacha: dto.showGacha } : {}),
       },
-      create: { userId },
+      create: {
+        userId,
+        ...(dto.profilePublic !== undefined
+          ? { profilePublic: dto.profilePublic }
+          : {}),
+        ...(dto.showActivity !== undefined
+          ? { showActivity: dto.showActivity }
+          : {}),
+        ...(dto.showFavorites !== undefined
+          ? { showFavorites: dto.showFavorites }
+          : {}),
+        ...(dto.showRatings !== undefined
+          ? { showRatings: dto.showRatings }
+          : {}),
+        ...(dto.showGacha !== undefined ? { showGacha: dto.showGacha } : {}),
+      },
     });
 
     return this.getPrivacySettings(userId);

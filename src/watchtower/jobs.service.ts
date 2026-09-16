@@ -36,7 +36,7 @@ export class JobsService {
       where: {
         type_dedupeKey: { type: input.type, dedupeKey: input.dedupeKey },
       },
-      select: { id: true, status: true, priority: true },
+      select: { id: true, status: true, priority: true, payload: true },
     });
 
     if (existing) {
@@ -44,11 +44,12 @@ export class JobsService {
       // (afterId) ativo, NÃO sobrescreva. Continuação é owned pelo worker
       // que detém o lock; re-enfileiramentos diários/startup só refrescam
       // prioridade ou marcam para re-executar quando DONE.
+      const payload = existing.payload;
       const payloadHasCursor =
-        typeof (existing as unknown as { payload?: { afterId?: unknown } })
-          ?.payload === 'object' &&
-        (existing as unknown as { payload?: { afterId?: unknown } })?.payload
-          ?.afterId !== undefined;
+        typeof payload === 'object' &&
+        payload !== null &&
+        'afterId' in payload &&
+        typeof payload.afterId === 'string';
 
       if (existing.status === 'DONE' || existing.status === 'DEAD') {
         await this.prisma.watchtowerJob.update({
@@ -239,8 +240,8 @@ export class JobsService {
     const isDead = newAttempts >= job.maxAttempts;
     const backoff = this.backoffMs(job.attempts);
 
-    await this.prisma.watchtowerJob.update({
-      where: { id },
+    const updated = await this.prisma.watchtowerJob.updateMany({
+      where: { id, lockedBy, status: 'RUNNING' },
       data: {
         status: isDead ? 'DEAD' : 'PENDING',
         attempts: newAttempts,
@@ -250,6 +251,7 @@ export class JobsService {
         lockedAt: null,
       },
     });
+    if (updated.count === 0) return;
   }
 
   /** Estatísticas da fila (p/ admin/status). */

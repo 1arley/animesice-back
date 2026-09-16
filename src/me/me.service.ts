@@ -78,13 +78,14 @@ export class MeService {
   async getMyActivity(userId: string, page: number = 1, limit: number = 20) {
     const safeLimit = Math.min(Math.max(limit, 1), 100);
     const skip = (page - 1) * safeLimit;
+    const sourceTake = skip + safeLimit;
 
     const [comments, ratings, favorites, commentCount, ratingCount, favCount] =
       await this.prisma.$transaction([
         this.prisma.comment.findMany({
-          where: { userId },
-          skip,
-          take: safeLimit,
+          where: { userId, status: 'VISIBLE' },
+          skip: 0,
+          take: sourceTake,
           orderBy: { createdAt: 'desc' },
           select: {
             id: true,
@@ -100,8 +101,8 @@ export class MeService {
         }),
         this.prisma.rating.findMany({
           where: { userId },
-          skip,
-          take: safeLimit,
+          skip: 0,
+          take: sourceTake,
           orderBy: { createdAt: 'desc' },
           select: {
             score: true,
@@ -112,8 +113,8 @@ export class MeService {
         }),
         this.prisma.favorite.findMany({
           where: { userId },
-          skip,
-          take: safeLimit,
+          skip: 0,
+          take: sourceTake,
           orderBy: { createdAt: 'desc' },
           select: {
             animeId: true,
@@ -121,7 +122,7 @@ export class MeService {
             createdAt: true,
           },
         }),
-        this.prisma.comment.count({ where: { userId } }),
+        this.prisma.comment.count({ where: { userId, status: 'VISIBLE' } }),
         this.prisma.rating.count({ where: { userId } }),
         this.prisma.favorite.count({ where: { userId } }),
       ]);
@@ -135,7 +136,7 @@ export class MeService {
     const total = commentCount + ratingCount + favCount;
 
     return {
-      data: interleaved.slice(0, safeLimit),
+      data: interleaved.slice(skip, skip + safeLimit),
       meta: {
         total,
         page,

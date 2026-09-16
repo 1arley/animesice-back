@@ -290,7 +290,7 @@ describe('UserService', () => {
       expect(result).toEqual(profile);
       expect(prisma.user.findUnique).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: '1' },
+          where: expect.objectContaining({ id: '1' }),
           select: expect.objectContaining({ _count: expect.any(Object) }),
         }),
       );

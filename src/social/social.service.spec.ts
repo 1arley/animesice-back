@@ -604,7 +604,7 @@ describe('SocialService', () => {
       await service.getFeed(null, 2, 20, 'global');
 
       expect(prisma.post.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ skip: 20, take: 20 }),
+        expect.objectContaining({ skip: 0, take: 40 }),
       );
     });
 

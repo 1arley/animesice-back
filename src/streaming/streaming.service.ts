@@ -181,7 +181,7 @@ export class StreamingService {
     ttlSeconds: number = 86400,
   ) {
     const anime = await this.prisma.anime.findUnique({
-      where: { slug: animeSlug },
+      where: { slug: animeSlug, published: true },
     });
 
     if (!anime) {
@@ -530,7 +530,7 @@ export class StreamingService {
     forceRefresh = false,
   ): Promise<StreamSourceResponse> {
     const anime = await this.prisma.anime.findUnique({
-      where: { slug: animeSlug },
+      where: { slug: animeSlug, published: true },
       select: { id: true, slug: true },
     });
     if (!anime) {

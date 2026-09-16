@@ -52,6 +52,8 @@ export class CatalogScanner implements OnModuleInit {
     console.error(`[CATALOG] scanning ${url}`);
 
     let html: string;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20_000);
     try {
       const res = await fetch(url, {
         headers: {
@@ -60,6 +62,7 @@ export class CatalogScanner implements OnModuleInit {
           'accept-language': 'pt-BR,pt;q=0.9',
         },
         redirect: 'follow',
+        signal: controller.signal,
       });
       if (!res.ok) {
         throw new Error(`${url} retornou ${res.status}`);
@@ -69,6 +72,8 @@ export class CatalogScanner implements OnModuleInit {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[CATALOG] fetch falhou p/ ${url}:`, msg);
       return [];
+    } finally {
+      clearTimeout(timeout);
     }
 
     const entries = this.parseCatalog(html, animeSlug);

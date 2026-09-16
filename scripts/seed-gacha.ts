@@ -181,7 +181,6 @@ async function main(): Promise<void> {
         name,
         image: imageOf(detail),
         favourites,
-        rarity,
         animeId: anime.id,
         animeTitle: anime.title,
       },

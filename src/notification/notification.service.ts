@@ -34,7 +34,7 @@ export class NotificationService {
       ]);
 
     if (prefCount === 0) {
-      void this.seedDefaultPreferences(userId);
+      void this.seedDefaultPreferences(userId).catch(() => undefined);
     }
 
     return {
@@ -86,7 +86,7 @@ export class NotificationService {
 
     if (pref) return pref.enabled;
 
-    void this.seedDefaultPreferences(userId);
+    void this.seedDefaultPreferences(userId).catch(() => undefined);
     return true;
   }
 

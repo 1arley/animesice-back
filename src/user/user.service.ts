@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '@/prisma/prisma.service';
+import { PROFILE_PUBLIC_OR_EMPTY } from '@/common/prisma-filters';
 import { CreateUserDto } from '@/dto/create-user.dto';
 import * as bcrypt from 'bcrypt';
 import { BCRYPT_ROUNDS, DEFAULT_PAGE_SIZE } from '@/common/constants';
@@ -115,7 +116,7 @@ export class UserService {
 
   async getPublicProfile(id: string) {
     const user = await this.prisma.user.findUnique({
-      where: { id },
+      where: { id, ...PROFILE_PUBLIC_OR_EMPTY },
       select: {
         id: true,
         name: true,

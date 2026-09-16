@@ -83,6 +83,7 @@ interface GraphQLResponse<T> {
 @Injectable()
 export class AniListClient {
   private lastCall = 0;
+  private rateLimitQueue = Promise.resolve();
 
   async fetchMedia(id: number): Promise<AniListMediaSummary> {
     const query = `
@@ -310,9 +311,16 @@ export class AniListClient {
   }
 
   private async rateLimit(): Promise<void> {
-    const now = Date.now();
-    const elapsed = now - this.lastCall;
-    if (elapsed < SLEEP_MS) await sleep(SLEEP_MS - elapsed);
-    this.lastCall = Date.now();
+    let release!: () => void;
+    const previous = this.rateLimitQueue;
+    this.rateLimitQueue = new Promise<void>((resolve) => (release = resolve));
+    await previous;
+    try {
+      const elapsed = Date.now() - this.lastCall;
+      if (elapsed < SLEEP_MS) await sleep(SLEEP_MS - elapsed);
+      this.lastCall = Date.now();
+    } finally {
+      release();
+    }
   }
 }

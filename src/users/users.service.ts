@@ -193,7 +193,7 @@ export class UsersService {
   ) {
     const userId = await this.resolveUser(identifier);
     const privacy = await this.getPrivacy(userId);
-    if (!privacy.showActivity) {
+    if (!privacy.profilePublic || !privacy.showActivity) {
       return { data: [], meta: { total: 0, page, limit, totalPages: 0 } };
     }
     const safeLimit = Math.min(Math.max(limit, 1), 100);
@@ -234,7 +234,7 @@ export class UsersService {
   ) {
     const userId = await this.resolveUser(identifier);
     const privacy = await this.getPrivacy(userId);
-    if (!privacy.showRatings) {
+    if (!privacy.profilePublic || !privacy.showRatings) {
       return { data: [], meta: { total: 0, page, limit, totalPages: 0 } };
     }
     const safeLimit = Math.min(Math.max(limit, 1), 100);
@@ -276,7 +276,7 @@ export class UsersService {
   ) {
     const userId = await this.resolveUser(identifier);
     const privacy = await this.getPrivacy(userId);
-    if (!privacy.showFavorites) {
+    if (!privacy.profilePublic || !privacy.showFavorites) {
       return { data: [], meta: { total: 0, page, limit, totalPages: 0 } };
     }
     const safeLimit = Math.min(Math.max(limit, 1), 100);
@@ -324,7 +324,7 @@ export class UsersService {
   ) {
     const userId = await this.resolveUser(identifier);
     const privacy = await this.getPrivacy(userId);
-    if (!privacy.showFavorites) {
+    if (!privacy.profilePublic || !privacy.showFavorites) {
       return { data: [], meta: { total: 0, page, limit, totalPages: 0 } };
     }
     const safeLimit = Math.min(Math.max(limit, 1), 100);
@@ -388,6 +388,7 @@ export class UsersService {
     }
     const safeLimit = Math.min(Math.max(limit, 1), 100);
     const skip = (page - 1) * safeLimit;
+    const sourceTake = skip + safeLimit;
 
     const [
       watches,
@@ -401,8 +402,8 @@ export class UsersService {
     ] = await this.prisma.$transaction([
       this.prisma.watchHistory.findMany({
         where: { userId },
-        skip,
-        take: safeLimit,
+        skip: 0,
+        take: sourceTake,
         orderBy: { watchedAt: 'desc' },
         select: {
           watchedAt: true,
@@ -417,9 +418,9 @@ export class UsersService {
         },
       }),
       this.prisma.rating.findMany({
-        where: { userId },
-        skip,
-        take: safeLimit,
+        where: { userId, ...(privacy.showRatings ? {} : { id: 'never' }) },
+        skip: 0,
+        take: sourceTake,
         orderBy: { createdAt: 'desc' },
         select: {
           score: true,
@@ -430,9 +431,9 @@ export class UsersService {
         },
       }),
       this.prisma.favorite.findMany({
-        where: { userId },
-        skip,
-        take: safeLimit,
+        where: { userId, ...(privacy.showFavorites ? {} : { id: 'never' }) },
+        skip: 0,
+        take: sourceTake,
         orderBy: { createdAt: 'desc' },
         select: {
           createdAt: true,
@@ -443,8 +444,8 @@ export class UsersService {
       }),
       this.prisma.comment.findMany({
         where: { userId, status: 'VISIBLE' },
-        skip,
-        take: safeLimit,
+        skip: 0,
+        take: sourceTake,
         orderBy: { createdAt: 'desc' },
         select: {
           id: true,
@@ -456,8 +457,12 @@ export class UsersService {
         },
       }),
       this.prisma.watchHistory.count({ where: { userId } }),
-      this.prisma.rating.count({ where: { userId } }),
-      this.prisma.favorite.count({ where: { userId } }),
+      this.prisma.rating.count({
+        where: { userId, ...(privacy.showRatings ? {} : { id: 'never' }) },
+      }),
+      this.prisma.favorite.count({
+        where: { userId, ...(privacy.showFavorites ? {} : { id: 'never' }) },
+      }),
       this.prisma.comment.count({ where: { userId, status: 'VISIBLE' } }),
     ]);
 
@@ -493,7 +498,7 @@ export class UsersService {
     const total = watchCount + ratingCount + favCount + commentCount;
 
     return {
-      data: events.slice(0, safeLimit),
+      data: events.slice(skip, skip + safeLimit),
       meta: {
         total,
         page,

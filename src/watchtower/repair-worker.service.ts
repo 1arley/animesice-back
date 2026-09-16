@@ -78,6 +78,7 @@ export class RepairWorker {
       },
     });
     const deadIds: string[] = [];
+    const checkedIds = sample.map((ep) => ep.id);
     for (const ep of sample) {
       if (enqueued >= cap) break;
       if (!ep.videoUrl) continue;
@@ -96,6 +97,14 @@ export class RepairWorker {
         });
         enqueued++;
       }
+    }
+    if (checkedIds.length > 0) {
+      await this.prisma.episode
+        .updateMany({
+          where: { id: { in: checkedIds } },
+          data: { videoCheckedAt: new Date() },
+        })
+        .catch(() => undefined);
     }
 
     // Batch: marcar episódios mortos + enfileirar repair jobs em uma ida.

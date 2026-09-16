@@ -109,7 +109,11 @@ export class SocialService {
 
   async getPost(postId: string, currentUserId: string | null) {
     const post = await this.prisma.post.findFirst({
-      where: { id: postId, status: ContentStatus.VISIBLE },
+      where: {
+        id: postId,
+        status: ContentStatus.VISIBLE,
+        user: PROFILE_PUBLIC_OR_EMPTY,
+      },
       select: POST_SELECT,
     });
 
@@ -664,6 +668,7 @@ export class SocialService {
     limit: number,
     page: number,
   ) {
+    const sourceTake = skip + limit;
     const postWhere: Prisma.PostWhereInput = {
       userId: { in: userIds },
       status: ContentStatus.VISIBLE,
@@ -682,8 +687,8 @@ export class SocialService {
     const [posts, totalPosts, watchIds, ratingIds, favIds] = await Promise.all([
       this.prisma.post.findMany({
         where: postWhere,
-        skip,
-        take: limit,
+        skip: 0,
+        take: sourceTake,
         orderBy: { createdAt: 'desc' },
         select: POST_SELECT,
       }),
@@ -750,8 +755,8 @@ export class SocialService {
     ] = await this.prisma.$transaction([
       this.prisma.watchHistory.findMany({
         where: { userId: { in: watchIds } },
-        skip,
-        take: limit,
+        skip: 0,
+        take: sourceTake,
         orderBy: { watchedAt: 'desc' },
         select: {
           userId: true,
@@ -766,8 +771,8 @@ export class SocialService {
       }),
       this.prisma.rating.findMany({
         where: { userId: { in: ratingIds } },
-        skip,
-        take: limit,
+        skip: 0,
+        take: sourceTake,
         orderBy: { createdAt: 'desc' },
         select: {
           userId: true,
@@ -778,8 +783,8 @@ export class SocialService {
       }),
       this.prisma.favorite.findMany({
         where: { userId: { in: favIds } },
-        skip,
-        take: limit,
+        skip: 0,
+        take: sourceTake,
         orderBy: { createdAt: 'desc' },
         select: {
           userId: true,
@@ -789,8 +794,8 @@ export class SocialService {
       }),
       this.prisma.comment.findMany({
         where: { userId: { in: watchIds }, status: ContentStatus.VISIBLE },
-        skip,
-        take: limit,
+        skip: 0,
+        take: sourceTake,
         orderBy: { createdAt: 'desc' },
         select: {
           userId: true,
@@ -879,7 +884,7 @@ export class SocialService {
         createdAt: p.createdAt.toISOString(),
         post: { ...p, hasLiked: likedPostIds.has(p.id) },
       })),
-      ...events.slice(0, limit).map((e) => ({
+      ...events.map((e) => ({
         type: 'activity' as const,
         createdAt: e.createdAt,
         event: {
@@ -904,7 +909,7 @@ export class SocialService {
       })),
     ]
       .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
-      .slice(0, limit)
+      .slice(skip, skip + limit)
       .map(({ createdAt: _createdAt, ...rest }) => rest);
 
     const total =
