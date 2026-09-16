@@ -88,12 +88,12 @@ describe('AnimeService (busca/filtros/paginação)', () => {
     expect(arg.where.rating).toEqual({ gte: 7.5, lte: 9.0 });
   });
 
-  it('published padrão true e "false" desliga o filtro', async () => {
+  it('published sempre true (endpoint público ignora filtro do cliente)', async () => {
     const { svc, prisma } = build();
     await svc.findAll({});
     expect(prisma.anime.findMany.mock.calls[0][0].where.published).toBe(true);
     await svc.findAll({ published: 'false' });
-    expect(prisma.anime.findMany.mock.calls[1][0].where.published).toBe(false);
+    expect(prisma.anime.findMany.mock.calls[1][0].where.published).toBe(true);
   });
 
   it.each([

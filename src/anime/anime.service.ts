@@ -106,11 +106,9 @@ function buildWhere(filters: AnimeFilterDto): Prisma.AnimeWhereInput {
     if (filters.maxScore) where.rating.lte = parseFloat(filters.maxScore);
   }
 
-  if (filters.published !== undefined) {
-    where.published = filters.published !== 'false';
-  } else {
-    where.published = true;
-  }
+  // Public catalog always shows only published anime.
+  // Admin listing uses a separate endpoint (GET /admin/animes).
+  where.published = true;
 
   if (shouldExcludeAdult(filters)) {
     const and = where.AND
