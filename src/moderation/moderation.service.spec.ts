@@ -20,6 +20,7 @@ function makePrisma() {
   };
   const moderationAction = {
     create: jest.fn(async () => ({})) as jest.Mock,
+    findFirst: jest.fn(async () => null) as jest.Mock,
   };
   const comment = {
     findUnique: jest.fn(async () => null) as jest.Mock,
@@ -31,6 +32,7 @@ function makePrisma() {
     findUnique: jest.fn(async () => null) as jest.Mock,
     update: jest.fn(async () => ({})) as jest.Mock,
     delete: jest.fn(async () => ({})) as jest.Mock,
+    updateMany: jest.fn(async () => ({ count: 0 })) as jest.Mock,
   };
   const roomMessage = {
     findUnique: jest.fn(async () => null) as jest.Mock,
@@ -40,6 +42,7 @@ function makePrisma() {
   };
   const postComment = {
     findUnique: jest.fn(async () => null) as jest.Mock,
+    updateMany: jest.fn(async () => ({ count: 0 })) as jest.Mock,
   };
   const prisma = {
     report,
@@ -221,7 +224,7 @@ describe('ModerationService', () => {
           where: { id: 'target' },
           data: expect.objectContaining({
             suspendedReason: 'spam',
-            suspendedUntil: null,
+            suspendedUntil: new Date('9999-12-31T23:59:59.999Z'),
           }),
         }),
       );
@@ -327,30 +330,14 @@ describe('ModerationService', () => {
   });
 
   describe('isUserSuspended', () => {
-    it('deve retornar false se usuário não existir', async () => {
-      const { svc } = build();
-      expect(await svc.isUserSuspended('x')).toBe(false);
-    });
-
     it('deve retornar false se não houver suspensão', async () => {
-      const { svc, prisma } = build();
-      prisma.user.findUnique.mockResolvedValue({ suspendedUntil: null });
-      expect(await svc.isUserSuspended('x')).toBe(false);
-    });
-
-    it('deve retornar false se suspensão expirou', async () => {
-      const { svc, prisma } = build();
-      prisma.user.findUnique.mockResolvedValue({
-        suspendedUntil: new Date(Date.now() - 1000),
-      });
+      const { svc } = build();
       expect(await svc.isUserSuspended('x')).toBe(false);
     });
 
     it('deve retornar true se suspensão vigente', async () => {
       const { svc, prisma } = build();
-      prisma.user.findUnique.mockResolvedValue({
-        suspendedUntil: new Date(Date.now() + 100000),
-      });
+      prisma.moderationAction.findFirst.mockResolvedValue({ id: 'ma1' });
       expect(await svc.isUserSuspended('x')).toBe(true);
     });
   });

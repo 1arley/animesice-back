@@ -1,3 +1,4 @@
+import { hasActiveRestriction } from '@/common/moderation-state';
 import {
   Injectable,
   NotFoundException,
@@ -132,10 +133,24 @@ export class ModerationService {
       await this.prisma.user.update({
         where: { id: targetUserId },
         data: {
-          suspendedUntil: expiresAt,
+          suspendedUntil: expiresAt ?? new Date('9999-12-31T23:59:59.999Z'),
           suspendedReason: dto.reason ?? actionType,
         },
       });
+    }
+
+    if (actionType === 'DELETE_CONTENT') {
+      const since = new Date(Date.now() - 7 * 24 * 3600_000);
+      await this.prisma.$transaction([
+        this.prisma.post.updateMany({
+          where: { userId: targetUserId, createdAt: { gte: since } },
+          data: { status: ContentStatus.HIDDEN_BY_MOD },
+        }),
+        this.prisma.postComment.updateMany({
+          where: { userId: targetUserId, createdAt: { gte: since } },
+          data: { status: ContentStatus.HIDDEN_BY_MOD },
+        }),
+      ]);
     }
 
     void this.notificationService.create({
@@ -149,19 +164,32 @@ export class ModerationService {
   }
 
   async deleteComment(commentId: string, _moderatorId: string) {
+    // Try anime comment first, then social post comment.
     const comment = await this.prisma.comment.findUnique({
       where: { id: commentId },
-      select: { id: true, status: true },
+      select: { id: true },
     });
 
-    if (!comment) {
-      throw new NotFoundException('Comentário não encontrado.');
+    if (comment) {
+      return this.prisma.comment.update({
+        where: { id: commentId },
+        data: { status: ContentStatus.HIDDEN_BY_MOD },
+      });
     }
 
-    return this.prisma.comment.update({
+    const postComment = await this.prisma.postComment.findUnique({
       where: { id: commentId },
-      data: { status: ContentStatus.HIDDEN_BY_MOD },
+      select: { id: true },
     });
+
+    if (postComment) {
+      return this.prisma.postComment.update({
+        where: { id: commentId },
+        data: { status: ContentStatus.HIDDEN_BY_MOD },
+      });
+    }
+
+    throw new NotFoundException('Comentário não encontrado.');
   }
 
   async adminListPosts(page = 1, limit = 20, status?: string) {
@@ -234,13 +262,7 @@ export class ModerationService {
   }
 
   async isUserSuspended(userId: string): Promise<boolean> {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: { suspendedUntil: true },
-    });
-
-    if (!user?.suspendedUntil) return false;
-    return user.suspendedUntil > new Date();
+    return hasActiveRestriction(this.prisma, userId);
   }
 
   private async validateTarget(

@@ -20,6 +20,7 @@ import { ModerationService } from '@/moderation/moderation.service';
 import { JwtAuthGuard } from '@/auth/jwt-auth.guard';
 import { RolesGuard } from '@/auth/roles.guard';
 import { Roles } from '@/auth/roles.decorators';
+import { Audit } from '@/auth/decorators/audit.decorator';
 import {
   CreateReportDto,
   ResolveReportDto,
@@ -63,6 +64,7 @@ export class ModerationController {
   @Patch('admin/reports/:id/resolve')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN', 'SUPERADMIN')
+  @Audit('RESOLVE', 'Report')
   @ApiOperation({ summary: 'Resolver denúncia como RESOLVED' })
   resolveReport(
     @Req() req: AuthenticatedRequest,
@@ -80,6 +82,7 @@ export class ModerationController {
   @Patch('admin/reports/:id/dismiss')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN', 'SUPERADMIN')
+  @Audit('DISMISS', 'Report')
   @ApiOperation({ summary: 'Rejeitar denúncia como DISMISSED' })
   dismissReport(
     @Req() req: AuthenticatedRequest,
@@ -97,6 +100,7 @@ export class ModerationController {
   @Post('admin/users/:id/moderate')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN', 'SUPERADMIN')
+  @Audit('MODERATE', 'User')
   @ApiOperation({
     summary: 'Aplicar ação de moderação a usuário (warn/mute/ban)',
   })
@@ -111,6 +115,7 @@ export class ModerationController {
   @Delete('admin/comments/:id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN', 'SUPERADMIN')
+  @Audit('DELETE', 'Comment')
   @ApiOperation({ summary: 'Ocultar comentário (moderação)' })
   deleteComment(@Param('id') id: string) {
     return this.moderationService.deleteComment(id, '');
@@ -135,6 +140,7 @@ export class ModerationController {
   @Patch('admin/posts/:id/hide')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN', 'SUPERADMIN')
+  @Audit('HIDE', 'Post')
   @ApiOperation({ summary: 'Ocultar post do feed (moderação)' })
   hidePost(@Param('id') id: string) {
     return this.moderationService.adminHidePost(id);
@@ -143,6 +149,7 @@ export class ModerationController {
   @Delete('admin/posts/:id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN', 'SUPERADMIN')
+  @Audit('DELETE', 'Post')
   @ApiOperation({ summary: 'Excluir post permanentemente (admin)' })
   deletePost(@Param('id') id: string) {
     return this.moderationService.adminDeletePost(id);

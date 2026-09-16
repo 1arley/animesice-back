@@ -1,3 +1,4 @@
+import { hasActiveRestriction } from '@/common/moderation-state';
 import {
   Injectable,
   NotFoundException,
@@ -33,6 +34,10 @@ export class CommentService {
   ) {}
 
   async create(userId: string, dto: CreateCommentDto) {
+    if (await hasActiveRestriction(this.prisma, userId)) {
+      throw new ForbiddenException('Sua conta não pode publicar conteúdo.');
+    }
+
     if (dto.animeId) {
       const anime = await this.prisma.anime.findUnique({
         where: { id: dto.animeId },
@@ -183,6 +188,10 @@ export class CommentService {
   }
 
   async edit(userId: string, commentId: string, dto: EditCommentDto) {
+    if (await hasActiveRestriction(this.prisma, userId)) {
+      throw new ForbiddenException('Sua conta não pode publicar conteúdo.');
+    }
+
     const comment = await this.prisma.comment.findUnique({
       where: { id: commentId },
       select: { id: true, userId: true },

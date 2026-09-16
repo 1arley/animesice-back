@@ -1,4 +1,12 @@
-import { IsEnum, IsOptional, IsString } from 'class-validator';
+import {
+  IsEnum,
+  IsOptional,
+  IsString,
+  IsIn,
+  IsInt,
+  Min,
+  Max,
+} from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { ReportReason, ReportTargetType } from '@prisma/client';
 
@@ -32,7 +40,7 @@ export class ResolveReportDto {
 
 export class ModerateUserDto {
   @ApiProperty({ enum: ['WARN', 'MUTE', 'BAN', 'DELETE_CONTENT'] })
-  @IsString()
+  @IsIn(['WARN', 'MUTE', 'BAN', 'DELETE_CONTENT'])
   actionType!: 'WARN' | 'MUTE' | 'BAN' | 'DELETE_CONTENT';
 
   @ApiProperty({ required: false })
@@ -45,5 +53,8 @@ export class ModerateUserDto {
     description: 'Duração em horas (para MUTE/BAN)',
   })
   @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(87600)
   hours?: number;
 }
