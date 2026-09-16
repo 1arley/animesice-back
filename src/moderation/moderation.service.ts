@@ -153,12 +153,14 @@ export class ModerationService {
       ]);
     }
 
-    void this.notificationService.create({
-      userId: targetUserId,
-      type: NotificationType.MODERATION_ACTION,
-      title: `Ação de moderação: ${actionType}`,
-      body: dto.reason ?? 'Você recebeu uma ação de moderação.',
-    });
+    void this.notificationService
+      .create({
+        userId: targetUserId,
+        type: NotificationType.MODERATION_ACTION,
+        title: `Ação de moderação: ${actionType}`,
+        body: dto.reason ?? 'Você recebeu uma ação de moderação.',
+      })
+      .catch(() => undefined);
 
     return action;
   }

@@ -146,7 +146,7 @@ export class ExtractionJobService implements OnModuleDestroy {
         if (!job) throw error;
       }
     }
-    void this.start(job, fn);
+    void this.start(job, fn).catch(() => undefined);
     return job;
   }
   private async start(job: ExtractionJob, fn: ExtractionFn): Promise<void> {

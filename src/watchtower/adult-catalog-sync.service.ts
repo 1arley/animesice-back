@@ -45,7 +45,12 @@ export class AdultCatalogSyncService implements OnApplicationBootstrap {
         console.log('[ADULT-SYNC] boot: já sincronizado, pulando full-copy');
         return;
       }
-      void this.handleCron();
+      void this.handleCron().catch((error: unknown) =>
+        console.error(
+          '[ADULT-SYNC] boot falhou:',
+          error instanceof Error ? error.message : String(error),
+        ),
+      );
     })();
   }
 

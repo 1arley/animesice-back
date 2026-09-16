@@ -107,11 +107,13 @@ export class CommentService {
                 })
               )?.slug
             : undefined;
-          void this.notificationService.notifyCommentReply(
-            dto.parentId,
-            author?.name ?? 'Alguém',
-            animeSlug,
-          );
+          void this.notificationService
+            .notifyCommentReply(
+              dto.parentId,
+              author?.name ?? 'Alguém',
+              animeSlug,
+            )
+            .catch(() => undefined);
         }
         return comment;
       });
@@ -145,7 +147,7 @@ export class CommentService {
     const safeLimit = Math.min(Math.max(limit, 1), MAX_COMMENTS_PER_PAGE);
     const safePage = Math.max(page, 1);
     return this.prisma.comment.findMany({
-      where,
+      where: { ...where, status: 'VISIBLE' },
       take: safeLimit,
       skip: (safePage - 1) * safeLimit,
       include: {
@@ -153,6 +155,7 @@ export class CommentService {
           select: { id: true, name: true, userName: true, avatar: true },
         },
         replies: {
+          where: { status: 'VISIBLE' },
           take: MAX_REPLIES_PER_COMMENT,
           include: {
             user: {
@@ -162,7 +165,9 @@ export class CommentService {
           },
           orderBy: { createdAt: 'asc' },
         },
-        _count: { select: { likes: true, replies: true } },
+        _count: {
+          select: { likes: true, replies: { where: { status: 'VISIBLE' } } },
+        },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -265,11 +270,9 @@ export class CommentService {
           })
         )?.slug
       : undefined;
-    void this.notificationService.notifyCommentLike(
-      commentId,
-      liker?.name ?? 'Alguém',
-      animeSlug,
-    );
+    void this.notificationService
+      .notifyCommentLike(commentId, liker?.name ?? 'Alguém', animeSlug)
+      .catch(() => undefined);
 
     return { liked: true };
   }
@@ -293,7 +296,7 @@ export class CommentService {
 
     const [replies, total] = await this.prisma.$transaction([
       this.prisma.comment.findMany({
-        where: { parentId: commentId },
+        where: { parentId: commentId, status: 'VISIBLE' },
         take: safeLimit,
         skip: (safePage - 1) * safeLimit,
         include: {
@@ -304,7 +307,9 @@ export class CommentService {
         },
         orderBy: { createdAt: 'asc' },
       }),
-      this.prisma.comment.count({ where: { parentId: commentId } }),
+      this.prisma.comment.count({
+        where: { parentId: commentId, status: 'VISIBLE' },
+      }),
     ]);
 
     return {

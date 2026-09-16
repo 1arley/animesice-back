@@ -163,12 +163,9 @@ export class AdminService {
       data: { ...rest, season: season ?? 1, animeId: anime.id },
     });
 
-    void this.notificationService.notifyNewEpisode(
-      anime.id,
-      anime.title,
-      episode.number,
-      anime.slug,
-    );
+    void this.notificationService
+      .notifyNewEpisode(anime.id, anime.title, episode.number, anime.slug)
+      .catch(() => undefined);
 
     return episode;
   }
@@ -346,7 +343,9 @@ export class AdminService {
         media.coverImage?.large ?? media.coverImage?.extraLarge ?? undefined,
       bannerImage: media.bannerImage ?? undefined,
       rating:
-        typeof media.averageScore === 'number' ? media.averageScore : undefined,
+        typeof media.averageScore === 'number'
+          ? media.averageScore / 10
+          : undefined,
       status: mappedStatus ?? 'LANCAMENTO',
       audio: dto.audio ?? AudioType.LEGENDADO,
       ageRating: media.isAdult ? 'A18' : 'A14',
