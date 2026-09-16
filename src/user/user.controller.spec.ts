@@ -1,8 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { UserController } from '@/user/user.controller';
 import { UserService } from '@/user/user.service';
-import { SupabaseService } from '@/upload/supabase.service';
+import { AvatarService } from '@/upload/avatar.service';
 
 describe('UserController', () => {
   let controller: UserController;
@@ -15,9 +16,19 @@ describe('UserController', () => {
     clearAvatar: jest.fn(),
   };
 
-  const mockSupabaseService = {
-    uploadImage: jest.fn(),
-    deleteAvatarImage: jest.fn(),
+  const mockAvatarService = {
+    save: jest.fn(),
+    get: jest.fn(),
+  };
+
+  const mockConfig = {
+    get: jest.fn((key: string) =>
+      key === 'PUBLIC_BACKEND_URL'
+        ? 'https://api.example.com'
+        : key === 'API_PREFIX'
+          ? 'api'
+          : undefined,
+    ),
   };
 
   beforeEach(async () => {
@@ -26,7 +37,8 @@ describe('UserController', () => {
       controllers: [UserController],
       providers: [
         { provide: UserService, useValue: mockUserService },
-        { provide: SupabaseService, useValue: mockSupabaseService },
+        { provide: AvatarService, useValue: mockAvatarService },
+        { provide: ConfigService, useValue: mockConfig },
       ],
     }).compile();
 
@@ -63,7 +75,7 @@ describe('UserController', () => {
         id: 'u1',
         email: 'a@b.com',
       });
-      const req = { user: { id: 'u1' } } as any;
+      const req = { user: { id: 'u1' } } as never;
       const result = await controller.getProfile(req);
       expect(mockUserService.findById).toHaveBeenCalledWith('u1');
       expect(result.id).toBe('u1');
@@ -89,7 +101,7 @@ describe('UserController', () => {
         id: 'u1',
         bio: 'nova bio',
       });
-      const req = { user: { id: 'u1' } } as any;
+      const req = { user: { id: 'u1' } } as never;
       const result = await controller.updateProfileMeta(req, dto);
       expect(mockUserService.updateProfileMeta).toHaveBeenCalledWith('u1', dto);
       expect(result.bio).toBe('nova bio');
@@ -98,80 +110,41 @@ describe('UserController', () => {
 
   describe('uploadAvatar', () => {
     it('lança BadRequestException quando arquivo ausente', async () => {
-      const req = { user: { id: 'u1' } } as any;
+      const req = { user: { id: 'u1' } } as never;
       await expect(
-        controller.uploadAvatar(req, undefined as any),
+        controller.uploadAvatar(req, undefined as never),
       ).rejects.toThrow(BadRequestException);
     });
 
-    it('faz upload e remove avatar antigo quando já existia', async () => {
+    it('grava o avatar no banco e retorna a URL pública', async () => {
       const file = {
-        buffer: Buffer.from('img'),
+        buffer: Buffer.from([0xff, 0xd8, 0xff, 0xe0]),
         mimetype: 'image/jpeg',
         originalname: 'avatar.jpg',
-      } as any;
-      const req = { user: { id: 'u1' } } as any;
-      mockSupabaseService.uploadImage.mockResolvedValue({
-        url: 'https://cdn.example/avatar.jpg',
-      });
-      mockUserService.findById.mockResolvedValue({
-        id: 'u1',
-        avatar: 'https://cdn.example/old.jpg',
-      });
+      } as unknown as Parameters<UserController['uploadAvatar']>[1];
+      const req = { user: { id: 'u1' } } as never;
+      mockAvatarService.save.mockResolvedValue('/avatars/u1');
       mockUserService.updateProfileMeta.mockResolvedValue({
         id: 'u1',
-        avatar: 'https://cdn.example/avatar.jpg',
+        avatar: 'https://api.example.com/api/avatars/u1',
       });
 
       await controller.uploadAvatar(req, file);
 
-      expect(mockSupabaseService.uploadImage).toHaveBeenCalledWith(
+      expect(mockAvatarService.save).toHaveBeenCalledWith(
+        'u1',
         file.buffer,
         file.mimetype,
-        file.originalname,
-        'u1',
-      );
-      expect(mockSupabaseService.deleteAvatarImage).toHaveBeenCalledWith(
-        'https://cdn.example/old.jpg',
       );
       expect(mockUserService.updateProfileMeta).toHaveBeenCalledWith('u1', {
-        avatar: 'https://cdn.example/avatar.jpg',
+        avatar: 'https://api.example.com/api/avatars/u1',
       });
-    });
-
-    it('faz upload sem remover avatar antigo quando não existia', async () => {
-      const file = {
-        buffer: Buffer.from('img'),
-        mimetype: 'image/png',
-        originalname: 'avatar.png',
-      } as any;
-      const req = { user: { id: 'u1' } } as any;
-      mockSupabaseService.uploadImage.mockResolvedValue({
-        url: 'https://cdn.example/avatar.png',
-      });
-      mockUserService.findById.mockResolvedValue({
-        id: 'u1',
-        avatar: null,
-      });
-      mockUserService.updateProfileMeta.mockResolvedValue({
-        id: 'u1',
-        avatar: 'https://cdn.example/avatar.png',
-      });
-
-      await controller.uploadAvatar(req, file);
-
-      expect(mockSupabaseService.uploadImage).toHaveBeenCalled();
-      expect(mockSupabaseService.deleteAvatarImage).not.toHaveBeenCalled();
     });
   });
 
   describe('deleteAvatar', () => {
-    it('remove imagem do storage e limpa avatar quando existia', async () => {
-      const req = { user: { id: 'u1' } } as any;
-      mockUserService.findById.mockResolvedValue({
-        id: 'u1',
-        avatar: 'https://cdn.example/avatar.jpg',
-      });
+    it('limpa o avatar e o arquivo associado', async () => {
+      const req = { user: { id: 'u1' } } as never;
       mockUserService.clearAvatar.mockResolvedValue({
         id: 'u1',
         avatar: null,
@@ -179,28 +152,8 @@ describe('UserController', () => {
 
       const result = await controller.deleteAvatar(req);
 
-      expect(mockSupabaseService.deleteAvatarImage).toHaveBeenCalledWith(
-        'https://cdn.example/avatar.jpg',
-      );
       expect(mockUserService.clearAvatar).toHaveBeenCalledWith('u1');
       expect(result.avatar).toBeNull();
-    });
-
-    it('não chama storage quando não havia avatar', async () => {
-      const req = { user: { id: 'u1' } } as any;
-      mockUserService.findById.mockResolvedValue({
-        id: 'u1',
-        avatar: null,
-      });
-      mockUserService.clearAvatar.mockResolvedValue({
-        id: 'u1',
-        avatar: null,
-      });
-
-      await controller.deleteAvatar(req);
-
-      expect(mockSupabaseService.deleteAvatarImage).not.toHaveBeenCalled();
-      expect(mockUserService.clearAvatar).toHaveBeenCalledWith('u1');
     });
   });
 });

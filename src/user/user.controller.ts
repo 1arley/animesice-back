@@ -15,6 +15,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { ConfigService } from '@nestjs/config';
 import {
   ApiTags,
   ApiBearerAuth,
@@ -38,9 +39,10 @@ import {
 } from '@/common/constants';
 import {
   ALLOWED_IMAGE_MIMETYPES,
+  AvatarService,
   MAX_AVATAR_BYTES,
-  SupabaseService,
-} from '@/upload/supabase.service';
+} from '@/upload/avatar.service';
+import { backendOrigin } from '@/common/backend-origin';
 import type { AuthenticatedRequest } from '@/common/interfaces/request.interface';
 
 class UpdateProfileMetaDto {
@@ -78,8 +80,13 @@ class UpdateProfileMetaDto {
 export class UserController {
   constructor(
     private readonly userService: UserService,
-    private readonly supabaseService: SupabaseService,
+    private readonly avatars: AvatarService,
+    private readonly config: ConfigService,
   ) {}
+
+  private get trustProxy(): boolean {
+    return this.config.get<string>('TRUST_PROXY') === 'true';
+  }
 
   @Get()
   @ApiFindAllUsers()
@@ -176,29 +183,24 @@ export class UserController {
       throw new BadRequestException('Arquivo de imagem não enviado.');
     }
 
-    const { url } = await this.supabaseService.uploadImage(
+    const path = await this.avatars.save(
+      req.user.id,
       file.buffer,
       file.mimetype,
-      file.originalname,
-      req.user.id,
     );
+    const prefix = (this.config.get<string>('API_PREFIX') ?? 'api').replace(
+      /^\/|\/$/g,
+      '',
+    );
+    const avatar = `${backendOrigin(req, this.trustProxy, this.config)}/${prefix}${path}`;
 
-    const current = await this.userService.findById(req.user.id);
-    if (current.avatar) {
-      await this.supabaseService.deleteAvatarImage(current.avatar);
-    }
-
-    return this.userService.updateProfileMeta(req.user.id, { avatar: url });
+    return this.userService.updateProfileMeta(req.user.id, { avatar });
   }
 
   @Delete('me/avatar')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Remover avatar do usuário (volta ao fallback)' })
   async deleteAvatar(@Req() req: AuthenticatedRequest) {
-    const current = await this.userService.findById(req.user.id);
-    if (current.avatar) {
-      await this.supabaseService.deleteAvatarImage(current.avatar);
-    }
     return this.userService.clearAvatar(req.user.id);
   }
 }

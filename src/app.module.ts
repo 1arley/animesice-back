@@ -36,6 +36,7 @@ import { AuditInterceptor } from '@/common/interceptors/audit.interceptor';
 import { BlogModule } from '@/blog/blog.module';
 import { GachaModule } from '@/gacha/gacha.module';
 import { BillingModule } from '@/billing/billing.module';
+import { MaintenanceInterceptor } from '@/common/interceptors/maintenance.interceptor';
 
 @Module({
   imports: [
@@ -87,6 +88,7 @@ import { BillingModule } from '@/billing/billing.module';
   providers: [
     AppService,
     AuditService,
+    { provide: APP_INTERCEPTOR, useClass: MaintenanceInterceptor },
     {
       provide: APP_GUARD,
       useClass: ThrottlerBehindProxyGuard,

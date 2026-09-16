@@ -18,9 +18,11 @@ describe('UserService', () => {
       update: jest.fn(),
     },
     $transaction: jest.fn(),
+    $executeRaw: jest.fn(),
   };
 
   beforeEach(async () => {
+    mockPrismaService.$executeRaw.mockResolvedValue(1);
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         UserService,
@@ -388,15 +390,18 @@ describe('UserService', () => {
   });
 
   describe('clearAvatar', () => {
-    it('should clear avatar', async () => {
-      mockPrismaService.user.update.mockResolvedValue({
+    it('should clear avatar and delete stored file atomically', async () => {
+      mockPrismaService.$transaction.mockResolvedValue([
+        { id: '1', avatar: null },
+      ]);
+
+      await expect(service.clearAvatar('1')).resolves.toEqual({
         id: '1',
         avatar: null,
       });
-      await service.clearAvatar('1');
-      expect(prisma.user.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: { avatar: null } }),
-      );
+
+      expect(prisma.$transaction).toHaveBeenCalled();
+      expect(prisma.$executeRaw).toHaveBeenCalled();
     });
   });
 });

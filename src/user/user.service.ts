@@ -204,22 +204,27 @@ export class UserService {
   }
 
   async clearAvatar(userId: string) {
-    const user = await this.prisma.user.update({
-      where: { id: userId },
-      data: { avatar: null },
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        userName: true,
-        role: true,
-        avatar: true,
-        bio: true,
-        myAnimeList: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-    });
+    const [user] = await this.prisma.$transaction([
+      this.prisma.user.update({
+        where: { id: userId },
+        data: { avatar: null },
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          userName: true,
+          role: true,
+          avatar: true,
+          bio: true,
+          myAnimeList: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      }),
+      this.prisma.$executeRaw`
+        DELETE FROM "AvatarFile" WHERE "userId" = ${userId}
+      `,
+    ]);
 
     return user;
   }
