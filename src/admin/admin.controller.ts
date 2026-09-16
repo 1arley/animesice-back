@@ -22,9 +22,11 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { AdminService } from '@/admin/admin.service';
+import { EpisodeService } from '@/episode/episode.service';
 import { JwtAuthGuard } from '@/auth/jwt-auth.guard';
 import { RolesGuard } from '@/auth/roles.guard';
 import { Roles } from '@/auth/roles.decorators';
+import { Audit } from '@/auth/decorators/audit.decorator';
 import { CreateAnimeDto, UpdateAnimeDto } from '@/admin/dto/update-anime.dto';
 import {
   CreateEpisodeDto,
@@ -67,6 +69,7 @@ export class AdminController {
   constructor(
     private readonly adminService: AdminService,
     private readonly supabaseService: SupabaseService,
+    private readonly episodeService: EpisodeService,
   ) {}
 
   // --- Overview -----------------------------------------------------------
@@ -99,47 +102,78 @@ export class AdminController {
   }
 
   @Post('anime')
+  @Audit('CREATE', 'Anime')
   @ApiOperation({ summary: 'Criar anime' })
   createAnime(@Body() dto: CreateAnimeDto) {
     return this.adminService.createAnime(dto);
   }
 
   @Post('anime/import')
+  @Audit('IMPORT', 'Anime')
   @ApiOperation({ summary: 'Importar anime via AniList (por id ou busca)' })
   importAnime(@Body() dto: ImportAnimeDto) {
     return this.adminService.importFromAniList(dto);
   }
 
   @Patch('anime/:slug')
+  @Audit('UPDATE', 'Anime')
   @ApiOperation({ summary: 'Atualizar anime por slug' })
   updateAnime(@Param('slug') slug: string, @Body() dto: UpdateAnimeDto) {
     return this.adminService.updateAnime(slug, dto);
   }
 
   @Delete('anime/:slug')
+  @Audit('DELETE', 'Anime')
   @ApiOperation({ summary: 'Remover anime por slug' })
   deleteAnime(@Param('slug') slug: string) {
     return this.adminService.deleteAnime(slug);
   }
 
   // --- Episode CRUD -------------------------------------------------------
+  @Get('episode/:slug/:number')
+  @Audit('VIEW_EPISODE', 'Episode')
+  @ApiOperation({
+    summary: 'Obter episódio (admin, incluindo anime despublicado)',
+  })
+  getEpisode(
+    @Param('slug') slug: string,
+    @Param('number', ParseIntPipe) number: number,
+    @Query('season') season: string | undefined,
+  ) {
+    return this.episodeService.findByAnimeSlugAndNumber(
+      slug,
+      number,
+      season ? parseInt(season, 10) || 1 : 1,
+      true,
+    );
+  }
+
   @Post('episode/:slug')
+  @Audit('CREATE', 'Episode')
   @ApiOperation({ summary: 'Criar episódio para um anime' })
   createEpisode(@Param('slug') slug: string, @Body() dto: CreateEpisodeDto) {
     return this.adminService.createEpisode(slug, dto);
   }
 
   @Patch('episode/:slug/:number')
+  @Audit('UPDATE', 'Episode')
   @ApiOperation({ summary: 'Atualizar episódio (ex: cadastrar videoUrl)' })
   updateEpisode(
     @Param('slug') slug: string,
     @Param('number', ParseIntPipe) number: number,
+    @Query('season') season: string | undefined,
     @Body() dto: UpdateEpisodeDto,
   ) {
-    return this.adminService.updateEpisode(slug, number, dto);
+    return this.adminService.updateEpisode(
+      slug,
+      number,
+      dto,
+      season ? parseInt(season, 10) || 1 : 1,
+    );
   }
 
   @Post('episode/:slug/:number/upload')
+  @Audit('UPLOAD_VIDEO', 'Episode')
   @ApiOperation({
     summary: 'Upload de vídeo (.mp4/.m3u8/.ts) p/ Supabase Storage',
   })
@@ -164,6 +198,7 @@ export class AdminController {
   async uploadEpisodeVideo(
     @Param('slug') slug: string,
     @Param('number', ParseIntPipe) number: number,
+    @Query('season') season: string | undefined,
     @UploadedFile() file: Express.Multer.File,
   ) {
     if (!file) {
@@ -183,22 +218,32 @@ export class AdminController {
       file.originalname,
     );
 
-    return this.adminService.updateEpisode(slug, number, {
-      videoUrl: url,
-    });
+    return this.adminService.updateEpisode(
+      slug,
+      number,
+      { videoUrl: url },
+      season ? parseInt(season, 10) || 1 : 1,
+    );
   }
 
   @Delete('episode/:slug/:number')
+  @Audit('DELETE', 'Episode')
   @ApiOperation({ summary: 'Remover episódio' })
   deleteEpisode(
     @Param('slug') slug: string,
     @Param('number', ParseIntPipe) number: number,
+    @Query('season') season: string | undefined,
   ) {
-    return this.adminService.deleteEpisode(slug, number);
+    return this.adminService.deleteEpisode(
+      slug,
+      number,
+      season ? parseInt(season, 10) || 1 : 1,
+    );
   }
 
   // --- Genre --------------------------------------------------------------
   @Post('genre')
+  @Audit('CREATE', 'Genre')
   @ApiOperation({ summary: 'Criar gênero' })
   createGenre(@Body() dto: CreateGenreDto) {
     return this.adminService.createGenre(dto);

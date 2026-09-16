@@ -109,8 +109,26 @@ export class AdminService {
     }
 
     const { genreSlugs, ...fields } = dto;
+    // Convert empty strings to null for clearable optional fields so Prisma
+    // actually writes the removal instead of skipping the field entirely.
+    const CLEARABLE = [
+      'synopsis',
+      'posterImage',
+      'coverImage',
+      'trailerUrl',
+      'embedUrl',
+      'rating',
+      'notes',
+    ] as const;
     const data: Prisma.AnimeUpdateInput = {
-      ...fields,
+      ...Object.fromEntries(
+        Object.entries(fields).map(([k, v]) => [
+          k,
+          CLEARABLE.includes(k as (typeof CLEARABLE)[number]) && v === ''
+            ? null
+            : v,
+        ]),
+      ),
       audio: audioTypeFromTitle(dto.title ?? anime.title),
     };
     if (genreSlugs !== undefined) {
@@ -140,8 +158,9 @@ export class AdminService {
     if (!anime) {
       throw new NotFoundException('Anime não encontrado.');
     }
+    const { season, ...rest } = dto;
     const episode = await this.prisma.episode.create({
-      data: { ...dto, animeId: anime.id },
+      data: { ...rest, season: season ?? 1, animeId: anime.id },
     });
 
     void this.notificationService.notifyNewEpisode(
@@ -172,9 +191,23 @@ export class AdminService {
     if (!episode) {
       throw new NotFoundException('Episódio não encontrado.');
     }
+    const CLEARABLE_EP = [
+      'title',
+      'videoUrl',
+      'thumbnail',
+      'duration',
+    ] as const;
+    const data: Prisma.EpisodeUpdateInput = Object.fromEntries(
+      Object.entries(dto).map(([k, v]) => [
+        k,
+        CLEARABLE_EP.includes(k as (typeof CLEARABLE_EP)[number]) && v === ''
+          ? null
+          : v,
+      ]),
+    );
     return this.prisma.episode.update({
       where: { id: episode.id },
-      data: dto,
+      data,
     });
   }
 
@@ -329,13 +362,13 @@ export class AdminService {
       ...(endDate ? { endDate: endDate.toISOString() } : {}),
       ...(media.episodes ? { episodeCount: media.episodes } : {}),
       published: true,
+      anilistId: media.id,
     };
 
     const anime = await this.createAnime(createDto);
 
     return {
       ...anime,
-      anilistId: media.id,
       anilistUrl: `https://anilist.co/anime/${media.id}`,
     };
   }

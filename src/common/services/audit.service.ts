@@ -128,4 +128,29 @@ export class AuditService {
       orderBy: { createdAt: 'desc' },
     });
   }
+
+  async getMutationLogs(days: number = 7) {
+    const since = new Date();
+    since.setDate(since.getDate() - days);
+
+    return this.prisma.adminAuditLog.findMany({
+      where: {
+        createdAt: { gte: since },
+        action: {
+          in: ['CREATE', 'UPDATE', 'DELETE', 'IMPORT', 'UPLOAD_VIDEO'],
+        },
+      },
+      include: {
+        admin: {
+          select: {
+            id: true,
+            email: true,
+            name: true,
+            role: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
 }

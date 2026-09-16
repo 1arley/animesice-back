@@ -135,26 +135,31 @@ describe('AdminController', () => {
     it('atualiza episódio repassando número e dto', async () => {
       adminService.updateEpisode.mockResolvedValue({});
 
-      await controller.updateEpisode('naruto', 2, { videoUrl: 'url' });
-
-      expect(adminService.updateEpisode).toHaveBeenCalledWith('naruto', 2, {
+      await controller.updateEpisode('naruto', 2, undefined, {
         videoUrl: 'url',
       });
+
+      expect(adminService.updateEpisode).toHaveBeenCalledWith(
+        'naruto',
+        2,
+        { videoUrl: 'url' },
+        1,
+      );
     });
 
     it('remove episódio', async () => {
       adminService.deleteEpisode.mockResolvedValue({});
 
-      await controller.deleteEpisode('naruto', 1);
+      await controller.deleteEpisode('naruto', 1, undefined);
 
-      expect(adminService.deleteEpisode).toHaveBeenCalledWith('naruto', 1);
+      expect(adminService.deleteEpisode).toHaveBeenCalledWith('naruto', 1, 1);
     });
   });
 
   describe('uploadEpisodeVideo', () => {
     it('lança BadRequestException quando o arquivo não é enviado', async () => {
       await expect(
-        controller.uploadEpisodeVideo('naruto', 1, undefined as any),
+        controller.uploadEpisodeVideo('naruto', 1, undefined, undefined as any),
       ).rejects.toBeInstanceOf(BadRequestException);
     });
 
@@ -166,7 +171,7 @@ describe('AdminController', () => {
       } as any;
 
       await expect(
-        controller.uploadEpisodeVideo('naruto', 1, file),
+        controller.uploadEpisodeVideo('naruto', 1, undefined, file),
       ).rejects.toBeInstanceOf(BadRequestException);
     });
 
@@ -178,7 +183,7 @@ describe('AdminController', () => {
       } as any;
 
       await expect(
-        controller.uploadEpisodeVideo('naruto', 1, file),
+        controller.uploadEpisodeVideo('naruto', 1, undefined, file),
       ).rejects.toBeInstanceOf(BadRequestException);
     });
 
@@ -197,16 +202,19 @@ describe('AdminController', () => {
       });
       adminService.updateEpisode.mockResolvedValue({});
 
-      await controller.uploadEpisodeVideo('naruto', 1, file);
+      await controller.uploadEpisodeVideo('naruto', 1, undefined, file);
 
       expect(supabaseService.uploadVideo).toHaveBeenCalledWith(
         buffer,
         'video/mp4',
         'ep1.mp4',
       );
-      expect(adminService.updateEpisode).toHaveBeenCalledWith('naruto', 1, {
-        videoUrl: 'https://cdn/ep1.mp4',
-      });
+      expect(adminService.updateEpisode).toHaveBeenCalledWith(
+        'naruto',
+        1,
+        { videoUrl: 'https://cdn/ep1.mp4' },
+        1,
+      );
     });
 
     it('aceita .ts (video/mp2t) com sync byte 0x47', async () => {
@@ -218,7 +226,7 @@ describe('AdminController', () => {
       supabaseService.uploadVideo.mockResolvedValue({ url: 'u', path: 'p' });
       adminService.updateEpisode.mockResolvedValue({});
 
-      await controller.uploadEpisodeVideo('naruto', 1, file);
+      await controller.uploadEpisodeVideo('naruto', 1, undefined, file);
 
       expect(adminService.updateEpisode).toHaveBeenCalled();
     });
@@ -232,7 +240,7 @@ describe('AdminController', () => {
       supabaseService.uploadVideo.mockResolvedValue({ url: 'u', path: 'p' });
       adminService.updateEpisode.mockResolvedValue({});
 
-      await controller.uploadEpisodeVideo('naruto', 1, file);
+      await controller.uploadEpisodeVideo('naruto', 1, undefined, file);
 
       expect(adminService.updateEpisode).toHaveBeenCalled();
     });

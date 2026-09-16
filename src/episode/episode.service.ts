@@ -27,9 +27,10 @@ export class EpisodeService {
     slug: string,
     number: number,
     season: number = 1,
+    includeUnpublished: boolean = false,
   ) {
     const anime = await this.prisma.anime.findFirst({
-      where: { slug, published: true },
+      where: includeUnpublished ? { slug } : { slug, published: true },
       select: {
         id: true,
         episodes: {

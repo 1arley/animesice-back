@@ -7,6 +7,12 @@ export class CreateEpisodeDto {
   @Min(1)
   number!: number;
 
+  @ApiProperty({ required: false, default: 1, description: 'Temporada' })
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  season?: number;
+
   @ApiProperty({ required: false })
   @IsOptional()
   @IsString()
@@ -25,12 +31,12 @@ export class CreateEpisodeDto {
   @IsString()
   embedUrl?: string;
 
-  @ApiProperty({ required: false })
+  @ApiProperty({ required: false, description: 'Thumbnail URL' })
   @IsOptional()
   @IsString()
   thumbnailUrl?: string;
 
-  @ApiProperty({ required: false })
+  @ApiProperty({ required: false, description: 'Duração do episódio' })
   @IsOptional()
   @IsString()
   duration?: string;

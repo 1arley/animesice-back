@@ -61,7 +61,24 @@ export class AuditController {
     @Query('resourceType') resourceType: string = 'User',
     @Query('days') days: string = '7',
   ) {
-    const daysNum = Math.min(parseInt(days) || 7, 90); // Máximo 90 dias
+    const daysNum = Math.min(parseInt(days) || 7, 90);
     return this.auditService.getSensitiveDataAccess(resourceType, daysNum);
+  }
+
+  @Get('mutations')
+  @UseGuards(RolesGuard)
+  @Roles('SUPERADMIN')
+  @Audit('VIEW_AUDIT_LOGS', 'AdminAuditLog')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Ver logs de mutações administrativas (CRUD, import, upload)',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Logs de mutações retornados',
+  })
+  async getMutationLogs(@Query('days') days: string = '7') {
+    const daysNum = Math.min(parseInt(days) || 7, 90);
+    return this.auditService.getMutationLogs(daysNum);
   }
 }

@@ -32,6 +32,14 @@ describe('AdminService', () => {
         create: jest.fn(),
         upsert: jest.fn(),
       },
+      userCard: {
+        findMany: jest.fn(),
+        update: jest.fn(),
+      },
+      card: {
+        findUnique: jest.fn(),
+        update: jest.fn(),
+      },
       $transaction: jest.fn(),
     };
     anilistService = { fetchMedia: jest.fn(), searchMedia: jest.fn() };
@@ -364,6 +372,7 @@ describe('AdminService', () => {
       prisma.anime.create.mockResolvedValue({
         id: 'a1',
         slug: 'sousou-no-frieren',
+        anilistId: 123,
       });
 
       const result = await service.importFromAniList({

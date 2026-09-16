@@ -177,6 +177,11 @@ export class CreateAnimeDto {
   @IsArray()
   @IsString({ each: true })
   genreSlugs?: string[];
+
+  @ApiProperty({ required: false, description: 'ID do AniList' })
+  @IsOptional()
+  @IsInt()
+  anilistId?: number;
 }
 
 export class UpdateAnimeDto extends PartialType(CreateAnimeDto) {}
