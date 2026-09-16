@@ -11,7 +11,7 @@ import {
   ExtractionJobService,
   ExtractionJob,
 } from '@/streaming/extraction-job.service';
-import { youtubeEmbedUrl } from '@/embed/scrape/extract';
+import { isNoVideoUrl, youtubeEmbedUrl } from '@/embed/scrape/extract';
 import {
   probeMediaUrlDead,
   purgeExpiredLivenessCache,
@@ -259,6 +259,8 @@ export class StreamingService {
     reextracted: boolean;
   }> {
     let rawVideoUrl: string | null = episode.videoUrl;
+
+    if (rawVideoUrl && isNoVideoUrl(rawVideoUrl)) rawVideoUrl = null;
 
     dbg(
       `[STREAM] getSource animeSlug=${animeSlug} ep=${episodeNumber} embedUrl=${episode.embedUrl ?? 'null'} videoUrl=${episode.videoUrl?.slice(0, 80) ?? 'null'}`,
@@ -645,6 +647,7 @@ export class StreamingService {
 
     // Se já tem videoUrl válido, não precisa de extração assíncrona
     let rawVideoUrl = episode.videoUrl;
+    if (rawVideoUrl && isNoVideoUrl(rawVideoUrl)) rawVideoUrl = null;
     if (rawVideoUrl && /\/embed\/media\?url=/i.test(rawVideoUrl)) {
       try {
         const u = new URL(rawVideoUrl);

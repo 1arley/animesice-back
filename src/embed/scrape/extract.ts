@@ -4,10 +4,17 @@ import type { Page, Request } from 'playwright';
 const MEDIA_HOST_RE =
   /googlevideo\.com\/videoplayback|\/videoplayback|\.m3u8|\.mp4|\.ts($|\?)|streamtape|mixdrop|doodstream|hydrax|blogger\.com\/video/i;
 
-/** Filtra so URLs .mp4 / .m3u8 (descarta blob:, data:, etc.). */
+/** true se a URL é o placeholder "sem vídeo" das fontes (novideo.mp4). */
+export function isNoVideoUrl(url: string): boolean {
+  return /\/no[_-]?video(\.mp4)?($|\?|#)/i.test(url);
+}
+
+/** Filtra so URLs .mp4 / .m3u8 (descarta blob:, data:, placeholder novideo, etc.). */
 export function keepVideoUrls(urls: string[]): string[] {
   return urls.filter(
-    (u) => /\.mp4($|\?|#)/i.test(u) || /\.m3u8($|\?|#)/i.test(u),
+    (u) =>
+      !isNoVideoUrl(u) &&
+      (/\.mp4($|\?|#)/i.test(u) || /\.m3u8($|\?|#)/i.test(u)),
   );
 }
 

@@ -8,6 +8,7 @@ import {
 } from './scrape-source.interface';
 import {
   keepVideoUrls,
+  isNoVideoUrl,
   extractVideoElements,
   extractAllIframes,
 } from './extract';
@@ -155,7 +156,12 @@ export class AnimefireScrapeSource implements ScrapeSource {
     // Unescape \/ e ordena por qualidade (hd/720p primeiro, depois sd).
     const srcs = json.data
       .map((d) => (d.src || '').replace(/\\\//g, '/'))
-      .filter((s) => /^https?:\/\//i.test(s) && /\.mp4($|\?|#)/i.test(s));
+      .filter(
+        (s) =>
+          /^https?:\/\//i.test(s) &&
+          !isNoVideoUrl(s) &&
+          /\.mp4($|\?|#)/i.test(s),
+      );
 
     // Preferência: hd (720p) primeiro. Mantém ordem original se não houver hd.
     const hd = srcs.find((s) => /\/hd\//i.test(s));

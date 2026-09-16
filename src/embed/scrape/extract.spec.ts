@@ -1,4 +1,5 @@
 import {
+  isNoVideoUrl,
   keepVideoUrls,
   isExpiringMediaUrl,
   preferPermanentMediaUrls,
@@ -69,6 +70,18 @@ describe('extract helpers', () => {
       expect(
         keepVideoUrls(['https://cdn/v.mp4', 'blob:xyz', 'https://cdn/v.m3u8']),
       ).toEqual(['https://cdn/v.mp4', 'https://cdn/v.m3u8']);
+    });
+
+    it('descarta placeholder novideo.mp4 (animefire/yourupload)', () => {
+      expect(
+        keepVideoUrls([
+          'https://www.yourupload.com/embed/novideo.mp4',
+          'https://cdn/lightspeedst/hd/1.mp4',
+        ]),
+      ).toEqual(['https://cdn/lightspeedst/hd/1.mp4']);
+      expect(isNoVideoUrl('https://www.yourupload.com/embed/novideo.mp4')).toBe(
+        true,
+      );
     });
   });
 

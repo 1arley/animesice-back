@@ -21,8 +21,8 @@ import { ExtractionJob } from '@/streaming/extraction-job.service';
 import { JwtAuthGuard } from '@/auth/jwt-auth.guard';
 import { ConfigService } from '@nestjs/config';
 import { Throttle } from '@nestjs/throttler';
+import { backendOrigin } from '@/common/backend-origin';
 
-const HOSTNAME_RE = /^[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$/i;
 const EPISODE_NUM_RE = /^\d+$/;
 
 /**
@@ -41,64 +41,6 @@ function clientIpFromRequest(
     }
   }
   return req.socket.remoteAddress || '0.0.0.0';
-}
-
-/**
- * Origem pública do backend (scheme + host) usada p/ montar URLs absolutas de
- * proxy de mídia `/embed/media` no caminho `/stream/source`. Em prod, use
- * PUBLIC_BACKEND_URL. Headers x-forwarded-* só são aceitos com TRUST_PROXY;
- * o host (forwarded ou direto) é validado contra PUBLIC_BACKEND_HOSTS quando
- * configurado, e em produção exige allowlist — evita entregar o token de mídia
- * assinado a uma origem atacante via Host header poisoning.
- */
-function backendOrigin(
-  req: express.Request,
-  trustProxy: boolean,
-  config: ConfigService,
-): string {
-  const configured = config.get<string>('PUBLIC_BACKEND_URL');
-  if (configured) return configured.replace(/\/$/, '');
-
-  const allowedHosts = (config.get<string>('PUBLIC_BACKEND_HOSTS') ?? '')
-    .split(',')
-    .map((h) => h.trim().toLowerCase())
-    .filter(Boolean);
-
-  let host: string | undefined;
-  if (trustProxy) {
-    const forwarded = req.headers['x-forwarded-host'];
-    if (typeof forwarded === 'string') host = forwarded;
-  }
-  if (!host) {
-    const direct = req.headers['host'];
-    if (typeof direct === 'string') host = direct;
-  }
-
-  if (host && HOSTNAME_RE.test(host)) {
-    const hostOnly = host.replace(/:\d+$/, '').toLowerCase();
-    if (allowedHosts.length > 0) {
-      if (allowedHosts.includes(host) || allowedHosts.includes(hostOnly)) {
-        const scheme =
-          trustProxy &&
-          typeof req.headers['x-forwarded-proto'] === 'string' &&
-          /^https?$/i.test(req.headers['x-forwarded-proto'])
-            ? String(req.headers['x-forwarded-proto']).toLowerCase()
-            : 'https';
-        return `${scheme}://${host}`;
-      }
-    } else {
-      if (process.env.NODE_ENV !== 'production') {
-        return `${req.protocol}://${host}`;
-      }
-    }
-  }
-
-  if (process.env.NODE_ENV === 'production') {
-    throw new ForbiddenException(
-      'PUBLIC_BACKEND_URL ou PUBLIC_BACKEND_HOSTS não configurados.',
-    );
-  }
-  return 'http://localhost';
 }
 
 @ApiTags('streaming')
