@@ -559,8 +559,8 @@ describe('GachaService', () => {
 
       expect(pull.conditionLabel).toBeDefined();
       expect(mockPrisma.notification.updateMany).toHaveBeenCalledWith({
-        where: { id: 'n1', read: false },
-        data: { read: true },
+        where: { id: 'n1', claimed: false },
+        data: { claimed: true },
       });
       expect(mockPrisma.userCard.create).toHaveBeenCalled();
       expect(mockPrisma.user.updateMany).toHaveBeenCalledWith(
@@ -657,7 +657,12 @@ describe('GachaService', () => {
 
       expect(mockPrisma.userCard.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { userId: 'u1', card: { rarity: 'RARA' }, foil: 'HOLO' },
+          where: {
+            userId: 'u1',
+            status: 'ACTIVE',
+            card: { rarity: 'RARA' },
+            foil: 'HOLO',
+          },
           skip: 0,
           take: 100,
           orderBy: { obtainedAt: 'desc' },
@@ -686,7 +691,7 @@ describe('GachaService', () => {
       expect(mockPrisma.privacySettings.findUnique).toHaveBeenCalled();
       expect(mockPrisma.userCard.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { userId: 'u2' },
+          where: { userId: 'u2', status: 'ACTIVE' },
           orderBy: { card: { rarity: 'desc' } },
         }),
       );
@@ -863,11 +868,36 @@ describe('GachaService', () => {
         }),
       );
 
+      mockPrisma.card.findUnique.mockResolvedValue({ rarity: 'COMUM' });
+      mockPrisma.card.update.mockResolvedValue({ id: 'c1' });
       await service.adminUpdateCard('c1', { name: 'Novo' });
       expect(mockPrisma.card.update).toHaveBeenCalledWith({
         where: { id: 'c1' },
         data: { name: 'Novo' },
       });
+
+      mockPrisma.card.findUnique.mockResolvedValue({ rarity: 'EPICA' });
+      mockPrisma.card.update.mockResolvedValue({
+        id: 'c1',
+        rarity: 'LENDARIA',
+      });
+      mockPrisma.userCard.findMany.mockResolvedValue([
+        { id: 'p1', condition: 0.05, foil: 'NORMAL', edition: 1 },
+      ]);
+      mockPrisma.userCard.update.mockResolvedValue({ id: 'p1' });
+
+      const repriced = await service.adminUpdateCard('c1', {
+        rarity: 'LENDARIA',
+      });
+      expect(repriced).toMatchObject({ repriced: 1 });
+      expect(mockPrisma.userCard.update).toHaveBeenCalledWith({
+        where: { id: 'p1' },
+        data: { value: cardValue('LENDARIA', 0.05, 'NORMAL', 1) },
+      });
+      mockPrisma.card.findUnique.mockResolvedValue(null);
+      await expect(
+        service.adminUpdateCard('ghost', { rarity: 'RARA' }),
+      ).rejects.toBeInstanceOf(NotFoundException);
 
       await service.adminUserCards('u1', 1, 10);
       expect(mockPrisma.userCard.findMany).toHaveBeenCalledWith(
@@ -1258,7 +1288,7 @@ describe('GachaService', () => {
         await expect(service.acceptTrade('u2', 't1')).rejects.toBeInstanceOf(
           ConflictException,
         );
-        expect(mockPrisma.gachaTrade.update).toHaveBeenCalledWith(
+        expect(mockPrisma.gachaTrade.updateMany).toHaveBeenCalledWith(
           expect.objectContaining({ data: { status: 'EXPIRED' } }),
         );
       });
@@ -1358,8 +1388,8 @@ describe('GachaService', () => {
         await expect(service.cancelTrade('u1', 't1')).rejects.toBeInstanceOf(
           ConflictException,
         );
-        expect(mockPrisma.gachaTrade.update).toHaveBeenCalledWith({
-          where: { id: 't1' },
+        expect(mockPrisma.gachaTrade.updateMany).toHaveBeenCalledWith({
+          where: expect.objectContaining({ id: 't1' }),
           data: { status: 'EXPIRED' },
         });
       });
@@ -1510,6 +1540,73 @@ describe('GachaService', () => {
         BadRequestException,
       );
       expect(mockPrisma.userCard.update).not.toHaveBeenCalled();
+    });
+
+    it('queima carta, credita 40% e preserva registro como BURNED', async () => {
+      mockPrisma.userCard.findFirst.mockResolvedValue({
+        id: 'p1',
+        value: 100,
+        edition: 3,
+        card: { name: 'Card Comum' },
+      });
+      mockPrisma.gachaTrade.findFirst.mockResolvedValue(null);
+      mockPrisma.gachaListing.findFirst.mockResolvedValue(null);
+      mockPrisma.user.findFirst.mockResolvedValue(null);
+      mockPrisma.user.updateMany.mockResolvedValue({ count: 1 });
+      mockPrisma.crystalEvent.create.mockResolvedValue({});
+
+      await expect(service.burn('u1', 'p1')).resolves.toEqual({
+        burned: 'p1',
+        payout: 40,
+      });
+      expect(mockPrisma.userCard.updateMany).toHaveBeenCalledWith({
+        where: { id: 'p1', userId: 'u1', status: 'ACTIVE' },
+        data: { status: 'BURNED' },
+      });
+      expect(mockPrisma.crystalEvent.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            delta: 40,
+            type: 'BURN',
+            refId: 'p1',
+          }),
+        }),
+      );
+    });
+
+    it('bloqueia queima da carta destacada', async () => {
+      mockPrisma.userCard.findFirst.mockResolvedValue({
+        id: 'p1',
+        value: 100,
+        edition: 3,
+        card: { name: 'Card Comum' },
+      });
+      mockPrisma.gachaTrade.findFirst.mockResolvedValue(null);
+      mockPrisma.gachaListing.findFirst.mockResolvedValue(null);
+      mockPrisma.user.findFirst.mockResolvedValue({ id: 'u1' });
+
+      await expect(service.burn('u1', 'p1')).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      expect(mockPrisma.crystalEvent.create).not.toHaveBeenCalled();
+    });
+
+    it('garante payout mínimo de 1 Crystal', async () => {
+      mockPrisma.userCard.findFirst.mockResolvedValue({
+        id: 'p1',
+        value: 1,
+        edition: 3,
+        card: { name: 'Card Comum' },
+      });
+      mockPrisma.gachaTrade.findFirst.mockResolvedValue(null);
+      mockPrisma.gachaListing.findFirst.mockResolvedValue(null);
+      mockPrisma.user.findFirst.mockResolvedValue(null);
+      mockPrisma.crystalEvent.create.mockResolvedValue({});
+
+      await service.burn('u1', 'p1');
+      expect(mockPrisma.user.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { crystalBalance: { increment: 1 } } }),
+      );
     });
 
     it('buyCosmetic barra key inexistente, posse duplicada e saldo baixo', async () => {

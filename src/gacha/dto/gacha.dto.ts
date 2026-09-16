@@ -22,6 +22,13 @@ export class RerollGachaCardDto {
   userCardId!: string;
 }
 
+export class BurnGachaCardDto {
+  @ApiProperty({ description: 'ID da UserCard (sua) a queimar.' })
+  @IsString()
+  @IsNotEmpty()
+  userCardId!: string;
+}
+
 export class BuyCosmeticDto {
   @ApiProperty({ description: 'Chave do cosmético (ex.: FRAME_AURORA).' })
   @IsString()

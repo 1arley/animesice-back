@@ -1,0 +1,6 @@
+CREATE TYPE "UserCardStatus" AS ENUM ('ACTIVE', 'BURNED');
+
+ALTER TABLE "UserCard"
+ADD COLUMN "status" "UserCardStatus" NOT NULL DEFAULT 'ACTIVE';
+
+ALTER TYPE "CrystalEventType" ADD VALUE 'BURN';

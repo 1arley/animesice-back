@@ -30,6 +30,7 @@ import {
   isEpicTier,
   pickWeighted,
 } from '@/gacha/gacha.constants';
+import { randomInt } from 'node:crypto';
 
 const DAY_MS = 86_400_000;
 const HOUR_MS = 3_600_000;
@@ -161,12 +162,16 @@ export class GachaService {
   private async pityState(userId: string) {
     const [lastEpic, first] = await this.prisma.$transaction([
       this.prisma.userCard.findFirst({
-        where: { userId, card: { rarity: { in: EPIC_RARITIES } } },
+        where: {
+          userId,
+          status: 'ACTIVE',
+          card: { rarity: { in: EPIC_RARITIES } },
+        },
         orderBy: { obtainedAt: 'desc' },
         select: { obtainedAt: true },
       }),
       this.prisma.userCard.findFirst({
-        where: { userId },
+        where: { userId, status: 'ACTIVE' },
         orderBy: { obtainedAt: 'asc' },
         select: { obtainedAt: true },
       }),
@@ -201,12 +206,16 @@ export class GachaService {
         this.prisma.gachaSpin.count({ where: { userId, hour } }),
         this.prisma.gachaClaimLock.findUnique({ where: { userId } }),
         this.prisma.userCard.findFirst({
-          where: { userId, card: { rarity: { in: EPIC_RARITIES } } },
+          where: {
+            userId,
+            status: 'ACTIVE',
+            card: { rarity: { in: EPIC_RARITIES } },
+          },
           orderBy: { obtainedAt: 'desc' },
           select: { obtainedAt: true },
         }),
         this.prisma.userCard.findFirst({
-          where: { userId },
+          where: { userId, status: 'ACTIVE' },
           orderBy: { obtainedAt: 'asc' },
           select: { obtainedAt: true },
         }),
@@ -215,7 +224,7 @@ export class GachaService {
           select: { crystalBalance: true, gachaCosmetics: true },
         }),
         this.prisma.userCard.aggregate({
-          where: { userId },
+          where: { userId, status: 'ACTIVE' },
           _sum: { value: true },
         }),
       ]);
@@ -429,15 +438,15 @@ export class GachaService {
     const pull = await this.prisma.$transaction(
       async (tx) => {
         const pending = await tx.notification.findFirst({
-          where: { userId, type: 'COMPENSATION', read: false },
+          where: { userId, type: 'COMPENSATION', claimed: false },
           select: { id: true },
         });
         if (!pending) {
           throw new ForbiddenException('Nada a resgatar.');
         }
         const marked = await tx.notification.updateMany({
-          where: { id: pending.id, read: false },
-          data: { read: true },
+          where: { id: pending.id, claimed: false },
+          data: { claimed: true },
         });
         if (marked.count !== 1) {
           throw new ForbiddenException('Compensação já resgatada.');
@@ -588,10 +597,11 @@ export class GachaService {
   }
 
   async reroll(userId: string, userCardId: string) {
+    await this.expirePendingTrades();
     const pull = await this.prisma.$transaction(
       async (tx) => {
         const card = await tx.userCard.findFirst({
-          where: { id: userCardId, userId },
+          where: { id: userCardId, userId, status: 'ACTIVE' },
           select: PULL_SELECT,
         });
         if (!card) {
@@ -691,6 +701,81 @@ export class GachaService {
     );
   }
 
+  async burn(userId: string, userCardId: string) {
+    await this.expirePendingTrades();
+    return this.prisma.$transaction(
+      async (tx) => {
+        const card = await tx.userCard.findFirst({
+          where: { id: userCardId, userId, status: 'ACTIVE' },
+          select: {
+            id: true,
+            value: true,
+            edition: true,
+            card: { select: { name: true } },
+          },
+        });
+        if (!card) throw new NotFoundException('Carta não encontrada.');
+
+        const pendingTrade = await tx.gachaTrade.findFirst({
+          where: {
+            status: 'PENDING',
+            OR: [
+              { offeredUserCardId: userCardId },
+              { requestedUserCardId: userCardId },
+            ],
+          },
+          select: { id: true },
+        });
+        if (pendingTrade) {
+          throw new BadRequestException('Carta envolvida em troca pendente.');
+        }
+
+        const listing = await tx.gachaListing.findFirst({
+          where: {
+            userCardId,
+            status: 'ACTIVE',
+            expiresAt: { gt: new Date() },
+          },
+          select: { id: true },
+        });
+        if (listing) {
+          throw new BadRequestException(
+            'Cancele o anúncio antes de queimar a carta.',
+          );
+        }
+
+        const featured = await tx.user.findFirst({
+          where: { id: userId, featuredUserCardId: userCardId },
+          select: { id: true },
+        });
+        if (featured) {
+          throw new BadRequestException(
+            'Remova a carta dos destaques antes de queimá-la.',
+          );
+        }
+
+        const payout = Math.max(1, Math.floor(card.value * 0.4));
+        await this.changeCrystals(
+          tx,
+          userId,
+          payout,
+          'BURN',
+          userCardId,
+          `Queima ${card.card.name} #${card.edition}`,
+        );
+        const burned = await tx.userCard.updateMany({
+          where: { id: userCardId, userId, status: 'ACTIVE' },
+          data: { status: 'BURNED' },
+        });
+        if (burned.count !== 1) {
+          throw new ConflictException('Carta não está mais disponível.');
+        }
+        return { burned: userCardId, payout };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+  }
+
   async createListing(userId: string, userCardId: string, price: number) {
     if (!Number.isSafeInteger(price) || price < 1 || price > 2_147_483_647) {
       throw new BadRequestException('Preço deve ser um inteiro positivo.');
@@ -698,7 +783,7 @@ export class GachaService {
     return this.prisma.$transaction(
       async (tx) => {
         const card = await tx.userCard.findFirst({
-          where: { id: userCardId, userId },
+          where: { id: userCardId, userId, status: 'ACTIVE' },
           select: { id: true },
         });
         if (!card) {
@@ -968,6 +1053,7 @@ export class GachaService {
     const safePage = Math.max(page, 1);
     const where: Prisma.UserCardWhereInput = {
       userId: ownerId,
+      status: 'ACTIVE',
       ...(rarity && (GACHA_TIERS as readonly string[]).includes(rarity)
         ? { card: { rarity } }
         : {}),
@@ -1017,7 +1103,7 @@ export class GachaService {
     const [total, owned] = await this.prisma.$transaction([
       this.prisma.card.count({ where: { animeId } }),
       this.prisma.userCard.findMany({
-        where: { userId, card: { animeId } },
+        where: { userId, status: 'ACTIVE', card: { animeId } },
         select: { cardId: true },
       }),
     ]);
@@ -1042,7 +1128,7 @@ export class GachaService {
 
   async setFeatured(userId: string, userCardId: string) {
     const card = await this.prisma.userCard.findFirst({
-      where: { id: userCardId, userId },
+      where: { id: userCardId, userId, status: 'ACTIVE' },
       select: { id: true },
     });
     if (!card) throw new NotFoundException('Carta não encontrada.');
@@ -1133,6 +1219,7 @@ export class GachaService {
     const pull = await this.prisma.userCard.findFirst({
       where: {
         id,
+        status: 'ACTIVE',
         user: {
           OR: [
             { privacySettings: null },
@@ -1179,7 +1266,7 @@ export class GachaService {
     });
     const ownedRows = userId
       ? await this.prisma.userCard.findMany({
-          where: { userId },
+          where: { userId, status: 'ACTIVE' },
           select: { cardId: true },
           distinct: ['cardId'],
         })
@@ -1251,6 +1338,7 @@ export class GachaService {
   async recent(limit = 20) {
     const safeLimit = Math.min(Math.max(limit, 1), 50);
     const pulls = await this.prisma.userCard.findMany({
+      where: { status: 'ACTIVE' },
       take: safeLimit * 2,
       orderBy: { obtainedAt: 'desc' },
       select: {
@@ -1381,15 +1469,49 @@ export class GachaService {
   adminCreateCard(data: { name: string; image?: string; rarity: string }) {
     // ponytail: malCharacterId negativo sintético p/ carta manual; colidir
     // com carta real do MAL é impossível (IDs MAL são positivos).
-    const malCharacterId = -Date.now();
+    const malCharacterId = -randomInt(1, 2_000_000_000);
     return this.prisma.card.create({ data: { ...data, malCharacterId } });
   }
 
-  adminUpdateCard(
+  async adminUpdateCard(
     id: string,
     data: { name?: string; image?: string; rarity?: string },
   ) {
-    return this.prisma.card.update({ where: { id }, data });
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const current = await tx.card.findUnique({
+        where: { id },
+        select: { rarity: true },
+      });
+      if (!current) throw new NotFoundException('Carta não encontrada.');
+      const updatedCard = await tx.card.update({ where: { id }, data });
+      if (
+        !data.rarity ||
+        data.rarity === current.rarity ||
+        !(GACHA_TIERS as readonly string[]).includes(data.rarity)
+      ) {
+        return { card: updatedCard, repriced: 0 };
+      }
+      const rarity = data.rarity as GachaTier;
+      const copies = await tx.userCard.findMany({
+        where: { cardId: id },
+        select: { id: true, condition: true, foil: true, edition: true },
+      });
+      for (const copy of copies) {
+        await tx.userCard.update({
+          where: { id: copy.id },
+          data: {
+            value: cardValue(
+              rarity,
+              copy.condition,
+              copy.foil as GachaFoil,
+              copy.edition,
+            ),
+          },
+        });
+      }
+      return { card: updatedCard, repriced: copies.length };
+    });
+    return { ...updated.card, repriced: updated.repriced };
   }
 
   adminUserCards(userId: string, page = 1, limit = 50) {
@@ -1473,6 +1595,7 @@ export class GachaService {
     offeredUserCardId: string,
     requestedUserCardId: string,
   ) {
+    await this.expirePendingTrades();
     if (offeredUserCardId === requestedUserCardId) {
       throw new BadRequestException(
         'Não dá para trocar uma carta com ela mesma.',
@@ -1481,16 +1604,22 @@ export class GachaService {
     const [offered, requested] = await this.prisma.$transaction([
       this.prisma.userCard.findUnique({
         where: { id: offeredUserCardId },
-        select: { id: true, userId: true },
+        select: { id: true, userId: true, status: true },
       }),
       this.prisma.userCard.findUnique({
         where: { id: requestedUserCardId },
-        select: { id: true, userId: true },
+        select: { id: true, userId: true, status: true },
       }),
     ]);
     if (!offered)
       throw new NotFoundException('Carta oferecida não encontrada.');
     if (!requested) throw new NotFoundException('Carta pedida não encontrada.');
+    if (offered.status && offered.status !== 'ACTIVE') {
+      throw new BadRequestException('Carta oferecida não está disponível.');
+    }
+    if (requested.status && requested.status !== 'ACTIVE') {
+      throw new BadRequestException('Carta pedida não está disponível.');
+    }
     if (offered.userId !== userId) {
       throw new ForbiddenException('Você não é dono da carta oferecida.');
     }
@@ -1592,6 +1721,7 @@ export class GachaService {
   }
 
   async acceptTrade(userId: string, tradeId: string) {
+    await this.expireTrade(tradeId);
     return this.prisma.$transaction(async (tx) => {
       const trade = await tx.gachaTrade.findUnique({
         where: { id: tradeId },
@@ -1608,10 +1738,6 @@ export class GachaService {
         throw new ConflictException('Troca não está mais pendente.');
       }
       if (Date.now() >= trade.expiresAt.getTime()) {
-        await tx.gachaTrade.update({
-          where: { id: tradeId },
-          data: { status: 'EXPIRED' },
-        });
         throw new ConflictException('Troca expirada.');
       }
 
@@ -1696,6 +1822,7 @@ export class GachaService {
     actorField: 'offeredUserId' | 'requestedUserId',
     verb: string,
   ) {
+    await this.expireTrade(tradeId);
     return this.prisma.$transaction(async (tx) => {
       const trade = await tx.gachaTrade.findUnique({
         where: { id: tradeId },
@@ -1718,10 +1845,6 @@ export class GachaService {
         throw new ConflictException('Troca não está mais pendente.');
       }
       if (Date.now() >= trade.expiresAt.getTime()) {
-        await tx.gachaTrade.update({
-          where: { id: tradeId },
-          data: { status: 'EXPIRED' },
-        });
         throw new ConflictException('Troca expirada.');
       }
       const cancelled = await tx.gachaTrade.updateMany({
@@ -1732,6 +1855,20 @@ export class GachaService {
         throw new ConflictException('Troca não está mais pendente.');
       }
       return { id: tradeId, status: 'CANCELLED' };
+    });
+  }
+
+  private async expireTrade(tradeId: string): Promise<void> {
+    await this.prisma.gachaTrade.updateMany({
+      where: { id: tradeId, status: 'PENDING', expiresAt: { lte: new Date() } },
+      data: { status: 'EXPIRED' },
+    });
+  }
+
+  private async expirePendingTrades(): Promise<void> {
+    await this.prisma.gachaTrade.updateMany({
+      where: { status: 'PENDING', expiresAt: { lte: new Date() } },
+      data: { status: 'EXPIRED' },
     });
   }
 

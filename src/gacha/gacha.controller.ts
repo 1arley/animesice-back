@@ -16,6 +16,7 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { GachaService } from '@/gacha/gacha.service';
 import {
   BuyCosmeticDto,
+  BurnGachaCardDto,
   ClaimGachaDto,
   CreateListingDto,
   NewTradeDto,
@@ -124,6 +125,14 @@ export class GachaController {
   })
   reroll(@Req() req: AuthenticatedRequest, @Body() dto: RerollGachaCardDto) {
     return this.gachaService.reroll(req.user.id, dto.userCardId);
+  }
+
+  @Post('burn')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Queima carta e devolve 40% do valor em Crystal' })
+  burn(@Req() req: AuthenticatedRequest, @Body() dto: BurnGachaCardDto) {
+    return this.gachaService.burn(req.user.id, dto.userCardId);
   }
 
   @Post('cosmetics')

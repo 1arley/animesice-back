@@ -478,6 +478,7 @@ model Notification {
   body      String?
   linkUrl   String?
   read      Boolean  @default(false)
+  claimed   Boolean  @default(false)
   createdAt DateTime @default(now())
   actorId   String?
   targetId  String?
@@ -820,6 +821,7 @@ model UserCard {
   foil       String   @default("NORMAL")
   edition    Int
   value      Int
+  status     UserCardStatus @default(ACTIVE)
   obtainedAt DateTime @default(now())
 
   @@index([userId, obtainedAt(sort: Desc)])
@@ -829,6 +831,11 @@ model UserCard {
   tradeOffered   GachaTrade[] @relation("TradeOffered")
   tradeRequested GachaTrade[] @relation("TradeRequested")
   listings       GachaListing[]
+}
+
+enum UserCardStatus {
+  ACTIVE
+  BURNED
 }
 
 model GachaRollDay {
@@ -989,4 +996,5 @@ enum CrystalEventType {
   SALE
   TAX
   ADMIN
+  BURN
 }
