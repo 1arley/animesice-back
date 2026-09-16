@@ -55,7 +55,7 @@ describe('AuthService', () => {
     moderationAction: {
       count: jest.fn().mockResolvedValue(0),
     },
-    $transaction: jest.fn(async (ops: Promise<unknown>[]) => Promise.all(ops)),
+    $transaction: jest.fn(),
   };
 
   const mockMailService = {
@@ -83,6 +83,12 @@ describe('AuthService', () => {
 
   beforeEach(async () => {
     jest.resetAllMocks();
+    mockPrismaService.$transaction.mockImplementation(
+      async (input: Promise<unknown>[] | ((tx: any) => unknown)) =>
+        typeof input === 'function'
+          ? input(mockPrismaService)
+          : Promise.all(input),
+    );
     mockMailService.sendVerificationCode.mockResolvedValue(true);
     mockMailService.sendEmailChangeConfirm.mockResolvedValue(true);
     mockMailService.sendPasswordResetEmail.mockResolvedValue(true);
@@ -604,11 +610,16 @@ describe('AuthService', () => {
       });
       mockPrismaService.user.update.mockResolvedValue({});
       mockPrismaService.passwordResetToken.delete.mockResolvedValue({});
+      mockPrismaService.passwordResetToken.deleteMany.mockResolvedValue({
+        count: 1,
+      });
 
       const result = await service.resetPassword(token, 'new-pass');
 
       expect(mockPrismaService.user.update).toHaveBeenCalled();
-      expect(mockPrismaService.passwordResetToken.delete).toHaveBeenCalled();
+      expect(
+        mockPrismaService.passwordResetToken.deleteMany,
+      ).toHaveBeenCalled();
       expect(mockPrismaService.refreshToken.deleteMany).toHaveBeenCalled();
       expect(result).toHaveProperty('message');
     });

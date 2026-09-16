@@ -26,6 +26,8 @@ export class TurnstileService {
     }
 
     let verified = false;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10_000);
     try {
       const res = await fetch(this.siteverify, {
         method: 'POST',
@@ -34,6 +36,7 @@ export class TurnstileService {
           secret: expectedSecret,
           response: token,
         }),
+        signal: controller.signal,
       });
       if (res.ok) {
         const data = (await res.json()) as {
@@ -44,6 +47,8 @@ export class TurnstileService {
       }
     } catch {
       verified = false;
+    } finally {
+      clearTimeout(timeout);
     }
 
     if (!verified) {

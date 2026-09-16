@@ -474,32 +474,30 @@ export class AuthService {
 
   async resetPassword(token: string, newPassword: string) {
     const tokenHash = this.hashToken(token);
-    const record = await this.prisma.passwordResetToken.findUnique({
-      where: { token: tokenHash },
-    });
-
-    if (!record) {
-      throw new BadRequestException('Token de redefinição inválido.');
-    }
-
-    if (record.expiresAt < new Date()) {
-      await this.prisma.passwordResetToken.delete({
-        where: { id: record.id },
-      });
-      throw new BadRequestException('Token de redefinição expirado.');
-    }
-
     const hashed = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
-    await this.prisma.user.update({
-      where: { id: record.userId },
-      data: { password: hashed },
+    await this.prisma.$transaction(async (tx) => {
+      const record = await tx.passwordResetToken.findUnique({
+        where: { token: tokenHash },
+      });
+      if (!record) {
+        throw new BadRequestException('Token de redefinição inválido.');
+      }
+      if (record.expiresAt < new Date()) {
+        await tx.passwordResetToken.delete({ where: { id: record.id } });
+        throw new BadRequestException('Token de redefinição expirado.');
+      }
+      const consumed = await tx.passwordResetToken.deleteMany({
+        where: { id: record.id, token: tokenHash },
+      });
+      if (consumed.count !== 1) {
+        throw new BadRequestException('Token de redefinição inválido.');
+      }
+      await tx.user.update({
+        where: { id: record.userId },
+        data: { password: hashed },
+      });
+      await tx.refreshToken.deleteMany({ where: { userId: record.userId } });
     });
-
-    await this.prisma.passwordResetToken.delete({
-      where: { id: record.id },
-    });
-
-    await this.revokeAllUserRefreshTokens(record.userId);
 
     return { message: 'Senha redefinida com sucesso.' };
   }
