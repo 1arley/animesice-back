@@ -122,6 +122,7 @@ export const SOURCE_IDS = [
   'meusanimes',
   'animefire',
   'animesonlinecc',
+  'tioanime',
 ] as const;
 
 /** Template de URL de episódio por fonte.
@@ -143,6 +144,8 @@ export function sourceEpisodeUrl(
       return `https://animefire.io/animes/${animeSlug}/${episodeNumber}`;
     case 'animesonlinecc':
       return `https://animesonlinecc.to/episodio/${animeSlug}-episodio-${episodeNumber}/`;
+    case 'tioanime':
+      return `https://tioanime.com/ver/${animeSlug}-${episodeNumber}`;
     default:
       return null;
   }

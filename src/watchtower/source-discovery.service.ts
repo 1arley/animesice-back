@@ -113,6 +113,9 @@ export class SourceDiscovery {
     if (/animesonlinecc\.to/i.test(lower)) {
       return { sourceId: 'animesonlinecc', url: episodeUrl };
     }
+    if (/tioanime\.com/i.test(lower)) {
+      return { sourceId: 'tioanime', url: episodeUrl };
+    }
     return null;
   }
 

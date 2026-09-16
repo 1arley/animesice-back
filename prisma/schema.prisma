@@ -736,6 +736,7 @@ model WatchtowerSourceHealth {
   consecutiveFailures Int       @default(0)
   avgLatencyMs        Int       @default(0)
   disabled            Boolean   @default(false)
+  disabledByAdmin     Boolean   @default(false)
   lastSuccessAt       DateTime?
   lastFailureAt       DateTime?
 
