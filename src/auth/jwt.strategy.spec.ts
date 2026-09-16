@@ -5,7 +5,7 @@ describe('JwtStrategy', () => {
   let strategy: JwtStrategy;
   const prisma = {
     user: { findUnique: jest.fn() },
-    moderationAction: { findFirst: jest.fn().mockResolvedValue(null) },
+    moderationAction: { count: jest.fn().mockResolvedValue(0) },
   };
   const config = { getOrThrow: jest.fn().mockReturnValue('access-secret') };
 

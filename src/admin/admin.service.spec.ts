@@ -197,7 +197,7 @@ describe('AdminService', () => {
 
       expect(result).toEqual({ id: 'e1', number: 1, animeId: 'a1' });
       expect(prisma.episode.create).toHaveBeenCalledWith({
-        data: { number: 1, animeId: 'a1' },
+        data: { number: 1, season: 1, animeId: 'a1' },
       });
       expect(notificationService.notifyNewEpisode).toHaveBeenCalledWith(
         'a1',

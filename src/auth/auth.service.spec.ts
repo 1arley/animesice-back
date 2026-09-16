@@ -53,7 +53,7 @@ describe('AuthService', () => {
       findUnique: jest.fn(),
     },
     moderationAction: {
-      findFirst: jest.fn().mockResolvedValue(null),
+      count: jest.fn().mockResolvedValue(0),
     },
     $transaction: jest.fn(async (ops: Promise<unknown>[]) => Promise.all(ops)),
   };

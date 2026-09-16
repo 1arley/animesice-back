@@ -2,6 +2,7 @@ import { Test } from '@nestjs/testing';
 import { BadRequestException } from '@nestjs/common';
 import { AdminController } from '@/admin/admin.controller';
 import { AdminService } from '@/admin/admin.service';
+import { EpisodeService } from '@/episode/episode.service';
 import { SupabaseService } from '@/upload/supabase.service';
 
 describe('AdminController', () => {
@@ -18,6 +19,7 @@ describe('AdminController', () => {
     createGenre: jest.fn(),
   };
   const supabaseService = { uploadVideo: jest.fn() };
+  const episodeService = { findByAnimeSlugAndNumber: jest.fn() };
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -26,6 +28,7 @@ describe('AdminController', () => {
       providers: [
         { provide: AdminService, useValue: adminService },
         { provide: SupabaseService, useValue: supabaseService },
+        { provide: EpisodeService, useValue: episodeService },
       ],
     }).compile();
     controller = moduleRef.get(AdminController);

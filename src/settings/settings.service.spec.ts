@@ -22,7 +22,7 @@ function makeMocks() {
     rating: { count: jest.fn() },
     favorite: { count: jest.fn() },
     watchHistory: { count: jest.fn() },
-    moderationAction: { findFirst: jest.fn().mockResolvedValue(null) },
+    moderationAction: { count: jest.fn().mockResolvedValue(0) },
     animeRequestVote: { findMany: jest.fn().mockResolvedValue([]) },
     siteFeedbackUpvote: { findMany: jest.fn().mockResolvedValue([]) },
     animeRequest: {

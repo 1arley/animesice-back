@@ -62,7 +62,7 @@ describe('SocialService', () => {
     rating: { findMany: jest.fn(), count: jest.fn() },
     favorite: { findMany: jest.fn(), count: jest.fn() },
     comment: { findMany: jest.fn(), count: jest.fn() },
-    moderationAction: { findFirst: jest.fn().mockResolvedValue(null) },
+    moderationAction: { count: jest.fn().mockResolvedValue(0) },
     $transaction: jest.fn(),
     $queryRaw: jest.fn(),
   };

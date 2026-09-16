@@ -41,7 +41,7 @@ function makePrisma() {
     episode,
     user,
     commentLike,
-    moderationAction: { findFirst: jest.fn(async () => null) as jest.Mock },
+    moderationAction: { count: jest.fn().mockResolvedValue(0) },
     $transaction: jest.fn(async (ops: Promise<unknown>[]) => Promise.all(ops)),
   };
   return prisma;

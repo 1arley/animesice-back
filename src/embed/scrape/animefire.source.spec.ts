@@ -10,6 +10,7 @@ jest.mock('./extract', () => {
   const actual = jest.requireActual('./extract');
   return {
     keepVideoUrls: actual.keepVideoUrls,
+    isNoVideoUrl: actual.isNoVideoUrl,
     extractVideoElements: jest.fn(),
     extractAllIframes: jest.fn(),
   };

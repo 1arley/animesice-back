@@ -21,6 +21,7 @@ function makePrisma() {
   const moderationAction = {
     create: jest.fn(async () => ({})) as jest.Mock,
     findFirst: jest.fn(async () => null) as jest.Mock,
+    count: jest.fn(async () => 0) as jest.Mock,
   };
   const comment = {
     findUnique: jest.fn(async () => null) as jest.Mock,
@@ -331,13 +332,14 @@ describe('ModerationService', () => {
 
   describe('isUserSuspended', () => {
     it('deve retornar false se não houver suspensão', async () => {
-      const { svc } = build();
+      const { svc, prisma } = build();
+      prisma.moderationAction.count.mockResolvedValue(0);
       expect(await svc.isUserSuspended('x')).toBe(false);
     });
 
     it('deve retornar true se suspensão vigente', async () => {
       const { svc, prisma } = build();
-      prisma.moderationAction.findFirst.mockResolvedValue({ id: 'ma1' });
+      prisma.moderationAction.count.mockResolvedValue(1);
       expect(await svc.isUserSuspended('x')).toBe(true);
     });
   });

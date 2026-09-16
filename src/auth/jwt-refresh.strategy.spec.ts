@@ -7,7 +7,7 @@ describe('JwtRefreshStrategy', () => {
   const prisma = {
     user: { findUnique: jest.fn() },
     refreshToken: { findMany: jest.fn() },
-    moderationAction: { findFirst: jest.fn().mockResolvedValue(null) },
+    moderationAction: { count: jest.fn().mockResolvedValue(0) },
   };
   const config = { getOrThrow: jest.fn().mockReturnValue('refresh-secret') };
 
