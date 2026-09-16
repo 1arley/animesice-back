@@ -304,6 +304,50 @@ export class SettingsService {
       );
     }
 
+    // Fix phantom vote counters before cascade-deleting vote records.
+    const [userVotes, userUpvotes] = await Promise.all([
+      this.prisma.animeRequestVote.findMany({
+        where: { userId },
+        select: { requestId: true },
+      }),
+      this.prisma.siteFeedbackUpvote.findMany({
+        where: { userId },
+        select: { feedbackId: true },
+      }),
+    ]);
+
+    if (userVotes.length > 0) {
+      const requestIds = [...new Set(userVotes.map((v) => v.requestId))];
+      await this.prisma.$transaction(
+        requestIds.map((id) =>
+          this.prisma.animeRequest.update({
+            where: { id },
+            data: {
+              voteCount: {
+                decrement: userVotes.filter((v) => v.requestId === id).length,
+              },
+            },
+          }),
+        ),
+      );
+    }
+    if (userUpvotes.length > 0) {
+      const feedbackIds = [...new Set(userUpvotes.map((v) => v.feedbackId))];
+      await this.prisma.$transaction(
+        feedbackIds.map((id) =>
+          this.prisma.siteFeedback.update({
+            where: { id },
+            data: {
+              upvotes: {
+                decrement: userUpvotes.filter((v) => v.feedbackId === id)
+                  .length,
+              },
+            },
+          }),
+        ),
+      );
+    }
+
     await this.prisma.user.delete({ where: { id: userId } });
     return { message: 'Usuário excluído com sucesso.' };
   }
@@ -328,7 +372,10 @@ export class SettingsService {
     }
 
     // Apenas SUPERADMIN pode promover para SUPERADMIN.
-    if (role === 'SUPERADMIN' && adminRole !== 'SUPERADMIN') {
+    if (
+      (role === 'SUPERADMIN' || user.role === 'SUPERADMIN') &&
+      adminRole !== 'SUPERADMIN'
+    ) {
       throw new ForbiddenException(
         'Apenas SUPERADMIN pode atribuir o cargo de SUPERADMIN.',
       );

@@ -33,6 +33,8 @@ import { JwtAuthGuard } from '@/auth/jwt-auth.guard';
 import { RolesGuard } from '@/auth/roles.guard';
 import { Roles } from '@/auth/roles.decorators';
 import type { AuthenticatedRequest } from '@/common/interfaces/request.interface';
+import { Public } from '@/auth/decorators/public.decorator';
+import { Audit } from '@/auth/decorators/audit.decorator';
 
 @ApiTags('settings')
 @ApiBearerAuth('JWT-auth')
@@ -40,6 +42,12 @@ import type { AuthenticatedRequest } from '@/common/interfaces/request.interface
 @UseGuards(JwtAuthGuard)
 export class SettingsController {
   constructor(private readonly settingsService: SettingsService) {}
+
+  @Get('public')
+  @Public()
+  publicSettings() {
+    return this.settingsService.getSiteSettings();
+  }
 
   // ── Personal settings: account ────────────────────────────────────────
 
@@ -153,6 +161,7 @@ export class SettingsController {
   @Patch('site')
   @UseGuards(RolesGuard)
   @Roles('ADMIN', 'SUPERADMIN')
+  @Audit('UPDATE', 'SiteSettings')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Atualizar configurações globais do site' })
   updateSiteSettings(@Body() dto: UpdateSiteSettingsDto) {
@@ -190,6 +199,7 @@ export class SettingsController {
   @Delete('admin/users/:id')
   @UseGuards(RolesGuard)
   @Roles('ADMIN', 'SUPERADMIN')
+  @Audit('DELETE', 'User')
   @ApiOperation({ summary: 'Excluir usuário (cascade delete)' })
   deleteUser(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
     return this.settingsService.deleteUser(id, req.user.id);
@@ -198,6 +208,7 @@ export class SettingsController {
   @Patch('admin/users/:id/role')
   @UseGuards(RolesGuard)
   @Roles('ADMIN', 'SUPERADMIN')
+  @Audit('UPDATE_ROLE', 'User')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Alterar cargo de usuário' })
   updateUserRole(
