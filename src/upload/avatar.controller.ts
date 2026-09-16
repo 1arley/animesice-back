@@ -13,7 +13,7 @@ export class AvatarController {
       throw new NotFoundException('Avatar não encontrado.');
     }
     res.set({
-      'Content-Type': avatar.mimetype,
+      'Content-Type': avatar.contentType,
       'Cache-Control': 'public, max-age=86400',
     });
     res.send(avatar.data);

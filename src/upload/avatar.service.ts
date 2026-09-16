@@ -19,21 +19,21 @@ export class AvatarService {
     mimetype: string,
   ): Promise<string> {
     await this.prisma.$executeRaw`
-      INSERT INTO "AvatarFile" ("userId", "data", "mimetype")
+      INSERT INTO "AvatarFile" ("userId", "data", "contentType")
       VALUES (${userId}, ${buffer}, ${mimetype})
       ON CONFLICT ("userId") DO UPDATE SET
         "data" = EXCLUDED."data",
-        "mimetype" = EXCLUDED."mimetype"
+        "contentType" = EXCLUDED."contentType"
     `;
     return `/avatars/${userId}`;
   }
 
   async get(
     userId: string,
-  ): Promise<{ data: Buffer; mimetype: string } | null> {
+  ): Promise<{ data: Buffer; contentType: string } | null> {
     const rows = await this.prisma.$queryRaw<
-      { data: Buffer; mimetype: string }[]
-    >`SELECT "data", "mimetype" FROM "AvatarFile" WHERE "userId" = ${userId} LIMIT 1`;
-    return rows[0] ?? null;
+      unknown[]
+    >`SELECT "data", "contentType" FROM "AvatarFile" WHERE "userId" = ${userId} LIMIT 1`;
+    return (rows[0] as { data: Buffer; contentType: string }) ?? null;
   }
 }
