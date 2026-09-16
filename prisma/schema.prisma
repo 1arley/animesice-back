@@ -155,10 +155,13 @@ model User {
   gachaRollDays           GachaRollDay[]
   gachaSpins              GachaSpin[]
   gachaClaimLock          GachaClaimLock?
+  crystalEvents           CrystalEvent[]
+  gachaDailyBonus         GachaDailyBonus?
   gachaBypasses           GachaBypass[]
   gachaListings           GachaListing[]
-  pointsBalance           Int               @default(0)
-  pointEvents             GachaPointEvent[]
+  legacyPointsBalance     Int               @default(0) @map("pointsBalance")
+  crystalBalance          Int               @default(0)
+  legacyPointEvents       GachaPointEvent[]
   gachaCosmetics          String[]          @default([])
   posts                   Post[]
   postLikes               PostLike[]
@@ -933,9 +936,7 @@ enum GachaListingStatus {
   EXPIRED
 }
 
-/// Eventos da carteira de pontos do gacha — mint no claim, gasto em
-/// reroll/cosmético, transferência no mercado, ajuste admin. Saldo em
-/// User.pointsBalance é derivado mas cacheado (update transacional).
+/// Histórico da carteira anterior à economia Crystal.
 model GachaPointEvent {
   id        String              @id @default(uuid())
   userId    String
@@ -952,6 +953,38 @@ model GachaPointEvent {
 enum GachaPointEventType {
   MINT
   SPEND
+  SALE
+  TAX
+  ADMIN
+}
+
+/// Ledger de Crystais — moeda do gacha (reroll, mercado, shop).
+model CrystalEvent {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      CrystalEventType
+  delta     Int      // positivo = crédito, negativo = débito
+  refId     String?  // userCardId, listingId, etc.
+  reason    String?
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([userId, createdAt(sort: Desc)])
+}
+
+/// Controle de bônus diário de Crystais —1 claim por dia UTC.
+model GachaDailyBonus {
+  userId    String   @id
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lastClaim DateTime @db.Timestamptz(6)
+}
+
+enum CrystalEventType {
+  INITIAL
+  MINT
+  DAILY
+  SPEND
+  PURCHASE
   SALE
   TAX
   ADMIN

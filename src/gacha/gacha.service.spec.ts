@@ -20,6 +20,12 @@ describe('GachaService', () => {
   let service: GachaService;
 
   const mockPrisma = {
+    crystalEvent: {
+      create: jest.fn(),
+      findMany: jest.fn(),
+      count: jest.fn(),
+    },
+    gachaDailyBonus: { createMany: jest.fn(), updateMany: jest.fn() },
     userCard: {
       count: jest.fn(),
       findFirst: jest.fn(),
@@ -96,6 +102,7 @@ describe('GachaService', () => {
       updateMany: jest.fn(),
     },
     user: {
+      findUniqueOrThrow: jest.fn(),
       findMany: jest.fn(),
       findFirst: jest.fn(),
       findUnique: jest.fn(),
@@ -140,6 +147,10 @@ describe('GachaService', () => {
 
   beforeEach(async () => {
     jest.resetAllMocks();
+    mockPrisma.user.updateMany.mockResolvedValue({ count: 1 });
+    mockPrisma.user.findUniqueOrThrow.mockResolvedValue({ crystalBalance: 0 });
+    mockPrisma.crystalEvent.findMany.mockResolvedValue([]);
+    mockPrisma.crystalEvent.count.mockResolvedValue(0);
     mockPrisma.$transaction.mockImplementation(
       (input: Promise<unknown>[] | ((tx: typeof mockPrisma) => unknown)) =>
         typeof input === 'function' ? input(mockPrisma) : Promise.all(input),
@@ -153,6 +164,7 @@ describe('GachaService', () => {
     mockPrisma.userCard.updateMany.mockResolvedValue({ count: 1 });
     mockPrisma.gachaClaimLock.findUnique.mockResolvedValue(null);
     mockPrisma.card.update.mockResolvedValue({ editionCounter: 1 });
+    mockPrisma.userCard.aggregate.mockResolvedValue({ _sum: { value: 0 } });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -423,18 +435,25 @@ describe('GachaService', () => {
       expect(mockPrisma.post.create).not.toHaveBeenCalled();
     });
 
-    it('crea mint de pontos no claim (delta = value da carta)', async () => {
+    it('credita metade do valor da carta em Crystal no claim)', async () => {
       mockPrisma.gachaSpin.findFirst.mockResolvedValue(previewComum);
       mockClaimCreate();
 
       const pull = await service.claim('u1', 's1');
 
-      expect(mockPrisma.user.update).toHaveBeenCalledWith({
-        where: { id: 'u1' },
-        data: { pointsBalance: { increment: pull.value } },
-      });
-      expect(mockPrisma.gachaPointEvent.create).toHaveBeenCalledWith({
-        data: { userId: 'u1', delta: pull.value, type: 'MINT', refId: pull.id },
+      expect(mockPrisma.user.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { crystalBalance: { increment: Math.floor(pull.value / 2) } },
+        }),
+      );
+      expect(mockPrisma.crystalEvent.create).toHaveBeenCalledWith({
+        data: {
+          userId: 'u1',
+          delta: Math.floor(pull.value / 2),
+          type: 'MINT',
+          refId: pull.id,
+          reason: `Carta guardada: ${pull.card.name}`,
+        },
       });
     });
 
@@ -544,10 +563,11 @@ describe('GachaService', () => {
         data: { read: true },
       });
       expect(mockPrisma.userCard.create).toHaveBeenCalled();
-      expect(mockPrisma.user.update).toHaveBeenCalledWith({
-        where: { id: 'u1' },
-        data: { pointsBalance: { increment: pull.value } },
-      });
+      expect(mockPrisma.user.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { crystalBalance: { increment: Math.floor(pull.value / 2) } },
+        }),
+      );
     });
 
     it('rejeita quando não há compensação pendente', async () => {
@@ -1346,19 +1366,62 @@ describe('GachaService', () => {
     });
   });
 
-  describe('points', () => {
-    it('adjustPoints registra evento ADMIN e atualiza saldo', async () => {
-      mockPrisma.user.findUnique.mockResolvedValue({ pointsBalance: 100 });
-      mockPrisma.user.update.mockResolvedValue({});
-      mockPrisma.gachaPointEvent.create.mockResolvedValue({ id: 'e1' });
-
-      await service.adjustPoints('u1', 50, 'estorno de bug');
-
-      expect(mockPrisma.user.update).toHaveBeenCalledWith({
-        where: { id: 'u1' },
-        data: { pointsBalance: 150 },
+  describe('crystals', () => {
+    it('separa pontos da coleção e moeda disponível no status', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue({
+        crystalBalance: 50,
+        gachaCosmetics: [],
       });
-      expect(mockPrisma.gachaPointEvent.create).toHaveBeenCalledWith(
+      mockPrisma.userCard.aggregate.mockResolvedValue({ _sum: { value: 101 } });
+      const status = await service.status('u1');
+      expect(status.pointsBalance).toBe(101);
+      expect(status.crystalBalance).toBe(50);
+    });
+
+    it('alias points retorna a carteira Crystal e rejeita paginação inválida', async () => {
+      mockPrisma.user.findUniqueOrThrow.mockResolvedValue({
+        crystalBalance: 45,
+      });
+      expect((await service.points('u1')).balance).toBe(45);
+      await expect(service.crystals('u1', 1.5)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      await expect(
+        service.crystals('u1', Number.MAX_SAFE_INTEGER, 50),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('daily recusado não credita carteira nem extrato', async () => {
+      mockPrisma.gachaDailyBonus.updateMany.mockResolvedValue({ count: 0 });
+      await expect(service.dailyBonus('u1')).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      expect(mockPrisma.user.updateMany).not.toHaveBeenCalled();
+      expect(mockPrisma.crystalEvent.create).not.toHaveBeenCalled();
+    });
+
+    it('bloqueia reroll de carta anunciada antes de cobrar', async () => {
+      mockPrisma.userCard.findFirst.mockResolvedValue({ id: 'p1' });
+      mockPrisma.gachaListing.findFirst.mockResolvedValue({ id: 'l1' });
+      await expect(service.reroll('u1', 'p1')).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      expect(mockPrisma.crystalEvent.create).not.toHaveBeenCalled();
+    });
+
+    it('adjustCrystals registra evento ADMIN e atualiza saldo', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue({ crystalBalance: 100 });
+      mockPrisma.user.update.mockResolvedValue({});
+      mockPrisma.crystalEvent.create.mockResolvedValue({ id: 'e1' });
+
+      await service.adjustCrystals('u1', 50, 'estorno de bug');
+
+      expect(mockPrisma.user.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { crystalBalance: { increment: 50 } },
+        }),
+      );
+      expect(mockPrisma.crystalEvent.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
             userId: 'u1',
@@ -1370,15 +1433,16 @@ describe('GachaService', () => {
       );
     });
 
-    it('adjustPoints barra saldo negativo e delta inválido', async () => {
-      mockPrisma.user.findUnique.mockResolvedValue({ pointsBalance: 10 });
+    it('adjustCrystals barra saldo negativo e delta inválido', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue({ crystalBalance: 10 });
+      mockPrisma.user.updateMany.mockResolvedValue({ count: 0 });
       await expect(
-        service.adjustPoints('u1', -50, 'punicao'),
+        service.adjustCrystals('u1', -50, 'punicao'),
       ).rejects.toBeInstanceOf(BadRequestException);
       await expect(
-        service.adjustPoints('u1', 0, 'noop'),
+        service.adjustCrystals('u1', 0, 'noop'),
       ).rejects.toBeInstanceOf(BadRequestException);
-      await expect(service.adjustPoints('u1', 5, '')).rejects.toBeInstanceOf(
+      await expect(service.adjustCrystals('u1', 5, '')).rejects.toBeInstanceOf(
         BadRequestException,
       );
       expect(mockPrisma.user.update).not.toHaveBeenCalled();
@@ -1399,7 +1463,7 @@ describe('GachaService', () => {
       mockPrisma.userCard.findFirst.mockResolvedValue(owned);
       mockPrisma.gachaTrade.findFirst.mockResolvedValue(null);
       mockPrisma.user.updateMany.mockResolvedValue({ count: 1 });
-      mockPrisma.gachaPointEvent.create.mockResolvedValue({});
+      mockPrisma.crystalEvent.create.mockResolvedValue({});
       mockPrisma.userCard.update.mockImplementation(
         (args: {
           data: { condition: number; foil: 'NORMAL' | 'HOLO' | 'GOLD' };
@@ -1415,10 +1479,10 @@ describe('GachaService', () => {
       const pull = await service.reroll('u1', 'p1');
 
       expect(mockPrisma.user.updateMany).toHaveBeenCalledWith({
-        where: { id: 'u1', pointsBalance: { gte: 10 } },
-        data: { pointsBalance: { decrement: 10 } },
+        where: { id: 'u1', crystalBalance: { gte: 10, lte: 2_147_483_647 } },
+        data: { crystalBalance: { increment: -10 } },
       });
-      expect(mockPrisma.gachaPointEvent.create).toHaveBeenCalledWith(
+      expect(mockPrisma.crystalEvent.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({ delta: -10, type: 'SPEND' }),
         }),
@@ -1484,7 +1548,7 @@ describe('GachaService', () => {
       mockPrisma.userCard.updateMany.mockResolvedValue({ count: 1 });
       mockPrisma.user.updateMany.mockResolvedValue({ count: 1 });
       mockPrisma.user.update.mockResolvedValue({});
-      mockPrisma.gachaPointEvent.create.mockResolvedValue({});
+      mockPrisma.crystalEvent.create.mockResolvedValue({});
 
       await expect(service.buyListing('u1', 'l1')).resolves.toEqual({
         purchased: 'l1',
@@ -1493,8 +1557,8 @@ describe('GachaService', () => {
 
       expect(mockPrisma.user.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: 'u1', pointsBalance: { gte: 100 } },
-          data: { pointsBalance: { decrement: 100 } },
+          where: { id: 'u1', crystalBalance: { gte: 100, lte: 2_147_483_647 } },
+          data: { crystalBalance: { increment: -100 } },
         }),
       );
       expect(mockPrisma.userCard.updateMany).toHaveBeenCalledWith(
@@ -1503,7 +1567,7 @@ describe('GachaService', () => {
           data: { userId: 'u1' },
         }),
       );
-      const events = mockPrisma.gachaPointEvent.create.mock.calls.map(
+      const events = mockPrisma.crystalEvent.create.mock.calls.map(
         (call: [{ data: { delta: number; type: string } }]) => call[0].data,
       );
       expect(events).toEqual(
@@ -1587,6 +1651,8 @@ describe('GachaService', () => {
       await expect(
         service.createListing('u1', 'p1', 10),
       ).rejects.toBeInstanceOf(ConflictException);
+      // Transaction is still entered for atomicity, but no userCard updates happen.
+      expect(mockPrisma.userCard.update).not.toHaveBeenCalled();
     });
   });
 });

@@ -51,6 +51,53 @@ describe('GachaController (e2e)', () => {
     await prisma.card.deleteMany({ where: { name: 'Gacha Card' } });
   });
 
+  it('consulta cristais e concede apenas um bônus por dia UTC sob concorrência', async () => {
+    const prisma = getPrismaService();
+    await request(getHttpServer()).get('/gacha/crystals').expect(401);
+    const initial = await request(getHttpServer())
+      .get('/gacha/crystals')
+      .set('Cookie', cookie)
+      .expect(200);
+    expect(initial.body.balance).toBe(0);
+
+    const results = await Promise.all(
+      Array.from({ length: 2 }, () =>
+        request(getHttpServer())
+          .post('/gacha/crystals/daily')
+          .set('Cookie', cookie),
+      ),
+    );
+    expect(results.map((result) => result.status).sort()).toEqual([201, 403]);
+    expect(results.find((result) => result.status === 201)?.body).toEqual({
+      balance: 100,
+      claimed: 100,
+    });
+    await prisma.gachaDailyBonus.update({
+      where: { userId },
+      data: { lastClaim: new Date(Date.now() - 86_400_000) },
+    });
+    await request(getHttpServer())
+      .post('/gacha/crystals/daily')
+      .set('Cookie', cookie)
+      .expect(201);
+    const ledger = await request(getHttpServer())
+      .get('/gacha/crystals?page=1&limit=1')
+      .set('Cookie', cookie)
+      .expect(200);
+    expect(ledger.body.balance).toBe(200);
+    expect(ledger.body.events).toHaveLength(1);
+    expect(ledger.body.meta).toEqual({
+      total: 2,
+      page: 1,
+      limit: 1,
+      totalPages: 2,
+    });
+    await request(getHttpServer())
+      .get('/gacha/crystals?page=1.5')
+      .set('Cookie', cookie)
+      .expect(400);
+  });
+
   it('expõe coleção pública sem login e preserva a privacidade e as escritas protegidas', async () => {
     const prisma = getPrismaService();
     const card = await prisma.card.findFirstOrThrow({

@@ -2,8 +2,10 @@ import {
   Body,
   Controller,
   Delete,
+  DefaultValuePipe,
   Get,
   Param,
+  ParseIntPipe,
   Patch,
   Post,
   Query,
@@ -94,23 +96,22 @@ export class GachaController {
   @Get('points')
   @UseGuards(JwtAuthGuard, VerifiedGuard)
   @ApiBearerAuth('JWT-auth')
-  @ApiOperation({ summary: 'Saldo e extrato de pontos do gacha' })
+  @ApiOperation({
+    summary: 'Alias de crystals: saldo e extrato de Crystal',
+    deprecated: true,
+  })
   points(
     @Req() req: AuthenticatedRequest,
-    @Query('page') page: string,
-    @Query('limit') limit: string,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
   ) {
-    return this.gachaService.points(
-      req.user.id,
-      parseInt(page ?? '1', 10) || DEFAULT_PAGE,
-      parseInt(limit ?? '20', 10) || 20,
-    );
+    return this.gachaService.points(req.user.id, page, limit);
   }
 
   @Get('shop')
   @UseGuards(JwtAuthGuard, VerifiedGuard)
   @ApiBearerAuth('JWT-auth')
-  @ApiOperation({ summary: 'Loja de pontos: catálogo + saldo + posses' })
+  @ApiOperation({ summary: 'Loja de Crystal: catálogo + saldo + posses' })
   shop(@Req() req: AuthenticatedRequest) {
     return this.gachaService.shop(req.user.id);
   }
@@ -128,13 +129,13 @@ export class GachaController {
   @Post('cosmetics')
   @UseGuards(JwtAuthGuard, VerifiedGuard)
   @ApiBearerAuth('JWT-auth')
-  @ApiOperation({ summary: 'Compra um cosmético da loja com pontos' })
+  @ApiOperation({ summary: 'Compra um cosmético da loja com Crystal' })
   buyCosmetic(@Req() req: AuthenticatedRequest, @Body() dto: BuyCosmeticDto) {
     return this.gachaService.buyCosmetic(req.user.id, dto.key);
   }
 
   @Get('listings')
-  @ApiOperation({ summary: 'Mercado: anúncios ativos (buy-now por pontos)' })
+  @ApiOperation({ summary: 'Mercado: anúncios ativos com preço em Crystal' })
   listings(
     @Query('page') page: string,
     @Query('limit') limit: string,
@@ -241,6 +242,26 @@ export class GachaController {
   @ApiBearerAuth('JWT-auth')
   removeFeatured(@Req() req: AuthenticatedRequest) {
     return this.gachaService.removeFeatured(req.user.id);
+  }
+
+  @Get('crystals')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Saldo e extrato de Crystais' })
+  crystals(
+    @Req() req: AuthenticatedRequest,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
+  ) {
+    return this.gachaService.crystals(req.user.id, page, limit);
+  }
+
+  @Post('crystals/daily')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Resgatar bônus diário de Crystais' })
+  dailyBonus(@Req() req: AuthenticatedRequest) {
+    return this.gachaService.dailyBonus(req.user.id);
   }
 
   @Get('cards/:id')
@@ -407,19 +428,30 @@ export class GachaController {
   @Post('admin/users/:userId/points-adjust')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN', 'SUPERADMIN')
-  @Audit('ADJUST_GACHA_POINTS', 'GachaPointEvent')
+  @Audit('ADJUST_GACHA_CRYSTALS', 'CrystalEvent')
   @ApiOperation({
-    summary: 'Ajuste manual de saldo de pontos (delta +/-, motivo obrigatório)',
+    summary: 'Alias de crystals-adjust',
+    deprecated: true,
   })
   adminAdjustPoints(
     @Param('userId') userId: string,
     @Body() body: { delta: number; reason: string },
   ) {
-    return this.gachaService.adjustPoints(
-      userId,
-      Number(body.delta),
-      body.reason ?? '',
-    );
+    return this.gachaService.adjustCrystals(userId, body.delta, body.reason);
+  }
+
+  @Post('admin/users/:userId/crystals-adjust')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  @Audit('ADJUST_GACHA_CRYSTALS', 'CrystalEvent')
+  @ApiOperation({
+    summary: 'Ajuste de Crystal (delta inteiro, motivo obrigatório)',
+  })
+  adminAdjustCrystals(
+    @Param('userId') userId: string,
+    @Body() body: { delta: number; reason: string },
+  ) {
+    return this.gachaService.adjustCrystals(userId, body.delta, body.reason);
   }
 
   @Get('recent')

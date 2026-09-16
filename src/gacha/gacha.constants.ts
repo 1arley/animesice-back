@@ -2,7 +2,6 @@ export const GACHA_ROLLS_PER_DAY = 1;
 export const GACHA_PITY_DAYS = 30;
 export const GACHA_POOL_PER_ANIME = 8;
 export const GACHA_SPINS_PER_HOUR = 5;
-export const GACHA_CLAIM_LOCK_MS = 6 * 60 * 60 * 1000;
 export const GACHA_BYPASS_PRICE_CENTS = 299;
 export const GACHA_BYPASS_TTL_MS = 30 * 60 * 1000;
 
@@ -16,6 +15,20 @@ export const GACHA_TIERS = [
   'GALACTICA',
 ] as const;
 export type GachaTier = (typeof GACHA_TIERS)[number];
+
+export const GACHA_CLAIM_LOCK_HOURS: Record<GachaTier, number> = {
+  COMUM: 1,
+  INCOMUM: 2,
+  RARA: 3,
+  EPICA: 4,
+  LENDARIA: 5,
+  MITICA: 6,
+  GALACTICA: 7,
+};
+
+export function claimLockMs(tier: GachaTier): number {
+  return GACHA_CLAIM_LOCK_HOURS[tier] * 60 * 60 * 1000;
+}
 
 export const GACHA_TIER_WEIGHTS: Record<GachaTier, number> = {
   COMUM: 55,

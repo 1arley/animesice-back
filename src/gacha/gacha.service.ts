@@ -7,11 +7,11 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { CrystalEventType, Prisma } from '@prisma/client';
 import { PrismaService } from '@/prisma/prisma.service';
 import {
   GACHA_BYPASS_PRICE_CENTS,
-  GACHA_CLAIM_LOCK_MS,
+  claimLockMs,
   GACHA_COSMETICS,
   GACHA_FOILS,
   GACHA_FOIL_WEIGHTS,
@@ -196,7 +196,7 @@ export class GachaService {
 
   async status(userId: string) {
     const hour = this.hourStartUtc();
-    const [spinsUsed, claim, pity, first, wallet] =
+    const [spinsUsed, claim, pity, first, wallet, points] =
       await this.prisma.$transaction([
         this.prisma.gachaSpin.count({ where: { userId, hour } }),
         this.prisma.gachaClaimLock.findUnique({ where: { userId } }),
@@ -212,7 +212,11 @@ export class GachaService {
         }),
         this.prisma.user.findUnique({
           where: { id: userId },
-          select: { pointsBalance: true, gachaCosmetics: true },
+          select: { crystalBalance: true, gachaCosmetics: true },
+        }),
+        this.prisma.userCard.aggregate({
+          where: { userId },
+          _sum: { value: true },
         }),
       ]);
 
@@ -241,7 +245,8 @@ export class GachaService {
         ? 'Você já guardou uma carta. Girar continua liberado, mas a próxima só pode ser guardada após o fim do bloqueio.'
         : null,
       bypassPriceCents: locked ? GACHA_BYPASS_PRICE_CENTS : null,
-      pointsBalance: wallet?.pointsBalance ?? 0,
+      crystalBalance: wallet?.crystalBalance ?? 0,
+      pointsBalance: points._sum.value ?? 0,
       pointsCosmetics: wallet?.gachaCosmetics ?? [],
       pityDaysLeft,
       pityDue: since !== null && daysSince >= GACHA_PITY_DAYS,
@@ -324,7 +329,7 @@ export class GachaService {
           });
           if (lock !== null && lock.lockedUntil.getTime() > Date.now()) {
             throw new ForbiddenException(
-              `Você já guardou uma carta nas últimas ${GACHA_CLAIM_LOCK_MS / 3_600_000}h.`,
+              'Você já guardou uma carta recentemente.',
             );
           }
           const counter = await tx.card.update({
@@ -356,26 +361,23 @@ export class GachaService {
           if (claimed.count !== 1) {
             throw new NotFoundException('Preview expirada ou já resgatada.');
           }
-          await tx.user.update({
-            where: { id: userId },
-            data: { pointsBalance: { increment: created.value } },
-          });
-          await tx.gachaPointEvent.create({
-            data: {
-              userId,
-              delta: created.value,
-              type: 'MINT',
-              refId: created.id,
-            },
-          });
+          const lockMs = claimLockMs(spin.card.rarity as GachaTier);
           await tx.gachaClaimLock.upsert({
             where: { userId },
             create: {
               userId,
-              lockedUntil: new Date(Date.now() + GACHA_CLAIM_LOCK_MS),
+              lockedUntil: new Date(Date.now() + lockMs),
             },
-            update: { lockedUntil: new Date(Date.now() + GACHA_CLAIM_LOCK_MS) },
+            update: { lockedUntil: new Date(Date.now() + lockMs) },
           });
+          await this.changeCrystals(
+            tx,
+            userId,
+            Math.floor(created.value / 2),
+            'MINT',
+            created.id,
+            `Carta guardada: ${spin.card.name}`,
+          );
           return created;
         },
         { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
@@ -462,19 +464,14 @@ export class GachaService {
           },
           select: PULL_SELECT,
         });
-        await tx.user.update({
-          where: { id: userId },
-          data: { pointsBalance: { increment: created.value } },
-        });
-        await tx.gachaPointEvent.create({
-          data: {
-            userId,
-            delta: created.value,
-            type: 'MINT',
-            refId: created.id,
-            reason: 'Compensação de incidente',
-          },
-        });
+        await this.changeCrystals(
+          tx,
+          userId,
+          Math.floor(created.value / 2),
+          'MINT',
+          created.id,
+          'Compensação',
+        );
         return created;
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
@@ -508,81 +505,50 @@ export class GachaService {
     return { unlocked: deleted.count > 0 };
   }
 
-  async points(userId: string, page = 1, limit = 20) {
-    const safeLimit = Math.min(Math.max(limit, 1), 50);
-    const [user, events, total] = await this.prisma.$transaction([
-      this.prisma.user.findUnique({
-        where: { id: userId },
-        select: { pointsBalance: true },
-      }),
-      this.prisma.gachaPointEvent.findMany({
-        where: { userId },
-        orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * safeLimit,
-        take: safeLimit,
-      }),
-      this.prisma.gachaPointEvent.count({ where: { userId } }),
-    ]);
-    if (!user) {
-      throw new NotFoundException('Usuário não encontrado.');
-    }
-    return {
-      balance: user.pointsBalance,
-      events,
-      meta: { page, limit: safeLimit, total },
-    };
+  points(userId: string, page = 1, limit = 20) {
+    return this.crystals(userId, page, limit);
   }
 
-  async adjustPoints(userId: string, delta: number, reason: string) {
-    if (!Number.isInteger(delta) || delta === 0) {
-      throw new BadRequestException('delta deve ser um inteiro não-zero.');
+  async adjustCrystals(userId: string, delta: number, reason: string) {
+    if (
+      !Number.isSafeInteger(delta) ||
+      delta === 0 ||
+      Math.abs(delta) > 2_147_483_647
+    ) {
+      throw new BadRequestException(
+        'delta deve ser um inteiro não-zero de 32 bits.',
+      );
     }
-    const trimmed = reason?.trim();
-    if (!trimmed) {
+    if (typeof reason !== 'string' || !reason.trim()) {
       throw new BadRequestException('Motivo do ajuste é obrigatório.');
     }
-    return this.prisma.$transaction(
-      async (tx) => {
-        const user = await tx.user.findUnique({
-          where: { id: userId },
-          select: { pointsBalance: true },
-        });
-        if (!user) {
-          throw new NotFoundException('Usuário não encontrado.');
-        }
-        const next = user.pointsBalance + delta;
-        if (next < 0) {
-          throw new BadRequestException('Ajuste deixaria o saldo negativo.');
-        }
-        await tx.user.update({
-          where: { id: userId },
-          data: { pointsBalance: next },
-        });
-        return tx.gachaPointEvent.create({
-          data: { userId, delta, type: 'ADMIN', reason: trimmed },
-          select: {
-            id: true,
-            delta: true,
-            type: true,
-            reason: true,
-            createdAt: true,
-          },
-        });
-      },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-    );
+    return this.prisma.$transaction(async (tx) => {
+      const user = await tx.user.findUnique({
+        where: { id: userId },
+        select: { id: true },
+      });
+      if (!user) throw new NotFoundException('Usuário não encontrado.');
+      return this.changeCrystals(
+        tx,
+        userId,
+        delta,
+        'ADMIN',
+        null,
+        reason.trim(),
+      );
+    });
   }
 
   async shop(userId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { pointsBalance: true, gachaCosmetics: true },
+      select: { crystalBalance: true, gachaCosmetics: true },
     });
     if (!user) {
       throw new NotFoundException('Usuário não encontrado.');
     }
     return {
-      balance: user.pointsBalance,
+      balance: user.crystalBalance,
       cosmetics: GACHA_COSMETICS.map((item) => ({
         ...item,
         owned: user.gachaCosmetics.includes(item.key),
@@ -590,23 +556,34 @@ export class GachaService {
     };
   }
 
-  private async spendPoints(
+  private async changeCrystals(
     tx: Prisma.TransactionClient,
     userId: string,
-    cost: number,
-    type: 'SPEND',
+    delta: number,
+    type: CrystalEventType,
     refId: string | null,
     reason: string,
   ) {
-    const paid = await tx.user.updateMany({
-      where: { id: userId, pointsBalance: { gte: cost } },
-      data: { pointsBalance: { decrement: cost } },
-    });
-    if (paid.count !== 1) {
-      throw new BadRequestException('Pontos insuficientes.');
+    if (!Number.isSafeInteger(delta) || Math.abs(delta) > 2_147_483_647) {
+      throw new BadRequestException('Valor de Crystal inválido.');
     }
-    await tx.gachaPointEvent.create({
-      data: { userId, delta: -cost, type, refId, reason },
+    const changed = await tx.user.updateMany({
+      where: {
+        id: userId,
+        crystalBalance: {
+          gte: Math.max(0, -delta),
+          lte: 2_147_483_647 - Math.max(0, delta),
+        },
+      },
+      data: { crystalBalance: { increment: delta } },
+    });
+    if (changed.count !== 1) {
+      throw new BadRequestException(
+        delta < 0 ? 'Crystals insuficientes.' : 'Limite de Crystals excedido.',
+      );
+    }
+    return tx.crystalEvent.create({
+      data: { userId, delta, type, refId, reason },
     });
   }
 
@@ -633,14 +610,26 @@ export class GachaService {
         if (pendingTrade) {
           throw new BadRequestException('Carta envolvida em troca pendente.');
         }
+        const listing = await tx.gachaListing.findFirst({
+          where: {
+            userCardId,
+            status: 'ACTIVE',
+            expiresAt: { gt: new Date() },
+          },
+          select: { id: true },
+        });
+        if (listing)
+          throw new BadRequestException(
+            'Cancele o anúncio antes de rerrolar a carta.',
+          );
         const cost = Math.max(
           1,
           Math.round(card.value * GACHA_REROLL_COST_PCT),
         );
-        await this.spendPoints(
+        await this.changeCrystals(
           tx,
           userId,
-          cost,
+          -cost,
           'SPEND',
           userCardId,
           `Reroll ${card.card.name} #${card.edition}`,
@@ -684,10 +673,10 @@ export class GachaService {
         if (user.gachaCosmetics.includes(item.key)) {
           throw new BadRequestException('Você já possui este cosmético.');
         }
-        await this.spendPoints(
+        await this.changeCrystals(
           tx,
           userId,
-          item.price,
+          -item.price,
           'SPEND',
           item.key,
           item.label,
@@ -703,7 +692,7 @@ export class GachaService {
   }
 
   async createListing(userId: string, userCardId: string, price: number) {
-    if (!Number.isInteger(price) || price < 1) {
+    if (!Number.isSafeInteger(price) || price < 1 || price > 2_147_483_647) {
       throw new BadRequestException('Preço deve ser um inteiro positivo.');
     }
     return this.prisma.$transaction(
@@ -893,39 +882,32 @@ export class GachaService {
           where: { id: listing.userId, featuredUserCardId: listing.userCardId },
           data: { featuredUserCardId: null },
         });
-        await this.spendPoints(
+        await this.changeCrystals(
           tx,
           userId,
-          listing.price,
-          'SPEND',
+          -listing.price,
+          'PURCHASE',
           listingId,
           `Compra no mercado: ${listing.userCard.card.name}`,
         );
         const fee = Math.round(listing.price * GACHA_MARKET_TAX_PCT);
-        const net = listing.price - fee;
-        await tx.user.update({
-          where: { id: listing.userId },
-          data: { pointsBalance: { increment: net } },
-        });
-        await tx.gachaPointEvent.create({
-          data: {
-            userId: listing.userId,
-            delta: listing.price,
-            type: 'SALE',
-            refId: listingId,
-            reason: `Venda: ${listing.userCard.card.name}`,
-          },
-        });
+        await this.changeCrystals(
+          tx,
+          listing.userId,
+          listing.price,
+          'SALE',
+          listingId,
+          `Venda: ${listing.userCard.card.name}`,
+        );
         if (fee > 0) {
-          await tx.gachaPointEvent.create({
-            data: {
-              userId: listing.userId,
-              delta: -fee,
-              type: 'TAX',
-              refId: listingId,
-              reason: 'Taxa do mercado (10%)',
-            },
-          });
+          await this.changeCrystals(
+            tx,
+            listing.userId,
+            -fee,
+            'TAX',
+            listingId,
+            'Taxa do mercado (10%)',
+          );
         }
         return { purchased: listing.id, price: listing.price };
       },
@@ -1077,6 +1059,74 @@ export class GachaService {
       data: { featuredUserCardId: null },
     });
     return { featuredUserCardId: null };
+  }
+
+  async crystals(userId: string, page = 1, limit = 20) {
+    if (!Number.isSafeInteger(page) || !Number.isSafeInteger(limit)) {
+      throw new BadRequestException('Paginação inválida.');
+    }
+    const safeLimit = Math.min(Math.max(limit, 1), 50);
+    const safePage = Math.max(page, 1);
+    if (!Number.isSafeInteger((safePage - 1) * safeLimit)) {
+      throw new BadRequestException('Paginação inválida.');
+    }
+    const [events, total, wallet] = await this.prisma.$transaction([
+      this.prisma.crystalEvent.findMany({
+        where: { userId },
+        skip: (safePage - 1) * safeLimit,
+        take: safeLimit,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      }),
+      this.prisma.crystalEvent.count({ where: { userId } }),
+      this.prisma.user.findUniqueOrThrow({
+        where: { id: userId },
+        select: { crystalBalance: true },
+      }),
+    ]);
+    return {
+      balance: wallet.crystalBalance,
+      events,
+      meta: {
+        total,
+        page: safePage,
+        limit: safeLimit,
+        totalPages: Math.ceil(total / safeLimit),
+      },
+    };
+  }
+
+  async dailyBonus(userId: string) {
+    const now = new Date();
+    const todayStart = this.dayStartUtc(now);
+    const amount = 100;
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.gachaDailyBonus.createMany({
+        data: { userId, lastClaim: new Date(0) },
+        skipDuplicates: true,
+      });
+      const claimed = await tx.gachaDailyBonus.updateMany({
+        where: { userId, lastClaim: { lt: todayStart } },
+        data: { lastClaim: now },
+      });
+      if (claimed.count !== 1) {
+        throw new ForbiddenException('Bônus diário já resgatado hoje.');
+      }
+      await this.changeCrystals(
+        tx,
+        userId,
+        amount,
+        'DAILY',
+        null,
+        'Bônus diário',
+      );
+    });
+
+    const wallet = await this.prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      select: { crystalBalance: true },
+    });
+    return { balance: wallet.crystalBalance, claimed: amount };
   }
 
   async publicCard(id: string) {

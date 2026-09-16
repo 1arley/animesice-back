@@ -1,4 +1,4 @@
-import { IsInt, IsNotEmpty, IsString, Min } from 'class-validator';
+import { IsInt, IsNotEmpty, IsString, Max, Min } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class ClaimGachaDto {
@@ -35,9 +35,10 @@ export class CreateListingDto {
   @IsNotEmpty()
   userCardId!: string;
 
-  @ApiProperty({ description: 'Preço em pontos (inteiro ≥ 1).' })
+  @ApiProperty({ description: 'Preço em Crystal (inteiro ≥ 1).' })
   @IsInt()
   @Min(1)
+  @Max(2_147_483_647)
   price!: number;
 }
 
