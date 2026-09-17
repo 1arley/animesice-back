@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -35,7 +36,6 @@ import { VerifiedGuard } from '@/auth/verified.guard';
 import { RolesGuard } from '@/auth/roles.guard';
 import { Roles } from '@/auth/roles.decorators';
 import { Audit } from '@/auth/decorators/audit.decorator';
-import { BadRequestException } from '@nestjs/common';
 import { DEFAULT_PAGE } from '@/common/constants';
 import type { AuthenticatedRequest } from '@/common/interfaces/request.interface';
 import type { Request } from 'express';
@@ -505,12 +505,18 @@ export class GachaController {
   @Post('trades')
   @UseGuards(JwtAuthGuard, VerifiedGuard)
   @ApiBearerAuth('JWT-auth')
-  @ApiOperation({ summary: 'Propõe troca 1:1 (válida por 48h)' })
+  @ApiOperation({ summary: 'Propõe troca de 1 a 3 cartas por lado (48h)' })
   createTrade(@Req() req: AuthenticatedRequest, @Body() dto: NewTradeDto) {
+    if (
+      (!dto.offeredUserCardIds && !dto.offeredUserCardId) ||
+      (!dto.requestedUserCardIds && !dto.requestedUserCardId)
+    ) {
+      throw new BadRequestException('Informe cartas para os dois lados.');
+    }
     return this.gachaService.createTrade(
       req.user.id,
-      dto.offeredUserCardId,
-      dto.requestedUserCardId,
+      dto.offeredUserCardIds ?? dto.offeredUserCardId!,
+      dto.requestedUserCardIds ?? dto.requestedUserCardId!,
     );
   }
 

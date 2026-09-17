@@ -963,6 +963,7 @@ model UserCard {
 
   tradeOffered   GachaTrade[]   @relation("TradeOffered")
   tradeRequested GachaTrade[]   @relation("TradeRequested")
+  tradeCards     GachaTradeCard[]
   listings       GachaListing[]
 
   @@index([userId, obtainedAt(sort: Desc)])
@@ -1074,6 +1075,8 @@ model GachaTrade {
   createdAt           DateTime         @default(now()) @db.Timestamptz(6)
   completedAt         DateTime?        @db.Timestamptz(6)
 
+  cards               GachaTradeCard[]
+
   offeredUserCard   UserCard @relation("TradeOffered", fields: [offeredUserCardId], references: [id], onDelete: Cascade)
   requestedUserCard UserCard @relation("TradeRequested", fields: [requestedUserCardId], references: [id], onDelete: Cascade)
 
@@ -1082,6 +1085,26 @@ model GachaTrade {
   @@unique([requestedUserCardId], where: raw("status = 'PENDING'"))
   @@index([offeredUserId, status])
   @@index([requestedUserId, status])
+}
+
+model GachaTradeCard {
+  id         String   @id @default(uuid())
+  tradeId    String
+  userCardId String
+  side       GachaTradeCardSide
+  position   Int
+  snapshot   Json
+  trade      GachaTrade @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+  userCard   UserCard   @relation(fields: [userCardId], references: [id], onDelete: Restrict)
+
+  @@unique([tradeId, side, position])
+  @@unique([tradeId, userCardId])
+  @@index([userCardId, side])
+}
+
+enum GachaTradeCardSide {
+  OFFERED
+  REQUESTED
 }
 
 enum GachaTradeStatus {

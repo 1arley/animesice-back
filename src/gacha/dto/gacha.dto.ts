@@ -1,4 +1,6 @@
 import {
+  ArrayMaxSize,
+  ArrayMinSize,
   ArrayUnique,
   IsArray,
   IsBoolean,
@@ -62,15 +64,28 @@ export class CreateListingDto {
 }
 
 export class NewTradeDto {
-  @ApiProperty({ description: 'ID da UserCard oferecida (sua própria).' })
-  @IsString()
-  @IsNotEmpty()
-  offeredUserCardId!: string;
+  @ApiProperty({ type: [String], minItems: 1, maxItems: 3 })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(3)
+  @IsString({ each: true })
+  @IsNotEmpty({ each: true })
+  offeredUserCardIds?: string[];
 
-  @ApiProperty({ description: 'ID da UserCard pedida (do outro usuário).' })
+  @ApiProperty({ type: [String], minItems: 1, maxItems: 3 })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(3)
+  @IsString({ each: true })
+  @IsNotEmpty({ each: true })
+  requestedUserCardIds?: string[];
+
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  requestedUserCardId!: string;
+  offeredUserCardId?: string;
+  @IsOptional()
+  @IsString()
+  requestedUserCardId?: string;
 }
 
 export enum WishlistPriorityDto {
