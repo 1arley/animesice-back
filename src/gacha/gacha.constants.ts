@@ -142,5 +142,11 @@ export const GACHA_COSMETICS = [
       'Suas cartas ganham brilho dourado na página pública compartilhada.',
     price: 3000,
   },
+  {
+    key: 'BACK_ICE',
+    label: 'Verso Ice',
+    description: 'Verso azul cristalino para suas cartas.',
+    price: 1200,
+  },
 ] as const;
 export type GachaCosmetic = (typeof GACHA_COSMETICS)[number];

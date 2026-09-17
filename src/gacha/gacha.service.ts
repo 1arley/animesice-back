@@ -52,7 +52,11 @@ const PULL_SELECT = {
       userName: true,
       avatar: true,
       gachaCosmetics: true,
+      gachaCardBack: true,
     },
+  },
+  originalUser: {
+    select: { id: true, name: true, userName: true, avatar: true },
   },
   card: {
     select: {
@@ -350,6 +354,7 @@ export class GachaService {
           const created = await tx.userCard.create({
             data: {
               userId,
+              originalUserId: userId,
               cardId: spin.card.id,
               condition: spin.condition,
               foil: spin.foil,
@@ -460,6 +465,7 @@ export class GachaService {
         const created = await tx.userCard.create({
           data: {
             userId,
+            originalUserId: userId,
             cardId: card.id,
             condition,
             foil,
@@ -551,17 +557,35 @@ export class GachaService {
   async shop(userId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { crystalBalance: true, gachaCosmetics: true },
+      select: {
+        crystalBalance: true,
+        gachaCosmetics: true,
+        gachaCardBack: true,
+      },
     });
     if (!user) {
       throw new NotFoundException('Usuário não encontrado.');
     }
+    const custom = await this.prisma.gachaCardBack.findMany({
+      where: { status: 'PUBLISHED' },
+      select: { key: true, name: true, description: true, price: true },
+    });
     return {
       balance: user.crystalBalance,
-      cosmetics: GACHA_COSMETICS.map((item) => ({
-        ...item,
-        owned: user.gachaCosmetics.includes(item.key),
-      })),
+      activeCardBack: user.gachaCardBack,
+      cosmetics: [
+        ...GACHA_COSMETICS.map((item) => ({
+          ...item,
+          owned: user.gachaCosmetics.includes(item.key),
+        })),
+        ...custom.map((item) => ({
+          key: item.key,
+          label: item.name,
+          description: item.description ?? '',
+          price: item.price,
+          owned: user.gachaCosmetics.includes(item.key),
+        })),
+      ],
     };
   }
 
@@ -667,7 +691,18 @@ export class GachaService {
   }
 
   async buyCosmetic(userId: string, key: string) {
-    const item = GACHA_COSMETICS.find((cosmetic) => cosmetic.key === key);
+    const custom = await this.prisma.gachaCardBack.findFirst({
+      where: { key, status: 'PUBLISHED' },
+      select: { key: true, name: true, description: true, price: true },
+    });
+    const item = custom
+      ? {
+          key: custom.key,
+          label: custom.name,
+          description: custom.description ?? '',
+          price: custom.price,
+        }
+      : GACHA_COSMETICS.find((cosmetic) => cosmetic.key === key);
     if (!item) {
       throw new BadRequestException('Cosmético inexistente.');
     }
@@ -699,6 +734,87 @@ export class GachaService {
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     );
+  }
+
+  private sanitizeCardBackSvg(svg: string) {
+    const clean = svg
+      .replace(/<script[\s\S]*?<\/script>/gi, '')
+      .replace(/\son\w+\s*=\s*(['"]).*?\1/gi, '')
+      .replace(/javascript:/gi, '');
+    if (!/^\s*<svg[\s>]/i.test(clean) || clean.length > 500_000)
+      throw new BadRequestException('SVG inválido ou pesado demais.');
+    return clean;
+  }
+
+  adminCardBacks() {
+    return this.prisma.gachaCardBack.findMany({
+      orderBy: { updatedAt: 'desc' },
+    });
+  }
+
+  adminCreateCardBack(
+    data: {
+      key: string;
+      name: string;
+      description?: string;
+      svg: string;
+      previewUrl?: string;
+      price?: number;
+      status?: 'DRAFT' | 'REVIEW' | 'PUBLISHED' | 'ARCHIVED';
+    },
+    createdById?: string,
+  ) {
+    return this.prisma.gachaCardBack.create({
+      data: {
+        ...data,
+        svg: this.sanitizeCardBackSvg(data.svg),
+        price: data.price ?? 0,
+        createdById,
+      },
+    });
+  }
+
+  adminUpdateCardBack(
+    id: string,
+    data: {
+      key?: string;
+      name?: string;
+      description?: string;
+      svg?: string;
+      previewUrl?: string;
+      price?: number;
+      status?: 'DRAFT' | 'REVIEW' | 'PUBLISHED' | 'ARCHIVED';
+    },
+  ) {
+    return this.prisma.gachaCardBack.update({
+      where: { id },
+      data: {
+        ...data,
+        ...(data.svg ? { svg: this.sanitizeCardBackSvg(data.svg) } : {}),
+      },
+    });
+  }
+
+  async setCardBack(userId: string, key: string | null) {
+    if (key !== null && typeof key !== 'string') {
+      throw new BadRequestException('Capa inválida.');
+    }
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { gachaCosmetics: true },
+    });
+    if (!user) throw new NotFoundException('Usuário não encontrado.');
+    if (key && !key.startsWith('BACK_')) {
+      throw new BadRequestException('Cosmético não é capa de carta.');
+    }
+    if (key && !user.gachaCosmetics.includes(key)) {
+      throw new ForbiddenException('Você não possui esta capa.');
+    }
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: { gachaCardBack: key },
+      select: { gachaCardBack: true },
+    });
   }
 
   async burn(userId: string, userCardId: string) {
@@ -1259,7 +1375,91 @@ export class GachaService {
    * Catálogo completo (pool por anime) com flag de posse do usuário — usado
    * pela enciclopédia "quais faltam" da coleção. Sem usuário, tudo owned=false.
    */
-  async encyclopedia(userId: string | null) {
+  async encyclopedia(userId: string | null): Promise<{
+    stats: {
+      totalCards: number;
+      ownedCards: number;
+      totalSets: number;
+      completeSets: number;
+    };
+    sets: Array<{
+      animeId: string | null;
+      animeTitle: string | null;
+      animeSlug: string | null;
+      total: number;
+      owned: number;
+      cards: Array<{
+        id: string;
+        name: string;
+        image: string | null;
+        rarity: string;
+        favourites: number;
+        owned: boolean;
+      }>;
+      complete: boolean;
+    }>;
+  }>;
+  async encyclopedia(
+    userId: string | null,
+    options: {
+      view?: 'cards' | 'sets';
+      page?: number;
+      limit?: number;
+      search?: string;
+      rarity?: string;
+      ownership?: 'all' | 'owned' | 'missing';
+      animeId?: string;
+      progress?: 'all' | 'near' | 'complete';
+    },
+  ): Promise<{
+    view: 'cards' | 'sets';
+    cards: Array<{
+      id: string;
+      name: string;
+      image: string | null;
+      rarity: string;
+      favourites: number;
+      owned: boolean;
+      animeId: string | null;
+      animeTitle: string | null;
+    }>;
+    sets: Array<{
+      animeId: string | null;
+      animeTitle: string | null;
+      animeSlug: string | null;
+      total: number;
+      owned: number;
+      cards: Array<{
+        id: string;
+        name: string;
+        image: string | null;
+        rarity: string;
+        favourites: number;
+        owned: boolean;
+      }>;
+      complete: boolean;
+    }>;
+    meta: { total: number; page: number; limit: number; totalPages: number };
+    stats: {
+      totalCards: number;
+      ownedCards: number;
+      totalSets: number;
+      completeSets: number;
+    };
+  }>;
+  async encyclopedia(
+    userId: string | null,
+    options: {
+      view?: 'cards' | 'sets';
+      page?: number;
+      limit?: number;
+      search?: string;
+      rarity?: string;
+      ownership?: 'all' | 'owned' | 'missing';
+      animeId?: string;
+      progress?: 'all' | 'near' | 'complete';
+    } = {},
+  ) {
     const cards = await this.prisma.card.findMany({
       orderBy: [{ animeTitle: 'asc' }, { name: 'asc' }],
       include: { anime: { select: { id: true, slug: true, title: true } } },
@@ -1324,15 +1524,112 @@ export class GachaService {
       complete: set.total > 0 && set.owned === set.total,
     }));
 
-    return {
-      stats: {
-        totalCards: cards.length,
-        ownedCards: ownedIds.size,
-        totalSets: sets.length,
-        completeSets: sets.filter((set) => set.complete).length,
-      },
-      sets,
+    const fold = (value: string | null | undefined) =>
+      (value ?? '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase();
+    const term = fold(options.search?.trim());
+    const allCards = sets.flatMap((set) =>
+      set.cards.map((card) => ({
+        ...card,
+        animeId: set.animeId,
+        animeTitle: set.animeTitle,
+      })),
+    );
+    const cardsView = allCards.filter((card) => {
+      if (term && !fold(`${card.name} ${card.animeTitle}`).includes(term))
+        return false;
+      if (options.rarity && card.rarity !== options.rarity) return false;
+      if (
+        options.animeId &&
+        options.animeId !== 'orphan' &&
+        card.animeId !== options.animeId
+      )
+        return false;
+      if (options.ownership === 'owned' && !card.owned) return false;
+      if (options.ownership === 'missing' && card.owned) return false;
+      return true;
+    });
+    const setsView = sets.filter((set) => {
+      if (term && !fold(`${set.animeTitle} ${set.animeSlug}`).includes(term))
+        return false;
+      if (options.progress === 'complete' && !set.complete) return false;
+      if (options.progress === 'near' && (set.complete || set.owned === 0))
+        return false;
+      return true;
+    });
+    const view = options.view === 'sets' ? 'sets' : 'cards';
+    const source = view === 'sets' ? setsView : cardsView;
+    const page = Math.max(1, options.page ?? 1);
+    const limit = Math.min(100, Math.max(1, options.limit ?? 24));
+    const total = source.length;
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    const slice = source.slice((page - 1) * limit, page * limit);
+
+    const stats = {
+      totalCards: cards.length,
+      ownedCards: ownedIds.size,
+      totalSets: sets.length,
+      completeSets: sets.filter((set) => set.complete).length,
     };
+    if (Object.keys(options).length === 0) return { stats, sets };
+    return {
+      view,
+      cards: view === 'cards' ? slice : [],
+      sets: view === 'sets' ? slice : [],
+      meta: { total, page, limit, totalPages },
+      stats,
+    };
+  }
+
+  async encyclopediaSuggestions(query: string) {
+    const term = query.trim();
+    if (term.length < 2) return [];
+    const rows = await this.prisma.card.findMany({
+      where: { name: { contains: term, mode: 'insensitive' } },
+      select: { name: true, animeTitle: true },
+      orderBy: { name: 'asc' },
+      take: 5,
+    });
+    return [
+      ...new Set(
+        rows.flatMap((row) => [row.name, row.animeTitle].filter(Boolean)),
+      ),
+    ].slice(0, 5);
+  }
+
+  collections() {
+    return this.prisma.gachaCollection.findMany({
+      where: { published: true },
+      include: { members: { include: { card: true } } },
+      orderBy: { updatedAt: 'desc' },
+    });
+  }
+
+  adminCreateCollection(data: {
+    name: string;
+    slug: string;
+    description?: string;
+    version?: number;
+    published?: boolean;
+    cardIds?: string[];
+  }) {
+    return this.prisma.gachaCollection.create({
+      data: {
+        name: data.name,
+        slug: data.slug,
+        description: data.description,
+        version: data.version ?? 1,
+        published: data.published ?? false,
+        members: {
+          create: (data.cardIds ?? []).map((cardId) => ({
+            card: { connect: { id: cardId } },
+          })),
+        },
+      },
+      include: { members: true },
+    });
   }
 
   async recent(limit = 20) {
@@ -1466,6 +1763,41 @@ export class GachaService {
     };
   }
 
+  adminRarities() {
+    return this.prisma.gachaRarity.findMany({ orderBy: { pointsBase: 'asc' } });
+  }
+
+  adminCreateRarity(data: {
+    name: string;
+    slug: string;
+    pointsBase?: number;
+    dropWeight?: number;
+    color?: string;
+    active?: boolean;
+  }) {
+    return this.prisma.gachaRarity.create({
+      data: {
+        ...data,
+        pointsBase: data.pointsBase ?? 0,
+        dropWeight: data.dropWeight ?? 0,
+      },
+    });
+  }
+
+  adminUpdateRarity(
+    id: string,
+    data: {
+      name?: string;
+      slug?: string;
+      pointsBase?: number;
+      dropWeight?: number;
+      color?: string;
+      active?: boolean;
+    },
+  ) {
+    return this.prisma.gachaRarity.update({ where: { id }, data });
+  }
+
   adminCreateCard(data: { name: string; image?: string; rarity: string }) {
     // ponytail: malCharacterId negativo sintético p/ carta manual; colidir
     // com carta real do MAL é impossível (IDs MAL são positivos).
@@ -1484,32 +1816,8 @@ export class GachaService {
       });
       if (!current) throw new NotFoundException('Carta não encontrada.');
       const updatedCard = await tx.card.update({ where: { id }, data });
-      if (
-        !data.rarity ||
-        data.rarity === current.rarity ||
-        !(GACHA_TIERS as readonly string[]).includes(data.rarity)
-      ) {
-        return { card: updatedCard, repriced: 0 };
-      }
-      const rarity = data.rarity as GachaTier;
-      const copies = await tx.userCard.findMany({
-        where: { cardId: id },
-        select: { id: true, condition: true, foil: true, edition: true },
-      });
-      for (const copy of copies) {
-        await tx.userCard.update({
-          where: { id: copy.id },
-          data: {
-            value: cardValue(
-              rarity,
-              copy.condition,
-              copy.foil as GachaFoil,
-              copy.edition,
-            ),
-          },
-        });
-      }
-      return { card: updatedCard, repriced: copies.length };
+      // Card rarity changes affect future pulls only; historical copies retain value.
+      return { card: updatedCard, repriced: 0 };
     });
     return { ...updated.card, repriced: updated.repriced };
   }
@@ -1550,6 +1858,7 @@ export class GachaService {
       return tx.userCard.create({
         data: {
           userId,
+          originalUserId: userId,
           cardId: card.id,
           condition,
           foil,

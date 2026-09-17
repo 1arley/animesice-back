@@ -29,7 +29,6 @@ import { VerifiedGuard } from '@/auth/verified.guard';
 import { RolesGuard } from '@/auth/roles.guard';
 import { Roles } from '@/auth/roles.decorators';
 import { Audit } from '@/auth/decorators/audit.decorator';
-import { GACHA_TIERS } from '@/gacha/gacha.constants';
 import { BadRequestException } from '@nestjs/common';
 import { DEFAULT_PAGE } from '@/common/constants';
 import type { AuthenticatedRequest } from '@/common/interfaces/request.interface';
@@ -141,6 +140,61 @@ export class GachaController {
   @ApiOperation({ summary: 'Compra um cosmético da loja com Crystal' })
   buyCosmetic(@Req() req: AuthenticatedRequest, @Body() dto: BuyCosmeticDto) {
     return this.gachaService.buyCosmetic(req.user.id, dto.key);
+  }
+
+  @Patch('card-back')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  setCardBack(
+    @Req() req: AuthenticatedRequest,
+    @Body() body: { key: string | null },
+  ) {
+    return this.gachaService.setCardBack(req.user.id, body.key);
+  }
+
+  @Get('admin/card-backs')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  adminCardBacks() {
+    return this.gachaService.adminCardBacks();
+  }
+
+  @Post('admin/card-backs')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  adminCreateCardBack(
+    @Req() req: AuthenticatedRequest,
+    @Body()
+    body: {
+      key: string;
+      name: string;
+      description?: string;
+      svg: string;
+      previewUrl?: string;
+      price?: number;
+      status?: 'DRAFT' | 'REVIEW' | 'PUBLISHED' | 'ARCHIVED';
+    },
+  ) {
+    return this.gachaService.adminCreateCardBack(body, req.user.id);
+  }
+
+  @Patch('admin/card-backs/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  adminUpdateCardBack(
+    @Param('id') id: string,
+    @Body()
+    body: {
+      key?: string;
+      name?: string;
+      description?: string;
+      svg?: string;
+      previewUrl?: string;
+      price?: number;
+      status?: 'DRAFT' | 'REVIEW' | 'PUBLISHED' | 'ARCHIVED';
+    },
+  ) {
+    return this.gachaService.adminUpdateCardBack(id, body);
   }
 
   @Get('listings')
@@ -289,8 +343,57 @@ export class GachaController {
     summary:
       'Catálogo completo por anime com flag de posse (enciclopédia da coleção)',
   })
-  encyclopedia(@Req() req: OptionalAuthRequest) {
-    return this.gachaService.encyclopedia(req.user?.id ?? null);
+  encyclopedia(
+    @Req() req: OptionalAuthRequest,
+    @Query('view') view?: 'cards' | 'sets',
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('search') search?: string,
+    @Query('rarity') rarity?: string,
+    @Query('ownership') ownership?: 'all' | 'owned' | 'missing',
+    @Query('animeId') animeId?: string,
+    @Query('progress') progress?: 'all' | 'near' | 'complete',
+  ) {
+    const options = {
+      ...(view !== undefined ? { view } : {}),
+      ...(page !== undefined ? { page: Number(page) || 1 } : {}),
+      ...(limit !== undefined ? { limit: Number(limit) || 24 } : {}),
+      ...(search !== undefined ? { search } : {}),
+      ...(rarity !== undefined ? { rarity } : {}),
+      ...(ownership !== undefined ? { ownership } : {}),
+      ...(animeId !== undefined ? { animeId } : {}),
+      ...(progress !== undefined ? { progress } : {}),
+    };
+    return Object.keys(options).length > 0
+      ? this.gachaService.encyclopedia(req.user?.id ?? null, options)
+      : this.gachaService.encyclopedia(req.user?.id ?? null);
+  }
+
+  @Get('encyclopedia/suggestions')
+  suggestions(@Query('q') query = '') {
+    return this.gachaService.encyclopediaSuggestions(query);
+  }
+
+  @Get('collections')
+  collections() {
+    return this.gachaService.collections();
+  }
+
+  @Post('admin/collections')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  adminCreateCollection(
+    @Body()
+    body: {
+      name: string;
+      slug: string;
+      description?: string;
+      version?: number;
+      published?: boolean;
+      cardIds?: string[];
+    },
+  ) {
+    return this.gachaService.adminCreateCollection(body);
   }
 
   @Post('trades')
@@ -365,11 +468,8 @@ export class GachaController {
   adminCreateCard(
     @Body() body: { name: string; image?: string; rarity: string },
   ) {
-    if (!(GACHA_TIERS as readonly string[]).includes(body.rarity)) {
-      throw new BadRequestException(
-        `Raridade inválida. Use: ${GACHA_TIERS.join(', ')}`,
-      );
-    }
+    if (!body.rarity?.trim())
+      throw new BadRequestException('Raridade obrigatória.');
     return this.gachaService.adminCreateCard(body);
   }
 
@@ -381,15 +481,51 @@ export class GachaController {
     @Param('id') id: string,
     @Body() body: { name?: string; image?: string; rarity?: string },
   ) {
-    if (
-      body.rarity !== undefined &&
-      !(GACHA_TIERS as readonly string[]).includes(body.rarity)
-    ) {
-      throw new BadRequestException(
-        `Raridade inválida. Use: ${GACHA_TIERS.join(', ')}`,
-      );
-    }
+    if (body.rarity !== undefined && !body.rarity.trim())
+      throw new BadRequestException('Raridade inválida.');
     return this.gachaService.adminUpdateCard(id, body);
+  }
+
+  @Get('admin/rarities')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  adminRarities() {
+    return this.gachaService.adminRarities();
+  }
+
+  @Post('admin/rarities')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  adminCreateRarity(
+    @Body()
+    body: {
+      name: string;
+      slug: string;
+      pointsBase?: number;
+      dropWeight?: number;
+      color?: string;
+      active?: boolean;
+    },
+  ) {
+    return this.gachaService.adminCreateRarity(body);
+  }
+
+  @Patch('admin/rarities/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  adminUpdateRarity(
+    @Param('id') id: string,
+    @Body()
+    body: {
+      name?: string;
+      slug?: string;
+      pointsBase?: number;
+      dropWeight?: number;
+      color?: string;
+      active?: boolean;
+    },
+  ) {
+    return this.gachaService.adminUpdateRarity(id, body);
   }
 
   @Get('admin/users/:userId/cards')
