@@ -166,7 +166,12 @@ describe('GachaController', () => {
   describe('admin', () => {
     it('delega listagem e ações administrativas', async () => {
       await controller.adminCards('2', '10', 'card', 'RARA');
-      await controller.adminCreateCard({ name: 'Card', rarity: 'COMUM' });
+      await controller.adminCreateCard({
+        name: 'Card',
+        rarity: 'COMUM',
+        animeId: 'a1',
+        image: 'https://img.test/card.jpg',
+      });
       await controller.adminUpdateCard('c1', { rarity: 'RARA' });
       await controller.adminUserCards('u1', '2', '10');
       await controller.adminGrantUserCard('u1', { cardId: 'c1' });
@@ -182,6 +187,8 @@ describe('GachaController', () => {
       expect(m.gachaService.adminCreateCard).toHaveBeenCalledWith({
         name: 'Card',
         rarity: 'COMUM',
+        animeId: 'a1',
+        image: 'https://img.test/card.jpg',
       });
       expect(m.gachaService.adminUpdateCard).toHaveBeenCalledWith('c1', {
         rarity: 'RARA',
@@ -197,7 +204,12 @@ describe('GachaController', () => {
 
     it('rejeita raridades inválidas', () => {
       expect(() =>
-        controller.adminCreateCard({ name: 'Card', rarity: 'INVALIDA' }),
+        controller.adminCreateCard({
+          name: 'Card',
+          rarity: 'INVALIDA',
+          animeId: 'a1',
+          image: 'https://img.test/card.jpg',
+        }),
       ).toThrow('Raridade inválida');
       expect(() =>
         controller.adminUpdateCard('c1', { rarity: 'INVALIDA' }),

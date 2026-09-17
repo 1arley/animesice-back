@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   DefaultValuePipe,
+  ForbiddenException,
   Get,
   Param,
   ParseIntPipe,
@@ -452,12 +453,18 @@ export class GachaController {
     @Query('limit') limit: string,
     @Query('search') search?: string,
     @Query('rarity') rarity?: string,
+    @Query('animeId') animeId?: string,
+    @Query('status') status?: string,
+    @Query('source') source?: string,
   ) {
     return this.gachaService.adminCards(
       Number(page) || 1,
       Number(limit) || 24,
       search,
       rarity,
+      animeId,
+      status,
+      source,
     );
   }
 
@@ -466,11 +473,30 @@ export class GachaController {
   @Roles('ADMIN', 'SUPERADMIN')
   @Audit('CREATE_GACHA_CARD', 'Card')
   adminCreateCard(
-    @Body() body: { name: string; image?: string; rarity: string },
+    @Body()
+    body: {
+      name: string;
+      image?: string;
+      rarity: string;
+      animeId?: string;
+      source?: string;
+      variantName?: string;
+      variantType?: string;
+    },
   ) {
     if (!body.rarity?.trim())
       throw new BadRequestException('Raridade obrigatória.');
-    return this.gachaService.adminCreateCard(body);
+    if (!body.name?.trim()) throw new BadRequestException('Nome obrigatório.');
+    if (!body.animeId?.trim())
+      throw new BadRequestException('Anime obrigatório.');
+    if (!body.image?.trim())
+      throw new BadRequestException('Imagem obrigatória.');
+    if (!/^https:\/\//i.test(body.image))
+      throw new BadRequestException('Imagem deve usar HTTPS.');
+    return this.gachaService.adminCreateCard({
+      ...body,
+      animeId: body.animeId,
+    });
   }
 
   @Patch('admin/cards/:id')
@@ -479,11 +505,43 @@ export class GachaController {
   @Audit('UPDATE_GACHA_CARD', 'Card')
   adminUpdateCard(
     @Param('id') id: string,
-    @Body() body: { name?: string; image?: string; rarity?: string },
+    @Body()
+    body: {
+      name?: string;
+      image?: string;
+      rarity?: string;
+      animeId?: string;
+      status?: string;
+      variantName?: string;
+      variantType?: string;
+    },
+    @Req() req?: AuthenticatedRequest,
   ) {
     if (body.rarity !== undefined && !body.rarity.trim())
       throw new BadRequestException('Raridade inválida.');
+    if (body.animeId !== undefined && !body.animeId.trim())
+      throw new BadRequestException('Anime obrigatório.');
+    if (body.image !== undefined && !/^https:\/\//i.test(body.image))
+      throw new BadRequestException('Imagem deve usar HTTPS.');
+    if (body.status !== undefined && req?.user.role !== 'SUPERADMIN')
+      throw new ForbiddenException('Somente SUPERADMIN pode alterar status.');
     return this.gachaService.adminUpdateCard(id, body);
+  }
+
+  @Post('admin/cards/:id/publish')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SUPERADMIN')
+  @Audit('PUBLISH_GACHA_CARD', 'Card')
+  adminPublishCard(@Param('id') id: string) {
+    return this.gachaService.adminUpdateCard(id, { status: 'ACTIVE' });
+  }
+
+  @Post('admin/cards/:id/archive')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SUPERADMIN')
+  @Audit('ARCHIVE_GACHA_CARD', 'Card')
+  adminArchiveCard(@Param('id') id: string) {
+    return this.gachaService.adminUpdateCard(id, { status: 'ARCHIVED' });
   }
 
   @Get('admin/rarities')

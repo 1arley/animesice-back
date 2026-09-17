@@ -7,7 +7,12 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { CrystalEventType, Prisma } from '@prisma/client';
+import {
+  CardSource,
+  CardStatus,
+  CrystalEventType,
+  Prisma,
+} from '@prisma/client';
 import { PrismaService } from '@/prisma/prisma.service';
 import {
   GACHA_BYPASS_PRICE_CENTS,
@@ -1118,10 +1123,10 @@ export class GachaService {
 
   private async drawFromTier(tier: GachaTier) {
     const poolSize = await this.prisma.card.count({
-      where: { rarity: tier },
+      where: { rarity: tier, status: 'ACTIVE' },
     });
     const card = await this.prisma.card.findFirst({
-      where: { rarity: tier },
+      where: { rarity: tier, status: 'ACTIVE' },
       skip: Math.floor(Math.random() * poolSize),
       select: {
         id: true,
@@ -1740,7 +1745,15 @@ export class GachaService {
     }
   }
 
-  async adminCards(page = 1, limit = 24, search?: string, rarity?: string) {
+  async adminCards(
+    page = 1,
+    limit = 24,
+    search?: string,
+    rarity?: string,
+    animeId?: string,
+    status?: string,
+    source?: string,
+  ) {
     const where: Prisma.CardWhereInput = {};
     if (search) {
       where.name = { contains: search, mode: 'insensitive' };
@@ -1748,6 +1761,11 @@ export class GachaService {
     if (rarity && (GACHA_TIERS as readonly string[]).includes(rarity)) {
       where.rarity = rarity;
     }
+    if (animeId) where.animeId = animeId;
+    if (status && Object.values(CardStatus).includes(status as CardStatus))
+      where.status = status as CardStatus;
+    if (source && Object.values(CardSource).includes(source as CardSource))
+      where.source = source as CardSource;
     const [data, total] = await this.prisma.$transaction([
       this.prisma.card.findMany({
         where,
@@ -1798,24 +1816,71 @@ export class GachaService {
     return this.prisma.gachaRarity.update({ where: { id }, data });
   }
 
-  adminCreateCard(data: { name: string; image?: string; rarity: string }) {
+  adminCreateCard(data: {
+    name: string;
+    image?: string;
+    rarity: string;
+    animeId: string;
+    source?: string;
+    variantName?: string;
+    variantType?: string;
+  }) {
     // ponytail: malCharacterId negativo sintético p/ carta manual; colidir
     // com carta real do MAL é impossível (IDs MAL são positivos).
     const malCharacterId = -randomInt(1, 2_000_000_000);
-    return this.prisma.card.create({ data: { ...data, malCharacterId } });
+    return this.prisma.card.create({
+      data: {
+        name: data.name,
+        image: data.image,
+        rarity: data.rarity,
+        animeId: data.animeId,
+        variantName: data.variantName,
+        variantType: data.variantType,
+        malCharacterId,
+        source: data.source === 'MAL' ? CardSource.MAL : CardSource.MANUAL,
+        status: CardStatus.DRAFT,
+      },
+    });
   }
 
   async adminUpdateCard(
     id: string,
-    data: { name?: string; image?: string; rarity?: string },
+    data: {
+      name?: string;
+      image?: string;
+      rarity?: string;
+      animeId?: string;
+      status?: string;
+      variantName?: string;
+      variantType?: string;
+    },
   ) {
     const updated = await this.prisma.$transaction(async (tx) => {
       const current = await tx.card.findUnique({
         where: { id },
-        select: { rarity: true },
+        select: { rarity: true, animeId: true, image: true, name: true },
       });
       if (!current) throw new NotFoundException('Carta não encontrada.');
-      const updatedCard = await tx.card.update({ where: { id }, data });
+      if (
+        data.status === 'ACTIVE' &&
+        ((!data.animeId && !current.animeId) ||
+          (!data.image && !current.image) ||
+          (!data.name && !current.name))
+      ) {
+        throw new BadRequestException(
+          'Carta precisa de anime, nome e imagem para publicar.',
+        );
+      }
+      const { status, ...fields } = data;
+      const updatedCard = await tx.card.update({
+        where: { id },
+        data: {
+          ...fields,
+          ...(status && Object.values(CardStatus).includes(status as CardStatus)
+            ? { status: status as CardStatus }
+            : {}),
+        },
+      });
       // Card rarity changes affect future pulls only; historical copies retain value.
       return { card: updatedCard, repriced: 0 };
     });

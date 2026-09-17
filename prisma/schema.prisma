@@ -845,6 +845,10 @@ model Card {
   animeId           String?
   anime             Anime?                  @relation(fields: [animeId], references: [id], onDelete: SetNull)
   animeTitle        String?
+  status            CardStatus @default(ACTIVE)
+  source            CardSource @default(MAL)
+  variantName       String?
+  variantType       String      @default("STANDARD")
   owners            UserCard[]
   collectionMembers GachaCollectionMember[]
   spins             GachaSpin[]
@@ -854,6 +858,7 @@ model Card {
 
   @@index([rarity])
   @@index([animeId])
+  @@index([status, rarity])
 }
 
 model GachaRarity {
@@ -925,6 +930,18 @@ model UserCard {
 enum UserCardStatus {
   ACTIVE
   BURNED
+}
+
+enum CardStatus {
+  DRAFT
+  REVIEW
+  ACTIVE
+  ARCHIVED
+}
+
+enum CardSource {
+  MAL
+  MANUAL
 }
 
 enum GachaCosmeticStatus {

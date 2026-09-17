@@ -883,7 +883,12 @@ describe('GachaService', () => {
         }),
       );
 
-      mockPrisma.card.findUnique.mockResolvedValue({ rarity: 'COMUM' });
+      mockPrisma.card.findUnique.mockResolvedValue({
+        rarity: 'COMUM',
+        animeId: 'a1',
+        image: 'https://img.test/card.jpg',
+        name: 'Card',
+      });
       mockPrisma.card.update.mockResolvedValue({ id: 'c1' });
       await service.adminUpdateCard('c1', { name: 'Novo' });
       expect(mockPrisma.card.update).toHaveBeenCalledWith({
@@ -891,7 +896,12 @@ describe('GachaService', () => {
         data: { name: 'Novo' },
       });
 
-      mockPrisma.card.findUnique.mockResolvedValue({ rarity: 'EPICA' });
+      mockPrisma.card.findUnique.mockResolvedValue({
+        rarity: 'EPICA',
+        animeId: 'a1',
+        image: 'https://img.test/card.jpg',
+        name: 'Card',
+      });
       mockPrisma.card.update.mockResolvedValue({
         id: 'c1',
         rarity: 'LENDARIA',
