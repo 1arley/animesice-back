@@ -113,7 +113,9 @@ export class WishlistService {
             include: {
               card: {
                 include: {
-                  anime: { select: { id: true, slug: true, title: true } },
+                  anime: {
+                    select: { id: true, slug: true, title: true, malId: true },
+                  },
                 },
               },
             },
@@ -173,6 +175,9 @@ export class WishlistService {
     const cardData = cards
       .map((entry) => ({
         ...entry,
+        card: entry.card.imageHidden
+          ? { ...entry.card, name: '???', image: null }
+          : entry.card,
         complete: (ownedByCard.get(entry.cardId) ?? []).some((copy) =>
           this.matchesCopy(copy, entry),
         ),

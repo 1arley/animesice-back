@@ -713,16 +713,42 @@ export class SocialService {
       )
       .map((p) => (p.meta as Record<string, unknown>).userCardId as string);
 
-    let currentCardMap = new Map<string, { value: number; rarity: string }>();
+    let currentCardMap = new Map<
+      string,
+      {
+        value: number;
+        rarity: string;
+        name: string;
+        image: string | null;
+        imageHidden: boolean;
+      }
+    >();
     if (gachaPullIds.length > 0) {
       const currentCards = await this.prisma.userCard.findMany({
         where: { id: { in: gachaPullIds } },
-        select: { id: true, value: true, card: { select: { rarity: true } } },
+        select: {
+          id: true,
+          value: true,
+          card: {
+            select: {
+              rarity: true,
+              name: true,
+              image: true,
+              imageHidden: true,
+            },
+          },
+        },
       });
       currentCardMap = new Map(
         currentCards.map((uc) => [
           uc.id,
-          { value: uc.value, rarity: uc.card.rarity },
+          {
+            value: uc.value,
+            rarity: uc.card.rarity,
+            name: uc.card.imageHidden ? '???' : uc.card.name,
+            image: uc.card.imageHidden ? null : uc.card.image,
+            imageHidden: uc.card.imageHidden,
+          },
         ]),
       );
     }
@@ -739,6 +765,10 @@ export class SocialService {
           const current = currentCardMap.get(ucId)!;
           (post.meta as Record<string, unknown>).value = current.value;
           (post.meta as Record<string, unknown>).rarity = current.rarity;
+          (post.meta as Record<string, unknown>).name = current.name;
+          (post.meta as Record<string, unknown>).image = current.image;
+          (post.meta as Record<string, unknown>).imageHidden =
+            current.imageHidden;
         }
       }
     }

@@ -850,6 +850,7 @@ model Card {
   malCharacterId    Int                     @unique
   name              String
   image             String?
+  imageHidden       Boolean                 @default(false)
   favourites        Int                     @default(0)
   rarity            String                  @default("COMUM")
   animeId           String?
@@ -958,6 +959,7 @@ model UserCard {
   foil           String         @default("NORMAL")
   edition        Int
   value          Int
+  valueOverride  Int?
   status         UserCardStatus @default(ACTIVE)
   obtainedAt     DateTime       @default(now())
 
@@ -970,6 +972,22 @@ model UserCard {
   @@index([cardId, edition])
   @@index([userId, value(sort: Desc)])
   @@index([originalUserId])
+}
+
+model GachaAdminChange {
+  id         String   @id @default(uuid())
+  adminId    String
+  action     String
+  cardId     String?
+  userCardId String?
+  reason     String?
+  before     Json?
+  after      Json?
+  createdAt  DateTime @default(now())
+
+  @@index([cardId, createdAt(sort: Desc)])
+  @@index([userCardId, createdAt(sort: Desc)])
+  @@index([adminId, createdAt(sort: Desc)])
 }
 
 enum UserCardStatus {

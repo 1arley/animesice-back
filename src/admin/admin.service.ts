@@ -143,9 +143,15 @@ export class AdminService {
   }
 
   async deleteAnime(slug: string) {
-    const anime = await this.prisma.anime.findUnique({ where: { slug } });
+    const anime = await this.prisma.anime.findUnique({
+      where: { slug },
+      include: { _count: { select: { cards: true } } },
+    });
     if (!anime) {
       throw new NotFoundException('Anime não encontrado.');
+    }
+    if (anime._count?.cards > 0) {
+      throw new ConflictException('Anime possui cartas vinculadas.');
     }
     await this.prisma.anime.delete({ where: { slug } });
     return { message: 'Anime removido.' };

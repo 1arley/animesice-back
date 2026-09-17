@@ -20,6 +20,8 @@ function makeMocks() {
       adminUserCards: jest.fn(),
       adminGrantUserCard: jest.fn(),
       adminDeleteUserCard: jest.fn(),
+      adminSetUserCardValue: jest.fn(),
+      adminGachaHistory: jest.fn(),
       adminResetRoll: jest.fn(),
       recent: jest.fn(),
       ranking: jest.fn(),
@@ -172,7 +174,11 @@ describe('GachaController', () => {
         animeId: 'a1',
         image: 'https://img.test/card.jpg',
       });
-      await controller.adminUpdateCard('c1', { rarity: 'RARA' });
+      await controller.adminUpdateCard(
+        'c1',
+        { rarity: 'RARA', reason: 'Ajuste editorial' },
+        req('admin'),
+      );
       await controller.adminUserCards('u1', '2', '10');
       await controller.adminGrantUserCard('u1', { cardId: 'c1' });
       await controller.adminDeleteUserCard('p1');
@@ -183,6 +189,9 @@ describe('GachaController', () => {
         10,
         'card',
         'RARA',
+        undefined,
+        undefined,
+        undefined,
       );
       expect(m.gachaService.adminCreateCard).toHaveBeenCalledWith({
         name: 'Card',
@@ -190,9 +199,11 @@ describe('GachaController', () => {
         animeId: 'a1',
         image: 'https://img.test/card.jpg',
       });
-      expect(m.gachaService.adminUpdateCard).toHaveBeenCalledWith('c1', {
-        rarity: 'RARA',
-      });
+      expect(m.gachaService.adminUpdateCard).toHaveBeenCalledWith(
+        'c1',
+        { rarity: 'RARA' },
+        { adminId: 'admin', reason: 'Ajuste editorial' },
+      );
       expect(m.gachaService.adminUserCards).toHaveBeenCalledWith('u1', 2, 10);
       expect(m.gachaService.adminGrantUserCard).toHaveBeenCalledWith(
         'u1',
@@ -212,7 +223,11 @@ describe('GachaController', () => {
         }),
       ).toThrow('Raridade inválida');
       expect(() =>
-        controller.adminUpdateCard('c1', { rarity: 'INVALIDA' }),
+        controller.adminUpdateCard(
+          'c1',
+          { rarity: 'INVALIDA', reason: 'Ajuste editorial' },
+          req('admin'),
+        ),
       ).toThrow('Raridade inválida');
     });
   });

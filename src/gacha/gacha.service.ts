@@ -55,6 +55,7 @@ const PULL_SELECT = {
   foil: true,
   edition: true,
   value: true,
+  valueOverride: true,
   obtainedAt: true,
   user: {
     select: {
@@ -74,12 +75,19 @@ const PULL_SELECT = {
       id: true,
       name: true,
       image: true,
+      imageHidden: true,
       rarity: true,
       favourites: true,
       animeId: true,
       animeTitle: true,
       anime: {
-        select: { id: true, slug: true, title: true, coverImage: true },
+        select: {
+          id: true,
+          slug: true,
+          title: true,
+          coverImage: true,
+          malId: true,
+        },
       },
     },
   },
@@ -116,12 +124,19 @@ const SPIN_SELECT = {
       id: true,
       name: true,
       image: true,
+      imageHidden: true,
       rarity: true,
       favourites: true,
       animeId: true,
       animeTitle: true,
       anime: {
-        select: { id: true, slug: true, title: true, coverImage: true },
+        select: {
+          id: true,
+          slug: true,
+          title: true,
+          coverImage: true,
+          malId: true,
+        },
       },
     },
   },
@@ -147,6 +162,18 @@ const TRADE_SELECT = {
 
 type TradeRow = Prisma.GachaTradeGetPayload<{ select: typeof TRADE_SELECT }>;
 
+const presentCard = <
+  T extends { name: string; image: string | null; imageHidden: boolean },
+>(
+  card: T,
+) => (card.imageHidden ? { ...card, name: '???', image: null } : card);
+
+const presentPull = (pull: Pull) => ({
+  ...pull,
+  conditionLabel: conditionLabel(pull.condition),
+  card: presentCard(pull.card),
+});
+
 const fmtTrade = (t: TradeRow) => ({
   ...t,
   offeredUserCards: t.cards
@@ -156,12 +183,10 @@ const fmtTrade = (t: TradeRow) => ({
     ?.filter((c) => c.side === 'REQUESTED')
     .map((c) => c.snapshot) ?? [t.requestedUserCard],
   offeredUserCard: {
-    ...t.offeredUserCard,
-    conditionLabel: conditionLabel(t.offeredUserCard.condition),
+    ...presentPull(t.offeredUserCard),
   },
   requestedUserCard: {
-    ...t.requestedUserCard,
-    conditionLabel: conditionLabel(t.requestedUserCard.condition),
+    ...presentPull(t.requestedUserCard),
   },
 });
 
@@ -351,6 +376,7 @@ export class GachaService {
     return spins.map((spin) => ({
       ...spin,
       conditionLabel: conditionLabel(spin.condition),
+      card: presentCard(spin.card),
     }));
   }
 
@@ -385,6 +411,7 @@ export class GachaService {
         return {
           ...spin,
           conditionLabel: conditionLabel(spin.condition),
+          card: presentCard(spin.card),
           pityDue: pity.pityDue,
         };
       } catch (error) {
@@ -500,10 +527,7 @@ export class GachaService {
       }
     }
 
-    return {
-      ...pull,
-      conditionLabel: conditionLabel(pull.condition),
-    };
+    return presentPull(pull);
   }
 
   // Resgate único de compensação: consome a Notification 'COMPENSATION'
@@ -579,10 +603,7 @@ export class GachaService {
       }
     }
 
-    return {
-      ...pull,
-      conditionLabel: conditionLabel(pull.condition),
-    };
+    return presentPull(pull);
   }
 
   async unlockClaim(
@@ -750,19 +771,21 @@ export class GachaService {
           data: {
             condition,
             foil,
-            value: cardValue(
-              card.card.rarity as GachaTier,
-              condition,
-              foil,
-              card.edition,
-            ),
+            value:
+              card.valueOverride ??
+              cardValue(
+                card.card.rarity as GachaTier,
+                condition,
+                foil,
+                card.edition,
+              ),
           },
           select: PULL_SELECT,
         });
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     );
-    return { ...pull, conditionLabel: conditionLabel(pull.condition) };
+    return presentPull(pull);
   }
 
   async buyCosmetic(userId: string, key: string) {
@@ -971,7 +994,7 @@ export class GachaService {
     if (!Number.isSafeInteger(price) || price < 1 || price > 2_147_483_647) {
       throw new BadRequestException('Preço deve ser um inteiro positivo.');
     }
-    return this.prisma.$transaction(
+    const listing = await this.prisma.$transaction(
       async (tx) => {
         const card = await tx.userCard.findFirst({
           where: { id: userCardId, userId, status: 'ACTIVE' },
@@ -1028,6 +1051,7 @@ export class GachaService {
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     );
+    return { ...listing, userCard: presentPull(listing.userCard) };
   }
 
   async listings(
@@ -1074,9 +1098,13 @@ export class GachaService {
       }),
       this.prisma.gachaListing.count({ where }),
     ]);
+    const presented = items.map((item) => ({
+      ...item,
+      userCard: presentPull(item.userCard),
+    }));
     const data = this.wishlistService
       ? await Promise.all(
-          items.map(async (item) => ({
+          presented.map(async (item) => ({
             ...item,
             interestedCount: await this.wishlistService!.interestedCount(
               item.userCard.card.id,
@@ -1085,7 +1113,7 @@ export class GachaService {
             ),
           })),
         )
-      : items;
+      : presented;
     return {
       data,
       meta: {
@@ -1103,11 +1131,15 @@ export class GachaService {
       where: { userId, status: 'ACTIVE', expiresAt: { lte: now } },
       data: { status: 'EXPIRED' },
     });
-    return this.prisma.gachaListing.findMany({
+    const listings = await this.prisma.gachaListing.findMany({
       where: { userId, status: 'ACTIVE' },
       orderBy: { createdAt: 'desc' },
       select: LISTING_SELECT,
     });
+    return listings.map((listing) => ({
+      ...listing,
+      userCard: presentPull(listing.userCard),
+    }));
   }
 
   async cancelListing(userId: string, listingId: string) {
@@ -1286,10 +1318,7 @@ export class GachaService {
     ]);
 
     return {
-      data: pulls.map((pull) => ({
-        ...pull,
-        conditionLabel: conditionLabel(pull.condition),
-      })),
+      data: pulls.map(presentPull),
       stats: { total, totalValue: stats._sum.value ?? 0 },
       meta: {
         total,
@@ -1323,8 +1352,7 @@ export class GachaService {
     if (!pull) return null;
     const setComplete = await this.setCompleteFor(userId, pull.card.animeId);
     return {
-      ...pull,
-      conditionLabel: conditionLabel(pull.condition),
+      ...presentPull(pull),
       setComplete,
     };
   }
@@ -1433,7 +1461,7 @@ export class GachaService {
       select: PULL_SELECT,
     });
     if (!pull) throw new NotFoundException('Carta não encontrada.');
-    return { ...pull, conditionLabel: conditionLabel(pull.condition) };
+    return presentPull(pull);
   }
 
   async publicFeatured(userId: string) {
@@ -1452,8 +1480,7 @@ export class GachaService {
     if (!pull) return null;
     const setComplete = await this.setCompleteFor(userId, pull.card.animeId);
     return {
-      ...pull,
-      conditionLabel: conditionLabel(pull.condition),
+      ...presentPull(pull),
       setComplete,
     };
   }
@@ -1479,6 +1506,7 @@ export class GachaService {
         id: string;
         name: string;
         image: string | null;
+        imageHidden: boolean;
         rarity: string;
         favourites: number;
         owned: boolean;
@@ -1507,6 +1535,7 @@ export class GachaService {
       id: string;
       name: string;
       image: string | null;
+      imageHidden: boolean;
       rarity: string;
       favourites: number;
       owned: boolean;
@@ -1525,6 +1554,7 @@ export class GachaService {
         id: string;
         name: string;
         image: string | null;
+        imageHidden: boolean;
         rarity: string;
         favourites: number;
         owned: boolean;
@@ -1590,6 +1620,7 @@ export class GachaService {
           id: string;
           name: string;
           image: string | null;
+          imageHidden: boolean;
           rarity: string;
           favourites: number;
           owned: boolean;
@@ -1622,8 +1653,9 @@ export class GachaService {
       if (wish?.set) set.wishlisted = true;
       set.cards.push({
         id: card.id,
-        name: card.name,
-        image: card.image,
+        image: card.imageHidden ? null : card.image,
+        imageHidden: card.imageHidden,
+        name: card.imageHidden ? '???' : card.name,
         rarity: card.rarity,
         favourites: card.favourites,
         owned: has,
@@ -1774,6 +1806,7 @@ export class GachaService {
       .map(({ user, ...pull }) => ({
         ...pull,
         conditionLabel: conditionLabel(pull.condition),
+        card: presentCard(pull.card),
         user: {
           id: user.id,
           name: user.name,
@@ -1880,6 +1913,9 @@ export class GachaService {
         skip: (page - 1) * limit,
         take: limit,
         orderBy: { name: 'asc' },
+        include: {
+          anime: { select: { id: true, slug: true, title: true, malId: true } },
+        },
       }),
       this.prisma.card.count({ where }),
     ]);
@@ -1929,6 +1965,7 @@ export class GachaService {
     image?: string;
     rarity: string;
     animeId: string;
+    imageHidden?: boolean;
     source?: string;
     variantName?: string;
     variantType?: string;
@@ -1940,6 +1977,7 @@ export class GachaService {
       data: {
         name: data.name,
         image: data.image,
+        imageHidden: data.imageHidden ?? false,
         rarity: data.rarity,
         animeId: data.animeId,
         variantName: data.variantName,
@@ -1958,15 +1996,23 @@ export class GachaService {
       image?: string;
       rarity?: string;
       animeId?: string;
+      imageHidden?: boolean;
       status?: string;
       variantName?: string;
       variantType?: string;
     },
+    actor?: { adminId: string; reason?: string },
   ) {
     const updated = await this.prisma.$transaction(async (tx) => {
       const current = await tx.card.findUnique({
         where: { id },
-        select: { rarity: true, animeId: true, image: true, name: true },
+        select: {
+          rarity: true,
+          animeId: true,
+          image: true,
+          imageHidden: true,
+          name: true,
+        },
       });
       if (!current) throw new NotFoundException('Carta não encontrada.');
       if (
@@ -1980,6 +2026,20 @@ export class GachaService {
         );
       }
       const { status, ...fields } = data;
+      const rarityChanged =
+        data.rarity !== undefined && data.rarity !== current.rarity;
+      const copies = rarityChanged
+        ? await tx.userCard.findMany({
+            where: { cardId: id, valueOverride: null },
+            select: {
+              id: true,
+              condition: true,
+              foil: true,
+              edition: true,
+              value: true,
+            },
+          })
+        : [];
       const updatedCard = await tx.card.update({
         where: { id },
         data: {
@@ -1989,10 +2049,54 @@ export class GachaService {
             : {}),
         },
       });
-      // Card rarity changes affect future pulls only; historical copies retain value.
-      return { card: updatedCard, repriced: 0 };
+      let previousTotal = 0;
+      let nextTotal = 0;
+      for (const copy of copies) {
+        const nextValue = cardValue(
+          updatedCard.rarity as GachaTier,
+          copy.condition,
+          copy.foil as GachaFoil,
+          copy.edition,
+        );
+        previousTotal += copy.value;
+        nextTotal += nextValue;
+        await tx.userCard.update({
+          where: { id: copy.id },
+          data: { value: nextValue },
+        });
+      }
+      if (actor) {
+        await tx.gachaAdminChange.create({
+          data: {
+            adminId: actor.adminId,
+            action: rarityChanged ? 'UPDATE_CARD_AND_REPRICE' : 'UPDATE_CARD',
+            cardId: id,
+            reason: actor.reason,
+            before: current,
+            after: {
+              rarity: updatedCard.rarity,
+              animeId: updatedCard.animeId,
+              imageHidden: updatedCard.imageHidden,
+              repriced: copies.length,
+              previousTotal,
+              nextTotal,
+            },
+          },
+        });
+      }
+      return {
+        card: updatedCard,
+        repriced: copies.length,
+        previousTotal,
+        nextTotal,
+      };
     });
-    return { ...updated.card, repriced: updated.repriced };
+    return {
+      ...updated.card,
+      repriced: updated.repriced,
+      previousTotal: updated.previousTotal,
+      nextTotal: updated.nextTotal,
+    };
   }
 
   adminUserCards(userId: string, page = 1, limit = 50) {
@@ -2058,6 +2162,72 @@ export class GachaService {
     });
   }
 
+  async adminSetUserCardValue(
+    id: string,
+    value: number | null,
+    reason: string,
+    adminId: string,
+  ) {
+    return this.prisma.$transaction(async (tx) => {
+      const current = await tx.userCard.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          value: true,
+          valueOverride: true,
+          condition: true,
+          foil: true,
+          edition: true,
+          card: { select: { id: true, rarity: true } },
+        },
+      });
+      if (!current)
+        throw new NotFoundException('Carta do usuário não encontrada.');
+      const nextValue =
+        value ??
+        cardValue(
+          current.card.rarity as GachaTier,
+          current.condition,
+          current.foil as GachaFoil,
+          current.edition,
+        );
+      const updated = await tx.userCard.update({
+        where: { id },
+        data: { value: nextValue, valueOverride: value },
+        select: PULL_SELECT,
+      });
+      await tx.gachaAdminChange.create({
+        data: {
+          adminId,
+          action:
+            value === null
+              ? 'RESTORE_USER_CARD_VALUE'
+              : 'OVERRIDE_USER_CARD_VALUE',
+          cardId: current.card.id,
+          userCardId: id,
+          reason,
+          before: {
+            value: current.value,
+            valueOverride: current.valueOverride,
+          },
+          after: { value: nextValue, valueOverride: value },
+        },
+      });
+      return presentPull(updated);
+    });
+  }
+
+  adminGachaHistory(cardId?: string, userCardId?: string) {
+    return this.prisma.gachaAdminChange.findMany({
+      where: {
+        ...(cardId ? { cardId } : {}),
+        ...(userCardId ? { userCardId } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+  }
+
   async adminResetRoll(userId: string) {
     const [day, spins, lock] = await this.prisma.$transaction([
       this.prisma.gachaRollDay.deleteMany({
@@ -2119,12 +2289,19 @@ export class GachaService {
               id: true,
               name: true,
               image: true,
+              imageHidden: true,
               rarity: true,
               favourites: true,
               animeId: true,
               animeTitle: true,
               anime: {
-                select: { id: true, slug: true, title: true, coverImage: true },
+                select: {
+                  id: true,
+                  slug: true,
+                  title: true,
+                  coverImage: true,
+                  malId: true,
+                },
               },
             },
           },
@@ -2169,7 +2346,7 @@ export class GachaService {
         conditionLabel: conditionLabel(c.condition),
         foil: c.foil,
         value: c.value,
-        card: c.card,
+        card: presentCard(c.card),
       });
       const trade = await this.prisma.gachaTrade.create({
         data: {
@@ -2491,17 +2668,19 @@ export class GachaService {
     });
     if (privacy && !privacy.showGacha) return null;
 
+    const card = presentCard(pull.card);
     return this.prisma.post.create({
       data: {
         userId,
         kind: 'GACHA_PULL',
-        content: `Tirou ${pull.card.name} — ${pull.card.rarity} ${pull.foil} ${conditionLabel(pull.condition)} #${pull.edition}`,
+        content: `Tirou ${card.name} — ${card.rarity} ${pull.foil} ${conditionLabel(pull.condition)} #${pull.edition}`,
         animeId: pull.card.animeId,
         meta: {
           userCardId: pull.id,
           cardId: pull.card.id,
-          name: pull.card.name,
-          image: pull.card.image,
+          name: card.name,
+          image: card.image,
+          imageHidden: card.imageHidden,
           rarity: pull.card.rarity,
           foil: pull.foil,
           condition: pull.condition,

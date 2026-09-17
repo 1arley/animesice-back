@@ -124,6 +124,10 @@ describe('GachaService', () => {
       create: jest.fn(),
       update: jest.fn(),
     },
+    gachaAdminChange: {
+      create: jest.fn(),
+      findMany: jest.fn(),
+    },
     $transaction: jest.fn(),
   };
 
@@ -907,15 +911,24 @@ describe('GachaService', () => {
         rarity: 'LENDARIA',
       });
       mockPrisma.userCard.findMany.mockResolvedValue([
-        { id: 'p1', condition: 0.05, foil: 'NORMAL', edition: 1 },
+        {
+          id: 'p1',
+          condition: 0.05,
+          foil: 'NORMAL',
+          edition: 1,
+          value: 100,
+        },
       ]);
       mockPrisma.userCard.update.mockResolvedValue({ id: 'p1' });
 
       const repriced = await service.adminUpdateCard('c1', {
         rarity: 'LENDARIA',
       });
-      expect(repriced).toMatchObject({ repriced: 0 });
-      expect(mockPrisma.userCard.update).not.toHaveBeenCalled();
+      expect(repriced).toMatchObject({ repriced: 1 });
+      expect(mockPrisma.userCard.update).toHaveBeenCalledWith({
+        where: { id: 'p1' },
+        data: { value: cardValue('LENDARIA', 0.05, 'NORMAL', 1) },
+      });
       mockPrisma.card.findUnique.mockResolvedValue(null);
       await expect(
         service.adminUpdateCard('ghost', { rarity: 'RARA' }),
@@ -1047,6 +1060,10 @@ describe('GachaService', () => {
               : { id: 'rc1', userId: 'u2' },
           ),
       );
+      mockPrisma.userCard.findMany.mockResolvedValue([
+        { id: 'oc1', userId: 'u1' },
+        { id: 'rc1', userId: 'u2' },
+      ]);
     }
 
     describe('createTrade', () => {
@@ -1255,11 +1272,11 @@ describe('GachaService', () => {
         const res = await service.acceptTrade('u2', 't1');
 
         expect(mockPrisma.userCard.updateMany).toHaveBeenCalledWith({
-          where: { id: 'oc1', userId: 'u1' },
+          where: { id: { in: ['oc1'] }, userId: 'u1' },
           data: { userId: 'u2' },
         });
         expect(mockPrisma.userCard.updateMany).toHaveBeenCalledWith({
-          where: { id: 'rc1', userId: 'u2' },
+          where: { id: { in: ['rc1'] }, userId: 'u2' },
           data: { userId: 'u1' },
         });
         expect(mockPrisma.user.updateMany).toHaveBeenCalledWith({

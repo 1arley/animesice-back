@@ -39,6 +39,7 @@ import { Audit } from '@/auth/decorators/audit.decorator';
 import { DEFAULT_PAGE } from '@/common/constants';
 import type { AuthenticatedRequest } from '@/common/interfaces/request.interface';
 import type { Request } from 'express';
+import { GACHA_TIERS } from '@/gacha/gacha.constants';
 
 type OptionalAuthRequest = Request & { user?: AuthenticatedRequest['user'] };
 
@@ -588,6 +589,7 @@ export class GachaController {
     body: {
       name: string;
       image?: string;
+      imageHidden?: boolean;
       rarity: string;
       animeId?: string;
       source?: string;
@@ -595,8 +597,8 @@ export class GachaController {
       variantType?: string;
     },
   ) {
-    if (!body.rarity?.trim())
-      throw new BadRequestException('Raridade obrigatória.');
+    if (!(GACHA_TIERS as readonly string[]).includes(body.rarity))
+      throw new BadRequestException('Raridade inválida.');
     if (!body.name?.trim()) throw new BadRequestException('Nome obrigatório.');
     if (!body.animeId?.trim())
       throw new BadRequestException('Anime obrigatório.');
@@ -620,15 +622,20 @@ export class GachaController {
     body: {
       name?: string;
       image?: string;
+      imageHidden?: boolean;
       rarity?: string;
       animeId?: string;
       status?: string;
       variantName?: string;
       variantType?: string;
+      reason?: string;
     },
     @Req() req?: AuthenticatedRequest,
   ) {
-    if (body.rarity !== undefined && !body.rarity.trim())
+    if (
+      body.rarity !== undefined &&
+      !(GACHA_TIERS as readonly string[]).includes(body.rarity)
+    )
       throw new BadRequestException('Raridade inválida.');
     if (body.animeId !== undefined && !body.animeId.trim())
       throw new BadRequestException('Anime obrigatório.');
@@ -636,23 +643,40 @@ export class GachaController {
       throw new BadRequestException('Imagem deve usar HTTPS.');
     if (body.status !== undefined && req?.user.role !== 'SUPERADMIN')
       throw new ForbiddenException('Somente SUPERADMIN pode alterar status.');
-    return this.gachaService.adminUpdateCard(id, body);
+    if (
+      (body.rarity !== undefined || body.animeId !== undefined) &&
+      (!body.reason || body.reason.trim().length < 10)
+    )
+      throw new BadRequestException('Motivo deve ter ao menos 10 caracteres.');
+    const { reason, ...data } = body;
+    return this.gachaService.adminUpdateCard(id, data, {
+      adminId: req!.user.id,
+      reason: reason?.trim(),
+    });
   }
 
   @Post('admin/cards/:id/publish')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('SUPERADMIN')
   @Audit('PUBLISH_GACHA_CARD', 'Card')
-  adminPublishCard(@Param('id') id: string) {
-    return this.gachaService.adminUpdateCard(id, { status: 'ACTIVE' });
+  adminPublishCard(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    return this.gachaService.adminUpdateCard(
+      id,
+      { status: 'ACTIVE' },
+      { adminId: req.user.id },
+    );
   }
 
   @Post('admin/cards/:id/archive')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('SUPERADMIN')
   @Audit('ARCHIVE_GACHA_CARD', 'Card')
-  adminArchiveCard(@Param('id') id: string) {
-    return this.gachaService.adminUpdateCard(id, { status: 'ARCHIVED' });
+  adminArchiveCard(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    return this.gachaService.adminUpdateCard(
+      id,
+      { status: 'ARCHIVED' },
+      { adminId: req.user.id },
+    );
   }
 
   @Get('admin/rarities')
@@ -729,6 +753,44 @@ export class GachaController {
   @Audit('DELETE_GACHA_USER_CARD', 'UserCard')
   adminDeleteUserCard(@Param('id') id: string) {
     return this.gachaService.adminDeleteUserCard(id);
+  }
+
+  @Patch('admin/user-cards/:id/value')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SUPERADMIN')
+  @Audit('UPDATE_GACHA_USER_CARD_VALUE', 'UserCard')
+  adminSetUserCardValue(
+    @Param('id') id: string,
+    @Body() body: { value: number | null; reason: string },
+    @Req() req: AuthenticatedRequest,
+  ) {
+    if (
+      body.value !== null &&
+      (!Number.isSafeInteger(body.value) ||
+        body.value < 0 ||
+        body.value > 1_000_000)
+    )
+      throw new BadRequestException(
+        'Valor deve ser inteiro entre 0 e 1000000.',
+      );
+    if (!body.reason?.trim() || body.reason.trim().length < 10)
+      throw new BadRequestException('Motivo deve ter ao menos 10 caracteres.');
+    return this.gachaService.adminSetUserCardValue(
+      id,
+      body.value,
+      body.reason.trim(),
+      req.user.id,
+    );
+  }
+
+  @Get('admin/history')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  adminGachaHistory(
+    @Query('cardId') cardId?: string,
+    @Query('userCardId') userCardId?: string,
+  ) {
+    return this.gachaService.adminGachaHistory(cardId, userCardId);
   }
 
   @Post('admin/users/:userId/reset-roll')
