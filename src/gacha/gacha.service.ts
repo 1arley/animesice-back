@@ -1414,24 +1414,36 @@ export class GachaService {
     };
   }
 
-  async skinCatalog(userId: string) {
-    const [skins, user] = await this.prisma.$transaction([
+  async skinCatalog(userId: string, page = 1, limit = 48) {
+    const safeLimit = Math.min(Math.max(limit, 1), 100);
+    const safePage = Math.max(page, 1);
+    const where: Prisma.GachaSkinWhereInput = { active: true, blocked: false };
+    const skinSelect: Prisma.GachaSkinSelect = {
+      id: true,
+      name: true,
+      imageUrl: true,
+      sourceUrl: true,
+      active: true,
+      blocked: true,
+      card: { select: { id: true, name: true, malCharacterId: true } },
+      owners: {
+        where: { userId },
+        select: { acquiredAt: true, name: true, imageUrl: true },
+      },
+    };
+    const [total, skins, ownedSkins, user] = await this.prisma.$transaction([
+      this.prisma.gachaSkin.count({ where }),
       this.prisma.gachaSkin.findMany({
-        where: { active: true, blocked: false },
+        where,
         orderBy: [{ name: 'asc' }, { id: 'asc' }],
-        select: {
-          id: true,
-          name: true,
-          imageUrl: true,
-          sourceUrl: true,
-          active: true,
-          blocked: true,
-          card: { select: { id: true, name: true, malCharacterId: true } },
-          owners: {
-            where: { userId },
-            select: { acquiredAt: true, name: true, imageUrl: true },
-          },
-        },
+        skip: (safePage - 1) * safeLimit,
+        take: safeLimit,
+        select: skinSelect,
+      }),
+      this.prisma.gachaSkin.findMany({
+        where: { ...where, owners: { some: { userId } } },
+        orderBy: [{ name: 'asc' }, { id: 'asc' }],
+        select: skinSelect,
       }),
       this.prisma.user.findUniqueOrThrow({
         where: { id: userId },
@@ -1444,23 +1456,32 @@ export class GachaService {
     ]);
     const now = Date.now();
     const nextSpinAt = user.nextGachaSkinSpinAt;
+    const present = (skin: (typeof skins)[number]) => {
+      const { owners, ...rest } = skin;
+      const owned = owners[0];
+      return {
+        ...rest,
+        ...(owned ? { name: owned.name, imageUrl: owned.imageUrl } : {}),
+        owned: owned !== undefined,
+        acquiredAt: owned?.acquiredAt ?? null,
+        equipped: rest.id === user.equippedGachaSkinId,
+      };
+    };
     return {
-      skins: skins.map(({ owners, ...skin }) => {
-        const owned = owners[0];
-        return {
-          ...skin,
-          ...(owned ? { name: owned.name, imageUrl: owned.imageUrl } : {}),
-          owned: owned !== undefined,
-          acquiredAt: owned?.acquiredAt ?? null,
-          equipped: skin.id === user.equippedGachaSkinId,
-        };
-      }),
+      skins: skins.map(present),
+      owned: ownedSkins.map(present),
       equippedSkinId: user.equippedGachaSkinId,
       crystalBalance: user.crystalBalance,
       canSpin: !nextSpinAt || nextSpinAt.getTime() <= now,
       nextSpinAt: nextSpinAt?.toISOString() ?? null,
       spinPrice: SKIN_SPIN_PRICE,
       cooldownHours: 12,
+      meta: {
+        total,
+        page: safePage,
+        limit: safeLimit,
+        totalPages: Math.max(1, Math.ceil(total / safeLimit)),
+      },
     };
   }
 

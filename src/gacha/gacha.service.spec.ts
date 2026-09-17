@@ -126,6 +126,7 @@ describe('GachaService', () => {
     },
     gachaSkin: {
       findMany: jest.fn(),
+      count: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
     },
@@ -1802,6 +1803,7 @@ describe('GachaService', () => {
 
     it('lista skins com posse e cooldown', async () => {
       const nextSpinAt = new Date(Date.now() + 60_000);
+      mockPrisma.gachaSkin.count.mockResolvedValue(1);
       mockPrisma.gachaSkin.findMany.mockResolvedValue([
         {
           id: 's1',
@@ -1826,6 +1828,8 @@ describe('GachaService', () => {
         owned: true,
         equipped: true,
       });
+      expect(result.owned[0]).toMatchObject({ id: 's1', owned: true });
+      expect(result.meta).toMatchObject({ total: 1, page: 1 });
     });
 
     it('gira skin grátis e registra cooldown', async () => {

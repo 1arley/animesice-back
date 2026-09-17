@@ -205,8 +205,13 @@ export class GachaController {
   @UseGuards(JwtAuthGuard, VerifiedGuard)
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({ summary: 'Catálogo e coleção de skins' })
-  skins(@Req() req: AuthenticatedRequest) {
-    return this.gachaService.skinCatalog(req.user.id);
+  skins(
+    @Req() req: AuthenticatedRequest,
+    @Query('page', new DefaultValuePipe(DEFAULT_PAGE), ParseIntPipe)
+    page: number,
+    @Query('limit', new DefaultValuePipe(48), ParseIntPipe) limit: number,
+  ) {
+    return this.gachaService.skinCatalog(req.user.id, page, limit);
   }
 
   @Post('skins/spin')

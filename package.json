@@ -45,6 +45,8 @@
     "backfill:meusanimes-sources": "ts-node scripts/backfill-meusanimes-sources.ts",
     "sync:status-mal": "ts-node scripts/sync-status-mal.ts",
     "fuzzy:dry": "ts-node scripts/fuzzy-dry-run.ts",
+    "backfill:skin-images": "ts-node scripts/backfill-skin-images.ts",
+    "backfill:skin-images:dry": "ts-node scripts/backfill-skin-images.ts --dry --limit 10",
     "docker:build": "docker compose build",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
