@@ -124,6 +124,15 @@ describe('GachaService', () => {
       create: jest.fn(),
       update: jest.fn(),
     },
+    gachaSkin: {
+      findMany: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+    },
+    userGachaSkin: {
+      findUnique: jest.fn(),
+      create: jest.fn(),
+    },
     gachaAdminChange: {
       create: jest.fn(),
       findMany: jest.fn(),
@@ -1789,6 +1798,77 @@ describe('GachaService', () => {
       ).rejects.toBeInstanceOf(ConflictException);
       // Transaction is still entered for atomicity, but no userCard updates happen.
       expect(mockPrisma.userCard.update).not.toHaveBeenCalled();
+    });
+
+    it('lista skins com posse e cooldown', async () => {
+      const nextSpinAt = new Date(Date.now() + 60_000);
+      mockPrisma.gachaSkin.findMany.mockResolvedValue([
+        {
+          id: 's1',
+          name: 'Asuka',
+          imageUrl: 'https://cdn.example/asuka.webp',
+          sourceUrl: 'https://myanimelist.net/character/1',
+          active: true,
+          blocked: false,
+          card: { id: 'c1', name: 'Asuka', malCharacterId: 1 },
+          owners: [{ acquiredAt: new Date(0) }],
+        },
+      ]);
+      mockPrisma.user.findUniqueOrThrow.mockResolvedValue({
+        crystalBalance: 2000,
+        equippedGachaSkinId: 's1',
+        nextGachaSkinSpinAt: nextSpinAt,
+      });
+      const result = await service.skinCatalog('u1');
+      expect(result.canSpin).toBe(false);
+      expect(result.skins[0]).toMatchObject({
+        id: 's1',
+        owned: true,
+        equipped: true,
+      });
+    });
+
+    it('gira skin grátis e registra cooldown', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue({
+        crystalBalance: 0,
+        nextGachaSkinSpinAt: null,
+      });
+      mockPrisma.gachaSkin.findMany.mockResolvedValue([
+        {
+          id: 's1',
+          name: 'Asuka',
+          imageUrl: 'https://cdn.example/asuka.webp',
+          sourceUrl: null,
+          card: null,
+        },
+      ]);
+      mockPrisma.userGachaSkin.create.mockResolvedValue({ id: 'us1' });
+      mockPrisma.user.update.mockResolvedValue({});
+      const result = await service.spinSkin('u1');
+      expect(result.price).toBe(0);
+      expect(mockPrisma.crystalEvent.create).not.toHaveBeenCalled();
+      expect(mockPrisma.userGachaSkin.create).toHaveBeenCalledWith({
+        data: {
+          userId: 'u1',
+          skinId: 's1',
+          name: 'Asuka',
+          imageUrl: 'https://cdn.example/asuka.webp',
+        },
+      });
+    });
+
+    it('equipa e remove skin somente se pertencer ao usuário', async () => {
+      mockPrisma.userGachaSkin.findUnique.mockResolvedValue({
+        skin: { blocked: false },
+      });
+      mockPrisma.user.update.mockResolvedValue({ equippedGachaSkinId: 's1' });
+      await expect(service.equipSkin('u1', 's1')).resolves.toEqual({
+        equippedSkinId: 's1',
+      });
+      mockPrisma.user.update.mockResolvedValue({ equippedGachaSkinId: null });
+      await expect(service.equipSkin('u1', null)).resolves.toEqual({
+        equippedSkinId: null,
+      });
     });
   });
 });

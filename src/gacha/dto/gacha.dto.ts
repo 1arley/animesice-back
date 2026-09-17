@@ -4,12 +4,14 @@ import {
   ArrayUnique,
   IsArray,
   IsBoolean,
+  IsDefined,
   IsEnum,
   IsInt,
   IsIn,
   IsNotEmpty,
   IsOptional,
   IsString,
+  ValidateIf,
   Max,
   Min,
 } from 'class-validator';
@@ -48,6 +50,14 @@ export class BuyCosmeticDto {
   @IsString()
   @IsNotEmpty()
   key!: string;
+}
+
+export class EquipGachaSkinDto {
+  @ApiProperty({ nullable: true })
+  @IsDefined()
+  @ValidateIf((value: EquipGachaSkinDto) => value.skinId !== null)
+  @IsString()
+  skinId!: string | null;
 }
 
 export class CreateListingDto {

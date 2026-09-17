@@ -29,6 +29,7 @@ import {
   UpsertSetWishlistDto,
   WishlistPrivacyDto,
   WishlistPriorityDto,
+  EquipGachaSkinDto,
 } from '@/gacha/dto/gacha.dto';
 import { JwtAuthGuard } from '@/auth/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from '@/auth/optional-jwt-auth.guard';
@@ -198,6 +199,30 @@ export class GachaController {
   @ApiOperation({ summary: 'Status do roll diário e pity' })
   status(@Req() req: AuthenticatedRequest) {
     return this.gachaService.status(req.user.id);
+  }
+
+  @Get('skins')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Catálogo e coleção de skins' })
+  skins(@Req() req: AuthenticatedRequest) {
+    return this.gachaService.skinCatalog(req.user.id);
+  }
+
+  @Post('skins/spin')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Gira skin (grátis a cada 12h ou 1000 Crystals)' })
+  spinSkin(@Req() req: AuthenticatedRequest) {
+    return this.gachaService.spinSkin(req.user.id);
+  }
+
+  @Patch('skins/equip')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Equipa ou remove skin de perfil' })
+  equipSkin(@Req() req: AuthenticatedRequest, @Body() dto: EquipGachaSkinDto) {
+    return this.gachaService.equipSkin(req.user.id, dto.skinId ?? null);
   }
 
   @Get('points')
@@ -677,6 +702,50 @@ export class GachaController {
       { status: 'ARCHIVED' },
       { adminId: req.user.id },
     );
+  }
+
+  @Post('admin/skins')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  @Audit('CREATE_GACHA_SKIN', 'GachaSkin')
+  adminCreateSkin(
+    @Body()
+    body: {
+      name: string;
+      imageUrl: string;
+      cardId?: string;
+      sourceUrl?: string;
+      active?: boolean;
+    },
+  ) {
+    if (!body.name?.trim()) throw new BadRequestException('Nome obrigatório.');
+    if (!/^https:\/\//i.test(body.imageUrl ?? ''))
+      throw new BadRequestException('Imagem deve usar HTTPS.');
+    if (body.sourceUrl && !/^https:\/\//i.test(body.sourceUrl))
+      throw new BadRequestException('Fonte deve usar HTTPS.');
+    return this.gachaService.adminCreateSkin(body);
+  }
+
+  @Patch('admin/skins/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  @Audit('UPDATE_GACHA_SKIN', 'GachaSkin')
+  adminUpdateSkin(
+    @Param('id') id: string,
+    @Body()
+    body: {
+      name?: string;
+      imageUrl?: string;
+      sourceUrl?: string;
+      active?: boolean;
+      blocked?: boolean;
+    },
+  ) {
+    if (body.imageUrl !== undefined && !/^https:\/\//i.test(body.imageUrl))
+      throw new BadRequestException('Imagem deve usar HTTPS.');
+    if (body.sourceUrl !== undefined && !/^https:\/\//i.test(body.sourceUrl))
+      throw new BadRequestException('Fonte deve usar HTTPS.');
+    return this.gachaService.adminUpdateSkin(id, body);
   }
 
   @Get('admin/rarities')

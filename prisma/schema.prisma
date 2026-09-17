@@ -174,6 +174,10 @@ model User {
   gachaWishlistPublic     Boolean                  @default(true)
   gachaCardWishlists      GachaCardWishlist[]
   gachaSetWishlists       GachaSetWishlist[]
+  gachaSkins              UserGachaSkin[]
+  equippedGachaSkinId     String?
+  equippedGachaSkin       GachaSkin?               @relation("EquippedGachaSkin", fields: [equippedGachaSkinId], references: [id], onDelete: SetNull)
+  nextGachaSkinSpinAt     DateTime?                @db.Timestamptz(6)
   posts                   Post[]
   postLikes               PostLike[]
   postComments            PostComment[]
@@ -864,6 +868,7 @@ model Card {
   collectionMembers GachaCollectionMember[]
   wishlistEntries   GachaCardWishlist[]
   spins             GachaSpin[]
+  skins             GachaSkin[]
   editionCounter    Int                     @default(0)
   createdAt         DateTime                @default(now())
   updatedAt         DateTime                @updatedAt
@@ -871,6 +876,38 @@ model Card {
   @@index([rarity])
   @@index([animeId])
   @@index([status, rarity])
+}
+
+model GachaSkin {
+  id         String          @id @default(uuid())
+  cardId     String?
+  card       Card?           @relation(fields: [cardId], references: [id], onDelete: SetNull)
+  name       String
+  imageUrl   String
+  sourceUrl  String?
+  active     Boolean         @default(true)
+  blocked    Boolean         @default(false)
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+  owners     UserGachaSkin[]
+  equippedBy User[]          @relation("EquippedGachaSkin")
+
+  @@index([active, blocked])
+  @@index([cardId])
+}
+
+model UserGachaSkin {
+  id         String    @id @default(uuid())
+  userId     String
+  skinId     String
+  name       String
+  imageUrl   String
+  acquiredAt DateTime  @default(now())
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  skin       GachaSkin @relation(fields: [skinId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, skinId])
+  @@index([userId, acquiredAt(sort: Desc)])
 }
 
 model GachaCardWishlist {

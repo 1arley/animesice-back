@@ -48,6 +48,8 @@ const HOUR_MS = 3_600_000;
 const TRADE_TTL_MS = 48 * HOUR_MS;
 const TRADE_ACTIVE_LIMIT = 3;
 const EPIC_RARITIES = ['EPICA', 'LENDARIA', 'MITICA', 'GALACTICA'];
+const SKIN_SPIN_COOLDOWN_MS = 12 * HOUR_MS;
+const SKIN_SPIN_PRICE = 1_000;
 
 const PULL_SELECT = {
   id: true,
@@ -1410,6 +1412,176 @@ export class GachaService {
         totalPages: Math.ceil(total / safeLimit),
       },
     };
+  }
+
+  async skinCatalog(userId: string) {
+    const [skins, user] = await this.prisma.$transaction([
+      this.prisma.gachaSkin.findMany({
+        where: { active: true, blocked: false },
+        orderBy: [{ name: 'asc' }, { id: 'asc' }],
+        select: {
+          id: true,
+          name: true,
+          imageUrl: true,
+          sourceUrl: true,
+          active: true,
+          blocked: true,
+          card: { select: { id: true, name: true, malCharacterId: true } },
+          owners: {
+            where: { userId },
+            select: { acquiredAt: true, name: true, imageUrl: true },
+          },
+        },
+      }),
+      this.prisma.user.findUniqueOrThrow({
+        where: { id: userId },
+        select: {
+          crystalBalance: true,
+          equippedGachaSkinId: true,
+          nextGachaSkinSpinAt: true,
+        },
+      }),
+    ]);
+    const now = Date.now();
+    const nextSpinAt = user.nextGachaSkinSpinAt;
+    return {
+      skins: skins.map(({ owners, ...skin }) => {
+        const owned = owners[0];
+        return {
+          ...skin,
+          ...(owned ? { name: owned.name, imageUrl: owned.imageUrl } : {}),
+          owned: owned !== undefined,
+          acquiredAt: owned?.acquiredAt ?? null,
+          equipped: skin.id === user.equippedGachaSkinId,
+        };
+      }),
+      equippedSkinId: user.equippedGachaSkinId,
+      crystalBalance: user.crystalBalance,
+      canSpin: !nextSpinAt || nextSpinAt.getTime() <= now,
+      nextSpinAt: nextSpinAt?.toISOString() ?? null,
+      spinPrice: SKIN_SPIN_PRICE,
+      cooldownHours: 12,
+    };
+  }
+
+  async spinSkin(userId: string) {
+    const result = await this.prisma.$transaction(
+      async (tx) => {
+        const user = await tx.user.findUnique({
+          where: { id: userId },
+          select: { crystalBalance: true, nextGachaSkinSpinAt: true },
+        });
+        if (!user) throw new NotFoundException('Usuário não encontrado.');
+        const skins = await tx.gachaSkin.findMany({
+          where: {
+            active: true,
+            blocked: false,
+            owners: { none: { userId } },
+          },
+          select: {
+            id: true,
+            name: true,
+            imageUrl: true,
+            sourceUrl: true,
+            card: { select: { id: true, name: true, malCharacterId: true } },
+          },
+        });
+        if (skins.length === 0) {
+          throw new ConflictException('Coleção de skins completa.');
+        }
+        const now = new Date();
+        const free =
+          user.nextGachaSkinSpinAt === null ||
+          user.nextGachaSkinSpinAt.getTime() <= now.getTime();
+        const picked = skins[randomInt(skins.length)];
+        if (!picked) throw new ConflictException('Nenhuma skin disponível.');
+        if (!free) {
+          await this.changeCrystals(
+            tx,
+            userId,
+            -SKIN_SPIN_PRICE,
+            CrystalEventType.SPEND,
+            picked.id,
+            'Giro de skin',
+          );
+        }
+        await tx.userGachaSkin.create({
+          data: {
+            userId,
+            skinId: picked.id,
+            name: picked.name,
+            imageUrl: picked.imageUrl,
+          },
+        });
+        const nextSpinAt = new Date(now.getTime() + SKIN_SPIN_COOLDOWN_MS);
+        const updatedUser = await tx.user.update({
+          where: { id: userId },
+          data: { nextGachaSkinSpinAt: nextSpinAt },
+          select: { crystalBalance: true },
+        });
+        return {
+          skin: picked,
+          paid: !free,
+          nextSpinAt,
+          crystalBalance: updatedUser.crystalBalance,
+        };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+    return {
+      ...result,
+      nextSpinAt: result.nextSpinAt.toISOString(),
+      price: result.paid ? SKIN_SPIN_PRICE : 0,
+    };
+  }
+
+  async equipSkin(userId: string, skinId: string | null) {
+    if (skinId !== null) {
+      const owned = await this.prisma.userGachaSkin.findUnique({
+        where: { userId_skinId: { userId, skinId } },
+        select: { skin: { select: { blocked: true } } },
+      });
+      if (!owned)
+        throw new NotFoundException('Skin não encontrada na coleção.');
+      if (owned.skin.blocked) throw new ForbiddenException('Skin bloqueada.');
+    }
+    const user = await this.prisma.user.update({
+      where: { id: userId },
+      data: { equippedGachaSkinId: skinId },
+      select: { equippedGachaSkinId: true },
+    });
+    return { equippedSkinId: user.equippedGachaSkinId };
+  }
+
+  adminCreateSkin(data: {
+    name: string;
+    imageUrl: string;
+    cardId?: string;
+    sourceUrl?: string;
+    active?: boolean;
+  }) {
+    return this.prisma.gachaSkin.create({
+      data: {
+        name: data.name,
+        imageUrl: data.imageUrl,
+        cardId: data.cardId,
+        sourceUrl: data.sourceUrl,
+        active: data.active ?? true,
+      },
+    });
+  }
+
+  adminUpdateSkin(
+    id: string,
+    data: {
+      name?: string;
+      imageUrl?: string;
+      sourceUrl?: string;
+      active?: boolean;
+      blocked?: boolean;
+    },
+  ) {
+    return this.prisma.gachaSkin.update({ where: { id }, data });
   }
 
   async dailyBonus(userId: string) {
