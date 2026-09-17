@@ -167,7 +167,12 @@ export class WorkerService {
 
     const valid = await this.validator.pickValid(candidates, anime.id);
     if (!valid) {
-      for (const c of candidates) await this.health.recordFailure(c.sourceId);
+      for (const c of candidates) {
+        await this.health.recordFailure(c.sourceId, {
+          kind: 'VALIDATION',
+          error: 'URL de mídia rejeitada pela validação',
+        });
+      }
       // Marca episódio existente como quebrado p/ CHECK_RELEASES parar de
       // re-enfileirar repetidamente (repair sweep controla a cadência).
       await this.markEpisodeBrokenIfAny(anime.id, season, p.episodeNumber);

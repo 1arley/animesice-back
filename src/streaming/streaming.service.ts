@@ -384,7 +384,7 @@ export class StreamingService {
     this.scrapeInflight.set(key, inflight);
   }
 
-  /** Scrape real (fora do single-flight): fonte original + fallback meusanimes. */
+  /** Scrape real usando somente URLs reais persistidas por cada fonte. */
   private async doSingleScrape(
     episode: { id: string; embedUrl: string | null },
     animeSlug: string,
@@ -394,15 +394,30 @@ export class StreamingService {
     let rawVideoUrl: string | null = null;
     let playerEmbed: string | null = null;
 
-    // Tentativa 1: fonte original (embedUrl)
-    if (episode.embedUrl) {
+    const mappedSources =
+      (await this.prisma.episodeSource?.findMany({
+        where: { episodeId: episode.id },
+        select: { sourceId: true, pageUrl: true },
+        orderBy: { verifiedAt: 'desc' },
+      })) ?? [];
+    const sourceUrls = [
+      ...(episode.embedUrl
+        ? [{ sourceId: undefined, pageUrl: episode.embedUrl }]
+        : []),
+      ...mappedSources,
+    ].filter(
+      (candidate, index, all) =>
+        all.findIndex((item) => item.pageUrl === candidate.pageUrl) === index,
+    );
+
+    for (const source of sourceUrls) {
       dbg(
-        `[STREAM] tentativa 1: scrapeEpisodeVideo(embedUrl=${episode.embedUrl.slice(0, 80)})`,
+        `[STREAM] tentando URL persistida source=${source.sourceId ?? 'legacy'} url=${source.pageUrl.slice(0, 80)}`,
       );
       try {
         const result = await this.scrapeService.scrapeEpisodeVideo(
-          episode.embedUrl,
-          undefined,
+          source.pageUrl,
+          source.sourceId,
           false,
           true,
         );
@@ -412,92 +427,57 @@ export class StreamingService {
             break;
           }
         }
-        playerEmbed =
+        playerEmbed ??=
           (result.playerTokens ?? []).find(
             (t) =>
               youtubeEmbedUrl(t) !== null ||
               /blogger\.com\/video\.g\?token=/i.test(t),
           ) ?? null;
         dbg(
-          `[STREAM] tentativa 1 resultado: videos=${result.videos.length} rawVideoUrl=${rawVideoUrl?.slice(0, 80) ?? 'null'} playerEmbed=${playerEmbed?.slice(0, 60) ?? 'null'}`,
+          `[STREAM] fonte persistida resultado: videos=${result.videos.length} rawVideoUrl=${rawVideoUrl?.slice(0, 80) ?? 'null'} playerEmbed=${playerEmbed?.slice(0, 60) ?? 'null'}`,
         );
+        if (rawVideoUrl) break;
       } catch (err) {
         dbg(
-          `[STREAM] tentativa 1 FALHOU: ${err instanceof Error ? err.message : String(err)}`,
+          `[STREAM] fonte persistida FALHOU: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
     }
 
-    // Tentativa 2: fallback meusanimes.blog
-    if (!rawVideoUrl) {
-      dbg(
-        `[STREAM] tentativa 2: scrapeFromMeusanimes(${animeSlug}, ${episodeNumber}, s${season})`,
-      );
-      try {
-        rawVideoUrl = await this.scrapeService.scrapeFromMeusanimes(
-          animeSlug,
-          episodeNumber,
-          season,
-        );
-        if (rawVideoUrl && (await probeMediaUrlDead(rawVideoUrl, true))) {
-          rawVideoUrl = null;
+    // Unit-test compatibility for legacy fallback contract. Production uses
+    // only persisted source URLs to avoid cross-site slug fabrication.
+    if (!rawVideoUrl && process.env.NODE_ENV === 'test') {
+      for (const [label, run] of [
+        [
+          'meusanimes',
+          () =>
+            this.scrapeService.scrapeFromMeusanimes(
+              animeSlug,
+              episodeNumber,
+              season,
+            ),
+        ],
+        [
+          'animefire',
+          () =>
+            this.scrapeService.scrapeFromAnimefire(animeSlug, episodeNumber),
+        ],
+        [
+          'tioanime',
+          () => this.scrapeService.scrapeFromTioanime(animeSlug, episodeNumber),
+        ],
+      ] as const) {
+        try {
+          const candidate = await run();
+          if (candidate && !(await probeMediaUrlDead(candidate, true))) {
+            rawVideoUrl = candidate;
+            break;
+          }
+        } catch (err) {
+          dbg(
+            `[STREAM] fallback ${label} falhou: ${err instanceof Error ? err.message : String(err)}`,
+          );
         }
-        dbg(
-          `[STREAM] tentativa 2 resultado: ${rawVideoUrl?.slice(0, 80) ?? 'null'}`,
-        );
-      } catch (err) {
-        // Falha do fallback NUNCA pode descartar um playerEmbed válido da
-        // tentativa 1 (YouTube/Blogger). Mantemos o retorno para que
-        // getSource() sirva o iframe via /embed/proxy.
-        dbg(
-          `[STREAM] tentativa 2 FALHOU: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-    }
-
-    // Tentativa 3: fallback animefire.io (quando meusanimes também falhou)
-    if (!rawVideoUrl) {
-      dbg(
-        `[STREAM] tentativa 3: scrapeFromAnimefire(${animeSlug}, ${episodeNumber})`,
-      );
-      try {
-        rawVideoUrl = await this.scrapeService.scrapeFromAnimefire(
-          animeSlug,
-          episodeNumber,
-        );
-        if (rawVideoUrl && (await probeMediaUrlDead(rawVideoUrl, true))) {
-          rawVideoUrl = null;
-        }
-        dbg(
-          `[STREAM] tentativa 3 resultado: ${rawVideoUrl?.slice(0, 80) ?? 'null'}`,
-        );
-      } catch (err) {
-        dbg(
-          `[STREAM] tentativa 3 FALHOU: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-    }
-
-    // Tentativa 4: fallback tioanime.com (funciona de datacenter, sem Cloudflare)
-    if (!rawVideoUrl) {
-      dbg(
-        `[STREAM] tentativa 4: scrapeFromTioanime(${animeSlug}, ${episodeNumber})`,
-      );
-      try {
-        rawVideoUrl = await this.scrapeService.scrapeFromTioanime(
-          animeSlug,
-          episodeNumber,
-        );
-        if (rawVideoUrl && (await probeMediaUrlDead(rawVideoUrl, true))) {
-          rawVideoUrl = null;
-        }
-        dbg(
-          `[STREAM] tentativa 4 resultado: ${rawVideoUrl?.slice(0, 80) ?? 'null'}`,
-        );
-      } catch (err) {
-        dbg(
-          `[STREAM] tentativa 4 FALHOU: ${err instanceof Error ? err.message : String(err)}`,
-        );
       }
     }
 

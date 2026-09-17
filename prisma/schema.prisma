@@ -149,10 +149,10 @@ model User {
   siteFeedbacks           SiteFeedback[]           @relation("SiteFeedbackUser")
   siteFeedbackUpvotes     SiteFeedbackUpvote[]
   privacySettings         PrivacySettings?
-  userCards              UserCard[]
-  originalUserCards      UserCard[]              @relation("OriginalUserCards")
-  featuredUserCardId     String?                  @unique
-  featuredUserCard       UserCard?                @relation("FeaturedUserCard", fields: [featuredUserCardId], references: [id], onDelete: SetNull)
+  userCards               UserCard[]
+  originalUserCards       UserCard[]               @relation("OriginalUserCards")
+  featuredUserCardId      String?                  @unique
+  featuredUserCard        UserCard?                @relation("FeaturedUserCard", fields: [featuredUserCardId], references: [id], onDelete: SetNull)
   gachaRollDays           GachaRollDay[]
   gachaSpins              GachaSpin[]
   gachaClaimLock          GachaClaimLock?
@@ -160,10 +160,10 @@ model User {
   gachaDailyBonus         GachaDailyBonus?
   gachaBypasses           GachaBypass[]
   gachaListings           GachaListing[]
-  legacyPointsBalance     Int               @default(0) @map("pointsBalance")
-  crystalBalance          Int               @default(0)
+  legacyPointsBalance     Int                      @default(0) @map("pointsBalance")
+  crystalBalance          Int                      @default(0)
   legacyPointEvents       GachaPointEvent[]
-  gachaCosmetics          String[]          @default([])
+  gachaCosmetics          String[]                 @default([])
   gachaCardBack           String?
   posts                   Post[]
   postLikes               PostLike[]
@@ -182,16 +182,16 @@ model SiteSetting {
 
 /// Artigos editoriais gerenciados pelo CMS do painel administrativo.
 model BlogPost {
-  id          String   @id @default(uuid())
-  slug        String   @unique
+  id          String    @id @default(uuid())
+  slug        String    @unique
   title       String
   description String
   content     String
   category    String
-  published   Boolean  @default(false)
+  published   Boolean   @default(false)
   publishedAt DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   @@index([published, publishedAt(sort: Desc)])
   @@index([createdAt(sort: Desc)])
@@ -259,45 +259,46 @@ model PasswordResetToken {
 }
 
 model Anime {
-  id                String          @id @default(uuid())
-  slug              String          @unique
-  title             String
-  synopsis          String?
-  coverImage        String?
-  bannerImage       String?
-  rating            Float?          @default(0)
-  ageRating         String?         @default("A14")
-  status            String          @default("LANCAMENTO")
-  audio             AudioType       @default(LEGENDADO)
-  format            AnimeFormat?    @default(TV)
-  year              Int?
-  season            AnimeSeason?
-  studios           String[]
-  themes            String[]
-  alternativeTitles String[]
-  japaneseTitle     String?
-  source            String?
-  releaseDate       DateTime?
-  endDate           DateTime?
-  episodeCount      Int?
-  anilistId         Int?            @unique
-  malId             Int?            @unique
-  published         Boolean         @default(true)
-  editorialSynopsis      String?
-  editorialWhereToWatch  String?
-  editorialDubbingInfo   String?
-  editorialSeasonsInfo   String?
-  episodes          Episode[]
-  genres            Genre[]
-  comments          Comment[]
-  ratings           Rating[]
-  favorites         Favorite[]
-  animeSchedules    AnimeSchedule[]
-  animeList         UserAnimeList[]
-  posts             Post[]
-  cards             Card[]
-  createdAt         DateTime        @default(now())
-  updatedAt         DateTime        @updatedAt
+  id                    String          @id @default(uuid())
+  slug                  String          @unique
+  title                 String
+  synopsis              String?
+  coverImage            String?
+  bannerImage           String?
+  rating                Float?          @default(0)
+  ageRating             String?         @default("A14")
+  status                String          @default("LANCAMENTO")
+  audio                 AudioType       @default(LEGENDADO)
+  format                AnimeFormat?    @default(TV)
+  year                  Int?
+  season                AnimeSeason?
+  studios               String[]
+  themes                String[]
+  alternativeTitles     String[]
+  japaneseTitle         String?
+  source                String?
+  releaseDate           DateTime?
+  endDate               DateTime?
+  episodeCount          Int?
+  anilistId             Int?            @unique
+  malId                 Int?            @unique
+  published             Boolean         @default(true)
+  editorialSynopsis     String?
+  editorialWhereToWatch String?
+  editorialDubbingInfo  String?
+  editorialSeasonsInfo  String?
+  episodes              Episode[]
+  sourceMappings        AnimeSource[]
+  genres                Genre[]
+  comments              Comment[]
+  ratings               Rating[]
+  favorites             Favorite[]
+  animeSchedules        AnimeSchedule[]
+  animeList             UserAnimeList[]
+  posts                 Post[]
+  cards                 Card[]
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
 
   @@index([slug])
   @@index([rating])
@@ -343,6 +344,7 @@ model Episode {
   comments        Comment[]
   streamingTokens StreamingToken[]
   watchHistories  WatchHistory[]
+  sources         EpisodeSource[]
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
 
@@ -351,6 +353,41 @@ model Episode {
   @@index([animeId, season])
   @@index([animeId, number, season])
   @@index([dateModified])
+}
+
+model AnimeSource {
+  id          String    @id @default(uuid())
+  animeId     String
+  anime       Anime     @relation(fields: [animeId], references: [id], onDelete: Cascade)
+  sourceId    String
+  externalUrl String
+  externalKey String?
+  audio       AudioType
+  confidence  Float     @default(1)
+  verifiedAt  DateTime?
+  lastError   String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([animeId, sourceId])
+  @@index([sourceId, externalKey])
+}
+
+model EpisodeSource {
+  id          String    @id @default(uuid())
+  episodeId   String
+  episode     Episode   @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  sourceId    String
+  pageUrl     String
+  externalKey String?
+  audio       AudioType
+  verifiedAt  DateTime?
+  lastError   String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([episodeId, sourceId])
+  @@index([sourceId, externalKey])
 }
 
 model Genre {
@@ -602,18 +639,18 @@ model AnimeRequestVote {
 }
 
 model SiteFeedback {
-  id          String              @id @default(uuid())
+  id          String               @id @default(uuid())
   userId      String
-  user        User                @relation("SiteFeedbackUser", fields: [userId], references: [id], onDelete: Cascade)
+  user        User                 @relation("SiteFeedbackUser", fields: [userId], references: [id], onDelete: Cascade)
   type        FeedbackType
   title       String
   description String
-  status      FeedbackStatus      @default(OPEN)
+  status      FeedbackStatus       @default(OPEN)
   adminNote   String?
-  upvotes     Int                 @default(0)
+  upvotes     Int                  @default(0)
   upvoters    SiteFeedbackUpvote[]
-  createdAt   DateTime            @default(now())
-  updatedAt   DateTime            @updatedAt
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
 
   @@index([type, status, createdAt])
   @@index([userId])
@@ -710,20 +747,20 @@ model WatchtowerJob {
 /// respondida em tempo real pelo endpoint de streaming e precisa sobreviver a
 /// reinícios e a múltiplas réplicas da API.
 model StreamExtractionJob {
-  id            String   @id @default(uuid())
-  activeKey     String?  @unique
+  id            String    @id @default(uuid())
+  activeKey     String?   @unique
   animeSlug     String
   episodeNumber Int
   season        Int
-  status        String   @default("pending")
+  status        String    @default("pending")
   videoUrl      String?
   playerEmbed   String?
   error         String?
   lockedBy      String?
   lockedUntil   DateTime?
-  createdAt     DateTime @default(now())
+  createdAt     DateTime  @default(now())
   completedAt   DateTime?
-  updatedAt     DateTime @updatedAt
+  updatedAt     DateTime  @updatedAt
 
   @@index([animeSlug, episodeNumber, season, status])
   @@index([status, lockedUntil])
@@ -733,15 +770,23 @@ model StreamExtractionJob {
 /// e desabilita automaticamente as que falham N vezes seguidas (canário 1x/h
 /// reabilita).
 model WatchtowerSourceHealth {
-  sourceId            String    @id
-  successCount        Int       @default(0)
-  failureCount        Int       @default(0)
-  consecutiveFailures Int       @default(0)
-  avgLatencyMs        Int       @default(0)
-  disabled            Boolean   @default(false)
-  disabledByAdmin     Boolean   @default(false)
-  lastSuccessAt       DateTime?
-  lastFailureAt       DateTime?
+  sourceId             String    @id
+  successCount         Int       @default(0)
+  failureCount         Int       @default(0)
+  consecutiveFailures  Int       @default(0)
+  avgLatencyMs         Int       @default(0)
+  disabled             Boolean   @default(false)
+  disabledByAdmin      Boolean   @default(false)
+  lastSuccessAt        DateTime?
+  lastFailureAt        DateTime?
+  lastCheckedAt        DateTime?
+  lastError            String?
+  lastFailureKind      String?
+  availabilityFailures Int       @default(0)
+  contentMisses        Int       @default(0)
+  extractionFailures   Int       @default(0)
+  validationFailures   Int       @default(0)
+  capacityFailures     Int       @default(0)
 
   @@index([disabled])
 }
@@ -780,8 +825,8 @@ model SiteFeedbackUpvote {
 model PostShare {
   userId    String
   postId    String
-  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  post      Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
 
   @@id([userId, postId])
@@ -791,21 +836,21 @@ model PostShare {
 /// Personagem cacheado do MAL — o "card" do gacha (qualquer personagem,
 /// não só mulheres; raridade vem dos favorites do MAL).
 model Card {
-  id                   String      @id @default(uuid())
-  malCharacterId       Int         @unique
-  name                 String
-  image                String?
-  favourites           Int         @default(0)
-  rarity               String      @default("COMUM")
-  animeId              String?
-  anime                Anime?      @relation(fields: [animeId], references: [id], onDelete: SetNull)
-  animeTitle           String?
-  owners               UserCard[]
-  collectionMembers    GachaCollectionMember[]
-  spins                GachaSpin[]
-  editionCounter       Int         @default(0)
-  createdAt            DateTime    @default(now())
-  updatedAt            DateTime    @updatedAt
+  id                String                  @id @default(uuid())
+  malCharacterId    Int                     @unique
+  name              String
+  image             String?
+  favourites        Int                     @default(0)
+  rarity            String                  @default("COMUM")
+  animeId           String?
+  anime             Anime?                  @relation(fields: [animeId], references: [id], onDelete: SetNull)
+  animeTitle        String?
+  owners            UserCard[]
+  collectionMembers GachaCollectionMember[]
+  spins             GachaSpin[]
+  editionCounter    Int                     @default(0)
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
 
   @@index([rarity])
   @@index([animeId])
@@ -821,27 +866,30 @@ model GachaRarity {
   active     Boolean  @default(true)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+
   @@index([active, dropWeight])
 }
 
 model GachaCollection {
-  id String @id @default(uuid())
-  name String
-  slug String @unique
+  id          String                  @id @default(uuid())
+  name        String
+  slug        String                  @unique
   description String?
-  version Int @default(1)
-  published Boolean @default(false)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  members GachaCollectionMember[]
+  version     Int                     @default(1)
+  published   Boolean                 @default(false)
+  createdAt   DateTime                @default(now())
+  updatedAt   DateTime                @updatedAt
+  members     GachaCollectionMember[]
+
   @@index([published, updatedAt(sort: Desc)])
 }
 
 model GachaCollectionMember {
   collectionId String
-  cardId String
-  collection GachaCollection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
-  card Card @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  cardId       String
+  collection   GachaCollection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  card         Card            @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
   @@id([collectionId, cardId])
   @@index([cardId])
 }
@@ -849,29 +897,29 @@ model GachaCollectionMember {
 /// Cópia de carta de um usuário — non-unique, individualizada por
 /// condition/foil/edition (o "float" das skins de CS).
 model UserCard {
-  id         String   @id @default(uuid())
-  userId     String
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id             String         @id @default(uuid())
+  userId         String
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   originalUserId String?
-  originalUser User?  @relation("OriginalUserCards", fields: [originalUserId], references: [id], onDelete: SetNull)
-  featuredBy User?    @relation("FeaturedUserCard")
-  cardId     String
-  card       Card     @relation(fields: [cardId], references: [id], onDelete: Cascade)
-  condition  Float
-  foil       String   @default("NORMAL")
-  edition    Int
-  value      Int
-  status     UserCardStatus @default(ACTIVE)
-  obtainedAt DateTime @default(now())
+  originalUser   User?          @relation("OriginalUserCards", fields: [originalUserId], references: [id], onDelete: SetNull)
+  featuredBy     User?          @relation("FeaturedUserCard")
+  cardId         String
+  card           Card           @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  condition      Float
+  foil           String         @default("NORMAL")
+  edition        Int
+  value          Int
+  status         UserCardStatus @default(ACTIVE)
+  obtainedAt     DateTime       @default(now())
+
+  tradeOffered   GachaTrade[]   @relation("TradeOffered")
+  tradeRequested GachaTrade[]   @relation("TradeRequested")
+  listings       GachaListing[]
 
   @@index([userId, obtainedAt(sort: Desc)])
   @@index([cardId, edition])
   @@index([userId, value(sort: Desc)])
   @@index([originalUserId])
-
-  tradeOffered   GachaTrade[] @relation("TradeOffered")
-  tradeRequested GachaTrade[] @relation("TradeRequested")
-  listings       GachaListing[]
 }
 
 enum UserCardStatus {
@@ -899,6 +947,7 @@ model GachaCardBack {
   createdById String?
   createdAt   DateTime            @default(now())
   updatedAt   DateTime            @updatedAt
+
   @@index([status, updatedAt(sort: Desc)])
 }
 
@@ -939,14 +988,14 @@ model GachaClaimLock {
 
 /// Intenção de bypass via LivePix — uso único por reference.
 model GachaBypass {
-  reference String   @id
+  reference String    @id
   userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   amount    Int
-  status    String   @default("PENDING")
-  expiresAt DateTime @db.Timestamptz(6)
+  status    String    @default("PENDING")
+  expiresAt DateTime  @db.Timestamptz(6)
   paidAt    DateTime? @db.Timestamptz(6)
-  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
 
   @@index([userId, status])
 }
@@ -954,7 +1003,7 @@ model GachaBypass {
 /// Troca 1:1 entre dois usuários — escrow confirmado, aplicada numa única
 /// transação (swap de UserCard.userId). Vale por 48h após criada.
 model GachaTrade {
-  id                  String            @id @default(uuid())
+  id                  String           @id @default(uuid())
   offeredUserId       String
   offeredUserCardId   String
   requestedUserId     String
@@ -984,17 +1033,17 @@ enum GachaTradeStatus {
 /// Listagem do mercado — carta em escrow (unique parcial enquanto ACTIVE,
 /// mesmo padrão de GachaTrade) vendida por pontos com buy-now. Vale 48h.
 model GachaListing {
-  id           String             @id @default(uuid())
-  userId       String
-  user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userCardId   String
-  userCard     UserCard           @relation(fields: [userCardId], references: [id], onDelete: Cascade)
-  price        Int
-  status       GachaListingStatus @default(ACTIVE)
-  buyerId      String?
-  expiresAt    DateTime
-  createdAt    DateTime           @default(now())
-  completedAt  DateTime?
+  id          String             @id @default(uuid())
+  userId      String
+  user        User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userCardId  String
+  userCard    UserCard           @relation(fields: [userCardId], references: [id], onDelete: Cascade)
+  price       Int
+  status      GachaListingStatus @default(ACTIVE)
+  buyerId     String?
+  expiresAt   DateTime
+  createdAt   DateTime           @default(now())
+  completedAt DateTime?
 
   @@unique([userCardId], where: raw("status = 'ACTIVE'"))
   @@index([status, expiresAt])
@@ -1032,14 +1081,14 @@ enum GachaPointEventType {
 
 /// Ledger de Crystais — moeda do gacha (reroll, mercado, shop).
 model CrystalEvent {
-  id        String   @id @default(uuid())
+  id        String           @id @default(uuid())
   userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   type      CrystalEventType
-  delta     Int      // positivo = crédito, negativo = débito
-  refId     String?  // userCardId, listingId, etc.
+  delta     Int // positivo = crédito, negativo = débito
+  refId     String? // userCardId, listingId, etc.
   reason    String?
-  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  createdAt DateTime         @default(now()) @db.Timestamptz(6)
 
   @@index([userId, createdAt(sort: Desc)])
 }

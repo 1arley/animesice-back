@@ -116,6 +116,9 @@ export class SourceDiscovery {
     if (/tioanime\.com/i.test(lower)) {
       return { sourceId: 'tioanime', url: episodeUrl };
     }
+    if (/animesdigital\.org/i.test(lower)) {
+      return { sourceId: 'animesdigital', url: episodeUrl };
+    }
     return null;
   }
 
@@ -125,20 +128,11 @@ export class SourceDiscovery {
     ep: number,
     season: number = 1,
   ): string[] {
+    // MeusAnimes/TioAnime usam identidades próprias. Sem URL descoberta no
+    // catálogo, fabricar caminho com slug AnimeSice produz falsos 404/500.
+    if (sourceId === 'meusanimes' || sourceId === 'tioanime') return [];
     const base = sourceEpisodeUrl(sourceId, slug, ep, season);
     if (!base) return [];
-    if (sourceId === 'meusanimes') {
-      // Post-split: slug sibling (ex: "kaguya-sama-love-is-war-2") 404 no catálogo.
-      // Fallbacks: tenta slug base sem sufixo de temporada + URL sem sufixo de episódio.
-      const baseSlug = slug.replace(/-\d+$/, '');
-      return [
-        base,
-        ...(baseSlug !== slug
-          ? [`https://meusanimes.blog/e/${baseSlug}-episodio-${ep}/`]
-          : []),
-        `https://meusanimes.blog/e/${slug}/`,
-      ];
-    }
     return [base];
   }
 

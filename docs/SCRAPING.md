@@ -6,9 +6,17 @@
 |---------|------|-----------|------------|
 | `animefire.source.ts` | animefire.io | ✅ `extractHttp` | fallback inerte |
 | `animesonlinecc.source.ts` | animesonlinecc.to | ❌ | ✅ |
-| `meusanimes.source.ts` | meusanimes.blog | ❌ | ✅ |
+| `meusanimes.source.ts` | meusanimes.blog | ✅ | fallback Chromium |
+| `animesdigital.source.ts` | animesdigital.org | ✅ | fallback Chromium |
 
 ## extractHttp (animefire)
+
+## animesdigital
+
+`animesdigital.org` foi validado na VPS em 17/09/2026: 12 páginas de episódios,
+12 animes, HTTP 200 e playlists HLS `.m3u8` acessíveis diretamente no CDN.
+Adapter fica atrás de `ANIMESDIGITAL_ENABLED=true` e usa somente URLs reais
+persistidas em `EpisodeSource`; nunca converte slug AnimeSice.
 
 Sem browser. 2 fetchs:
 

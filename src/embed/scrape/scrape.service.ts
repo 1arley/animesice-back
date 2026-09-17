@@ -14,6 +14,7 @@ import { AnimefireScrapeSource } from './animefire.source';
 import { AnimesonlineccScrapeSource } from './animesonlinecc.source';
 import { MeusanimesScrapeSource } from './meusanimes.source';
 import { TioanimeScrapeSource } from './tioanime.source';
+import { AnimesdigitalScrapeSource } from './animesdigital.source';
 import { youtubeEmbedUrl } from './extract';
 import {
   waitForPlayerReady,
@@ -22,9 +23,13 @@ import {
 } from './event-waits';
 import { BrowserPool } from './browser-pool.service';
 import { PrismaService } from '@/prisma/prisma.service';
-import { HealthMonitor } from '@/watchtower/health-monitor.service';
+import {
+  HealthMonitor,
+  SourceFailureKind,
+} from '@/watchtower/health-monitor.service';
 import { MetricsService } from '@/metrics/metrics.service';
-import { SOURCE_IDS } from '@/watchtower/watchtower.types';
+import { OPTIONAL_SOURCE_IDS, SOURCE_IDS } from '@/watchtower/watchtower.types';
+const TRACKED_SOURCE_IDS = [...SOURCE_IDS, ...OPTIONAL_SOURCE_IDS] as const;
 import { ensureXvfb } from './xvfb.helper';
 import { refererForMediaUrlWithFallback } from '@/common/url-utils';
 import { playwrightProxy } from '@/common/outbound-proxy';
@@ -130,13 +135,20 @@ export class ScrapeService {
     animesonlinecc: AnimesonlineccScrapeSource,
     meusanimes: MeusanimesScrapeSource,
     tioanime: TioanimeScrapeSource,
+    animesdigital: AnimesdigitalScrapeSource,
     private readonly prisma: PrismaService,
     @Inject(forwardRef(() => HealthMonitor))
     private readonly health: HealthMonitor,
     private readonly metrics: MetricsService,
     private readonly browserPool: BrowserPool,
   ) {
-    this.sources = [animefire, animesonlinecc, meusanimes, tioanime];
+    this.sources = [
+      animefire,
+      animesonlinecc,
+      meusanimes,
+      tioanime,
+      animesdigital,
+    ];
     const ttl = Number(process.env.SCRAPE_CACHE_TTL_MS ?? 10 * 60_000);
     const stale = Number(process.env.SCRAPE_CACHE_STALE_MS ?? 60 * 60_000);
     this.CACHE_TTL_MS = Number.isFinite(ttl) && ttl > 0 ? ttl : 10 * 60_000;
@@ -287,12 +299,13 @@ export class ScrapeService {
         });
         this.evictIfNeeded();
       } else {
-        await this.recordFailure(source.id);
+        await this.recordFailure(source.id, 'EXTRACTION', 'resultado vazio');
         this.metrics.recordExtractionFailure(source.id);
       }
       return result;
     } catch (err) {
-      await this.recordFailure(source.id);
+      const message = err instanceof Error ? err.message : String(err);
+      await this.recordFailure(source.id, this.failureKind(message), message);
       this.metrics.recordExtractionFailure(source.id);
       throw err;
     } finally {
@@ -657,7 +670,11 @@ export class ScrapeService {
       });
       rawMp4 = result.videos[0] ?? null;
     } catch (err) {
-      await this.recordFailure(source.id);
+      await this.recordFailure(
+        source.id,
+        this.failureKind(err instanceof Error ? err.message : String(err)),
+        err instanceof Error ? err.message : String(err),
+      );
       this.metrics.recordReextract(source.id, false);
       console.error(
         `[REEXTRACT] falhou p/ ${sanitizeLog(animeSlug)}/${episodeNumber}:`,
@@ -666,7 +683,11 @@ export class ScrapeService {
       return null;
     }
     if (!rawMp4 || (await probeMediaUrlDead(rawMp4, true))) {
-      await this.recordFailure(source.id);
+      await this.recordFailure(
+        source.id,
+        'VALIDATION',
+        'URL de mídia ausente ou inválida',
+      );
       this.metrics.recordReextract(source.id, false);
       return null;
     }
@@ -844,6 +865,12 @@ export class ScrapeService {
     animeSlug: string,
     episodeNumber: number,
   ): Promise<string | null> {
+    if (
+      process.env.NODE_ENV !== 'test' &&
+      process.env.TIOANIME_ENABLED !== 'true'
+    ) {
+      return null;
+    }
     const episodeUrl = this.tioanimeEpisodeUrl(animeSlug, episodeNumber);
     dbg(`[TIOANIME] try ${animeSlug}/${episodeNumber} -> ${episodeUrl}`);
     try {
@@ -1041,13 +1068,42 @@ export class ScrapeService {
     sourceId: string,
     latencyMs: number,
   ): Promise<void> {
-    if (!(SOURCE_IDS as readonly string[]).includes(sourceId)) return;
+    if (
+      !TRACKED_SOURCE_IDS.includes(
+        sourceId as (typeof TRACKED_SOURCE_IDS)[number],
+      )
+    )
+      return;
     await this.health.recordSuccess(sourceId, latencyMs).catch(() => undefined);
   }
 
   /** Registra failure no HealthMonitor (só p/ fontes rastreadas em SOURCE_IDS). */
-  private async recordFailure(sourceId: string): Promise<void> {
-    if (!(SOURCE_IDS as readonly string[]).includes(sourceId)) return;
-    await this.health.recordFailure(sourceId).catch(() => undefined);
+  private async recordFailure(
+    sourceId: string,
+    kind: SourceFailureKind = 'AVAILABILITY',
+    error?: string,
+  ): Promise<void> {
+    if (
+      !TRACKED_SOURCE_IDS.includes(
+        sourceId as (typeof TRACKED_SOURCE_IDS)[number],
+      )
+    )
+      return;
+    await this.health
+      .recordFailure(sourceId, { kind, error })
+      .catch(() => undefined);
+  }
+
+  private failureKind(message: string): SourceFailureKind {
+    if (/retornou (?:404|410)\b/i.test(message)) return 'CONTENT_MISS';
+    if (/fila de extração ocupada/i.test(message)) return 'CAPACITY';
+    if (
+      /retornou (?:403|429|5\d\d)\b|operation was aborted|fetch failed|timeout|cloudflare/i.test(
+        message,
+      )
+    ) {
+      return 'AVAILABILITY';
+    }
+    return 'EXTRACTION';
   }
 }

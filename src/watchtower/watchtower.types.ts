@@ -125,6 +125,8 @@ export const SOURCE_IDS = [
   'tioanime',
 ] as const;
 
+export const OPTIONAL_SOURCE_IDS = ['animesdigital'] as const;
+
 /** Template de URL de episódio por fonte.
  *
  * Post-split: cada anime sibling tem slug que já codifica a temporada

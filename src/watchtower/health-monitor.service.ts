@@ -8,9 +8,17 @@
  */
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '@/prisma/prisma.service';
-import { SOURCE_IDS } from './watchtower.types';
+import { OPTIONAL_SOURCE_IDS, SOURCE_IDS } from './watchtower.types';
 
 const DISABLE_THRESHOLD = 5;
+
+export type SourceFailureKind =
+  'AVAILABILITY' | 'CONTENT_MISS' | 'EXTRACTION' | 'VALIDATION' | 'CAPACITY';
+
+export interface SourceFailure {
+  kind: SourceFailureKind;
+  error?: string;
+}
 
 interface SourceScore {
   sourceId: string;
@@ -42,12 +50,18 @@ export class HealthMonitor {
           ELSE ROUND(("avgLatencyMs" * "successCount" + ${Math.round(latencyMs)}) / ("successCount" + 1))
         END,
         "lastSuccessAt" = NOW(),
+        "lastCheckedAt" = NOW(),
+        "lastError" = NULL,
+        "lastFailureKind" = NULL,
         "disabled" = CASE WHEN "disabledByAdmin" THEN true ELSE false END
       WHERE "sourceId" = ${sourceId}
     `;
   }
 
-  async recordFailure(sourceId: string): Promise<void> {
+  async recordFailure(
+    sourceId: string,
+    failure: SourceFailure = { kind: 'AVAILABILITY' },
+  ): Promise<void> {
     await this.prisma.watchtowerSourceHealth
       .upsert({
         where: { sourceId },
@@ -55,18 +69,44 @@ export class HealthMonitor {
         create: { sourceId },
       })
       .catch(() => undefined);
-    await this.prisma.$executeRaw`
-      UPDATE "WatchtowerSourceHealth"
-      SET
-        "failureCount" = "failureCount" + 1,
-        "consecutiveFailures" = "consecutiveFailures" + 1,
-        "lastFailureAt" = NOW(),
-        "disabled" = CASE
-          WHEN "consecutiveFailures" + 1 >= ${DISABLE_THRESHOLD} THEN true
-          ELSE "disabled"
-        END
-      WHERE "sourceId" = ${sourceId}
-    `;
+    const error = failure.error?.slice(0, 2000) ?? null;
+    if (failure.kind === 'AVAILABILITY') {
+      await this.prisma.$executeRaw`
+        UPDATE "WatchtowerSourceHealth"
+        SET
+          "failureCount" = "failureCount" + 1,
+          "availabilityFailures" = "availabilityFailures" + 1,
+          "consecutiveFailures" = "consecutiveFailures" + 1,
+          "lastFailureAt" = NOW(),
+          "lastCheckedAt" = NOW(),
+          "lastError" = ${error},
+          "lastFailureKind" = ${failure.kind},
+          "disabled" = CASE
+            WHEN "consecutiveFailures" + 1 >= ${DISABLE_THRESHOLD} THEN true
+            ELSE "disabled"
+          END
+        WHERE "sourceId" = ${sourceId}
+      `;
+      return;
+    }
+
+    const counter = {
+      CONTENT_MISS: { contentMisses: { increment: 1 } },
+      EXTRACTION: { extractionFailures: { increment: 1 } },
+      VALIDATION: { validationFailures: { increment: 1 } },
+      CAPACITY: { capacityFailures: { increment: 1 } },
+    }[failure.kind];
+    await this.prisma.watchtowerSourceHealth.update({
+      where: { sourceId },
+      data: {
+        failureCount: { increment: 1 },
+        ...counter,
+        lastFailureAt: new Date(),
+        lastCheckedAt: new Date(),
+        lastError: error,
+        lastFailureKind: failure.kind,
+      },
+    });
   }
 
   /** Fontes ativas, ordenadas por score (saudável 1º). meusanimes = base prioritária. */
@@ -74,7 +114,15 @@ export class HealthMonitor {
     const rows = await this.prisma.watchtowerSourceHealth.findMany();
     const map = new Map(rows.map((r) => [r.sourceId, r]));
 
-    const scored: SourceScore[] = SOURCE_IDS.map((id) => {
+    const enabledIds = [...SOURCE_IDS, ...OPTIONAL_SOURCE_IDS].filter(
+      (id) =>
+        (id !== 'tioanime' ||
+          process.env.NODE_ENV === 'test' ||
+          process.env.TIOANIME_ENABLED === 'true') &&
+        (id !== 'animesdigital' ||
+          process.env.ANIMESDIGITAL_ENABLED === 'true'),
+    );
+    const scored: SourceScore[] = enabledIds.map((id) => {
       const row = map.get(id);
       if (row?.disabled) return { sourceId: id, score: -1, disabled: true };
       const total = (row?.successCount ?? 0) + (row?.failureCount ?? 0);

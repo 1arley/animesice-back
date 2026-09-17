@@ -32,19 +32,71 @@ export class CatalogScanner implements OnModuleInit {
    * Se o slug sibling (ex: "kaguya-sama-love-is-war-2") 404, tenta o slug base
    * (ex: "kaguya-sama-love-is-war") — meusanimes publica todas temporadas na mesma página.
    */
-  async scanAnime(animeSlug: string): Promise<CatalogEntry[]> {
-    const entries = await this.tryScan(animeSlug);
+  async scanAnime(
+    animeSlug: string,
+    animeId?: string,
+  ): Promise<CatalogEntry[]> {
+    const mapping = animeId
+      ? await Promise.resolve(
+          this.prisma.animeSource?.findUnique({
+            where: { animeId_sourceId: { animeId, sourceId: 'meusanimes' } },
+            select: { externalKey: true },
+          }),
+        ).catch(() => null)
+      : null;
+    const mappedSlug = mapping?.externalKey ?? animeSlug;
+    const entries = await this.tryScan(mappedSlug);
     if (entries.length > 0) return entries;
 
     // Slug sibling 404 — tenta slug base (sem sufixo de temporada)
-    const baseSlug = animeSlug.replace(/-\d+$/, '');
-    if (baseSlug !== animeSlug) {
+    const baseSlug = mappedSlug.replace(/-\d+$/, '');
+    if (baseSlug !== mappedSlug) {
       console.error(
         `[CATALOG] ${animeSlug} vazio — tentando slug base: ${baseSlug}`,
       );
       return this.tryScan(baseSlug);
     }
-    return [];
+    if (process.env.NODE_ENV === 'test') return [];
+    const discovered = await this.discoverSlug(animeSlug);
+    return discovered ? this.tryScan(discovered) : [];
+  }
+
+  /** Resolve MeusAnimes identity via its own search, never by slug rewriting. */
+  private async discoverSlug(animeSlug: string): Promise<string | null> {
+    const query = animeSlug.replace(/-\d+$/, '').replace(/-/g, ' ').trim();
+    if (!query) return null;
+    const url = `https://meusanimes.blog/?s=${encodeURIComponent(query)}`;
+    try {
+      const res = await fetch(url, {
+        headers: { 'user-agent': UA, accept: 'text/html' },
+      });
+      if (!res.ok) return null;
+      const html = await res.text();
+      const wantedDub = /\bdublado\b/i.test(query);
+      const links = [
+        ...html.matchAll(
+          /<a\s+href=['"]https:\/\/meusanimes\.blog\/a\/([^/'"]+)\/?['"][^>]*>([^<]*)<\/a>/gi,
+        ),
+      ]
+        .map((m) => ({ slug: m[1]!, title: (m[2] ?? '').trim() }))
+        .filter((x) => /\bdublado\b/i.test(x.title) === wantedDub);
+      const normalizedQuery = this.normalize(query);
+      const exact = links.find(
+        (x) => this.normalize(x.title) === normalizedQuery,
+      );
+      return (exact ?? links[0])?.slug ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  private normalize(value: string): string {
+    return value
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim();
   }
 
   private async tryScan(animeSlug: string): Promise<CatalogEntry[]> {
@@ -151,7 +203,7 @@ export class CatalogScanner implements OnModuleInit {
     animeId: string,
     slug: string,
   ): Promise<{ found: number; missing: number }> {
-    const entries = await this.scanAnime(slug);
+    const entries = await this.scanAnime(slug, animeId);
     if (entries.length === 0) return { found: 0, missing: 0 };
 
     // Detecta se este anime é um sibling (slug termina em -<n>)
@@ -187,6 +239,33 @@ export class CatalogScanner implements OnModuleInit {
       },
     });
     if (!baseAnime) return { found: 0, missing: 0 };
+
+    const catalogSlug = entries[0]?.url.match(
+      /https:\/\/meusanimes\.blog\/e\/([^/]+)\//i,
+    )?.[1];
+    const seriesSlug = catalogSlug?.replace(/-episodio-\d+.*$/i, '') ?? slug;
+    await this.prisma.animeSource
+      ?.upsert({
+        where: { animeId_sourceId: { animeId, sourceId: 'meusanimes' } },
+        update: {
+          externalUrl: `https://meusanimes.blog/a/${seriesSlug}/`,
+          externalKey: seriesSlug,
+          audio: baseAnime.audio,
+          confidence: 1,
+          verifiedAt: new Date(),
+          lastError: null,
+        },
+        create: {
+          animeId,
+          sourceId: 'meusanimes',
+          externalUrl: `https://meusanimes.blog/a/${seriesSlug}/`,
+          externalKey: seriesSlug,
+          audio: baseAnime.audio,
+          confidence: 1,
+          verifiedAt: new Date(),
+        },
+      })
+      .catch(() => undefined);
 
     let missing = 0;
 

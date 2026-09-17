@@ -42,7 +42,7 @@ export class Publisher {
       select: { id: true },
     });
 
-    await this.prisma.episode.upsert({
+    const episode = await this.prisma.episode.upsert({
       where: {
         animeId_season_number: {
           animeId: input.animeId,
@@ -75,6 +75,34 @@ export class Publisher {
         duration: input.duration ?? null,
       },
     });
+
+    const animeAudio = await this.prisma.anime.findUnique({
+      where: { id: input.animeId },
+      select: { audio: true },
+    });
+    if (animeAudio) {
+      await this.prisma.episodeSource?.upsert({
+        where: {
+          episodeId_sourceId: {
+            episodeId: episode.id,
+            sourceId: input.sourceId,
+          },
+        },
+        update: {
+          pageUrl: input.embedUrl,
+          audio: animeAudio.audio,
+          verifiedAt: new Date(),
+          lastError: null,
+        },
+        create: {
+          episodeId: episode.id,
+          sourceId: input.sourceId,
+          pageUrl: input.embedUrl,
+          audio: animeAudio.audio,
+          verifiedAt: new Date(),
+        },
+      });
+    }
 
     // Só notifica em episódio realmente novo. Com reap/ownership corrigidos,
     // dois workers não processam o mesmo job (dedupeKey) → sem dupla notificação.

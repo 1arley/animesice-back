@@ -7,6 +7,7 @@ import { AnimefireScrapeSource } from '@/embed/scrape/animefire.source';
 import { AnimesonlineccScrapeSource } from '@/embed/scrape/animesonlinecc.source';
 import { MeusanimesScrapeSource } from '@/embed/scrape/meusanimes.source';
 import { TioanimeScrapeSource } from '@/embed/scrape/tioanime.source';
+import { AnimesdigitalScrapeSource } from '@/embed/scrape/animesdigital.source';
 import { PrismaModule } from '@/prisma/prisma.module';
 import { WatchtowerModule } from '@/watchtower/watchtower.module';
 import { MetricsService } from '@/metrics/metrics.service';
@@ -28,6 +29,7 @@ import { MetricsService } from '@/metrics/metrics.service';
     AnimesonlineccScrapeSource,
     MeusanimesScrapeSource,
     TioanimeScrapeSource,
+    AnimesdigitalScrapeSource,
     ScrapeService,
     MetricsService,
   ],
