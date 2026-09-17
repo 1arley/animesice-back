@@ -1,4 +1,16 @@
-import { IsInt, IsNotEmpty, IsString, Max, Min } from 'class-validator';
+import {
+  ArrayUnique,
+  IsArray,
+  IsBoolean,
+  IsEnum,
+  IsInt,
+  IsIn,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Max,
+  Min,
+} from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class ClaimGachaDto {
@@ -59,4 +71,57 @@ export class NewTradeDto {
   @IsString()
   @IsNotEmpty()
   requestedUserCardId!: string;
+}
+
+export enum WishlistPriorityDto {
+  LOW = 'LOW',
+  NORMAL = 'NORMAL',
+  HIGH = 'HIGH',
+}
+
+export class UpsertCardWishlistDto {
+  @ApiProperty({ enum: WishlistPriorityDto, required: false })
+  @IsOptional()
+  @IsEnum(WishlistPriorityDto)
+  priority?: WishlistPriorityDto;
+
+  @ApiProperty({
+    enum: ['NORMAL', 'HOLO', 'GOLD'],
+    isArray: true,
+    required: false,
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @IsIn(['NORMAL', 'HOLO', 'GOLD'], { each: true })
+  acceptedFoils?: string[];
+
+  @ApiProperty({
+    enum: ['MINT', 'NM', 'EX', 'PLAYED', 'POOR'],
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  @IsIn(['MINT', 'NM', 'EX', 'PLAYED', 'POOR'])
+  minCondition?: string;
+
+  @ApiProperty({ required: false, minimum: 1 })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(2_147_483_647)
+  maxEdition?: number;
+}
+
+export class UpsertSetWishlistDto {
+  @ApiProperty({ enum: WishlistPriorityDto, required: false })
+  @IsOptional()
+  @IsEnum(WishlistPriorityDto)
+  priority?: WishlistPriorityDto;
+}
+
+export class WishlistPrivacyDto {
+  @ApiProperty()
+  @IsBoolean()
+  isPublic!: boolean;
 }

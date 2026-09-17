@@ -9,6 +9,7 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Put,
   Query,
   Req,
   UseGuards,
@@ -23,6 +24,10 @@ import {
   NewTradeDto,
   RerollGachaCardDto,
   SetFeaturedGachaCardDto,
+  UpsertCardWishlistDto,
+  UpsertSetWishlistDto,
+  WishlistPrivacyDto,
+  WishlistPriorityDto,
 } from '@/gacha/dto/gacha.dto';
 import { JwtAuthGuard } from '@/auth/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from '@/auth/optional-jwt-auth.guard';
@@ -41,6 +46,106 @@ type OptionalAuthRequest = Request & { user?: AuthenticatedRequest['user'] };
 @Controller('gacha')
 export class GachaController {
   constructor(private readonly gachaService: GachaService) {}
+
+  @Get('wishlist')
+  @UseGuards(OptionalJwtAuthGuard)
+  wishlist(
+    @Req() req: OptionalAuthRequest,
+    @Query('userId') userId?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('status') status?: 'pending' | 'complete',
+    @Query('priority') priority?: 'LOW' | 'NORMAL' | 'HIGH',
+    @Query('type') type?: 'cards' | 'sets',
+  ) {
+    const ownerId = userId || req.user?.id;
+    if (!ownerId)
+      throw new BadRequestException('Informe o usuário da wishlist.');
+    return this.gachaService.wishlist(ownerId, req.user?.id ?? null, {
+      page: Number(page) || 1,
+      limit: Number(limit) || 24,
+      status,
+      priority: priority as WishlistPriorityDto | undefined,
+      type,
+    });
+  }
+
+  @Put('wishlist/cards/:cardId')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  upsertCardWishlist(
+    @Req() req: AuthenticatedRequest,
+    @Param('cardId') cardId: string,
+    @Body() dto: UpsertCardWishlistDto,
+  ) {
+    return this.gachaService.upsertCardWishlist(req.user.id, cardId, dto);
+  }
+
+  @Delete('wishlist/cards/:cardId')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  deleteCardWishlist(
+    @Req() req: AuthenticatedRequest,
+    @Param('cardId') cardId: string,
+  ) {
+    return this.gachaService.deleteCardWishlist(req.user.id, cardId);
+  }
+
+  @Put('wishlist/sets/:animeId')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  upsertSetWishlist(
+    @Req() req: AuthenticatedRequest,
+    @Param('animeId') animeId: string,
+    @Body() dto: UpsertSetWishlistDto,
+  ) {
+    return this.gachaService.upsertSetWishlist(req.user.id, animeId, dto);
+  }
+
+  @Delete('wishlist/sets/:animeId')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  deleteSetWishlist(
+    @Req() req: AuthenticatedRequest,
+    @Param('animeId') animeId: string,
+  ) {
+    return this.gachaService.deleteSetWishlist(req.user.id, animeId);
+  }
+
+  @Patch('wishlist/privacy')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  setWishlistPrivacy(
+    @Req() req: AuthenticatedRequest,
+    @Body() dto: WishlistPrivacyDto,
+  ) {
+    return this.gachaService.setWishlistPrivacy(req.user.id, dto.isPublic);
+  }
+
+  @Get('wishlist/interested/:cardId')
+  @UseGuards(OptionalJwtAuthGuard)
+  interestedWishlistUsers(
+    @Param('cardId') cardId: string,
+    @Query('animeId') animeId: string,
+    @Query('condition') condition: string,
+    @Query('foil') foil: string,
+    @Query('edition') edition: string,
+  ) {
+    const parsedCondition = Number(condition);
+    const parsedEdition = Number(edition);
+    if (
+      !Number.isFinite(parsedCondition) ||
+      !Number.isInteger(parsedEdition) ||
+      parsedEdition < 1
+    ) {
+      throw new BadRequestException('Variante da carta inválida.');
+    }
+    return this.gachaService.interestedWishlistUsers(cardId, animeId || null, {
+      condition: parsedCondition,
+      foil,
+      edition: parsedEdition,
+    });
+  }
 
   @Post('roll')
   @UseGuards(JwtAuthGuard, VerifiedGuard)

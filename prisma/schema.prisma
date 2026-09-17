@@ -110,6 +110,12 @@ enum FeedbackStatus {
   REJECTED
 }
 
+enum WishlistPriority {
+  LOW
+  NORMAL
+  HIGH
+}
+
 model User {
   id                      String                   @id @default(uuid())
   email                   String                   @unique
@@ -165,6 +171,9 @@ model User {
   legacyPointEvents       GachaPointEvent[]
   gachaCosmetics          String[]                 @default([])
   gachaCardBack           String?
+  gachaWishlistPublic     Boolean                  @default(true)
+  gachaCardWishlists      GachaCardWishlist[]
+  gachaSetWishlists       GachaSetWishlist[]
   posts                   Post[]
   postLikes               PostLike[]
   postComments            PostComment[]
@@ -259,17 +268,17 @@ model PasswordResetToken {
 }
 
 model Anime {
-  id                    String          @id @default(uuid())
-  slug                  String          @unique
+  id                    String             @id @default(uuid())
+  slug                  String             @unique
   title                 String
   synopsis              String?
   coverImage            String?
   bannerImage           String?
-  rating                Float?          @default(0)
-  ageRating             String?         @default("A14")
-  status                String          @default("LANCAMENTO")
-  audio                 AudioType       @default(LEGENDADO)
-  format                AnimeFormat?    @default(TV)
+  rating                Float?             @default(0)
+  ageRating             String?            @default("A14")
+  status                String             @default("LANCAMENTO")
+  audio                 AudioType          @default(LEGENDADO)
+  format                AnimeFormat?       @default(TV)
   year                  Int?
   season                AnimeSeason?
   studios               String[]
@@ -280,9 +289,9 @@ model Anime {
   releaseDate           DateTime?
   endDate               DateTime?
   episodeCount          Int?
-  anilistId             Int?            @unique
-  malId                 Int?            @unique
-  published             Boolean         @default(true)
+  anilistId             Int?               @unique
+  malId                 Int?               @unique
+  published             Boolean            @default(true)
   editorialSynopsis     String?
   editorialWhereToWatch String?
   editorialDubbingInfo  String?
@@ -297,8 +306,9 @@ model Anime {
   animeList             UserAnimeList[]
   posts                 Post[]
   cards                 Card[]
-  createdAt             DateTime        @default(now())
-  updatedAt             DateTime        @updatedAt
+  gachaSetWishlists     GachaSetWishlist[]
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
 
   @@index([slug])
   @@index([rating])
@@ -845,12 +855,13 @@ model Card {
   animeId           String?
   anime             Anime?                  @relation(fields: [animeId], references: [id], onDelete: SetNull)
   animeTitle        String?
-  status            CardStatus @default(ACTIVE)
-  source            CardSource @default(MAL)
+  status            CardStatus              @default(ACTIVE)
+  source            CardSource              @default(MAL)
   variantName       String?
-  variantType       String      @default("STANDARD")
+  variantType       String                  @default("STANDARD")
   owners            UserCard[]
   collectionMembers GachaCollectionMember[]
+  wishlistEntries   GachaCardWishlist[]
   spins             GachaSpin[]
   editionCounter    Int                     @default(0)
   createdAt         DateTime                @default(now())
@@ -859,6 +870,39 @@ model Card {
   @@index([rarity])
   @@index([animeId])
   @@index([status, rarity])
+}
+
+model GachaCardWishlist {
+  id            String           @id @default(uuid())
+  userId        String
+  cardId        String
+  priority      WishlistPriority @default(NORMAL)
+  acceptedFoils String[]         @default([])
+  minCondition  String?
+  maxEdition    Int?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  card          Card             @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, cardId])
+  @@index([cardId, priority])
+  @@index([userId, priority])
+}
+
+model GachaSetWishlist {
+  id        String           @id @default(uuid())
+  userId    String
+  animeId   String
+  priority  WishlistPriority @default(NORMAL)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  anime     Anime            @relation(fields: [animeId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, animeId])
+  @@index([animeId, priority])
+  @@index([userId, priority])
 }
 
 model GachaRarity {

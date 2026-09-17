@@ -6,6 +6,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import {
   CardSource,
@@ -36,6 +37,11 @@ import {
   pickWeighted,
 } from '@/gacha/gacha.constants';
 import { randomInt } from 'node:crypto';
+import { WishlistService } from '@/gacha/wishlist.service';
+import {
+  UpsertCardWishlistDto,
+  UpsertSetWishlistDto,
+} from '@/gacha/dto/gacha.dto';
 
 const DAY_MS = 86_400_000;
 const HOUR_MS = 3_600_000;
@@ -153,7 +159,61 @@ const fmtTrade = (t: TradeRow) => ({
 export class GachaService {
   private readonly logger = new Logger(GachaService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly wishlistService?: WishlistService,
+  ) {}
+
+  wishlist(
+    userId: string,
+    viewerId: string | null,
+    options: Parameters<WishlistService['list']>[2] = {},
+  ) {
+    if (!this.wishlistService) throw new Error('WishlistService indisponível.');
+    return this.wishlistService.list(userId, viewerId, options);
+  }
+
+  upsertCardWishlist(
+    userId: string,
+    cardId: string,
+    dto: UpsertCardWishlistDto,
+  ) {
+    if (!this.wishlistService) throw new Error('WishlistService indisponível.');
+    return this.wishlistService.upsertCard(userId, cardId, dto);
+  }
+
+  deleteCardWishlist(userId: string, cardId: string) {
+    if (!this.wishlistService) throw new Error('WishlistService indisponível.');
+    return this.wishlistService.deleteCard(userId, cardId);
+  }
+
+  upsertSetWishlist(
+    userId: string,
+    animeId: string,
+    dto: UpsertSetWishlistDto,
+  ) {
+    if (!this.wishlistService) throw new Error('WishlistService indisponível.');
+    return this.wishlistService.upsertSet(userId, animeId, dto);
+  }
+
+  deleteSetWishlist(userId: string, animeId: string) {
+    if (!this.wishlistService) throw new Error('WishlistService indisponível.');
+    return this.wishlistService.deleteSet(userId, animeId);
+  }
+
+  setWishlistPrivacy(userId: string, isPublic: boolean) {
+    if (!this.wishlistService) throw new Error('WishlistService indisponível.');
+    return this.wishlistService.setPrivacy(userId, isPublic);
+  }
+
+  interestedWishlistUsers(
+    cardId: string,
+    animeId: string | null,
+    copy: { condition: number; foil: string; edition: number },
+  ) {
+    if (!this.wishlistService) throw new Error('WishlistService indisponível.');
+    return this.wishlistService.interestedUsers(cardId, animeId, copy);
+  }
 
   // ponytail: dia em UTC; migrar p/ TZ do usuário se houver reclamação BR.
   private dayStartUtc(now = new Date()): Date {
@@ -1004,8 +1064,20 @@ export class GachaService {
       }),
       this.prisma.gachaListing.count({ where }),
     ]);
+    const data = this.wishlistService
+      ? await Promise.all(
+          items.map(async (item) => ({
+            ...item,
+            interestedCount: await this.wishlistService!.interestedCount(
+              item.userCard.card.id,
+              item.userCard.card.animeId,
+              item.userCard,
+            ),
+          })),
+        )
+      : items;
     return {
-      data: items,
+      data,
       meta: {
         page,
         limit: safeLimit,
@@ -1400,7 +1472,10 @@ export class GachaService {
         rarity: string;
         favourites: number;
         owned: boolean;
+        wishlisted: boolean;
+        wishlistPriority: string | null;
       }>;
+      wishlisted: boolean;
       complete: boolean;
     }>;
   }>;
@@ -1425,6 +1500,8 @@ export class GachaService {
       rarity: string;
       favourites: number;
       owned: boolean;
+      wishlisted: boolean;
+      wishlistPriority: string | null;
       animeId: string | null;
       animeTitle: string | null;
     }>;
@@ -1441,7 +1518,10 @@ export class GachaService {
         rarity: string;
         favourites: number;
         owned: boolean;
+        wishlisted: boolean;
+        wishlistPriority: string | null;
       }>;
+      wishlisted: boolean;
       complete: boolean;
     }>;
     meta: { total: number; page: number; limit: number; totalPages: number };
@@ -1477,6 +1557,16 @@ export class GachaService {
         })
       : [];
     const ownedIds = new Set(ownedRows.map((row) => row.cardId));
+    const wishlistStates =
+      userId && this.wishlistService
+        ? await this.wishlistService.cardStates(
+            userId,
+            cards.map((card) => ({ id: card.id, animeId: card.animeId })),
+          )
+        : new Map<
+            string,
+            { direct: boolean; set: boolean; priority: string | null }
+          >();
 
     const byAnime = new Map<
       string | null,
@@ -1493,7 +1583,10 @@ export class GachaService {
           rarity: string;
           favourites: number;
           owned: boolean;
+          wishlisted: boolean;
+          wishlistPriority: string | null;
         }>;
+        wishlisted: boolean;
       }
     >();
     for (const card of cards) {
@@ -1508,12 +1601,15 @@ export class GachaService {
           total: 0,
           owned: 0,
           cards: [],
+          wishlisted: false,
         });
       }
       const set = byAnime.get(key)!;
       set.total += 1;
       const has = ownedIds.has(card.id);
+      const wish = wishlistStates.get(card.id);
       if (has) set.owned += 1;
+      if (wish?.set) set.wishlisted = true;
       set.cards.push({
         id: card.id,
         name: card.name,
@@ -1521,6 +1617,8 @@ export class GachaService {
         rarity: card.rarity,
         favourites: card.favourites,
         owned: has,
+        wishlisted: Boolean(wish?.direct || wish?.set),
+        wishlistPriority: wish?.priority ?? null,
       });
     }
 
