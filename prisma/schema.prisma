@@ -150,6 +150,7 @@ model User {
   siteFeedbackUpvotes     SiteFeedbackUpvote[]
   privacySettings         PrivacySettings?
   userCards              UserCard[]
+  originalUserCards      UserCard[]              @relation("OriginalUserCards")
   featuredUserCardId     String?                  @unique
   featuredUserCard       UserCard?                @relation("FeaturedUserCard", fields: [featuredUserCardId], references: [id], onDelete: SetNull)
   gachaRollDays           GachaRollDay[]
@@ -163,6 +164,7 @@ model User {
   crystalBalance          Int               @default(0)
   legacyPointEvents       GachaPointEvent[]
   gachaCosmetics          String[]          @default([])
+  gachaCardBack           String?
   posts                   Post[]
   postLikes               PostLike[]
   postComments            PostComment[]
@@ -799,6 +801,7 @@ model Card {
   anime                Anime?      @relation(fields: [animeId], references: [id], onDelete: SetNull)
   animeTitle           String?
   owners               UserCard[]
+  collectionMembers    GachaCollectionMember[]
   spins                GachaSpin[]
   editionCounter       Int         @default(0)
   createdAt            DateTime    @default(now())
@@ -808,12 +811,49 @@ model Card {
   @@index([animeId])
 }
 
+model GachaRarity {
+  id         String   @id @default(uuid())
+  name       String   @unique
+  slug       String   @unique
+  pointsBase Int      @default(0)
+  dropWeight Float    @default(0)
+  color      String?
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  @@index([active, dropWeight])
+}
+
+model GachaCollection {
+  id String @id @default(uuid())
+  name String
+  slug String @unique
+  description String?
+  version Int @default(1)
+  published Boolean @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  members GachaCollectionMember[]
+  @@index([published, updatedAt(sort: Desc)])
+}
+
+model GachaCollectionMember {
+  collectionId String
+  cardId String
+  collection GachaCollection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  card Card @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  @@id([collectionId, cardId])
+  @@index([cardId])
+}
+
 /// Cópia de carta de um usuário — non-unique, individualizada por
 /// condition/foil/edition (o "float" das skins de CS).
 model UserCard {
   id         String   @id @default(uuid())
   userId     String
   user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  originalUserId String?
+  originalUser User?  @relation("OriginalUserCards", fields: [originalUserId], references: [id], onDelete: SetNull)
   featuredBy User?    @relation("FeaturedUserCard")
   cardId     String
   card       Card     @relation(fields: [cardId], references: [id], onDelete: Cascade)
@@ -827,6 +867,7 @@ model UserCard {
   @@index([userId, obtainedAt(sort: Desc)])
   @@index([cardId, edition])
   @@index([userId, value(sort: Desc)])
+  @@index([originalUserId])
 
   tradeOffered   GachaTrade[] @relation("TradeOffered")
   tradeRequested GachaTrade[] @relation("TradeRequested")
@@ -836,6 +877,29 @@ model UserCard {
 enum UserCardStatus {
   ACTIVE
   BURNED
+}
+
+enum GachaCosmeticStatus {
+  DRAFT
+  REVIEW
+  PUBLISHED
+  ARCHIVED
+}
+
+model GachaCardBack {
+  id          String              @id @default(uuid())
+  key         String              @unique
+  name        String
+  description String?
+  svg         String              @db.Text
+  previewUrl  String?
+  price       Int                 @default(0)
+  version     Int                 @default(1)
+  status      GachaCosmeticStatus @default(DRAFT)
+  createdById String?
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+  @@index([status, updatedAt(sort: Desc)])
 }
 
 model GachaRollDay {
