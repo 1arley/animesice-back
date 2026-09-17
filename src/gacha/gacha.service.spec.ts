@@ -109,6 +109,21 @@ describe('GachaService', () => {
       update: jest.fn(),
       updateMany: jest.fn(),
     },
+    gachaCardBack: {
+      findFirst: jest.fn(),
+      findMany: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+    },
+    gachaCollection: {
+      findMany: jest.fn(),
+      create: jest.fn(),
+    },
+    gachaRarity: {
+      findMany: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+    },
     $transaction: jest.fn(),
   };
 
@@ -889,11 +904,8 @@ describe('GachaService', () => {
       const repriced = await service.adminUpdateCard('c1', {
         rarity: 'LENDARIA',
       });
-      expect(repriced).toMatchObject({ repriced: 1 });
-      expect(mockPrisma.userCard.update).toHaveBeenCalledWith({
-        where: { id: 'p1' },
-        data: { value: cardValue('LENDARIA', 0.05, 'NORMAL', 1) },
-      });
+      expect(repriced).toMatchObject({ repriced: 0 });
+      expect(mockPrisma.userCard.update).not.toHaveBeenCalled();
       mockPrisma.card.findUnique.mockResolvedValue(null);
       await expect(
         service.adminUpdateCard('ghost', { rarity: 'RARA' }),
