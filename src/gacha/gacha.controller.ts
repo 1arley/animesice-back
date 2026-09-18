@@ -31,6 +31,8 @@ import {
   WishlistPrivacyDto,
   WishlistPriorityDto,
   EquipGachaSkinDto,
+  GachaCollectionPreferencesDto,
+  GachaEngagementPilotDto,
 } from '@/gacha/dto/gacha.dto';
 import { JwtAuthGuard } from '@/auth/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from '@/auth/optional-jwt-auth.guard';
@@ -538,6 +540,34 @@ export class GachaController {
     return this.gachaService.collections();
   }
 
+  @Get('collections/progress')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  collectionProgress(@Req() req: AuthenticatedRequest) {
+    return this.gachaService.collectionProgress(req.user.id);
+  }
+
+  @Get('engagement-pilot')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  engagementPilot(@Req() req: AuthenticatedRequest) {
+    return this.gachaService.engagementPilotStatus(req.user.id);
+  }
+
+  @Patch('collections/preferences')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  updateCollectionPreferences(
+    @Req() req: AuthenticatedRequest,
+    @Body() body: GachaCollectionPreferencesDto,
+  ) {
+    return this.gachaService.updateCollectionPreferences(
+      req.user.id,
+      body.favoriteCollectionId,
+      body.pinnedCollectionIds ?? [],
+    );
+  }
+
   @Post('admin/collections')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN', 'SUPERADMIN')
@@ -895,6 +925,21 @@ export class GachaController {
   @Audit('RESET_GACHA_ROLL', 'GachaRollDay')
   adminResetRoll(@Param('userId') userId: string) {
     return this.gachaService.adminResetRoll(userId);
+  }
+
+  @Get('admin/engagement-pilot')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  adminEngagementPilot() {
+    return this.gachaService.adminEngagementPilot();
+  }
+
+  @Patch('admin/engagement-pilot')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SUPERADMIN')
+  @Audit('UPDATE_GACHA_ENGAGEMENT_PILOT', 'SiteSetting')
+  adminUpdateEngagementPilot(@Body() dto: GachaEngagementPilotDto) {
+    return this.gachaService.adminUpdateEngagementPilot(dto.percent);
   }
 
   @Post('admin/users/:userId/points-adjust')

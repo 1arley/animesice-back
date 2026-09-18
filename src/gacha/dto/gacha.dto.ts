@@ -31,6 +31,35 @@ export class SetFeaturedGachaCardDto {
   userCardId!: string;
 }
 
+export class GachaCollectionPreferencesDto {
+  @ApiProperty({ nullable: true })
+  @IsDefined()
+  @ValidateIf(
+    (value: GachaCollectionPreferencesDto) =>
+      value.favoriteCollectionId !== null,
+  )
+  @IsString()
+  @IsNotEmpty()
+  favoriteCollectionId!: string | null;
+
+  @ApiProperty({ type: [String], maxItems: 3, required: false })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(3)
+  @ArrayUnique()
+  @IsString({ each: true })
+  @IsNotEmpty({ each: true })
+  pinnedCollectionIds?: string[];
+}
+
+export class GachaEngagementPilotDto {
+  @ApiProperty({ minimum: 0, maximum: 100 })
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  percent!: number;
+}
+
 export class RerollGachaCardDto {
   @ApiProperty({ description: 'ID da UserCard (sua) a rerrolar.' })
   @IsString()

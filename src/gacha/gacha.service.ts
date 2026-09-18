@@ -36,7 +36,7 @@ import {
   isEpicTier,
   pickWeighted,
 } from '@/gacha/gacha.constants';
-import { randomInt } from 'node:crypto';
+import { createHash, randomInt } from 'node:crypto';
 import { WishlistService } from '@/gacha/wishlist.service';
 import {
   UpsertCardWishlistDto,
@@ -50,6 +50,34 @@ const TRADE_ACTIVE_LIMIT = 3;
 const EPIC_RARITIES = ['EPICA', 'LENDARIA', 'MITICA', 'GALACTICA'];
 const SKIN_SPIN_COOLDOWN_MS = 12 * HOUR_MS;
 const SKIN_SPIN_PRICE = 1_000;
+const FEATURED_ACCRUAL_LIMIT_MS = 7 * DAY_MS;
+const FEATURED_PRODUCTIVE_MS_PER_DAY = 10 * HOUR_MS;
+const FEATURED_REWARD_DENOMINATOR = BigInt(2 * HOUR_MS * 10_000);
+
+export function gachaPilotBucket(userId: string): number {
+  return createHash('sha256').update(userId).digest().readUInt32BE(0) % 100;
+}
+
+/** Tempo remunerado: primeiras 10h de cada janela de 24h ancorada no destaque. */
+export function featuredProductiveMs(
+  startedAt: Date,
+  from: Date,
+  to: Date,
+): number {
+  if (to <= from) return 0;
+  let cursor = Math.max(from.getTime(), startedAt.getTime());
+  const end = to.getTime();
+  let total = 0;
+  while (cursor < end) {
+    const offset = cursor - startedAt.getTime();
+    const dayStart = startedAt.getTime() + Math.floor(offset / DAY_MS) * DAY_MS;
+    const nextDay = dayStart + DAY_MS;
+    const paidEnd = dayStart + FEATURED_PRODUCTIVE_MS_PER_DAY;
+    total += Math.max(0, Math.min(end, paidEnd) - cursor);
+    cursor = Math.min(end, nextDay);
+  }
+  return total;
+}
 
 const PULL_SELECT = {
   id: true,
@@ -210,6 +238,162 @@ export class GachaService {
     @Optional() private readonly wishlistService?: WishlistService,
   ) {}
 
+  private async pilotConfig() {
+    const rows = await this.prisma.siteSetting.findMany({
+      where: {
+        key: {
+          in: [
+            'GACHA_ENGAGEMENT_PILOT_PERCENT',
+            'GACHA_ENGAGEMENT_PILOT_STARTED_AT',
+          ],
+        },
+      },
+    });
+    const settings = new Map(rows.map((row) => [row.key, row.value]));
+    const rawPercent = Number(
+      settings.get('GACHA_ENGAGEMENT_PILOT_PERCENT') ??
+        process.env.GACHA_ENGAGEMENT_PILOT_PERCENT ??
+        10,
+    );
+    const percent = Number.isFinite(rawPercent)
+      ? Math.min(100, Math.max(0, Math.trunc(rawPercent)))
+      : 10;
+    const rawStartedAt = settings.get('GACHA_ENGAGEMENT_PILOT_STARTED_AT');
+    const startedAt = rawStartedAt ? new Date(rawStartedAt) : new Date();
+    return {
+      percent,
+      startedAt: Number.isNaN(startedAt.getTime()) ? new Date() : startedAt,
+    };
+  }
+
+  private async pilotEnabled(userId: string) {
+    const config = await this.pilotConfig();
+    return gachaPilotBucket(userId) < config.percent;
+  }
+
+  async engagementPilotStatus(userId: string) {
+    const config = await this.pilotConfig();
+    return {
+      enabled: gachaPilotBucket(userId) < config.percent,
+      percent: config.percent,
+    };
+  }
+
+  async adminUpdateEngagementPilot(percent: number) {
+    const existing = await this.prisma.siteSetting.findUnique({
+      where: { key: 'GACHA_ENGAGEMENT_PILOT_STARTED_AT' },
+      select: { value: true },
+    });
+    const startedAt = existing?.value ?? new Date().toISOString();
+    await this.prisma.$transaction([
+      this.prisma.siteSetting.upsert({
+        where: { key: 'GACHA_ENGAGEMENT_PILOT_PERCENT' },
+        create: {
+          key: 'GACHA_ENGAGEMENT_PILOT_PERCENT',
+          value: String(percent),
+        },
+        update: { value: String(percent) },
+      }),
+      this.prisma.siteSetting.upsert({
+        where: { key: 'GACHA_ENGAGEMENT_PILOT_STARTED_AT' },
+        create: { key: 'GACHA_ENGAGEMENT_PILOT_STARTED_AT', value: startedAt },
+        update: {},
+      }),
+    ]);
+    return this.adminEngagementPilot();
+  }
+
+  async adminEngagementPilot() {
+    const config = await this.pilotConfig();
+    // ponytail: varredura de IDs no painel admin; migrar o bucket para coluna
+    // persistida se a tabela User chegar a centenas de milhares de linhas.
+    const users = await this.prisma.user.findMany({ select: { id: true } });
+    const cohort = users
+      .map(({ id }) => id)
+      .filter((id) => gachaPilotBucket(id) < config.percent);
+    const [issued, spent, earners, spins, discoveries] = await Promise.all([
+      this.prisma.crystalEvent.aggregate({
+        where: {
+          userId: { in: cohort },
+          createdAt: { gte: config.startedAt },
+          type: { in: ['FEATURED', 'COLLECTION'] },
+        },
+        _sum: { delta: true },
+      }),
+      this.prisma.crystalEvent.aggregate({
+        where: {
+          userId: { in: cohort },
+          createdAt: { gte: config.startedAt },
+          type: { in: ['SPEND', 'TAX'] },
+          delta: { lt: 0 },
+        },
+        _sum: { delta: true },
+      }),
+      this.prisma.crystalEvent.findMany({
+        where: {
+          userId: { in: cohort },
+          createdAt: { gte: config.startedAt },
+          type: { in: ['FEATURED', 'COLLECTION'] },
+        },
+        distinct: ['userId'],
+        select: { userId: true },
+      }),
+      this.prisma.gachaSpin.findMany({
+        where: { userId: { in: cohort }, createdAt: { gte: config.startedAt } },
+        distinct: ['userId'],
+        select: { userId: true },
+      }),
+      this.prisma.gachaCardDiscovery.findMany({
+        where: {
+          userId: { in: cohort },
+          discoveredAt: { gte: config.startedAt },
+        },
+        select: { userId: true, cardId: true, discoveredAt: true },
+      }),
+    ]);
+    const meaningful = new Set([
+      ...spins.map(({ userId }) => userId),
+      ...discoveries.map(({ userId }) => userId),
+    ]);
+    const rewardOnly = earners.filter(({ userId }) => !meaningful.has(userId));
+    const cardOwners = new Map<string, Set<string>>();
+    for (const row of discoveries) {
+      const owners = cardOwners.get(row.cardId) ?? new Set<string>();
+      owners.add(row.userId);
+      cardOwners.set(row.cardId, owners);
+    }
+    const sharedCards = [...cardOwners.values()].filter(
+      (owners) => owners.size >= 3,
+    ).length;
+    const emitted = issued._sum.delta ?? 0;
+    const sinks = Math.abs(spent._sum.delta ?? 0);
+    const rewardOnlyRate = earners.length
+      ? rewardOnly.length / earners.length
+      : 0;
+    return {
+      config: {
+        percent: config.percent,
+        startedAt: config.startedAt.toISOString(),
+      },
+      cohort: { assigned: cohort.length, totalUsers: users.length },
+      economy: {
+        emitted,
+        sinks,
+        ratio: sinks === 0 ? null : emitted / sinks,
+        pause: emitted > sinks * 1.2,
+      },
+      behavior: {
+        earners: earners.length,
+        meaningfulUsers: meaningful.size,
+        rewardOnlyUsers: rewardOnly.length,
+        rewardOnlyRate,
+        sharedCards,
+        pause: rewardOnlyRate > 0.3 || sharedCards > cohort.length * 0.1,
+      },
+      satisfaction: { measured: false },
+    };
+  }
+
   wishlist(
     userId: string,
     viewerId: string | null,
@@ -274,6 +458,220 @@ export class GachaService {
     return start;
   }
 
+  private async settleFeatured(userId: string, now = new Date()) {
+    if (!(await this.pilotEnabled(userId))) return 0;
+    return this.prisma.$transaction(
+      async (tx) => {
+        const user = await tx.user.findUnique({
+          where: { id: userId },
+          select: {
+            featuredStartedAt: true,
+            featuredSettledAt: true,
+            featuredRemainder: true,
+            featuredUserCard: {
+              select: { id: true, cardId: true, value: true },
+            },
+          },
+        });
+        const card = user?.featuredUserCard;
+        const startedAt = user?.featuredStartedAt;
+        const settledAt = user?.featuredSettledAt;
+        if (!card || !startedAt || !settledAt) return 0;
+
+        const paidUntil = new Date(
+          Math.min(
+            now.getTime(),
+            settledAt.getTime() + FEATURED_ACCRUAL_LIMIT_MS,
+          ),
+        );
+        const productiveMs = featuredProductiveMs(
+          startedAt,
+          settledAt,
+          paidUntil,
+        );
+        const medal = await tx.gachaCollectionProgress.findFirst({
+          where: {
+            userId,
+            reward100At: { not: null },
+            collection: { members: { some: { cardId: card.cardId } } },
+          },
+          select: { collectionId: true },
+        });
+        const rateBps = medal ? 105n : 100n;
+        const numerator =
+          user.featuredRemainder +
+          BigInt(card.value) * BigInt(productiveMs) * rateBps;
+        const amount = Number(numerator / FEATURED_REWARD_DENOMINATOR);
+        const remainder = numerator % FEATURED_REWARD_DENOMINATOR;
+        if (amount > 0) {
+          await this.changeCrystals(
+            tx,
+            userId,
+            amount,
+            'FEATURED',
+            card.id,
+            'Rendimento da carta em destaque',
+          );
+        }
+        await tx.user.update({
+          where: { id: userId },
+          data: { featuredSettledAt: now, featuredRemainder: remainder },
+        });
+        return amount;
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+  }
+
+  async collectionProgress(userId: string) {
+    if (!(await this.pilotEnabled(userId))) return [];
+    return this.prisma.$transaction(
+      async (tx) => {
+        const owned = await tx.userCard.findMany({
+          where: { userId, status: 'ACTIVE' },
+          distinct: ['cardId'],
+          select: { cardId: true },
+        });
+        await tx.gachaCardDiscovery.createMany({
+          data: owned.map(({ cardId }) => ({ userId, cardId })),
+          skipDuplicates: true,
+        });
+        const [collections, discoveries, user, saved] = await Promise.all([
+          tx.gachaCollection.findMany({
+            where: { published: true },
+            include: { members: { select: { cardId: true } } },
+            orderBy: { name: 'asc' },
+          }),
+          tx.gachaCardDiscovery.findMany({
+            where: { userId },
+            select: { cardId: true },
+          }),
+          tx.user.findUniqueOrThrow({
+            where: { id: userId },
+            select: { favoriteCollectionId: true, pinnedCollectionIds: true },
+          }),
+          tx.gachaCollectionProgress.findMany({ where: { userId } }),
+        ]);
+        const discovered = new Set(discoveries.map(({ cardId }) => cardId));
+        const savedByKey = new Map(
+          saved.map((row) => [`${row.collectionId}:${row.version}`, row]),
+        );
+        const result = [];
+        for (const collection of collections) {
+          const total = collection.members.length;
+          const found = collection.members.reduce(
+            (count, member) => count + Number(discovered.has(member.cardId)),
+            0,
+          );
+          const percent = total === 0 ? 0 : Math.floor((found * 100) / total);
+          const previous = savedByKey.get(
+            `${collection.id}:${collection.version}`,
+          );
+          const now = new Date();
+          const reward25At =
+            previous?.reward25At ?? (percent >= 25 ? now : null);
+          const reward50At =
+            previous?.reward50At ?? (percent >= 50 ? now : null);
+          const reward100At =
+            previous?.reward100At ?? (percent >= 100 ? now : null);
+          const rewards: Array<readonly [number, number]> = [];
+          if (!previous?.reward25At && reward25At) rewards.push([25, 50]);
+          if (!previous?.reward50At && reward50At) rewards.push([50, 100]);
+          if (!previous?.reward100At && reward100At) rewards.push([100, 200]);
+          await tx.gachaCollectionProgress.upsert({
+            where: {
+              userId_collectionId_version: {
+                userId,
+                collectionId: collection.id,
+                version: collection.version,
+              },
+            },
+            create: {
+              userId,
+              collectionId: collection.id,
+              version: collection.version,
+              reward25At,
+              reward50At,
+              reward100At,
+            },
+            update: { reward25At, reward50At, reward100At },
+          });
+          for (const [milestone, crystals] of rewards) {
+            await this.changeCrystals(
+              tx,
+              userId,
+              crystals,
+              'COLLECTION',
+              `${collection.id}:v${collection.version}:${milestone}`,
+              `${milestone}% da coleção ${collection.name}`,
+            );
+          }
+          result.push({
+            id: collection.id,
+            name: collection.name,
+            slug: collection.slug,
+            version: collection.version,
+            total,
+            discovered: found,
+            percent,
+            rewards: { reward25At, reward50At, reward100At },
+            favorite:
+              user.favoriteCollectionId === collection.id && percent < 100,
+            pinned: user.pinnedCollectionIds.includes(collection.id),
+          });
+        }
+        if (
+          user.favoriteCollectionId &&
+          result.some(
+            (collection) =>
+              collection.id === user.favoriteCollectionId &&
+              collection.percent >= 100,
+          )
+        ) {
+          await tx.user.update({
+            where: { id: userId },
+            data: { favoriteCollectionId: null },
+          });
+        }
+        return result;
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+  }
+
+  async updateCollectionPreferences(
+    userId: string,
+    favoriteCollectionId: string | null,
+    pinnedCollectionIds: string[],
+  ) {
+    if (!(await this.pilotEnabled(userId))) {
+      throw new ForbiddenException('Recurso ainda indisponível nesta conta.');
+    }
+    if (pinnedCollectionIds.length > 3) {
+      throw new BadRequestException('Escolha no máximo três medalhas.');
+    }
+    const progress = await this.collectionProgress(userId);
+    const byId = new Map(
+      progress.map((collection) => [collection.id, collection]),
+    );
+    if (favoriteCollectionId) {
+      const favorite = byId.get(favoriteCollectionId);
+      if (!favorite || favorite.percent < 25 || favorite.percent >= 100) {
+        throw new BadRequestException('Coleção favorita indisponível.');
+      }
+    }
+    if (pinnedCollectionIds.some((id) => !byId.get(id)?.rewards.reward100At)) {
+      throw new BadRequestException(
+        'Só medalhas concluídas podem ser fixadas.',
+      );
+    }
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { favoriteCollectionId, pinnedCollectionIds },
+    });
+    return this.collectionProgress(userId);
+  }
+
   private async pityState(userId: string) {
     const [lastEpic, first] = await this.prisma.$transaction([
       this.prisma.userCard.findFirst({
@@ -315,6 +713,7 @@ export class GachaService {
   }
 
   async status(userId: string) {
+    await this.settleFeatured(userId);
     const hour = this.hourStartUtc();
     const [spinsUsed, claim, pity, first, wallet, points] =
       await this.prisma.$transaction([
@@ -398,7 +797,7 @@ export class GachaService {
     const tier = await this.pickTierWithStock(
       pity.pityDue ? GACHA_PITY_WEIGHTS : GACHA_TIER_WEIGHTS,
     );
-    const card = await this.drawFromTier(tier);
+    const card = await this.drawFromTier(tier, userId);
 
     const condition = Math.random();
     const foil = pickWeighted(GACHA_FOIL_WEIGHTS);
@@ -481,6 +880,10 @@ export class GachaService {
             },
             select: PULL_SELECT,
           });
+          await tx.gachaCardDiscovery.createMany({
+            data: { userId, cardId: spin.card.id },
+            skipDuplicates: true,
+          });
           const claimed = await tx.gachaSpin.updateMany({
             where: { id: spin.id, claimedAt: null },
             data: { claimedAt: new Date() },
@@ -546,7 +949,7 @@ export class GachaService {
   // o cooldown. A updateMany em read=false é a trava de idempotência.
   async claimCompensation(userId: string) {
     const tier = await this.pickTierWithStock(GACHA_PITY_WEIGHTS);
-    const card = await this.drawFromTier(tier);
+    const card = await this.drawFromTier(tier, userId);
     const condition = Math.random();
     const foil = pickWeighted(GACHA_FOIL_WEIGHTS);
 
@@ -588,6 +991,10 @@ export class GachaService {
             ),
           },
           select: PULL_SELECT,
+        });
+        await tx.gachaCardDiscovery.createMany({
+          data: { userId, cardId: card.id },
+          skipDuplicates: true,
         });
         await this.changeCrystals(
           tx,
@@ -1005,6 +1412,7 @@ export class GachaService {
     if (!Number.isSafeInteger(price) || price < 1 || price > 2_147_483_647) {
       throw new BadRequestException('Preço deve ser um inteiro positivo.');
     }
+    await this.settleFeatured(userId);
     const listing = await this.prisma.$transaction(
       async (tx) => {
         const card = await tx.userCard.findFirst({
@@ -1040,6 +1448,13 @@ export class GachaService {
             `Limite de ${GACHA_LISTING_ACTIVE_LIMIT} anúncios ativos atingido.`,
           );
         }
+        await tx.user.updateMany({
+          where: { id: userId, featuredUserCardId: userCardId },
+          data: {
+            featuredUserCardId: null,
+            featuredSettledAt: null,
+          },
+        });
         try {
           return await tx.gachaListing.create({
             data: {
@@ -1209,9 +1624,16 @@ export class GachaService {
             'A carta mudou de dono — compra cancelada.',
           );
         }
+        await tx.gachaCardDiscovery.createMany({
+          data: { userId, cardId: listing.userCard.card.id },
+          skipDuplicates: true,
+        });
         await tx.user.updateMany({
           where: { id: listing.userId, featuredUserCardId: listing.userCardId },
-          data: { featuredUserCardId: null },
+          data: {
+            featuredUserCardId: null,
+            featuredSettledAt: null,
+          },
         });
         await this.changeCrystals(
           tx,
@@ -1246,12 +1668,72 @@ export class GachaService {
     );
   }
 
-  private async drawFromTier(tier: GachaTier) {
-    const poolSize = await this.prisma.card.count({
-      where: { rarity: tier, status: 'ACTIVE' },
-    });
+  private async drawFromTier(tier: GachaTier, userId: string) {
+    const favorite = (await this.pilotEnabled(userId))
+      ? await this.prisma.user.findUnique({
+          where: { id: userId },
+          select: {
+            favoriteCollection: {
+              select: {
+                id: true,
+                version: true,
+                progress: {
+                  where: { userId },
+                  select: {
+                    version: true,
+                    reward25At: true,
+                    reward100At: true,
+                  },
+                },
+              },
+            },
+          },
+        })
+      : null;
+    const activeFavorite = favorite?.favoriteCollection;
+    const currentProgress = activeFavorite?.progress.find(
+      (progress) => progress.version === activeFavorite.version,
+    );
+    const collectionId =
+      activeFavorite &&
+      currentProgress?.reward25At &&
+      !currentProgress.reward100At
+        ? activeFavorite.id
+        : null;
+    const baseWhere: Prisma.CardWhereInput = {
+      rarity: tier,
+      status: 'ACTIVE',
+    };
+    const [favored, other] = collectionId
+      ? await this.prisma.$transaction([
+          this.prisma.card.count({
+            where: {
+              ...baseWhere,
+              collectionMembers: { some: { collectionId } },
+            },
+          }),
+          this.prisma.card.count({
+            where: {
+              ...baseWhere,
+              collectionMembers: { none: { collectionId } },
+            },
+          }),
+        ])
+      : [0, await this.prisma.card.count({ where: baseWhere })];
+    const chooseFavored =
+      favored > 0 && Math.random() * (favored * 1.15 + other) < favored * 1.15;
+    const poolSize = chooseFavored ? favored : other;
     const card = await this.prisma.card.findFirst({
-      where: { rarity: tier, status: 'ACTIVE' },
+      where: {
+        ...baseWhere,
+        ...(collectionId
+          ? {
+              collectionMembers: chooseFavored
+                ? { some: { collectionId } }
+                : { none: { collectionId } },
+            }
+          : {}),
+      },
       skip: Math.floor(Math.random() * poolSize),
       select: {
         id: true,
@@ -1313,7 +1795,7 @@ export class GachaService {
           : sort === 'edition'
             ? { edition: 'asc' }
             : { value: 'desc' };
-    const [pulls, total, stats] = await this.prisma.$transaction([
+    const [pulls, total, stats, owner] = await this.prisma.$transaction([
       this.prisma.userCard.findMany({
         where,
         skip: (safePage - 1) * safeLimit,
@@ -1326,11 +1808,36 @@ export class GachaService {
         where,
         _sum: { value: true },
       }),
+      this.prisma.user.findUnique({
+        where: { id: ownerId },
+        select: {
+          pinnedCollectionIds: true,
+          gachaCollectionProgress: {
+            where: { reward100At: { not: null } },
+            select: {
+              collectionId: true,
+              version: true,
+              collection: { select: { name: true } },
+            },
+          },
+        },
+      }),
     ]);
+
+    const medals = (owner?.gachaCollectionProgress ?? [])
+      .filter((progress) =>
+        owner?.pinnedCollectionIds.includes(progress.collectionId),
+      )
+      .slice(0, 3)
+      .map((progress) => ({
+        id: progress.collectionId,
+        name: progress.collection.name,
+        version: progress.version,
+      }));
 
     return {
       data: pulls.map(presentPull),
-      stats: { total, totalValue: stats._sum.value ?? 0 },
+      stats: { total, totalValue: stats._sum.value ?? 0, medals },
       meta: {
         total,
         page: safePage,
@@ -1355,16 +1862,40 @@ export class GachaService {
   }
 
   async featured(userId: string) {
+    const enabled = await this.pilotEnabled(userId);
+    const claimed = await this.settleFeatured(userId);
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { featuredUserCard: { select: PULL_SELECT } },
+      select: {
+        featuredStartedAt: true,
+        featuredSettledAt: true,
+        featuredUserCard: { select: PULL_SELECT },
+      },
     });
     const pull = user?.featuredUserCard;
     if (!pull) return null;
     const setComplete = await this.setCompleteFor(userId, pull.card.animeId);
+    const medal = await this.prisma.gachaCollectionProgress.findFirst({
+      where: {
+        userId,
+        reward100At: { not: null },
+        collection: { members: { some: { cardId: pull.card.id } } },
+      },
+      select: { collection: { select: { id: true, name: true } } },
+    });
     return {
       ...presentPull(pull),
       setComplete,
+      featured: {
+        enabled,
+        claimed,
+        startedAt: user.featuredStartedAt?.toISOString() ?? null,
+        settledAt: user.featuredSettledAt?.toISOString() ?? null,
+        ratePercentPerTwoHours: medal ? 1.05 : 1,
+        dailyCapPercent: medal ? 5.25 : 5,
+        accumulationDays: 7,
+        medal: medal?.collection ?? null,
+      },
     };
   }
 
@@ -1374,19 +1905,33 @@ export class GachaService {
       select: { id: true },
     });
     if (!card) throw new NotFoundException('Carta não encontrada.');
+    await this.settleFeatured(userId);
+    const now = new Date();
+    const state = await this.prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      select: { featuredStartedAt: true },
+    });
     await this.prisma.user.update({
       where: { id: userId },
-      data: { featuredUserCardId: card.id },
+      data: {
+        featuredUserCardId: card.id,
+        featuredStartedAt: state.featuredStartedAt ?? now,
+        featuredSettledAt: now,
+      },
     });
     return this.featured(userId);
   }
 
   async removeFeatured(userId: string) {
+    const claimed = await this.settleFeatured(userId);
     await this.prisma.user.update({
       where: { id: userId },
-      data: { featuredUserCardId: null },
+      data: {
+        featuredUserCardId: null,
+        featuredSettledAt: null,
+      },
     });
-    return { featuredUserCardId: null };
+    return { featuredUserCardId: null, claimed };
   }
 
   async crystals(userId: string, page = 1, limit = 20) {
@@ -2459,7 +3004,10 @@ export class GachaService {
     return this.prisma.$transaction(async (tx) => {
       await tx.user.updateMany({
         where: { featuredUserCardId: id },
-        data: { featuredUserCardId: null },
+        data: {
+          featuredUserCardId: null,
+          featuredSettledAt: null,
+        },
       });
       return tx.userCard.delete({ where: { id } });
     });
@@ -2806,6 +3354,14 @@ export class GachaService {
 
   async acceptTrade(userId: string, tradeId: string) {
     await this.expireTrade(tradeId);
+    const parties = await this.prisma.gachaTrade.findUnique({
+      where: { id: tradeId },
+      select: { offeredUserId: true, requestedUserId: true },
+    });
+    if (parties) {
+      await this.settleFeatured(parties.offeredUserId);
+      await this.settleFeatured(parties.requestedUserId);
+    }
     return this.prisma.$transaction(async (tx) => {
       const trade = await tx.gachaTrade.findUnique({
         where: { id: tradeId },
@@ -2845,7 +3401,7 @@ export class GachaService {
         : [trade.requestedUserCardId];
       const owners = await tx.userCard.findMany({
         where: { id: { in: [...offeredIds, ...requestedIds] } },
-        select: { id: true, userId: true },
+        select: { id: true, userId: true, cardId: true },
       });
       if (
         owners.length !== offeredIds.length + requestedIds.length ||
@@ -2866,14 +3422,20 @@ export class GachaService {
           id: trade.offeredUserId,
           featuredUserCardId: trade.offeredUserCard.id,
         },
-        data: { featuredUserCardId: null },
+        data: {
+          featuredUserCardId: null,
+          featuredSettledAt: null,
+        },
       });
       await tx.user.updateMany({
         where: {
           id: trade.requestedUserId,
           featuredUserCardId: trade.requestedUserCard.id,
         },
-        data: { featuredUserCardId: null },
+        data: {
+          featuredUserCardId: null,
+          featuredSettledAt: null,
+        },
       });
 
       const offered = await tx.userCard.updateMany({
@@ -2890,6 +3452,19 @@ export class GachaService {
       ) {
         throw new ConflictException('Uma das cartas mudou de dono.');
       }
+      await tx.gachaCardDiscovery.createMany({
+        data: [
+          ...offeredIds.map((id) => ({
+            userId: trade.requestedUserId,
+            cardId: owners.find((card) => card.id === id)!.cardId,
+          })),
+          ...requestedIds.map((id) => ({
+            userId: trade.offeredUserId,
+            cardId: owners.find((card) => card.id === id)!.cardId,
+          })),
+        ],
+        skipDuplicates: true,
+      });
 
       const done = await tx.gachaTrade.update({
         where: { id: tradeId },

@@ -7,7 +7,11 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { GachaService } from '@/gacha/gacha.service';
+import {
+  featuredProductiveMs,
+  gachaPilotBucket,
+  GachaService,
+} from '@/gacha/gacha.service';
 import { PrismaService } from '@/prisma/prisma.service';
 import {
   cardValue,
@@ -20,7 +24,22 @@ describe('GachaService', () => {
   let service: GachaService;
 
   const mockPrisma = {
+    siteSetting: {
+      findMany: jest.fn(),
+      findUnique: jest.fn(),
+      upsert: jest.fn(),
+    },
+    gachaCardDiscovery: {
+      createMany: jest.fn(),
+      findMany: jest.fn(),
+    },
+    gachaCollectionProgress: {
+      findFirst: jest.fn(),
+      findMany: jest.fn(),
+      upsert: jest.fn(),
+    },
     crystalEvent: {
+      aggregate: jest.fn(),
       create: jest.fn(),
       findMany: jest.fn(),
       count: jest.fn(),
@@ -180,6 +199,9 @@ describe('GachaService', () => {
     mockPrisma.user.findUniqueOrThrow.mockResolvedValue({ crystalBalance: 0 });
     mockPrisma.crystalEvent.findMany.mockResolvedValue([]);
     mockPrisma.crystalEvent.count.mockResolvedValue(0);
+    mockPrisma.siteSetting.findMany.mockResolvedValue([
+      { key: 'GACHA_ENGAGEMENT_PILOT_PERCENT', value: '100' },
+    ]);
     mockPrisma.$transaction.mockImplementation(
       (input: Promise<unknown>[] | ((tx: typeof mockPrisma) => unknown)) =>
         typeof input === 'function' ? input(mockPrisma) : Promise.all(input),
@@ -224,10 +246,12 @@ describe('GachaService', () => {
     it('limpa destaque antes do delete administrativo', async () => {
       mockPrisma.userCard.delete.mockResolvedValue({ id: 'p1' });
       await service.adminDeleteUserCard('p1');
-      expect(mockPrisma.user.updateMany).toHaveBeenCalledWith({
-        where: { featuredUserCardId: 'p1' },
-        data: { featuredUserCardId: null },
-      });
+      expect(mockPrisma.user.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { featuredUserCardId: 'p1' },
+          data: expect.objectContaining({ featuredUserCardId: null }),
+        }),
+      );
       expect(mockPrisma.userCard.delete).toHaveBeenCalledWith({
         where: { id: 'p1' },
       });
@@ -240,21 +264,26 @@ describe('GachaService', () => {
       });
 
       await expect(service.setFeatured('u1', 'p1')).resolves.toBeNull();
-      expect(mockPrisma.user.update).toHaveBeenCalledWith({
-        where: { id: 'u1' },
-        data: { featuredUserCardId: 'p1' },
-      });
+      expect(mockPrisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'u1' },
+          data: expect.objectContaining({ featuredUserCardId: 'p1' }),
+        }),
+      );
     });
 
     it('removeFeatured limpa o destaque', async () => {
       mockPrisma.user.update.mockResolvedValue({});
       await expect(service.removeFeatured('u1')).resolves.toEqual({
         featuredUserCardId: null,
+        claimed: 0,
       });
-      expect(mockPrisma.user.update).toHaveBeenCalledWith({
-        where: { id: 'u1' },
-        data: { featuredUserCardId: null },
-      });
+      expect(mockPrisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'u1' },
+          data: expect.objectContaining({ featuredUserCardId: null }),
+        }),
+      );
     });
 
     it('featured retorna carta destacada com conditionLabel', async () => {
@@ -650,7 +679,11 @@ describe('GachaService', () => {
       const result = await service.collection('u1', 'u1');
 
       expect(result.data[0]?.conditionLabel).toBe('MINT');
-      expect(result.stats).toEqual({ total: 1, totalValue: 100 });
+      expect(result.stats).toEqual({
+        total: 1,
+        totalValue: 100,
+        medals: [],
+      });
       expect(result.meta.totalPages).toBe(1);
     });
 
@@ -674,7 +707,7 @@ describe('GachaService', () => {
 
       const result = await service.collection('u2', 'u1');
 
-      expect(result.stats).toEqual({ total: 0, totalValue: 0 });
+      expect(result.stats).toEqual({ total: 0, totalValue: 0, medals: [] });
     });
 
     it('aplica filtros, ordenação e limites seguros', async () => {
@@ -1289,12 +1322,14 @@ describe('GachaService', () => {
           where: { id: { in: ['rc1'] }, userId: 'u2' },
           data: { userId: 'u1' },
         });
-        expect(mockPrisma.user.updateMany).toHaveBeenCalledWith({
-          where: { id: 'u1', featuredUserCardId: 'oc1' },
-          data: { featuredUserCardId: null },
-        });
+        expect(mockPrisma.user.updateMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: { id: 'u1', featuredUserCardId: 'oc1' },
+            data: expect.objectContaining({ featuredUserCardId: null }),
+          }),
+        );
         expect(res.status).toBe('COMPLETED');
-        expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
+        expect(mockPrisma.$transaction).toHaveBeenCalledTimes(3);
       });
 
       it('404 quando troca não existe', async () => {
@@ -1887,6 +1922,26 @@ describe('GachaService', () => {
 });
 
 describe('gacha constants', () => {
+  it('mantém o usuário na mesma coorte do piloto', () => {
+    expect(gachaPilotBucket('user-123')).toBe(gachaPilotBucket('user-123'));
+    expect(gachaPilotBucket('user-123')).toBeGreaterThanOrEqual(0);
+    expect(gachaPilotBucket('user-123')).toBeLessThan(100);
+  });
+
+  it('limita o rendimento do destaque às primeiras 10h de cada janela diária', () => {
+    const start = new Date('2026-01-01T00:00:00Z');
+    expect(
+      featuredProductiveMs(start, start, new Date('2026-01-02T00:00:00Z')),
+    ).toBe(10 * 60 * 60 * 1000);
+    expect(
+      featuredProductiveMs(
+        start,
+        new Date('2026-01-01T09:00:00Z'),
+        new Date('2026-01-02T02:00:00Z'),
+      ),
+    ).toBe(3 * 60 * 60 * 1000);
+  });
+
   it('precifica carta: base × condition × foil + bônus low edition', () => {
     expect(cardValue('COMUM', 0.05, 'NORMAL', 500)).toBe(30);
     expect(cardValue('LENDARIA', 0.05, 'GOLD', 1)).toBe(12000 + 12000);

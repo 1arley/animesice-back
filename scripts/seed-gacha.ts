@@ -49,16 +49,14 @@ function createPrismaClient(): PrismaClient {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-// ponytail: limiares fixos calibrados p/ escala do MAL (Luffy 149k,
-// Zoro 116k, Sanji 33k, Franky 6,8k); rodar --dry e recalibrar se um
-// tier secar ou inundar.
+// O score é o num_favorites do MAL; os limites seguem o catálogo do gacha.
 function rarityFor(favourites: number): string {
-  if (favourites >= 50_000) return 'GALACTICA';
-  if (favourites >= 20_000) return 'MITICA';
-  if (favourites >= 10_000) return 'LENDARIA';
-  if (favourites >= 3_000) return 'EPICA';
-  if (favourites >= 800) return 'RARA';
-  if (favourites >= 300) return 'INCOMUM';
+  if (favourites >= 25_000) return 'GALACTICA';
+  if (favourites >= 10_000) return 'MITICA';
+  if (favourites >= 5_000) return 'LENDARIA';
+  if (favourites >= 1_000) return 'EPICA';
+  if (favourites >= 100) return 'RARA';
+  if (favourites >= 10) return 'INCOMUM';
   return 'COMUM';
 }
 
@@ -181,6 +179,7 @@ async function main(): Promise<void> {
         name,
         image: imageOf(detail),
         favourites,
+        rarity,
         animeId: anime.id,
         animeTitle: anime.title,
       },
