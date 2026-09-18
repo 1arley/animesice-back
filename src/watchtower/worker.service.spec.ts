@@ -709,7 +709,10 @@ describe('WorkerService', () => {
         payload: { animeId: 'anime-1', slug: 'solo', episodeNumber: 1 },
       }),
     );
-    expect(m.health.recordFailure).toHaveBeenCalledWith('meusanimes');
+    expect(m.health.recordFailure).toHaveBeenCalledWith(
+      'meusanimes',
+      expect.objectContaining({ kind: 'VALIDATION' }),
+    );
     expect(m.prisma.episode.updateMany).toHaveBeenCalled();
     expect(m.jobs.fail).toHaveBeenCalledWith(
       'job-inv',

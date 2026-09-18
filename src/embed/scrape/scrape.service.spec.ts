@@ -290,7 +290,10 @@ describe('ScrapeService (orquestração + cache SWR)', () => {
     await expect(
       svc.scrapeEpisodeVideo('https://animefire.io/a/3', undefined, false),
     ).rejects.toThrow('boom');
-    expect(health.recordFailure).toHaveBeenCalledWith('animefire');
+    expect(health.recordFailure).toHaveBeenCalledWith(
+      'animefire',
+      expect.any(Object),
+    );
   });
 
   it('resultado vazio não é cacheado e registra failure', async () => {
@@ -306,7 +309,10 @@ describe('ScrapeService (orquestração + cache SWR)', () => {
       false,
     );
     expect(res.videos).toHaveLength(0);
-    expect(health.recordFailure).toHaveBeenCalledWith('animefire');
+    expect(health.recordFailure).toHaveBeenCalledWith(
+      'animefire',
+      expect.any(Object),
+    );
 
     await svc.scrapeEpisodeVideo('https://animefire.io/a/4', undefined, false);
     expect(af.extractHttp).toHaveBeenCalledTimes(2);
@@ -413,7 +419,10 @@ describe('ScrapeService (orquestração + cache SWR)', () => {
       false,
     );
     expect(second.videos).toEqual(first.videos);
-    expect(health.recordFailure).toHaveBeenCalledWith('animefire');
+    expect(health.recordFailure).toHaveBeenCalledWith(
+      'animefire',
+      expect.any(Object),
+    );
   });
 
   it('single-flight: chamadas concorrentes compartilham 1 fetch', async () => {
@@ -637,7 +646,10 @@ describe('ScrapeService (cobertura avançada)', () => {
     expect(res.videos[0]).toContain('cdn.animefire');
     await sleep(30);
     expect(af.extractHttp).toHaveBeenCalledTimes(2);
-    expect(health.recordFailure).toHaveBeenCalledWith('animefire');
+    expect(health.recordFailure).toHaveBeenCalledWith(
+      'animefire',
+      expect.any(Object),
+    );
   });
 
   it('serializa scrapes concorrentes além do limite (transferência da fila)', async () => {
@@ -1241,7 +1253,10 @@ describe('ScrapeService (cobertura avançada)', () => {
     });
     af.extractHttp.mockRejectedValueOnce(new Error('boom'));
     expect(await svc.reextractEpisodeVideo('x', 1)).toBeNull();
-    expect(health.recordFailure).toHaveBeenCalledWith('animefire');
+    expect(health.recordFailure).toHaveBeenCalledWith(
+      'animefire',
+      expect.any(Object),
+    );
   });
 
   it('reextract retorna null quando extração HTTP devolve sem vídeo', async () => {
@@ -1256,7 +1271,10 @@ describe('ScrapeService (cobertura avançada)', () => {
       cloudflare: false,
     });
     expect(await svc.reextractEpisodeVideo('x', 1)).toBeNull();
-    expect(health.recordFailure).toHaveBeenCalledWith('animefire');
+    expect(health.recordFailure).toHaveBeenCalledWith(
+      'animefire',
+      expect.any(Object),
+    );
   });
 
   it('monta URL de episódio do meusanimes', () => {
@@ -1565,7 +1583,10 @@ describe('ScrapeService (cobertura de recuperação)', () => {
     const { svc, af, health } = build();
     af.extractHttp.mockRejectedValueOnce('extract down string');
     await expect(svc.reextractEpisodeVideo('foo', 1, 1)).resolves.toBeNull();
-    expect(health.recordFailure).toHaveBeenCalledWith('animefire');
+    expect(health.recordFailure).toHaveBeenCalledWith(
+      'animefire',
+      expect.any(Object),
+    );
   });
 
   it('scrapeFromMeusanimes usa season padrão quando omitido', async () => {

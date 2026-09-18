@@ -3,6 +3,7 @@ import { probeMediaUrlDead } from '@/common/media-probe';
 import {
   Inject,
   Injectable,
+  Optional,
   ServiceUnavailableException,
   forwardRef,
 } from '@nestjs/common';
@@ -135,19 +136,19 @@ export class ScrapeService {
     animesonlinecc: AnimesonlineccScrapeSource,
     meusanimes: MeusanimesScrapeSource,
     tioanime: TioanimeScrapeSource,
-    animesdigital: AnimesdigitalScrapeSource,
     private readonly prisma: PrismaService,
     @Inject(forwardRef(() => HealthMonitor))
     private readonly health: HealthMonitor,
     private readonly metrics: MetricsService,
     private readonly browserPool: BrowserPool,
+    @Optional() private readonly animesdigital?: AnimesdigitalScrapeSource,
   ) {
     this.sources = [
       animefire,
       animesonlinecc,
       meusanimes,
       tioanime,
-      animesdigital,
+      ...(animesdigital ? [animesdigital] : []),
     ];
     const ttl = Number(process.env.SCRAPE_CACHE_TTL_MS ?? 10 * 60_000);
     const stale = Number(process.env.SCRAPE_CACHE_STALE_MS ?? 60 * 60_000);

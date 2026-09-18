@@ -128,9 +128,6 @@ export class SourceDiscovery {
     ep: number,
     season: number = 1,
   ): string[] {
-    // MeusAnimes/TioAnime usam identidades próprias. Sem URL descoberta no
-    // catálogo, fabricar caminho com slug AnimeSice produz falsos 404/500.
-    if (sourceId === 'meusanimes' || sourceId === 'tioanime') return [];
     const base = sourceEpisodeUrl(sourceId, slug, ep, season);
     if (!base) return [];
     return [base];
