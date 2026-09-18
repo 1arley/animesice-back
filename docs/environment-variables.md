@@ -53,3 +53,9 @@ ConfigModule.forRoot({
 | Variável        | Default | Descrição                                                                 |
 | --------------- | ------- | ------------------------------------------------------------------------- |
 | `METRICS_TOKEN` | —       | Token p/ GET `/api/metrics` (header `X-Metrics-Token`). Sem valor, o endpoint fica desabilitado (404). |
+
+## Piloto do destaque
+
+| Variável | Default | Descrição |
+| --- | --- | --- |
+| `GACHA_ENGAGEMENT_PILOT_PERCENT` | `10` | Fallback do percentual da coorte (0–100). O valor salvo pelo painel admin em `SiteSetting` prevalece. |
