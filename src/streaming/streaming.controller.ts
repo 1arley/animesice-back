@@ -337,7 +337,10 @@ export class StreamingController {
       cleanup?.();
       void (async () => {
         try {
-          if (job.status === 'completed' && job.result?.videoUrl) {
+          if (
+            job.status === 'completed' &&
+            (job.result?.videoUrl || job.result?.playerEmbed)
+          ) {
             const source =
               await this.streamingService.buildSourceResponseFromJob(
                 job,
