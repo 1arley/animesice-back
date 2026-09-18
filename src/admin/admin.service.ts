@@ -16,6 +16,7 @@ import { AniListService, AniListMedia } from '@/admin/anilist.service';
 import { ImportAnimeDto } from '@/admin/dto/import-anime.dto';
 import { AnimeFormat, AnimeSeason, AudioType } from '@prisma/client';
 import { audioTypeFromTitle } from '@/common/anime-audio';
+import { CreateExternalAnimeDto } from '@/admin/dto/create-external-anime.dto';
 
 @Injectable()
 export class AdminService {
@@ -88,6 +89,70 @@ export class AdminService {
           : undefined,
       },
       include: { genres: true },
+    });
+  }
+
+  async createExternalAnime(dto: CreateExternalAnimeDto) {
+    const url = new URL(dto.url);
+    const host = url.hostname.toLowerCase().replace(/^www\./, '');
+    const match = url.pathname.match(/(?:anime|manga)\/(\d+)/i);
+    if (!match || !['myanimelist.net', 'anilist.co'].includes(host)) {
+      throw new NotFoundException(
+        'URL externa deve ser MAL ou AniList com ID.',
+      );
+    }
+
+    const externalSource = host === 'myanimelist.net' ? 'MAL' : 'ANILIST';
+    const externalId = Number(match[1]);
+    const existing = await this.prisma.anime.findFirst({
+      where: {
+        OR: [
+          { externalSource, externalUrl: dto.url },
+          ...(externalSource === 'MAL'
+            ? [{ malId: externalId }]
+            : [{ anilistId: externalId }]),
+        ],
+      },
+    });
+    if (existing) return existing;
+
+    let title = dto.title?.trim();
+    let coverImage = dto.coverImage?.trim();
+    if (externalSource === 'MAL' && !title && process.env.MAL_CLIENT_ID) {
+      const response = await fetch(
+        `https://api.myanimelist.net/v2/manga/${externalId}?fields=title,main_picture`,
+        { headers: { 'X-MAL-CLIENT-ID': process.env.MAL_CLIENT_ID } },
+      );
+      if (response.ok) {
+        const payload = (await response.json()) as {
+          title?: string;
+          main_picture?: { large?: string; medium?: string };
+        };
+        title = payload.title;
+        coverImage =
+          coverImage ||
+          payload.main_picture?.large ||
+          payload.main_picture?.medium;
+      }
+    }
+    if (!title)
+      throw new NotFoundException('Não foi possível obter título da obra.');
+
+    const slug = await this.uniqueSlug(this.slugify(title));
+    return this.prisma.anime.create({
+      data: {
+        slug,
+        title,
+        coverImage,
+        source: 'MANGA',
+        externalUrl: dto.url,
+        externalSource,
+        malId: externalSource === 'MAL' ? externalId : undefined,
+        anilistId: externalSource === 'ANILIST' ? externalId : undefined,
+        published: false,
+        status: 'FINALIZADO',
+        audio: AudioType.LEGENDADO,
+      },
     });
   }
 

@@ -35,6 +35,7 @@ import {
 import { CreateGenreDto } from '@/admin/dto/create-genre.dto';
 import { ImportAnimeDto } from '@/admin/dto/import-anime.dto';
 import { SupabaseService } from '@/upload/supabase.service';
+import { CreateExternalAnimeDto } from '@/admin/dto/create-external-anime.dto';
 
 const ALLOWED_VIDEO_MIMETYPES = [
   'video/mp4',
@@ -106,6 +107,13 @@ export class AdminController {
   @ApiOperation({ summary: 'Criar anime' })
   createAnime(@Body() dto: CreateAnimeDto) {
     return this.adminService.createAnime(dto);
+  }
+
+  @Post('anime/external')
+  @Audit('CREATE', 'Anime')
+  @ApiOperation({ summary: 'Criar obra externa via MAL/AniList' })
+  createExternalAnime(@Body() dto: CreateExternalAnimeDto) {
+    return this.adminService.createExternalAnime(dto);
   }
 
   @Post('anime/import')

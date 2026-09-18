@@ -1698,7 +1698,7 @@ export class GachaService {
   async dailyBonus(userId: string) {
     const now = new Date();
     const todayStart = this.dayStartUtc(now);
-    const amount = 100;
+    const amount = 200;
 
     await this.prisma.$transaction(async (tx) => {
       await tx.gachaDailyBonus.createMany({

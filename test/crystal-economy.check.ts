@@ -146,14 +146,14 @@ async function main() {
       daily.map((r) => r.status).sort(),
       [201, 403, 403, 403, 403],
     );
-    assert.equal((await wallet(buyer)).balance, 100);
+    assert.equal((await wallet(buyer)).balance, 200);
     await prisma.gachaDailyBonus.update({
       where: { userId: buyer },
       data: { lastClaim: new Date(Date.now() - 86_400_000) },
     });
     assert.deepEqual(await service.dailyBonus(buyer), {
-      balance: 200,
-      claimed: 100,
+      balance: 400,
+      claimed: 200,
     });
     const ledger = await request(server)
       .get('/api/gacha/crystals?limit=1')
@@ -187,26 +187,26 @@ async function main() {
     const listing = await service.createListing(seller, owned.id, 100);
     await assert.rejects(service.reroll(seller, owned.id), /Cancele o anúncio/);
     await service.buyListing(buyer, listing.id);
-    assert.equal((await wallet(buyer)).balance, 100);
+    assert.equal((await wallet(buyer)).balance, 300);
     assert.equal((await wallet(seller)).balance, 90);
     assert.equal((await service.status(buyer)).pointsBalance, 101);
     assert.equal((await service.status(seller)).pointsBalance, 0);
     const rerolled = await service.reroll(buyer, owned.id);
-    assert.equal((await wallet(buyer)).balance, 90);
+    assert.equal((await wallet(buyer)).balance, 290);
     assert.equal((await service.status(buyer)).pointsBalance, rerolled.value);
     await service.adjustCrystals(buyer, 1500, 'Cosmetic test');
     await service.buyCosmetic(buyer, 'FRAME_AURORA');
-    assert.equal((await wallet(buyer)).balance, 90);
+    assert.equal((await wallet(buyer)).balance, 290);
     assert.equal((await service.status(buyer)).pointsBalance, rerolled.value);
     await assert.rejects(service.buyCosmetic(buyer, 'FRAME_AURORA'));
-    assert.equal((await wallet(buyer)).balance, 90);
+    assert.equal((await wallet(buyer)).balance, 290);
 
     const debits = await Promise.allSettled([
       service.adjustCrystals(buyer, -80, 'Concurrent debit'),
       service.adjustCrystals(buyer, -80, 'Concurrent debit'),
     ]);
     assert.equal(debits.filter((r) => r.status === 'fulfilled').length, 1);
-    assert.equal((await wallet(buyer)).balance, 10);
+    assert.equal((await wallet(buyer)).balance, 210);
     const costly = await service.createListing(buyer, owned.id, 1000);
     await assert.rejects(
       service.buyListing(seller, costly.id),

@@ -69,8 +69,8 @@ describe('GachaController (e2e)', () => {
     );
     expect(results.map((result) => result.status).sort()).toEqual([201, 403]);
     expect(results.find((result) => result.status === 201)?.body).toEqual({
-      balance: 100,
-      claimed: 100,
+      balance: 200,
+      claimed: 200,
     });
     await prisma.gachaDailyBonus.update({
       where: { userId },
@@ -84,7 +84,7 @@ describe('GachaController (e2e)', () => {
       .get('/gacha/crystals?page=1&limit=1')
       .set('Cookie', cookie)
       .expect(200);
-    expect(ledger.body.balance).toBe(200);
+    expect(ledger.body.balance).toBe(400);
     expect(ledger.body.events).toHaveLength(1);
     expect(ledger.body.meta).toEqual({
       total: 2,
