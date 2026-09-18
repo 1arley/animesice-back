@@ -89,16 +89,18 @@ export class AuthService {
     role: string,
   ) {
     const opts = this.getCookieOptions();
+    const refreshOpts = this.getRefreshCookieOptions();
     res.cookie('access_token', accessToken, opts);
-    res.cookie('refresh_token', refreshToken, this.getRefreshCookieOptions());
-    res.cookie('role', role, { ...opts, httpOnly: false });
+    res.cookie('refresh_token', refreshToken, refreshOpts);
+    res.cookie('role', role, { ...refreshOpts, httpOnly: false });
   }
 
   clearAuthCookies(res: Response) {
     const opts = this.getCookieOptions();
+    const refreshOpts = this.getRefreshCookieOptions();
     res.clearCookie('access_token', opts);
-    res.clearCookie('refresh_token', this.getRefreshCookieOptions());
-    res.clearCookie('role', { ...opts, httpOnly: false });
+    res.clearCookie('refresh_token', refreshOpts);
+    res.clearCookie('role', { ...refreshOpts, httpOnly: false });
   }
 
   // ── Auth flows ──────────────────────────────────────────────────────
