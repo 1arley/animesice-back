@@ -117,26 +117,26 @@ enum WishlistPriority {
 }
 
 model User {
-  id                      String                   @id @default(uuid())
-  email                   String                   @unique
+  id                      String                    @id @default(uuid())
+  email                   String                    @unique
   password                String
   name                    String?
-  userName                String?                  @unique
-  role                    Role                     @default(USER)
-  isVerified              Boolean                  @default(false)
+  userName                String?                   @unique
+  role                    Role                      @default(USER)
+  isVerified              Boolean                   @default(false)
   avatar                  String?
   bio                     String?
   myAnimeList             String?
   suspendedUntil          DateTime?
   suspendedReason         String?
-  createdAt               DateTime                 @default(now())
-  updatedAt               DateTime                 @updatedAt
+  createdAt               DateTime                  @default(now())
+  updatedAt               DateTime                  @updatedAt
   refreshTokens           RefreshToken[]
   emailChangeTokens       EmailChangeToken[]
   passwordResetTokens     PasswordResetToken[]
   emailVerificationCodes  EmailVerificationCode[]
   comments                Comment[]
-  adminAuditLogs          AdminAuditLog[]          @relation("AdminActions")
+  adminAuditLogs          AdminAuditLog[]           @relation("AdminActions")
   ratings                 Rating[]
   favorites               Favorite[]
   watchHistories          WatchHistory[]
@@ -146,19 +146,27 @@ model User {
   roomMessages            RoomMessage[]
   animeList               UserAnimeList[]
   notificationPreferences NotificationPreference[]
-  reportsFiled            Report[]                 @relation("ReportReporter")
+  reportsFiled            Report[]                  @relation("ReportReporter")
   moderationActions       ModerationAction[]
-  moderatedReports        Report[]                 @relation("ReportModerator")
-  moderationActionsGiven  ModerationAction[]       @relation("ModerationModerator")
-  animeRequests           AnimeRequest[]           @relation("AnimeRequestUser")
-  animeRequestVotes       AnimeRequestVote[]       @relation("AnimeRequestVoteUser")
-  siteFeedbacks           SiteFeedback[]           @relation("SiteFeedbackUser")
+  moderatedReports        Report[]                  @relation("ReportModerator")
+  moderationActionsGiven  ModerationAction[]        @relation("ModerationModerator")
+  animeRequests           AnimeRequest[]            @relation("AnimeRequestUser")
+  animeRequestVotes       AnimeRequestVote[]        @relation("AnimeRequestVoteUser")
+  siteFeedbacks           SiteFeedback[]            @relation("SiteFeedbackUser")
   siteFeedbackUpvotes     SiteFeedbackUpvote[]
   privacySettings         PrivacySettings?
   userCards               UserCard[]
-  originalUserCards       UserCard[]               @relation("OriginalUserCards")
-  featuredUserCardId      String?                  @unique
-  featuredUserCard        UserCard?                @relation("FeaturedUserCard", fields: [featuredUserCardId], references: [id], onDelete: SetNull)
+  originalUserCards       UserCard[]                @relation("OriginalUserCards")
+  featuredUserCardId      String?                   @unique
+  featuredUserCard        UserCard?                 @relation("FeaturedUserCard", fields: [featuredUserCardId], references: [id], onDelete: SetNull)
+  featuredStartedAt       DateTime?                 @db.Timestamptz(6)
+  featuredSettledAt       DateTime?                 @db.Timestamptz(6)
+  featuredRemainder       BigInt                    @default(0)
+  favoriteCollectionId    String?
+  favoriteCollection      GachaCollection?          @relation("FavoriteGachaCollection", fields: [favoriteCollectionId], references: [id], onDelete: SetNull)
+  pinnedCollectionIds     String[]                  @default([])
+  gachaDiscoveries        GachaCardDiscovery[]
+  gachaCollectionProgress GachaCollectionProgress[]
   gachaRollDays           GachaRollDay[]
   gachaSpins              GachaSpin[]
   gachaClaimLock          GachaClaimLock?
@@ -166,24 +174,24 @@ model User {
   gachaDailyBonus         GachaDailyBonus?
   gachaBypasses           GachaBypass[]
   gachaListings           GachaListing[]
-  legacyPointsBalance     Int                      @default(0) @map("pointsBalance")
-  crystalBalance          Int                      @default(0)
+  legacyPointsBalance     Int                       @default(0) @map("pointsBalance")
+  crystalBalance          Int                       @default(0)
   legacyPointEvents       GachaPointEvent[]
-  gachaCosmetics          String[]                 @default([])
+  gachaCosmetics          String[]                  @default([])
   gachaCardBack           String?
-  gachaWishlistPublic     Boolean                  @default(true)
+  gachaWishlistPublic     Boolean                   @default(true)
   gachaCardWishlists      GachaCardWishlist[]
   gachaSetWishlists       GachaSetWishlist[]
   gachaSkins              UserGachaSkin[]
   equippedGachaSkinId     String?
-  equippedGachaSkin       GachaSkin?               @relation("EquippedGachaSkin", fields: [equippedGachaSkinId], references: [id], onDelete: SetNull)
-  nextGachaSkinSpinAt     DateTime?                @db.Timestamptz(6)
+  equippedGachaSkin       GachaSkin?                @relation("EquippedGachaSkin", fields: [equippedGachaSkinId], references: [id], onDelete: SetNull)
+  nextGachaSkinSpinAt     DateTime?                 @db.Timestamptz(6)
   posts                   Post[]
   postLikes               PostLike[]
   postComments            PostComment[]
   postShares              PostShare[]
-  following               Follow[]                 @relation("Follower")
-  followers               Follow[]                 @relation("Followee")
+  following               Follow[]                  @relation("Follower")
+  followers               Follow[]                  @relation("Followee")
 }
 
 /// Configuração global do site (chave-valor) — persistida no DB, com
@@ -868,6 +876,7 @@ model Card {
   variantType       String                  @default("STANDARD")
   owners            UserCard[]
   collectionMembers GachaCollectionMember[]
+  discoveries       GachaCardDiscovery[]
   wishlistEntries   GachaCardWishlist[]
   spins             GachaSpin[]
   skins             GachaSkin[]
@@ -961,17 +970,44 @@ model GachaRarity {
 }
 
 model GachaCollection {
-  id          String                  @id @default(uuid())
+  id          String                    @id @default(uuid())
   name        String
-  slug        String                  @unique
+  slug        String                    @unique
   description String?
-  version     Int                     @default(1)
-  published   Boolean                 @default(false)
-  createdAt   DateTime                @default(now())
-  updatedAt   DateTime                @updatedAt
+  version     Int                       @default(1)
+  published   Boolean                   @default(false)
+  createdAt   DateTime                  @default(now())
+  updatedAt   DateTime                  @updatedAt
   members     GachaCollectionMember[]
+  favoredBy   User[]                    @relation("FavoriteGachaCollection")
+  progress    GachaCollectionProgress[]
 
   @@index([published, updatedAt(sort: Desc)])
+}
+
+model GachaCardDiscovery {
+  userId       String
+  cardId       String
+  discoveredAt DateTime @default(now()) @db.Timestamptz(6)
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  card         Card     @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@id([userId, cardId])
+  @@index([cardId])
+}
+
+model GachaCollectionProgress {
+  userId       String
+  collectionId String
+  version      Int
+  reward25At   DateTime?       @db.Timestamptz(6)
+  reward50At   DateTime?       @db.Timestamptz(6)
+  reward100At  DateTime?       @db.Timestamptz(6)
+  user         User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  collection   GachaCollection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+
+  @@id([userId, collectionId, version])
+  @@index([collectionId, version])
 }
 
 model GachaCollectionMember {
@@ -1005,8 +1041,8 @@ model UserCard {
   status         UserCardStatus @default(ACTIVE)
   obtainedAt     DateTime       @default(now())
 
-  tradeOffered   GachaTrade[]   @relation("TradeOffered")
-  tradeRequested GachaTrade[]   @relation("TradeRequested")
+  tradeOffered   GachaTrade[]     @relation("TradeOffered")
+  tradeRequested GachaTrade[]     @relation("TradeRequested")
   tradeCards     GachaTradeCard[]
   listings       GachaListing[]
 
@@ -1136,7 +1172,7 @@ model GachaTrade {
   createdAt           DateTime         @default(now()) @db.Timestamptz(6)
   completedAt         DateTime?        @db.Timestamptz(6)
 
-  cards               GachaTradeCard[]
+  cards GachaTradeCard[]
 
   offeredUserCard   UserCard @relation("TradeOffered", fields: [offeredUserCardId], references: [id], onDelete: Cascade)
   requestedUserCard UserCard @relation("TradeRequested", fields: [requestedUserCardId], references: [id], onDelete: Cascade)
@@ -1149,14 +1185,14 @@ model GachaTrade {
 }
 
 model GachaTradeCard {
-  id         String   @id @default(uuid())
+  id         String             @id @default(uuid())
   tradeId    String
   userCardId String
   side       GachaTradeCardSide
   position   Int
   snapshot   Json
-  trade      GachaTrade @relation(fields: [tradeId], references: [id], onDelete: Cascade)
-  userCard   UserCard   @relation(fields: [userCardId], references: [id], onDelete: Restrict)
+  trade      GachaTrade         @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+  userCard   UserCard           @relation(fields: [userCardId], references: [id], onDelete: Restrict)
 
   @@unique([tradeId, side, position])
   @@unique([tradeId, userCardId])
@@ -1255,4 +1291,6 @@ enum CrystalEventType {
   TAX
   ADMIN
   BURN
+  FEATURED
+  COLLECTION
 }
