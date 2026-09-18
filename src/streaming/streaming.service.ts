@@ -653,7 +653,9 @@ export class StreamingService {
         /* mantém */
       }
     }
-    if (rawVideoUrl && /^https?:\/\//i.test(rawVideoUrl)) return null;
+    if (rawVideoUrl && /^https?:\/\//i.test(rawVideoUrl)) {
+      if (!(await probeMediaUrlDead(rawVideoUrl))) return null;
+    }
 
     // Cria ou reclama o job persistido. O claim é atômico: em múltiplas
     // réplicas só uma executa; após queda, um lease vencido pode ser retomado.

@@ -225,11 +225,14 @@ export class AuthService {
     await this.revokeAllUserRefreshTokens(user.id);
     await this.createRefreshToken(user.id, tokens.refresh_token);
 
-    const { password: _, ...userWithoutPassword } = user;
+    const { password: _, featuredRemainder, ...userWithoutPassword } = user;
 
     return {
       ...tokens,
-      user: userWithoutPassword,
+      user: {
+        ...userWithoutPassword,
+        featuredRemainder: String(featuredRemainder ?? 0n),
+      },
     };
   }
 
@@ -247,11 +250,14 @@ export class AuthService {
     await this.revokeAllUserRefreshTokens(userId);
     await this.createRefreshToken(userId, tokens.refresh_token);
 
-    const { password: _, ...userWithoutPassword } = user;
+    const { password: _, featuredRemainder, ...userWithoutPassword } = user;
 
     return {
       ...tokens,
-      user: userWithoutPassword,
+      user: {
+        ...userWithoutPassword,
+        featuredRemainder: String(featuredRemainder ?? 0n),
+      },
     };
   }
 

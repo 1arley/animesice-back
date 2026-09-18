@@ -611,6 +611,7 @@ describe('StreamingController', () => {
         'https://api.animesice.com',
         1,
         false,
+        true,
       );
       expect(res.status).not.toHaveBeenCalled();
       expect(res.json).toHaveBeenCalledWith(
