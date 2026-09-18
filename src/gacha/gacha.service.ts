@@ -1671,6 +1671,26 @@ export class GachaService {
     sourceUrl?: string;
     active?: boolean;
   }) {
+    if (data.cardId) {
+      return this.prisma.card
+        .findUnique({ where: { id: data.cardId }, select: { image: true } })
+        .then((card) => {
+          if (!card) throw new NotFoundException('Carta não encontrada.');
+          if (card.image && card.image === data.imageUrl)
+            throw new BadRequestException(
+              'A skin precisa ter uma arte diferente da carta base.',
+            );
+          return this.prisma.gachaSkin.create({
+            data: {
+              name: data.name,
+              imageUrl: data.imageUrl,
+              cardId: data.cardId,
+              sourceUrl: data.sourceUrl,
+              active: data.active ?? true,
+            },
+          });
+        });
+    }
     return this.prisma.gachaSkin.create({
       data: {
         name: data.name,

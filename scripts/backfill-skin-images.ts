@@ -5,12 +5,15 @@ import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
 
-const TENRAI = 'https://api.tenrai.org/v1';
+const MAL = 'https://api.jikan.moe/v4';
 const SLEEP_MS = 800;
 const RETRIES = 3;
 
-interface TenraiPictures {
-  data?: Array<{ jpg?: { image_url?: string | null } | null } | null>;
+interface MALPictures {
+  data?: Array<{
+    jpg?: { image_url?: string | null; large_image_url?: string | null } | null;
+    webp?: { image_url?: string | null; large_image_url?: string | null } | null;
+  } | null>;
 }
 
 function createPrismaClient(): PrismaClient {
@@ -23,7 +26,14 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const tenraiAgent = new Agent({ connect: { family: 4 } });
 
-async function tenrai(path: string): Promise<TenraiPictures | null> {
+function sameImage(a: string | null, b: string): boolean {
+  if (!a) return false;
+  const normalize = (url: string) =>
+    url.replace(/\.(?:jpe?g|png|webp)(?:\?.*)?$/i, '');
+  return normalize(a) === normalize(b);
+}
+
+async function mal(path: string): Promise<MALPictures | null> {
   for (let attempt = 1; attempt <= RETRIES; attempt++) {
     await sleep(SLEEP_MS);
     try {
@@ -31,14 +41,14 @@ async function tenrai(path: string): Promise<TenraiPictures | null> {
       const timer = setTimeout(() => controller.abort(), 20_000);
       let res;
       try {
-        res = await undiciFetch(`${TENRAI}${path}`, {
+        res = await undiciFetch(`${MAL}${path}`, {
           signal: controller.signal,
           dispatcher: tenraiAgent,
         });
       } finally {
         clearTimeout(timer);
       }
-      if (res.ok) return (await res.json()) as TenraiPictures;
+      if (res.ok) return (await res.json()) as MALPictures;
       if (res.status === 404) return null;
       if (res.status === 429) {
         const retryAfter = Number(res.headers.get('retry-after') || 5) * 1000;
@@ -76,7 +86,9 @@ async function main(): Promise<void> {
       orderBy: { id: 'asc' },
       ...(limit > 0 ? { take: limit } : {}),
     });
-    const targets = skins.filter((s) => s.card && s.imageUrl === s.card.image);
+    const targets = skins.filter(
+      (s) => s.card && sameImage(s.card.image, s.imageUrl),
+    );
     console.log(
       `[skin-images] ${skins.length} skins, ${targets.length} com imagem igual à carta`,
     );
@@ -84,10 +96,16 @@ async function main(): Promise<void> {
     for (const [index, skin] of targets.entries()) {
       const cardImage = skin.card?.image ?? '';
       const malId = skin.card?.malCharacterId;
-      const pics = malId ? await tenrai(`/characters/${malId}/pictures`) : null;
+      const pics = malId ? await mal(`/characters/${malId}/pictures`) : null;
       const alt = (pics?.data ?? [])
-        .map((p) => p?.jpg?.image_url)
-        .find((url) => url?.startsWith('https://') && url !== cardImage);
+        .map(
+          (p) =>
+            p?.webp?.large_image_url ??
+            p?.jpg?.large_image_url ??
+            p?.webp?.image_url ??
+            p?.jpg?.image_url,
+        )
+        .find((url) => url?.startsWith('https://') && !sameImage(cardImage, url));
 
       if (!alt) {
         if (pics === null && malId) {
