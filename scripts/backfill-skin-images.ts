@@ -5,14 +5,16 @@ import { PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
 
-const MAL = 'https://api.jikan.moe/v4';
-const SLEEP_MS = 800;
+const MAL = 'https://api.myanimelist.net/v2';
+// ponytail: 1,1s/req sem limite documentado — a comunidade reporta ~1-2 rps
+// seguro; backoff cobre 429.
+const SLEEP_MS = 1100;
 const RETRIES = 3;
 
-interface MALPictures {
-  data?: Array<{
-    jpg?: { image_url?: string | null; large_image_url?: string | null } | null;
-    webp?: { image_url?: string | null; large_image_url?: string | null } | null;
+interface MALCharacterPictures {
+  pictures?: Array<{
+    medium?: string | null;
+    large?: string | null;
   } | null>;
 }
 
@@ -24,7 +26,16 @@ function createPrismaClient(): PrismaClient {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-const tenraiAgent = new Agent({ connect: { family: 4 } });
+const malAgent = new Agent({ connect: { family: 4 } });
+
+function malHeaders(): Record<string, string> {
+  if (!process.env.MAL_CLIENT_ID) {
+    throw new Error(
+      'MAL_CLIENT_ID ausente — registre o app em myanimelist.net/apiconfig',
+    );
+  }
+  return { 'X-MAL-CLIENT-ID': process.env.MAL_CLIENT_ID };
+}
 
 function sameImage(a: string | null, b: string): boolean {
   if (!a) return false;
@@ -33,7 +44,11 @@ function sameImage(a: string | null, b: string): boolean {
   return normalize(a) === normalize(b);
 }
 
-async function mal(path: string): Promise<MALPictures | null> {
+async function malCharacterPictures(
+  malId: number,
+): Promise<MALCharacterPictures | null> {
+  const path = `/characters/${malId}?fields=pictures`;
+  const headers = malHeaders();
   for (let attempt = 1; attempt <= RETRIES; attempt++) {
     await sleep(SLEEP_MS);
     try {
@@ -43,13 +58,14 @@ async function mal(path: string): Promise<MALPictures | null> {
       try {
         res = await undiciFetch(`${MAL}${path}`, {
           signal: controller.signal,
-          dispatcher: tenraiAgent,
+          dispatcher: malAgent,
+          headers,
         });
       } finally {
         clearTimeout(timer);
       }
-      if (res.ok) return (await res.json()) as MALPictures;
-      if (res.status === 404) return null;
+      if (res.ok) return (await res.json()) as MALCharacterPictures;
+      if (res.status === 400 || res.status === 404) return null;
       if (res.status === 429) {
         const retryAfter = Number(res.headers.get('retry-after') || 5) * 1000;
         await sleep(Math.min(retryAfter, 30_000));
@@ -96,15 +112,9 @@ async function main(): Promise<void> {
     for (const [index, skin] of targets.entries()) {
       const cardImage = skin.card?.image ?? '';
       const malId = skin.card?.malCharacterId;
-      const pics = malId ? await mal(`/characters/${malId}/pictures`) : null;
-      const alt = (pics?.data ?? [])
-        .map(
-          (p) =>
-            p?.webp?.large_image_url ??
-            p?.jpg?.large_image_url ??
-            p?.webp?.image_url ??
-            p?.jpg?.image_url,
-        )
+      const pics = malId ? await malCharacterPictures(malId) : null;
+      const alt = (pics?.pictures ?? [])
+        .map((p) => p?.large ?? p?.medium)
         .find((url) => url?.startsWith('https://') && !sameImage(cardImage, url));
 
       if (!alt) {
