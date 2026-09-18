@@ -249,6 +249,7 @@ export class StreamingController {
       backendOrigin(req, this.trustProxy, this.configService),
       1,
       false,
+      true,
     );
     res.json(source);
   }

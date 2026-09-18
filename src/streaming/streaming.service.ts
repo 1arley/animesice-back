@@ -253,6 +253,7 @@ export class StreamingService {
     episodeNumber: number,
     season: number,
     forceRefresh = false,
+    skipLiveness = false,
   ): Promise<{
     videoUrl: string | null;
     playerEmbed: string | null;
@@ -277,6 +278,7 @@ export class StreamingService {
         /* mantém */
       }
     }
+    const lastKnownVideoUrl = rawVideoUrl;
 
     // Em recuperação solicitada pelo player, confirma a falha com um GET de
     // 1 byte antes de gastar um slot de scraper. O probe normal pode decidir
@@ -302,7 +304,12 @@ export class StreamingService {
     // sem metadata (controles/play desabilitados). Nesse caso seguimos para a
     // reextração single-flight abaixo e a primeira navegação já recebe uma
     // fonte utilizável, sem depender de F5.
-    if (!forceRefresh && rawVideoUrl && /^https?:\/\//i.test(rawVideoUrl)) {
+    if (
+      !forceRefresh &&
+      !skipLiveness &&
+      rawVideoUrl &&
+      /^https?:\/\//i.test(rawVideoUrl)
+    ) {
       const dead = await probeMediaUrlDead(rawVideoUrl);
       dbg(`[STREAM] probe videoUrl=${rawVideoUrl.slice(0, 80)} dead=${dead}`);
       if (dead) {
@@ -349,6 +356,13 @@ export class StreamingService {
     }
 
     const result = await inflight;
+    if (!result.videoUrl && !result.playerEmbed && lastKnownVideoUrl) {
+      return {
+        videoUrl: lastKnownVideoUrl,
+        playerEmbed: null,
+        reextracted: false,
+      };
+    }
     return { ...result, reextracted: true };
   }
 
@@ -508,6 +522,7 @@ export class StreamingService {
     apiOriginBackend: string,
     season: number = 1,
     forceRefresh = false,
+    skipLiveness = false,
   ): Promise<StreamSourceResponse> {
     const anime = await this.prisma.anime.findUnique({
       where: { slug: animeSlug, published: true },
@@ -547,6 +562,7 @@ export class StreamingService {
       episodeNumber,
       season,
       forceRefresh,
+      skipLiveness,
     );
 
     if (!rawVideoUrl && !playerEmbed) {
@@ -637,10 +653,7 @@ export class StreamingService {
         /* mantém */
       }
     }
-    if (rawVideoUrl && /^https?:\/\//i.test(rawVideoUrl)) {
-      const dead = await probeMediaUrlDead(rawVideoUrl);
-      if (!dead) return null; // vídeo já existe e está vivo
-    }
+    if (rawVideoUrl && /^https?:\/\//i.test(rawVideoUrl)) return null;
 
     // Cria ou reclama o job persistido. O claim é atômico: em múltiplas
     // réplicas só uma executa; após queda, um lease vencido pode ser retomado.
