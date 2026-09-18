@@ -1850,6 +1850,15 @@ describe('GachaService', () => {
       mockPrisma.user.update.mockResolvedValue({});
       const result = await service.spinSkin('u1');
       expect(result.price).toBe(0);
+      expect(mockPrisma.gachaSkin.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            card: {
+              is: { owners: { some: { userId: 'u1', status: 'ACTIVE' } } },
+            },
+          }),
+        }),
+      );
       expect(mockPrisma.crystalEvent.create).not.toHaveBeenCalled();
       expect(mockPrisma.userGachaSkin.create).toHaveBeenCalledWith({
         data: {

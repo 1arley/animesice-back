@@ -891,6 +891,7 @@ model GachaSkin {
   updatedAt  DateTime        @updatedAt
   owners     UserGachaSkin[]
   equippedBy User[]          @relation("EquippedGachaSkin")
+  userCards  UserCard[]
 
   @@index([active, blocked])
   @@index([cardId])
@@ -992,6 +993,8 @@ model UserCard {
   featuredBy     User?          @relation("FeaturedUserCard")
   cardId         String
   card           Card           @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  skinId         String?
+  skin           GachaSkin?     @relation(fields: [skinId], references: [id], onDelete: SetNull)
   condition      Float
   foil           String         @default("NORMAL")
   edition        Int
@@ -1007,6 +1010,7 @@ model UserCard {
 
   @@index([userId, obtainedAt(sort: Desc)])
   @@index([cardId, edition])
+  @@index([skinId])
   @@index([userId, value(sort: Desc)])
   @@index([originalUserId])
 }

@@ -60,6 +60,14 @@ export class EquipGachaSkinDto {
   skinId!: string | null;
 }
 
+export class ApplyGachaSkinDto {
+  @ApiProperty({ nullable: true })
+  @IsDefined()
+  @ValidateIf((value: ApplyGachaSkinDto) => value.skinId !== null)
+  @IsString()
+  skinId!: string | null;
+}
+
 export class CreateListingDto {
   @ApiProperty({ description: 'ID da UserCard (sua) a anunciar.' })
   @IsString()

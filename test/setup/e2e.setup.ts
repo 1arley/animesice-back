@@ -2,6 +2,7 @@ import { Test } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import type { Server } from 'node:http';
 import * as bcrypt from 'bcrypt';
+import cookieParser from 'cookie-parser';
 import { AppModule } from '@/app.module';
 import { PrismaService } from '@/prisma/prisma.service';
 import { MailService } from '@/mail/mail.service';
@@ -23,6 +24,7 @@ beforeAll(async () => {
     .compile();
 
   app = moduleRef.createNestApplication();
+  app.use(cookieParser());
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,

@@ -19,6 +19,7 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { GachaService } from '@/gacha/gacha.service';
 import {
   BuyCosmeticDto,
+  ApplyGachaSkinDto,
   BurnGachaCardDto,
   ClaimGachaDto,
   CreateListingDto,
@@ -210,8 +211,9 @@ export class GachaController {
     @Query('page', new DefaultValuePipe(DEFAULT_PAGE), ParseIntPipe)
     page: number,
     @Query('limit', new DefaultValuePipe(48), ParseIntPipe) limit: number,
+    @Query('search') search?: string,
   ) {
-    return this.gachaService.skinCatalog(req.user.id, page, limit);
+    return this.gachaService.skinCatalog(req.user.id, page, limit, search);
   }
 
   @Post('skins/spin')
@@ -228,6 +230,26 @@ export class GachaController {
   @ApiOperation({ summary: 'Equipa ou remove skin de perfil' })
   equipSkin(@Req() req: AuthenticatedRequest, @Body() dto: EquipGachaSkinDto) {
     return this.gachaService.equipSkin(req.user.id, dto.skinId ?? null);
+  }
+
+  @Get('user-cards/:id/skins')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Skins possuídas disponíveis para uma carta' })
+  cardSkins(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.gachaService.cardSkins(req.user.id, id);
+  }
+
+  @Patch('user-cards/:id/skin')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Aplica ou remove skin de uma cópia de carta' })
+  applyCardSkin(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: ApplyGachaSkinDto,
+  ) {
+    return this.gachaService.applyCardSkin(req.user.id, id, dto.skinId);
   }
 
   @Get('points')

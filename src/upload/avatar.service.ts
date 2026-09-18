@@ -1,13 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '@/prisma/prisma.service';
 
-export const ALLOWED_IMAGE_MIMETYPES = [
-  'image/jpeg',
-  'image/png',
-  'image/webp',
-  'image/gif',
-];
-export const MAX_AVATAR_BYTES = 5 * 1024 * 1024;
+export const ALLOWED_IMAGE_MIMETYPES = ['image/jpeg', 'image/png'];
+export const MAX_AVATAR_BYTES = 50 * 1024;
 
 @Injectable()
 export class AvatarService {

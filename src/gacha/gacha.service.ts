@@ -72,6 +72,9 @@ const PULL_SELECT = {
   originalUser: {
     select: { id: true, name: true, userName: true, avatar: true },
   },
+  skin: {
+    select: { id: true, name: true, imageUrl: true },
+  },
   card: {
     select: {
       id: true,
@@ -170,11 +173,17 @@ const presentCard = <
   card: T,
 ) => (card.imageHidden ? { ...card, name: '???', image: null } : card);
 
-const presentPull = (pull: Pull) => ({
-  ...pull,
-  conditionLabel: conditionLabel(pull.condition),
-  card: presentCard(pull.card),
-});
+const presentPull = (pull: Pull) => {
+  const card = presentCard(pull.card);
+  return {
+    ...pull,
+    conditionLabel: conditionLabel(pull.condition),
+    card: {
+      ...card,
+      image: pull.card.imageHidden ? null : (pull.skin?.imageUrl ?? card.image),
+    },
+  };
+};
 
 const fmtTrade = (t: TradeRow) => ({
   ...t,
@@ -1414,10 +1423,22 @@ export class GachaService {
     };
   }
 
-  async skinCatalog(userId: string, page = 1, limit = 48) {
+  async skinCatalog(userId: string, page = 1, limit = 48, search?: string) {
     const safeLimit = Math.min(Math.max(limit, 1), 100);
     const safePage = Math.max(page, 1);
-    const where: Prisma.GachaSkinWhereInput = { active: true, blocked: false };
+    const term = search?.trim();
+    const where: Prisma.GachaSkinWhereInput = {
+      active: true,
+      blocked: false,
+      ...(term
+        ? {
+            OR: [
+              { name: { contains: term, mode: 'insensitive' } },
+              { card: { name: { contains: term, mode: 'insensitive' } } },
+            ],
+          }
+        : {}),
+    };
     const skinSelect: Prisma.GachaSkinSelect = {
       id: true,
       name: true,
@@ -1498,6 +1519,9 @@ export class GachaService {
             active: true,
             blocked: false,
             owners: { none: { userId } },
+            card: {
+              is: { owners: { some: { userId, status: 'ACTIVE' } } },
+            },
           },
           select: {
             id: true,
@@ -1572,6 +1596,72 @@ export class GachaService {
       select: { equippedGachaSkinId: true },
     });
     return { equippedSkinId: user.equippedGachaSkinId };
+  }
+
+  async cardSkins(userId: string, userCardId: string) {
+    const card = await this.prisma.userCard.findFirst({
+      where: { id: userCardId, userId, status: 'ACTIVE' },
+      select: {
+        cardId: true,
+        skinId: true,
+        card: { select: { image: true } },
+      },
+    });
+    if (!card) throw new NotFoundException('Carta não encontrada.');
+    const owned = await this.prisma.userGachaSkin.findMany({
+      where: {
+        userId,
+        skin: { cardId: card.cardId, active: true, blocked: false },
+      },
+      orderBy: { acquiredAt: 'desc' },
+      select: {
+        skinId: true,
+        name: true,
+        imageUrl: true,
+      },
+    });
+    return {
+      skins: owned,
+      selectedSkinId: card.skinId,
+      baseImage: card.card.image,
+    };
+  }
+
+  async applyCardSkin(
+    userId: string,
+    userCardId: string,
+    skinId: string | null,
+  ) {
+    return this.prisma.$transaction(async (tx) => {
+      const card = await tx.userCard.findFirst({
+        where: { id: userCardId, userId, status: 'ACTIVE' },
+        select: { id: true, cardId: true },
+      });
+      if (!card) throw new NotFoundException('Carta não encontrada.');
+      if (skinId !== null) {
+        const owned = await tx.userGachaSkin.findFirst({
+          where: {
+            userId,
+            skinId,
+            skin: {
+              cardId: card.cardId,
+              active: true,
+              blocked: false,
+            },
+          },
+          select: { id: true },
+        });
+        if (!owned) {
+          throw new ForbiddenException('Skin indisponível para esta carta.');
+        }
+      }
+      const updated = await tx.userCard.update({
+        where: { id: card.id },
+        data: { skinId },
+        select: PULL_SELECT,
+      });
+      return presentPull(updated);
+    });
   }
 
   adminCreateSkin(data: {
