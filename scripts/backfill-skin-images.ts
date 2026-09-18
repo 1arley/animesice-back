@@ -94,6 +94,7 @@ async function main(): Promise<void> {
 
   try {
     const skins = await prisma.gachaSkin.findMany({
+      where: { blocked: false },
       select: {
         id: true,
         imageUrl: true,
