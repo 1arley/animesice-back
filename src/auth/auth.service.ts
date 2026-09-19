@@ -222,7 +222,6 @@ export class AuthService {
 
     const tokens = await this.getTokens(user.id, user.email, user.role);
 
-    await this.revokeAllUserRefreshTokens(user.id);
     await this.createRefreshToken(user.id, tokens.refresh_token);
 
     const { password: _, featuredRemainder, ...userWithoutPassword } = user;
@@ -236,7 +235,7 @@ export class AuthService {
     };
   }
 
-  async refreshTokens(userId: string) {
+  async refreshTokens(userId: string, currentRefreshToken: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
     });
@@ -245,10 +244,12 @@ export class AuthService {
       throw new UnauthorizedException('Usuário não encontrado.');
     }
 
-    const tokens = await this.getTokens(userId, user.email, user.role);
-
-    await this.revokeAllUserRefreshTokens(userId);
-    await this.createRefreshToken(userId, tokens.refresh_token);
+    const tokens = await this.getTokens(
+      userId,
+      user.email,
+      user.role,
+      currentRefreshToken,
+    );
 
     const { password: _, featuredRemainder, ...userWithoutPassword } = user;
 
@@ -614,7 +615,12 @@ export class AuthService {
 
   // ── Token internals ─────────────────────────────────────────────────
 
-  private async getTokens(userId: string, email: string, role: string) {
+  private async getTokens(
+    userId: string,
+    email: string,
+    role: string,
+    currentRefreshToken?: string,
+  ) {
     const payload = { sub: userId, email, role, jti: crypto.randomUUID() };
 
     const [accessToken, refreshToken] = await Promise.all([
@@ -624,12 +630,13 @@ export class AuthService {
           'JWT_ACCESS_EXPIRES_IN',
         ) as StringValue,
       }),
-      this.jwtService.signAsync(payload, {
-        secret: this.configService.get<string>('JWT_REFRESH_SECRET'),
-        expiresIn: this.configService.get<string>(
-          'JWT_REFRESH_EXPIRES_IN',
-        ) as StringValue,
-      }),
+      currentRefreshToken ??
+        this.jwtService.signAsync(payload, {
+          secret: this.configService.get<string>('JWT_REFRESH_SECRET'),
+          expiresIn: this.configService.get<string>(
+            'JWT_REFRESH_EXPIRES_IN',
+          ) as StringValue,
+        }),
     ]);
 
     return {
