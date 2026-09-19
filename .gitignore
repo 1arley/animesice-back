@@ -54,6 +54,8 @@ docker-compose.override.yml
 .turbo
 .cache
 
+graphify-out/
+
 #Bun
 bun.lock
 /generated/prisma
