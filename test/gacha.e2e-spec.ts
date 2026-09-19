@@ -115,7 +115,11 @@ describe('GachaController (e2e)', () => {
     const url = `/gacha/collection?userId=${userId}`;
     const visible = await request(getHttpServer()).get(url).expect(200);
     expect(visible.body.data[0].id).toBe(owned.id);
-    expect(visible.body.stats).toEqual({ total: 1, totalValue: 100 });
+    expect(visible.body.stats).toEqual({
+      total: 1,
+      totalValue: 100,
+      medals: [],
+    });
     await request(getHttpServer()).get('/gacha/collection').expect(400);
 
     await prisma.privacySettings.upsert({
