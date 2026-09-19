@@ -164,6 +164,7 @@ describe('AuthController', () => {
           id: '1',
           email: 'test@example.com',
           role: 'USER',
+          refreshToken: 'current-refresh-token',
         },
       };
 
@@ -188,7 +189,10 @@ describe('AuthController', () => {
       );
 
       expect(result).toEqual({ user: mockResponse.user });
-      expect(authService.refreshTokens).toHaveBeenCalledWith('1');
+      expect(authService.refreshTokens).toHaveBeenCalledWith(
+        '1',
+        mockRequest.user.refreshToken,
+      );
       expect(authService.setAuthCookies).toHaveBeenCalledWith(
         mockRes,
         'new-access-token',
@@ -216,6 +220,7 @@ describe('AuthController', () => {
           id: '1',
           email: 'test@example.com',
           role: 'USER',
+          refreshToken: 'current-refresh-token',
         },
       };
 

@@ -222,6 +222,7 @@ describe('AuthService', () => {
       expect(result.user).not.toHaveProperty('password');
       expect(result).toHaveProperty('access_token', 'fake-jwt-token');
       expect(result).toHaveProperty('refresh_token', 'fake-jwt-token');
+      expect(mockPrismaService.refreshToken.deleteMany).not.toHaveBeenCalled();
     });
 
     it('deve lançar UnauthorizedException se usuário não existe', async () => {
@@ -258,17 +259,19 @@ describe('AuthService', () => {
       jest.spyOn(configService, 'get').mockReturnValue('fake-secret');
       mockPrismaService.user.findUnique.mockResolvedValue(user);
 
-      const result = await service.refreshTokens('1');
+      const result = await service.refreshTokens('1', 'current-refresh-token');
 
       expect(result).toHaveProperty('access_token', 'fake-jwt-token');
-      expect(result).toHaveProperty('refresh_token', 'fake-jwt-token');
+      expect(result).toHaveProperty('refresh_token', 'current-refresh-token');
+      expect(mockPrismaService.refreshToken.deleteMany).not.toHaveBeenCalled();
+      expect(mockPrismaService.refreshToken.create).not.toHaveBeenCalled();
     });
 
     it('deve lançar UnauthorizedException se userId não existir', async () => {
       mockPrismaService.user.findUnique.mockResolvedValue(null);
-      await expect(service.refreshTokens('999')).rejects.toThrow(
-        UnauthorizedException,
-      );
+      await expect(
+        service.refreshTokens('999', 'current-refresh-token'),
+      ).rejects.toThrow(UnauthorizedException);
     });
   });
 

@@ -75,6 +75,20 @@ describe('WatchtowerScheduler', () => {
     expect(m.jobs.claimBatch).not.toHaveBeenCalled();
   });
 
+  it('aquece episódios ao iniciar sem depender do cron das 03h', async () => {
+    process.env.WATCHTOWER_ENABLED = 'true';
+    process.env.WT_REPAIR_ENABLED = 'true';
+    await (scheduler as any).enqueueStartupJobs();
+    expect(m.repair.sweep).toHaveBeenCalledTimes(1);
+  });
+
+  it('respeita WT_REPAIR_ENABLED=false também na inicialização', async () => {
+    process.env.WATCHTOWER_ENABLED = 'true';
+    process.env.WT_REPAIR_ENABLED = 'false';
+    await (scheduler as any).enqueueStartupJobs();
+    expect(m.repair.sweep).not.toHaveBeenCalled();
+  });
+
   it('tick processa batch quando enabled', async () => {
     process.env.WATCHTOWER_ENABLED = 'true';
     const fakeJobs = [
