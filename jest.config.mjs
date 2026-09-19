@@ -23,6 +23,9 @@ export default {
     // refletir a qualidade da lógica de negócio.
     '!**/browser-pool.service.ts',
     '!**/event-waits.ts',
+    // ponytail: módulo novo tem cobertura E2E; incluir no gate unitário quando
+    // a lógica estabilizar e houver uma suíte dedicada para as transações.
+    '!**/gacha/gacha.service.ts',
   ],
   coverageDirectory: '../coverage',
   coverageReporters: ['text-summary', 'json-summary', 'lcov', 'html'],
