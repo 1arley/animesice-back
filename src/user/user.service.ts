@@ -36,8 +36,11 @@ export class UserService {
       },
     });
 
-    const { password: _, ...userWithoutPassword } = user;
-    return userWithoutPassword;
+    const { password: _, featuredRemainder, ...userWithoutPassword } = user;
+    return {
+      ...userWithoutPassword,
+      featuredRemainder: String(featuredRemainder ?? 0n),
+    };
   }
 
   async findById(id: string) {
@@ -49,8 +52,11 @@ export class UserService {
       throw new NotFoundException('User not found');
     }
 
-    const { password: _, ...userWithoutPassword } = user;
-    return userWithoutPassword;
+    const { password: _, featuredRemainder, ...userWithoutPassword } = user;
+    return {
+      ...userWithoutPassword,
+      featuredRemainder: String(featuredRemainder ?? 0n),
+    };
   }
 
   async findAll(page: number = 1, limit: number = DEFAULT_PAGE_SIZE) {

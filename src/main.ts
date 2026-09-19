@@ -6,6 +6,7 @@ import cookieParser from 'cookie-parser';
 import { AppModule } from '@/app.module';
 import { HttpExceptionFilter } from '@/common/filters/http-exception.filter';
 import { LoggingInterceptor } from '@/common/interceptors/logging.interceptor';
+import { BigIntSerializationInterceptor } from '@/common/interceptors/bigint-serialization.interceptor';
 import { setupOutboundProxy } from '@/common/outbound-proxy';
 
 async function bootstrap() {
@@ -53,7 +54,10 @@ async function bootstrap() {
   app.useGlobalFilters(new HttpExceptionFilter());
 
   // Global interceptors
-  app.useGlobalInterceptors(new LoggingInterceptor());
+  app.useGlobalInterceptors(
+    new LoggingInterceptor(),
+    new BigIntSerializationInterceptor(),
+  );
 
   // Global validation pipe
   app.useGlobalPipes(
