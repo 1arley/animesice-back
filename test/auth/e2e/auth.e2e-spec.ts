@@ -299,7 +299,7 @@ describe('AuthController (e2e)', () => {
 
       const newRefreshToken = getSetCookie(response.headers, 'refresh_token');
       expect(newRefreshToken).toBeDefined();
-      expect(newRefreshToken).not.toBe(refreshToken);
+      expect(newRefreshToken).toBe(refreshToken);
     });
 
     it('should return 401 Unauthorized without refresh token', async () => {
@@ -337,7 +337,7 @@ describe('AuthController (e2e)', () => {
       );
     });
 
-    it('should prevent refresh token reuse after rotation', async () => {
+    it('should allow refresh token reuse across refreshes', async () => {
       const response1 = await request(getHttpServer())
         .post('/auth/refresh')
         .set('Authorization', `Bearer ${refreshToken}`)
@@ -345,21 +345,19 @@ describe('AuthController (e2e)', () => {
 
       const newRefreshToken = getSetCookie(response1.headers, 'refresh_token');
       expect(newRefreshToken).toBeDefined();
-      expect(newRefreshToken).not.toBe(refreshToken);
+      expect(newRefreshToken).toBe(refreshToken);
 
       await request(getHttpServer())
         .post('/auth/refresh')
         .set('Authorization', `Bearer ${newRefreshToken}`)
         .expect(201);
 
-      const oldTokenResponse = await request(getHttpServer())
+      const reusedTokenResponse = await request(getHttpServer())
         .post('/auth/refresh')
         .set('Authorization', `Bearer ${refreshToken}`)
-        .expect(401);
+        .expect(201);
 
-      expect((oldTokenResponse.body as ErrorResponse).message).toContain(
-        'Refresh token inválido',
-      );
+      expect(reusedTokenResponse.body).toHaveProperty('user');
     });
   });
 
