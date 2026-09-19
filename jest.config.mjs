@@ -25,7 +25,7 @@ export default {
     '!**/event-waits.ts',
     // ponytail: módulo novo tem cobertura E2E; incluir no gate unitário quando
     // a lógica estabilizar e houver uma suíte dedicada para as transações.
-    '!**/gacha/gacha.service.ts',
+    '!**/gacha/**',
   ],
   coverageDirectory: '../coverage',
   coverageReporters: ['text-summary', 'json-summary', 'lcov', 'html'],
