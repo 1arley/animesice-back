@@ -15,6 +15,8 @@ import { probeMediaUrlDead } from '@/common/media-probe';
 import { JobsService } from './jobs.service';
 import { JOB_TYPE, PRIORITY } from './watchtower.types';
 
+// 500 episódios/dia deixa o catálogo aquecido sem abrir centenas de Chromium
+// ao mesmo tempo; a fila continua serializada pelo batch do Watchtower.
 const DEFAULT_DAILY_CAP = 500;
 const SAMPLE_SIZE = 200;
 
@@ -32,6 +34,7 @@ export class RepairWorker {
     const broken = await this.prisma.episode.findMany({
       where: {
         OR: [{ videoUrl: null }, { videoBroken: true }],
+        anime: { published: true },
       },
       take: cap,
       select: { id: true, animeId: true, number: true, season: true },
@@ -66,7 +69,11 @@ export class RepairWorker {
 
     // Amostra maior p/ detectar vídeos mortos mais rápido
     const sample = await this.prisma.episode.findMany({
-      where: { videoUrl: { not: null }, videoBroken: false },
+      where: {
+        videoUrl: { not: null },
+        videoBroken: false,
+        anime: { published: true },
+      },
       take: SAMPLE_SIZE,
       orderBy: { videoCheckedAt: 'asc' },
       select: {

@@ -74,6 +74,9 @@ export class WatchtowerScheduler implements OnModuleInit {
 
   private async enqueueStartupJobs(): Promise<void> {
     try {
+      if (process.env.WT_REPAIR_ENABLED !== 'false') {
+        await this.repair.sweep();
+      }
       if (process.env.WT_BACKFILL_ENABLED === 'true') {
         await this.jobs.enqueue({
           type: JOB_TYPE.BACKFILL_ANILIST,
