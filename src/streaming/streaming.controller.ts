@@ -169,6 +169,20 @@ export class StreamingController {
         });
         return;
       }
+
+      // A fonte persistida já é o caminho rápido. Não faça probe de rede
+      // antes de responder: a validade será confirmada pelo player e uma
+      // falha seguirá pelo refresh forçado.
+      const source = await this.streamingService.getSource(
+        animeSlug,
+        episodeNumber,
+        backendOrigin(req, this.trustProxy, this.configService),
+        1,
+        false,
+        true,
+      );
+      res.json(source);
+      return;
     }
     const source = await this.streamingService.getSource(
       animeSlug,

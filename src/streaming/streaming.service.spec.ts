@@ -1287,7 +1287,7 @@ describe('StreamingService.getSourceAsync', () => {
     );
   });
 
-  it('submete novo job quando videoUrl está morto', async () => {
+  it('não faz probe da videoUrl no caminho assíncrono', async () => {
     const { prisma, extractionJobs, svc } = makeMocks();
     prisma.anime.findUnique.mockResolvedValue({ id: 'a1', slug: 'anime' });
     prisma.episode.findUnique.mockResolvedValue({
@@ -1303,11 +1303,12 @@ describe('StreamingService.getSourceAsync', () => {
     extractionJobs.findByEpisode.mockReturnValue(undefined);
     extractionJobs.submit.mockReturnValue({ id: 'job-dead' });
     const result = await svc.getSourceAsync('anime', 1);
-    expect(result).toEqual({ jobId: 'job-dead' });
+    expect(result).toBeNull();
+    expect(extractionJobs.submit).not.toHaveBeenCalled();
     probeSpy.mockRestore();
   });
 
-  it('desembrulha /embed/media?url= antes do probe', async () => {
+  it('desembrulha /embed/media?url= sem bloquear a resposta', async () => {
     const { prisma, svc } = makeMocks();
     prisma.anime.findUnique.mockResolvedValue({ id: 'a1', slug: 'anime' });
     prisma.episode.findUnique.mockResolvedValue({
@@ -1323,7 +1324,7 @@ describe('StreamingService.getSourceAsync', () => {
       .mockResolvedValue(false);
     const result = await svc.getSourceAsync('anime', 1);
     expect(result).toBeNull();
-    expect(probeSpy).toHaveBeenCalledWith('https://cdn.example.com/v.mp4');
+    expect(probeSpy).not.toHaveBeenCalled();
     probeSpy.mockRestore();
   });
 
