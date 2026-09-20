@@ -44,13 +44,19 @@ import { DEFAULT_PAGE } from '@/common/constants';
 import type { AuthenticatedRequest } from '@/common/interfaces/request.interface';
 import type { Request } from 'express';
 import { GACHA_TIERS } from '@/gacha/gacha.constants';
+import { GachaConfigService } from '@/gacha/gacha-config.service';
+import { EconomyService } from '@/gacha/economy/economy.service';
 
 type OptionalAuthRequest = Request & { user?: AuthenticatedRequest['user'] };
 
 @ApiTags('gacha')
 @Controller('gacha')
 export class GachaController {
-  constructor(private readonly gachaService: GachaService) {}
+  constructor(
+    private readonly gachaService: GachaService,
+    private readonly gachaConfig: GachaConfigService,
+    private readonly economy: EconomyService,
+  ) {}
 
   @Get('wishlist')
   @UseGuards(OptionalJwtAuthGuard)
@@ -336,7 +342,9 @@ export class GachaController {
       key: string;
       name: string;
       description?: string;
-      svg: string;
+      type?: 'BACK' | 'FRAME' | 'HIGHLIGHT';
+      rarity?: 'COMMON' | 'RARE' | 'EPIC' | 'LEGENDARY';
+      svg?: string;
       previewUrl?: string;
       price?: number;
       status?: 'DRAFT' | 'REVIEW' | 'PUBLISHED' | 'ARCHIVED';
@@ -355,6 +363,8 @@ export class GachaController {
       key?: string;
       name?: string;
       description?: string;
+      type?: 'BACK' | 'FRAME' | 'HIGHLIGHT';
+      rarity?: 'COMMON' | 'RARE' | 'EPIC' | 'LEGENDARY';
       svg?: string;
       previewUrl?: string;
       price?: number;
@@ -393,12 +403,12 @@ export class GachaController {
   @Post('listings')
   @UseGuards(JwtAuthGuard, VerifiedGuard)
   @ApiBearerAuth('JWT-auth')
-  @ApiOperation({ summary: 'Anuncia uma carta sua (escrow, 48h)' })
+  @ApiOperation({ summary: 'Anuncia uma carta sua (escrow, 7 dias)' })
   createListing(
     @Req() req: AuthenticatedRequest,
     @Body() dto: CreateListingDto,
   ) {
-    return this.gachaService.createListing(
+    return this.economy.createCardListing(
       req.user.id,
       dto.userCardId,
       Number(dto.price),
@@ -410,7 +420,7 @@ export class GachaController {
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({ summary: 'Desanuncia (a carta volta pra você)' })
   cancelListing(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
-    return this.gachaService.cancelListing(req.user.id, id);
+    return this.economy.cancelCardListing(req.user.id, id);
   }
 
   @Post('listings/:id/buy')
@@ -420,7 +430,7 @@ export class GachaController {
     summary: 'Buy-now: transfere pontos (taxa 10% queimada) e a carta',
   })
   buyListing(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
-    return this.gachaService.buyListing(req.user.id, id);
+    return this.economy.buyCardListing(req.user.id, id);
   }
 
   @Get('collection')
@@ -491,7 +501,7 @@ export class GachaController {
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({ summary: 'Resgatar bônus diário de Crystais' })
   dailyBonus(@Req() req: AuthenticatedRequest) {
-    return this.gachaService.dailyBonus(req.user.id);
+    return this.economy.claimDaily(req.user.id);
   }
 
   @Get('cards/:id')
@@ -987,5 +997,38 @@ export class GachaController {
   @ApiOperation({ summary: 'Ranking de colecionadores por valor' })
   ranking(@Query('limit') limit: string) {
     return this.gachaService.ranking(parseInt(limit ?? '20', 10) || 20);
+  }
+
+  // ── GachaConfig admin ────────────────────────────────────
+
+  @Get('admin/config')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Lista todas as configurações do gacha' })
+  adminListConfig() {
+    return this.gachaConfig.list();
+  }
+
+  @Patch('admin/config/:key')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SUPERADMIN')
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Atualiza uma configuração do gacha' })
+  async adminUpdateConfig(
+    @Param('key') key: string,
+    @Body()
+    body: {
+      value: import('@prisma/client').Prisma.InputJsonValue;
+      reason?: string;
+    },
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.gachaConfig.update(
+      key,
+      body.value,
+      req.user.id,
+      body.reason ?? 'Atualização administrativa',
+    );
   }
 }

@@ -1,0 +1,2 @@
+ALTER TABLE "GachaCardBack" ADD COLUMN "rarity" TEXT NOT NULL DEFAULT 'COMMON';
+ALTER TABLE "GachaMarketSale" ADD COLUMN "variant" JSONB;

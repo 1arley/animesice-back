@@ -13,6 +13,7 @@ import {
   GachaService,
 } from '@/gacha/gacha.service';
 import { PrismaService } from '@/prisma/prisma.service';
+import { GachaConfigService } from '@/gacha/gacha-config.service';
 import {
   cardValue,
   conditionLabel,
@@ -20,10 +21,93 @@ import {
   pickWeighted,
 } from '@/gacha/gacha.constants';
 
+const TEST_BASE_VALUE = {
+  COMUM: 10,
+  INCOMUM: 25,
+  RARA: 60,
+  EPICA: 150,
+  LENDARIA: 400,
+  MITICA: 800,
+  GALACTICA: 1600,
+};
+const TEST_FOIL_MULT = { NORMAL: 1, HOLO: 3, GOLD: 10 };
+
 describe('GachaService', () => {
   let service: GachaService;
+  const mockConfig = {
+    baseValue: TEST_BASE_VALUE,
+    foilMult: TEST_FOIL_MULT,
+    foilWeights: { NORMAL: 85, HOLO: 12, GOLD: 3 },
+    tierWeights: {
+      COMUM: 55,
+      INCOMUM: 25,
+      RARA: 12,
+      EPICA: 5.5,
+      LENDARIA: 2,
+      MITICA: 0.4,
+      GALACTICA: 0.1,
+    },
+    pityWeights: {
+      COMUM: 0,
+      INCOMUM: 0,
+      RARA: 0,
+      EPICA: 70,
+      LENDARIA: 20,
+      MITICA: 8,
+      GALACTICA: 2,
+    },
+    pityDays: 30,
+    spinsPerHour: 5,
+    bypassPriceCents: 299,
+    dailyBonus: 350,
+    featuredAccrualLimitMs: 604_800_000,
+    featuredProductiveMsPerDay: 36_000_000,
+    rerollCostPct: 0.15,
+    listingActiveLimit: 20,
+    listingTtlMs: 604_800_000,
+    marketTaxPct: 0.1,
+    skinSpinCooldownMs: 604_800_000,
+    skinSpinPrice: 0,
+    tradeActiveLimit: 3,
+    tradeTtlMs: 172_800_000,
+    cardFloors: {
+      COMUM: 500,
+      INCOMUM: 750,
+      RARA: 1_250,
+      EPICA: 2_500,
+      LENDARIA: 5_000,
+      MITICA: 9_000,
+      GALACTICA: 15_000,
+    },
+    burnPayout: {
+      COMUM: 100,
+      INCOMUM: 150,
+      RARA: 250,
+      EPICA: 500,
+      LENDARIA: 1_000,
+      MITICA: 1_800,
+      GALACTICA: 3_000,
+    },
+    collectionRewards: { '25': 1_000, '50': 2_500, '100': 6_000 },
+    claimLockMs: jest.fn(
+      (tier: string) =>
+        (
+          ({
+            COMUM: 1,
+            INCOMUM: 2,
+            RARA: 3,
+            EPICA: 4,
+            LENDARIA: 5,
+            MITICA: 6,
+            GALACTICA: 7,
+          }) as Record<string, number>
+        )[tier]! * 3_600_000,
+    ),
+  };
 
   const mockPrisma = {
+    gachaConfig: { findUnique: jest.fn().mockResolvedValue(null) },
+    gachaDailyClaim: { findUnique: jest.fn().mockResolvedValue(null) },
     siteSetting: {
       findMany: jest.fn(),
       findUnique: jest.fn(),
@@ -155,6 +239,7 @@ describe('GachaService', () => {
     },
     userGachaSkin: {
       findUnique: jest.fn(),
+      findFirst: jest.fn(),
       create: jest.fn(),
     },
     gachaAdminChange: {
@@ -226,6 +311,7 @@ describe('GachaService', () => {
       providers: [
         GachaService,
         { provide: PrismaService, useValue: mockPrisma },
+        { provide: GachaConfigService, useValue: mockConfig },
       ],
     }).compile();
 
@@ -975,7 +1061,16 @@ describe('GachaService', () => {
       expect(repriced).toMatchObject({ repriced: 1 });
       expect(mockPrisma.userCard.update).toHaveBeenCalledWith({
         where: { id: 'p1' },
-        data: { value: cardValue('LENDARIA', 0.05, 'NORMAL', 1) },
+        data: {
+          value: cardValue(
+            'LENDARIA',
+            0.05,
+            'NORMAL',
+            1,
+            mockConfig.baseValue,
+            mockConfig.foilMult,
+          ),
+        },
       });
       mockPrisma.card.findUnique.mockResolvedValue(null);
       await expect(
@@ -1567,7 +1662,7 @@ describe('GachaService', () => {
       expect(mockPrisma.user.update).not.toHaveBeenCalled();
     });
 
-    it('reroll cobra value + 15% do value, troca condition/foil e reprecifica', async () => {
+    it('reroll cobra 15% do piso do tier, troca condition/foil e reprecifica', async () => {
       const owned = {
         id: 'p1',
         condition: 0.5,
@@ -1591,19 +1686,26 @@ describe('GachaService', () => {
             ...owned,
             condition: args.data.condition,
             foil: args.data.foil,
-            value: cardValue('COMUM', args.data.condition, args.data.foil, 42),
+            value: cardValue(
+              'COMUM',
+              args.data.condition,
+              args.data.foil,
+              42,
+              mockConfig.baseValue,
+              mockConfig.foilMult,
+            ),
           }),
       );
 
       const pull = await service.reroll('u1', 'p1');
 
       expect(mockPrisma.user.updateMany).toHaveBeenCalledWith({
-        where: { id: 'u1', crystalBalance: { gte: 115, lte: 2_147_483_647 } },
-        data: { crystalBalance: { increment: -115 } },
+        where: { id: 'u1', crystalBalance: { gte: 75, lte: 2_147_483_647 } },
+        data: { crystalBalance: { increment: -75 } },
       });
       expect(mockPrisma.crystalEvent.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ delta: -115, type: 'SPEND' }),
+          data: expect.objectContaining({ delta: -75, type: 'SPEND' }),
         }),
       );
       expect(pull.conditionLabel).toBeDefined();
@@ -1631,12 +1733,12 @@ describe('GachaService', () => {
       expect(mockPrisma.userCard.update).not.toHaveBeenCalled();
     });
 
-    it('queima carta, credita 40% e preserva registro como BURNED', async () => {
+    it('queima carta, credita payout do tier e preserva registro como BURNED', async () => {
       mockPrisma.userCard.findFirst.mockResolvedValue({
         id: 'p1',
         value: 100,
         edition: 3,
-        card: { name: 'Card Comum' },
+        card: { name: 'Card Comum', rarity: 'COMUM' },
       });
       mockPrisma.gachaTrade.findFirst.mockResolvedValue(null);
       mockPrisma.gachaListing.findFirst.mockResolvedValue(null);
@@ -1646,7 +1748,7 @@ describe('GachaService', () => {
 
       await expect(service.burn('u1', 'p1')).resolves.toEqual({
         burned: 'p1',
-        payout: 40,
+        payout: 100,
       });
       expect(mockPrisma.userCard.updateMany).toHaveBeenCalledWith({
         where: { id: 'p1', userId: 'u1', status: 'ACTIVE' },
@@ -1655,7 +1757,7 @@ describe('GachaService', () => {
       expect(mockPrisma.crystalEvent.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({
-            delta: 40,
+            delta: 100,
             type: 'BURN',
             refId: 'p1',
           }),
@@ -1668,7 +1770,7 @@ describe('GachaService', () => {
         id: 'p1',
         value: 100,
         edition: 3,
-        card: { name: 'Card Comum' },
+        card: { name: 'Card Comum', rarity: 'COMUM' },
       });
       mockPrisma.gachaTrade.findFirst.mockResolvedValue(null);
       mockPrisma.gachaListing.findFirst.mockResolvedValue(null);
@@ -1680,12 +1782,12 @@ describe('GachaService', () => {
       expect(mockPrisma.crystalEvent.create).not.toHaveBeenCalled();
     });
 
-    it('garante payout mínimo de 1 Crystal', async () => {
+    it('usa payout fixo mesmo quando valor antigo da carta é baixo', async () => {
       mockPrisma.userCard.findFirst.mockResolvedValue({
         id: 'p1',
         value: 1,
         edition: 3,
-        card: { name: 'Card Comum' },
+        card: { name: 'Card Comum', rarity: 'COMUM' },
       });
       mockPrisma.gachaTrade.findFirst.mockResolvedValue(null);
       mockPrisma.gachaListing.findFirst.mockResolvedValue(null);
@@ -1694,15 +1796,24 @@ describe('GachaService', () => {
 
       await service.burn('u1', 'p1');
       expect(mockPrisma.user.updateMany).toHaveBeenCalledWith(
-        expect.objectContaining({ data: { crystalBalance: { increment: 1 } } }),
+        expect.objectContaining({
+          data: { crystalBalance: { increment: 100 } },
+        }),
       );
     });
 
     it('buyCosmetic barra key inexistente, posse duplicada e saldo baixo', async () => {
+      mockPrisma.gachaCardBack.findFirst.mockResolvedValue(null);
       await expect(
         service.buyCosmetic('u1', 'NAO_EXISTE'),
       ).rejects.toBeInstanceOf(BadRequestException);
 
+      mockPrisma.gachaCardBack.findFirst.mockResolvedValue({
+        key: 'FRAME_AURORA',
+        name: 'Moldura Aurora',
+        description: 'Teste',
+        price: 1500,
+      });
       mockPrisma.user.findUnique.mockResolvedValue({
         gachaCosmetics: ['FRAME_AURORA'],
       });
@@ -1822,7 +1933,7 @@ describe('GachaService', () => {
 
       mockPrisma.gachaTrade.findFirst.mockResolvedValue(null);
       mockPrisma.gachaListing.updateMany.mockResolvedValue({ count: 0 });
-      mockPrisma.gachaListing.count.mockResolvedValue(5);
+      mockPrisma.gachaListing.count.mockResolvedValue(20);
       await expect(
         service.createListing('u1', 'p1', 10),
       ).rejects.toBeInstanceOf(BadRequestException);
@@ -1911,7 +2022,7 @@ describe('GachaService', () => {
     });
 
     it('equipa e remove skin somente se pertencer ao usuário', async () => {
-      mockPrisma.userGachaSkin.findUnique.mockResolvedValue({
+      mockPrisma.userGachaSkin.findFirst.mockResolvedValue({
         skin: { blocked: false },
       });
       mockPrisma.user.update.mockResolvedValue({ equippedGachaSkinId: 's1' });
@@ -1936,21 +2047,33 @@ describe('gacha constants', () => {
   it('limita o rendimento do destaque às primeiras 10h de cada janela diária', () => {
     const start = new Date('2026-01-01T00:00:00Z');
     expect(
-      featuredProductiveMs(start, start, new Date('2026-01-02T00:00:00Z')),
+      featuredProductiveMs(
+        start,
+        start,
+        new Date('2026-01-02T00:00:00Z'),
+        36_000_000,
+      ),
     ).toBe(10 * 60 * 60 * 1000);
     expect(
       featuredProductiveMs(
         start,
         new Date('2026-01-01T09:00:00Z'),
         new Date('2026-01-02T02:00:00Z'),
+        36_000_000,
       ),
     ).toBe(3 * 60 * 60 * 1000);
   });
 
   it('precifica carta: base × condition × foil + bônus low edition', () => {
-    expect(cardValue('COMUM', 0.05, 'NORMAL', 500)).toBe(30);
-    expect(cardValue('LENDARIA', 0.05, 'GOLD', 1)).toBe(12000 + 12000);
-    expect(cardValue('RARA', 0.9, 'HOLO', 11)).toBe(180);
+    expect(
+      cardValue('COMUM', 0.05, 'NORMAL', 500, TEST_BASE_VALUE, TEST_FOIL_MULT),
+    ).toBe(30);
+    expect(
+      cardValue('LENDARIA', 0.05, 'GOLD', 1, TEST_BASE_VALUE, TEST_FOIL_MULT),
+    ).toBe(12000 + 12000);
+    expect(
+      cardValue('RARA', 0.9, 'HOLO', 11, TEST_BASE_VALUE, TEST_FOIL_MULT),
+    ).toBe(180);
   });
 
   it('rotula condition nas fronteiras', () => {

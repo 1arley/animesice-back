@@ -69,13 +69,10 @@ describe('GachaController (e2e)', () => {
     );
     expect(results.map((result) => result.status).sort()).toEqual([201, 403]);
     expect(results.find((result) => result.status === 201)?.body).toEqual({
-      balance: 200,
-      claimed: 200,
+      claimed: 350,
+      day: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
     });
-    await prisma.gachaDailyBonus.update({
-      where: { userId },
-      data: { lastClaim: new Date(Date.now() - 86_400_000) },
-    });
+    await prisma.gachaDailyClaim.deleteMany({ where: { userId } });
     await request(getHttpServer())
       .post('/gacha/crystals/daily')
       .set('Cookie', cookie)
@@ -84,7 +81,7 @@ describe('GachaController (e2e)', () => {
       .get('/gacha/crystals?page=1&limit=1')
       .set('Cookie', cookie)
       .expect(200);
-    expect(ledger.body.balance).toBe(400);
+    expect(ledger.body.balance).toBe(700);
     expect(ledger.body.events).toHaveLength(1);
     expect(ledger.body.meta).toEqual({
       total: 2,

@@ -16,10 +16,7 @@ import { VerifiedGuard } from '@/auth/verified.guard';
 import { Public } from '@/auth/decorators/public.decorator';
 import { LivePixService } from '@/billing/livepix.service';
 import { PrismaService } from '@/prisma/prisma.service';
-import {
-  GACHA_BYPASS_PRICE_CENTS,
-  GACHA_BYPASS_TTL_MS,
-} from '@/gacha/gacha.constants';
+import { GachaConfigService } from '@/gacha/gacha-config.service';
 import type { AuthenticatedRequest } from '@/common/interfaces/request.interface';
 
 interface LivePixWebhookBody {
@@ -35,6 +32,7 @@ export class GachaBypassController {
     private readonly livepix: LivePixService,
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly gachaConfig: GachaConfigService,
   ) {}
 
   @Post()
@@ -67,7 +65,7 @@ export class GachaBypassController {
       this.config.get<string>('FRONTEND_URL') || 'http://localhost:3000';
     const checkout = await this.livepix.createBypassCharge(
       await this.displayName(req.user.id),
-      GACHA_BYPASS_PRICE_CENTS,
+      this.gachaConfig.bypassPriceCents,
       `${frontend.replace(/\/$/, '')}/gacha?bypass=pending`,
     );
     await this.prisma.gachaBypass.upsert({
@@ -75,17 +73,17 @@ export class GachaBypassController {
       create: {
         reference: checkout.reference,
         userId: req.user.id,
-        amount: GACHA_BYPASS_PRICE_CENTS,
+        amount: this.gachaConfig.bypassPriceCents,
         status: 'PENDING',
-        expiresAt: new Date(Date.now() + GACHA_BYPASS_TTL_MS),
+        expiresAt: new Date(Date.now() + this.gachaConfig.bypassTtlMs),
       },
       update: {
         userId: req.user.id,
         status: 'PENDING',
-        expiresAt: new Date(Date.now() + GACHA_BYPASS_TTL_MS),
+        expiresAt: new Date(Date.now() + this.gachaConfig.bypassTtlMs),
       },
     });
-    return { ...checkout, amountCents: GACHA_BYPASS_PRICE_CENTS };
+    return { ...checkout, amountCents: this.gachaConfig.bypassPriceCents };
   }
 
   @Get(':reference')

@@ -176,6 +176,9 @@ model User {
   gachaListings           GachaListing[]
   legacyPointsBalance     Int                       @default(0) @map("pointsBalance")
   crystalBalance          Int                       @default(0)
+  crystalReserved         Int                       @default(0)
+  gachaMarketBlockedAt    DateTime?                 @db.Timestamptz(6)
+  gachaMarketBlockReason  String?
   legacyPointEvents       GachaPointEvent[]
   gachaCosmetics          String[]                  @default([])
   gachaCardBack           String?
@@ -186,6 +189,19 @@ model User {
   equippedGachaSkinId     String?
   equippedGachaSkin       GachaSkin?                @relation("EquippedGachaSkin", fields: [equippedGachaSkinId], references: [id], onDelete: SetNull)
   nextGachaSkinSpinAt     DateTime?                 @db.Timestamptz(6)
+  gachaInventory          GachaInventory?
+  gachaRetention          GachaRetention?
+  gachaDailyClaims        GachaDailyClaim[]
+  gachaOpeningDays        GachaOpeningDay[]
+  gachaOpenings           GachaOpening[]
+  crystalPurchases        CrystalPurchase[]
+  gachaBuyOrders          GachaBuyOrder[]
+  gachaSkinListings       GachaSkinListing[]
+  gachaOfficialOffers     GachaOfficialOffer[]
+  gachaMarketVisits       GachaMarketVisit[]
+  gachaMarketMissions     GachaMarketMission[]
+  gachaSalesAsSeller      GachaMarketSale[]         @relation("GachaSaleSeller")
+  gachaSalesAsBuyer       GachaMarketSale[]         @relation("GachaSaleBuyer")
   posts                   Post[]
   postLikes               PostLike[]
   postComments            PostComment[]
@@ -883,6 +899,8 @@ model Card {
   wishlistEntries   GachaCardWishlist[]
   spins             GachaSpin[]
   skins             GachaSkin[]
+  buyOrders         GachaBuyOrder[]
+  offers            GachaOfficialOffer[]
   editionCounter    Int                     @default(0)
   createdAt         DateTime                @default(now())
   updatedAt         DateTime                @updatedAt
@@ -893,36 +911,43 @@ model Card {
 }
 
 model GachaSkin {
-  id         String          @id @default(uuid())
+  id         String               @id @default(uuid())
   cardId     String?
-  card       Card?           @relation(fields: [cardId], references: [id], onDelete: SetNull)
+  card       Card?                @relation(fields: [cardId], references: [id], onDelete: SetNull)
   name       String
   imageUrl   String
   sourceUrl  String?
-  active     Boolean         @default(true)
-  blocked    Boolean         @default(false)
-  createdAt  DateTime        @default(now())
-  updatedAt  DateTime        @updatedAt
+  active     Boolean              @default(true)
+  blocked    Boolean              @default(false)
+  rarity     String               @default("COMMON")
+  createdAt  DateTime             @default(now())
+  updatedAt  DateTime             @updatedAt
   owners     UserGachaSkin[]
-  equippedBy User[]          @relation("EquippedGachaSkin")
+  equippedBy User[]               @relation("EquippedGachaSkin")
   userCards  UserCard[]
+  buyOrders  GachaBuyOrder[]
+  offers     GachaOfficialOffer[]
 
   @@index([active, blocked])
   @@index([cardId])
 }
 
 model UserGachaSkin {
-  id         String    @id @default(uuid())
+  id         String               @id @default(uuid())
   userId     String
   skinId     String
   name       String
   imageUrl   String
-  acquiredAt DateTime  @default(now())
-  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  skin       GachaSkin @relation(fields: [skinId], references: [id], onDelete: Cascade)
+  acquiredAt DateTime             @default(now())
+  rarity     String               @default("COMMON")
+  status     GachaOwnedItemStatus @default(ACTIVE)
+  user       User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  skin       GachaSkin            @relation(fields: [skinId], references: [id], onDelete: Cascade)
+  listings   GachaSkinListing[]
+  sales      GachaMarketSale[]
 
-  @@unique([userId, skinId])
   @@index([userId, acquiredAt(sort: Desc)])
+  @@index([userId, skinId, status])
 }
 
 model GachaCardWishlist {
@@ -1044,10 +1069,11 @@ model UserCard {
   status         UserCardStatus @default(ACTIVE)
   obtainedAt     DateTime       @default(now())
 
-  tradeOffered   GachaTrade[]     @relation("TradeOffered")
-  tradeRequested GachaTrade[]     @relation("TradeRequested")
+  tradeOffered   GachaTrade[]      @relation("TradeOffered")
+  tradeRequested GachaTrade[]      @relation("TradeRequested")
   tradeCards     GachaTradeCard[]
   listings       GachaListing[]
+  buyOrderSales  GachaMarketSale[]
 
   @@index([userId, obtainedAt(sort: Desc)])
   @@index([cardId, edition])
@@ -1074,7 +1100,17 @@ model GachaAdminChange {
 
 enum UserCardStatus {
   ACTIVE
+  ESCROW
+  SOLD
+  REMOVED
   BURNED
+}
+
+enum GachaOwnedItemStatus {
+  ACTIVE
+  ESCROW
+  SOLD
+  REMOVED
 }
 
 enum CardStatus {
@@ -1096,14 +1132,32 @@ enum GachaCosmeticStatus {
   ARCHIVED
 }
 
+model GachaConfig {
+  key       String   @id
+  value     Json
+  label     String
+  group     String
+  updatedAt DateTime @updatedAt
+
+  @@index([group])
+}
+
+enum GachaCosmeticType {
+  BACK
+  FRAME
+  HIGHLIGHT
+}
+
 model GachaCardBack {
   id          String              @id @default(uuid())
   key         String              @unique
   name        String
   description String?
-  svg         String              @db.Text
+  type        GachaCosmeticType   @default(BACK)
+  svg         String?             @db.Text
   previewUrl  String?
   price       Int                 @default(0)
+  rarity      String              @default("COMMON")
   version     Int                 @default(1)
   status      GachaCosmeticStatus @default(DRAFT)
   createdById String?
@@ -1274,6 +1328,7 @@ model CrystalEvent {
   reason    String?
   createdAt DateTime         @default(now()) @db.Timestamptz(6)
 
+  @@unique([userId, type, refId], where: raw("refId LIKE 'economy-v1:%'"))
   @@index([userId, createdAt(sort: Desc)])
 }
 
@@ -1282,6 +1337,250 @@ model GachaDailyBonus {
   userId    String   @id
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   lastClaim DateTime @db.Timestamptz(6)
+}
+
+model GachaInventory {
+  userId       String @id
+  commonBoxes  Int    @default(0)
+  rareBoxes    Int    @default(0)
+  premiumBoxes Int    @default(0)
+  keys         Int    @default(0)
+  spinResets   Int    @default(0)
+  user         User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model GachaDailyClaim {
+  userId    String
+  day       DateTime @db.Date
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, day])
+  @@index([userId, day(sort: Desc)])
+}
+
+model GachaOpeningDay {
+  userId    String
+  day       DateTime @db.Date
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, day])
+}
+
+model GachaRetention {
+  userId                String    @id
+  weeklyRewardReady     Boolean   @default(false)
+  weeklyRewardClaimedAt DateTime? @db.Date
+  loyaltyDays           Int       @default(0)
+  loyaltyRarePlusReady  Boolean   @default(false)
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model GachaEconomyVersion {
+  id         String         @id @default(uuid())
+  version    Int            @unique
+  snapshot   Json
+  authorId   String?
+  reason     String
+  activeFrom DateTime       @default(now()) @db.Timestamptz(6)
+  createdAt  DateTime       @default(now()) @db.Timestamptz(6)
+  openings   GachaOpening[]
+
+  @@index([activeFrom(sort: Desc)])
+}
+
+model GachaOpening {
+  id                String               @id @default(uuid())
+  userId            String
+  boxTier           GachaBoxTier
+  category          GachaPrizeCategory
+  quality           GachaPrizeQuality
+  amount            Int                  @default(1)
+  reward            Json
+  economyVersionId  String?
+  loyaltyGuaranteed Boolean              @default(false)
+  createdAt         DateTime             @default(now()) @db.Timestamptz(6)
+  user              User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  economyVersion    GachaEconomyVersion? @relation(fields: [economyVersionId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([economyVersionId])
+}
+
+model CrystalPurchase {
+  id             String               @id @default(uuid())
+  userId         String
+  packageId      String
+  idempotencyKey String
+  reference      String?              @unique
+  amountCents    Int
+  crystals       Int
+  status         CrystalPaymentStatus @default(PENDING)
+  checkoutUrl    String?
+  paidAt         DateTime?            @db.Timestamptz(6)
+  reversedAt     DateTime?            @db.Timestamptz(6)
+  createdAt      DateTime             @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime             @updatedAt
+  user           User                 @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([status, createdAt])
+}
+
+model GachaBuyOrder {
+  id          String                 @id @default(uuid())
+  userId      String
+  itemType    GachaMarketItemType
+  cardId      String?
+  skinId      String?
+  foil        String?
+  condition   String?
+  maxEdition  Int?
+  price       Int
+  status      GachaMarketOrderStatus @default(ACTIVE)
+  expiresAt   DateTime               @db.Timestamptz(6)
+  createdAt   DateTime               @default(now()) @db.Timestamptz(6)
+  completedAt DateTime?              @db.Timestamptz(6)
+  user        User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  card        Card?                  @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  skin        GachaSkin?             @relation(fields: [skinId], references: [id], onDelete: Cascade)
+  sale        GachaMarketSale?
+
+  @@index([userId, status])
+  @@index([itemType, cardId, price(sort: Desc)])
+  @@index([itemType, skinId, price(sort: Desc)])
+  @@index([status, expiresAt])
+}
+
+model GachaSkinListing {
+  id          String                 @id @default(uuid())
+  userId      String
+  userSkinId  String
+  price       Int
+  status      GachaMarketOrderStatus @default(ACTIVE)
+  buyerId     String?
+  expiresAt   DateTime               @db.Timestamptz(6)
+  createdAt   DateTime               @default(now()) @db.Timestamptz(6)
+  completedAt DateTime?              @db.Timestamptz(6)
+  user        User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userSkin    UserGachaSkin          @relation(fields: [userSkinId], references: [id], onDelete: Restrict)
+
+  @@unique([userSkinId], where: raw("status = 'ACTIVE'"))
+  @@index([userId, status])
+  @@index([status, expiresAt])
+}
+
+model GachaMarketSale {
+  id         String              @id @default(uuid())
+  sellerId   String
+  buyerId    String
+  itemType   GachaMarketItemType
+  userCardId String?
+  userSkinId String?
+  buyOrderId String?             @unique
+  price      Int
+  fee        Int
+  official   Boolean             @default(false)
+  suspicious Boolean             @default(false)
+  variant    Json?
+  createdAt  DateTime            @default(now()) @db.Timestamptz(6)
+  seller     User                @relation("GachaSaleSeller", fields: [sellerId], references: [id], onDelete: Restrict)
+  buyer      User                @relation("GachaSaleBuyer", fields: [buyerId], references: [id], onDelete: Restrict)
+  userCard   UserCard?           @relation(fields: [userCardId], references: [id], onDelete: SetNull)
+  userSkin   UserGachaSkin?      @relation(fields: [userSkinId], references: [id], onDelete: SetNull)
+  buyOrder   GachaBuyOrder?      @relation(fields: [buyOrderId], references: [id], onDelete: SetNull)
+
+  @@index([itemType, createdAt(sort: Desc)])
+  @@index([userCardId])
+  @@index([userSkinId])
+}
+
+model GachaOfficialOffer {
+  id          String                 @id @default(uuid())
+  userId      String
+  day         DateTime               @db.Date
+  slot        Int
+  itemType    GachaOfficialOfferType
+  cardId      String?
+  skinId      String?
+  price       Int
+  discount    Int                    @default(0)
+  payload     Json?
+  purchasedAt DateTime?              @db.Timestamptz(6)
+  user        User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  card        Card?                  @relation(fields: [cardId], references: [id], onDelete: SetNull)
+  skin        GachaSkin?             @relation(fields: [skinId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, day, slot])
+  @@index([userId, day])
+}
+
+model GachaMarketVisit {
+  userId String
+  day    DateTime @db.Date
+  user   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, day])
+}
+
+model GachaMarketMission {
+  userId             String
+  periodStart        DateTime  @db.Date
+  listingQualifiedAt DateTime? @db.Timestamptz(6)
+  claimedAt          DateTime? @db.Timestamptz(6)
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, periodStart])
+}
+
+enum GachaBoxTier {
+  COMMON
+  RARE
+  PREMIUM
+}
+
+enum GachaPrizeCategory {
+  CRYSTAL
+  SPIN_RESET
+  CARD
+  SKIN
+  KEY
+  CARD_BACK
+}
+
+enum GachaPrizeQuality {
+  BASIC
+  RARE
+  EPIC
+  LEGENDARY
+}
+
+enum CrystalPaymentStatus {
+  PENDING
+  PAID
+  REVERSED
+  EXPIRED
+}
+
+enum GachaMarketItemType {
+  CARD
+  SKIN
+}
+
+enum GachaMarketOrderStatus {
+  ACTIVE
+  FILLED
+  CANCELLED
+  EXPIRED
+}
+
+enum GachaOfficialOfferType {
+  CARD
+  SKIN
+  KEY
+  COMMON_BOX
 }
 
 enum CrystalEventType {
@@ -1296,4 +1595,5 @@ enum CrystalEventType {
   BURN
   FEATURED
   COLLECTION
+  CHARGEBACK
 }
