@@ -303,6 +303,12 @@ export class GachaController {
     return this.gachaService.buyCosmetic(req.user.id, dto.key);
   }
 
+  @Get('card-backs/:key')
+  @ApiOperation({ summary: 'SVG de uma capa publicada por key' })
+  cardBackByKey(@Param('key') key: string) {
+    return this.gachaService.cardBackByKey(key);
+  }
+
   @Patch('card-back')
   @UseGuards(JwtAuthGuard, VerifiedGuard)
   @ApiBearerAuth('JWT-auth')

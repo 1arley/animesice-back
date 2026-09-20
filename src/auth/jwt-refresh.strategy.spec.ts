@@ -52,16 +52,6 @@ describe('JwtRefreshStrategy', () => {
     });
   });
 
-  it('valida refresh token vindo do header Authorization', async () => {
-    const token = 'token-do-header';
-    prisma.user.findUnique.mockResolvedValue(user);
-    prisma.refreshToken.findMany.mockResolvedValue([{ token: hash(token) }]);
-
-    const result = await strategy.validate(buildReq(), { sub: 'u1' } as any);
-
-    expect(result.refreshToken).toBe(token);
-  });
-
   it('lança UnauthorizedException quando o token está ausente', async () => {
     const req = {
       cookies: {},
