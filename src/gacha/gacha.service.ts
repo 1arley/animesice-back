@@ -1082,7 +1082,14 @@ export class GachaService {
     }
     const custom = await this.prisma.gachaCardBack.findMany({
       where: { status: 'PUBLISHED' },
-      select: { key: true, name: true, description: true, price: true },
+      select: {
+        key: true,
+        name: true,
+        description: true,
+        price: true,
+        svg: true,
+        previewUrl: true,
+      },
     });
     return {
       balance: user.crystalBalance,
@@ -1098,6 +1105,8 @@ export class GachaService {
           description: item.description ?? '',
           price: item.price,
           owned: user.gachaCosmetics.includes(item.key),
+          svg: item.svg,
+          previewUrl: item.previewUrl,
         })),
       ],
     };
@@ -1309,6 +1318,17 @@ export class GachaService {
         ...(data.svg ? { svg: this.sanitizeCardBackSvg(data.svg) } : {}),
       },
     });
+  }
+
+  async cardBackByKey(key: string) {
+    const back = await this.prisma.gachaCardBack.findFirst({
+      where: { key, status: 'PUBLISHED' },
+      select: { key: true, name: true, svg: true, previewUrl: true },
+    });
+    if (!back) {
+      throw new NotFoundException('Capa não encontrada.');
+    }
+    return back;
   }
 
   async setCardBack(userId: string, key: string | null) {
@@ -1943,7 +1963,8 @@ export class GachaService {
     if (!Number.isSafeInteger((safePage - 1) * safeLimit)) {
       throw new BadRequestException('Paginação inválida.');
     }
-    const [events, total, wallet] = await this.prisma.$transaction([
+    const todayStart = this.dayStartUtc();
+    const [events, total, wallet, dailyBonus] = await this.prisma.$transaction([
       this.prisma.crystalEvent.findMany({
         where: { userId },
         skip: (safePage - 1) * safeLimit,
@@ -1955,9 +1976,14 @@ export class GachaService {
         where: { id: userId },
         select: { crystalBalance: true },
       }),
+      this.prisma.gachaDailyBonus.findUnique({
+        where: { userId },
+        select: { lastClaim: true },
+      }),
     ]);
     return {
       balance: wallet.crystalBalance,
+      dailyClaimedToday: !!dailyBonus && dailyBonus.lastClaim >= todayStart,
       events,
       meta: {
         total,

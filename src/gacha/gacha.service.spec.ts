@@ -44,7 +44,11 @@ describe('GachaService', () => {
       findMany: jest.fn(),
       count: jest.fn(),
     },
-    gachaDailyBonus: { createMany: jest.fn(), updateMany: jest.fn() },
+    gachaDailyBonus: {
+      createMany: jest.fn(),
+      updateMany: jest.fn(),
+      findUnique: jest.fn(),
+    },
     userCard: {
       count: jest.fn(),
       findFirst: jest.fn(),
@@ -199,6 +203,7 @@ describe('GachaService', () => {
     mockPrisma.user.findUniqueOrThrow.mockResolvedValue({ crystalBalance: 0 });
     mockPrisma.crystalEvent.findMany.mockResolvedValue([]);
     mockPrisma.crystalEvent.count.mockResolvedValue(0);
+    mockPrisma.gachaDailyBonus.findUnique.mockResolvedValue(null);
     mockPrisma.siteSetting.findMany.mockResolvedValue([
       { key: 'GACHA_ENGAGEMENT_PILOT_PERCENT', value: '100' },
     ]);
