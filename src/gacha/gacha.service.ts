@@ -1172,7 +1172,7 @@ export class GachaService {
           );
         const cost = Math.max(
           1,
-          Math.round(card.value * GACHA_REROLL_COST_PCT),
+          card.value + Math.round(card.value * GACHA_REROLL_COST_PCT),
         );
         await this.changeCrystals(
           tx,
