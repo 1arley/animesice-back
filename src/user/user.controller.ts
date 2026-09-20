@@ -155,7 +155,7 @@ export class UserController {
     },
   })
   @ApiOperation({
-    summary: 'Upload do avatar do usuário (JPG/PNG, máx 50KB)',
+    summary: 'Upload do avatar do usuário (JPG/PNG, máx 1MB)',
   })
   @UseInterceptors(
     FileInterceptor('file', {
