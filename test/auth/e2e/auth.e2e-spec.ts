@@ -299,7 +299,7 @@ describe('AuthController (e2e)', () => {
 
       const newRefreshToken = getSetCookie(response.headers, 'refresh_token');
       expect(newRefreshToken).toBeDefined();
-      expect(newRefreshToken).toBe(refreshToken);
+      expect(newRefreshToken).not.toBe(refreshToken);
     });
 
     it('should return 401 Unauthorized without refresh token', async () => {
