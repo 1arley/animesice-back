@@ -1562,7 +1562,7 @@ describe('GachaService', () => {
       expect(mockPrisma.user.update).not.toHaveBeenCalled();
     });
 
-    it('reroll cobra 10% do value, troca condition/foil e reprecifica', async () => {
+    it('reroll cobra value + 15% do value, troca condition/foil e reprecifica', async () => {
       const owned = {
         id: 'p1',
         condition: 0.5,
@@ -1593,12 +1593,12 @@ describe('GachaService', () => {
       const pull = await service.reroll('u1', 'p1');
 
       expect(mockPrisma.user.updateMany).toHaveBeenCalledWith({
-        where: { id: 'u1', crystalBalance: { gte: 10, lte: 2_147_483_647 } },
-        data: { crystalBalance: { increment: -10 } },
+        where: { id: 'u1', crystalBalance: { gte: 115, lte: 2_147_483_647 } },
+        data: { crystalBalance: { increment: -115 } },
       });
       expect(mockPrisma.crystalEvent.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ delta: -10, type: 'SPEND' }),
+          data: expect.objectContaining({ delta: -115, type: 'SPEND' }),
         }),
       );
       expect(pull.conditionLabel).toBeDefined();
