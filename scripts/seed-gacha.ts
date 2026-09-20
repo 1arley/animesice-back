@@ -7,7 +7,7 @@
  *
  * Fluxo por anime do catálogo: resolve mal_id (cache em Anime.malId; senão
  * busca por título com match de similaridade) → /anime/{id}/characters
- * (página 1: os 10 primeiros, que são os Main cadastrados primeiro) →
+ * (página 1: os 50 primeiros, que são os Main cadastrados primeiro) →
  * /characters/{id} com num_favorites → top por favorites → upsert.
  *
  * Uso: ts-node scripts/seed-gacha.ts [--limit N] [--dry]
@@ -225,11 +225,11 @@ async function main(): Promise<void> {
         }
       }
 
-      // Página 1: 10 personagens (os Main entram primeiro no MAL).
+      // Página 1: 50 personagens (os Main entram primeiro no MAL).
       const list = await mal<{
         data: Array<{ node: { id: number }; role: string }>;
       }>(`/anime/${malId}/characters`);
-      const candidates = (list?.data ?? []).slice(0, 10);
+      const candidates = (list?.data ?? []).slice(0, 50);
       if (candidates.length === 0) continue;
 
       const detailed: Array<{ detail: MalCharacterDetail; role: string }> = [];
