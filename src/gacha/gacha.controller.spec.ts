@@ -36,6 +36,7 @@ function makeMocks() {
       acceptTrade: jest.fn(),
       cancelTrade: jest.fn(),
       declineTrade: jest.fn(),
+      cardBackByKey: jest.fn(),
     },
   };
 }
@@ -300,6 +301,25 @@ describe('GachaController', () => {
       expect(m.gachaService.acceptTrade).toHaveBeenCalledWith('u1', 't1');
       expect(m.gachaService.cancelTrade).toHaveBeenCalledWith('u1', 't1');
       expect(m.gachaService.declineTrade).toHaveBeenCalledWith('u1', 't1');
+    });
+  });
+
+  describe('cardBackByKey', () => {
+    it('delega para o service com a key', async () => {
+      m.gachaService.cardBackByKey.mockResolvedValue({
+        key: 'BACK_ICE',
+        name: 'Ice',
+        svg: '<svg/>',
+        previewUrl: null,
+      });
+      const result = await controller.cardBackByKey('BACK_ICE');
+      expect(m.gachaService.cardBackByKey).toHaveBeenCalledWith('BACK_ICE');
+      expect(result).toEqual({
+        key: 'BACK_ICE',
+        name: 'Ice',
+        svg: '<svg/>',
+        previewUrl: null,
+      });
     });
   });
 });
