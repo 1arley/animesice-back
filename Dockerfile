@@ -28,7 +28,9 @@ ENV DATABASE_URL=""
 
 COPY tsconfig.json tsconfig.build.json nest-cli.json ./
 COPY src ./src/
+COPY scripts/seed-gacha.ts ./scripts/seed-gacha.ts
 RUN npm run build
+RUN npx tsc scripts/seed-gacha.ts --outDir dist/scripts --module nodenext --moduleResolution nodenext --target ES2023 --esModuleInterop --skipLibCheck --isolatedModules
 
 # Stage 4: Production
 FROM base AS production

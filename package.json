@@ -35,6 +35,7 @@
     "seed": "ts-node prisma/seed.ts",
     "seed:animefire": "ts-node scripts/seed-animefire.ts",
     "seed:animefire:dry": "ts-node scripts/seed-animefire.ts --limit 5",
+    "seed:gacha": "node dist/scripts/seed-gacha.js",
     "backfill:anilist": "ts-node scripts/backfill-anilist-id.ts",
     "backfill:anilist:dry": "ts-node scripts/backfill-anilist-id.ts --dry --limit 10",
     "backfill:gacha-values": "ts-node scripts/backfill-gacha-values.ts",
