@@ -29,6 +29,8 @@ describe('AuthService', () => {
     refreshToken: {
       create: jest.fn(),
       deleteMany: jest.fn(),
+      findUnique: jest.fn(),
+      updateMany: jest.fn(),
     },
     emailVerificationCode: {
       create: jest.fn(),
@@ -93,6 +95,8 @@ describe('AuthService', () => {
     mockMailService.sendEmailChangeConfirm.mockResolvedValue(true);
     mockMailService.sendPasswordResetEmail.mockResolvedValue(true);
     mockTurnstileService.verify.mockResolvedValue(true);
+    mockPrismaService.refreshToken.create.mockResolvedValue({});
+    mockPrismaService.refreshToken.updateMany.mockResolvedValue({ count: 1 });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -258,13 +262,26 @@ describe('AuthService', () => {
       jest.spyOn(jwtService, 'signAsync').mockResolvedValue('fake-jwt-token');
       jest.spyOn(configService, 'get').mockReturnValue('fake-secret');
       mockPrismaService.user.findUnique.mockResolvedValue(user);
+      mockPrismaService.refreshToken.findUnique.mockResolvedValue({
+        id: 'rt-1',
+        family: 'family-1',
+        replacedAt: null,
+      });
 
       const result = await service.refreshTokens('1', 'current-refresh-token');
 
       expect(result).toHaveProperty('access_token', 'fake-jwt-token');
-      expect(result).toHaveProperty('refresh_token', 'current-refresh-token');
+      expect(result).toHaveProperty('refresh_token', 'fake-jwt-token');
       expect(mockPrismaService.refreshToken.deleteMany).not.toHaveBeenCalled();
-      expect(mockPrismaService.refreshToken.create).not.toHaveBeenCalled();
+      expect(mockPrismaService.refreshToken.updateMany).toHaveBeenCalledWith({
+        where: expect.objectContaining({
+          id: 'rt-1',
+          userId: '1',
+          replacedAt: null,
+        }),
+        data: { replacedAt: expect.any(Date) },
+      });
+      expect(mockPrismaService.refreshToken.create).toHaveBeenCalled();
     });
 
     it('deve lançar UnauthorizedException se userId não existir', async () => {
@@ -272,6 +289,31 @@ describe('AuthService', () => {
       await expect(
         service.refreshTokens('999', 'current-refresh-token'),
       ).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('deve revogar a família quando outro refresh consumir o token primeiro', async () => {
+      mockPrismaService.user.findUnique.mockResolvedValue({
+        id: '1',
+        email: 'test@example.com',
+        role: 'USER',
+      });
+      mockPrismaService.refreshToken.findUnique.mockResolvedValue({
+        id: 'rt-1',
+        family: 'family-1',
+        replacedAt: null,
+      });
+      mockPrismaService.refreshToken.updateMany.mockResolvedValue({ count: 0 });
+      jest.spyOn(jwtService, 'signAsync').mockResolvedValue('fake-jwt-token');
+
+      await expect(
+        service.refreshTokens('1', 'current-refresh-token'),
+      ).rejects.toThrow('Sessão comprometida');
+      expect(mockPrismaService.refreshToken.create).not.toHaveBeenCalled();
+      expect(mockPrismaService.refreshToken.deleteMany).toHaveBeenCalledWith({
+        where: {
+          OR: [{ family: 'family-1' }, { id: 'rt-1' }],
+        },
+      });
     });
   });
 
@@ -632,10 +674,12 @@ describe('AuthService', () => {
     const code = '12345678';
     const codeHash = crypto.createHash('sha256').update(code).digest('hex');
 
-    it('deve lançar NotFoundException se usuário não existir', async () => {
+    it('deve retornar resposta genérica se usuário não existir', async () => {
       mockPrismaService.user.findUnique.mockResolvedValue(null);
-      await expect(service.verifyEmail('test@test.com', code)).rejects.toThrow(
-        NotFoundException,
+      await expect(service.verifyEmail('test@test.com', code)).resolves.toEqual(
+        {
+          message: 'Código de verificação inválido.',
+        },
       );
     });
 

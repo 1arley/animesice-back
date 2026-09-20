@@ -21,6 +21,7 @@ import { Response } from 'express';
 import { BCRYPT_ROUNDS } from '@/common/constants';
 import { MailService } from '@/mail/mail.service';
 import { TurnstileService } from '@/auth/turnstile/turnstile.service';
+import type { Prisma } from '@prisma/client';
 
 @Injectable()
 export class AuthService {
@@ -261,7 +262,7 @@ export class AuthService {
     // compromised — revoke every token in the chain.
     if (storedToken.replacedAt) {
       const family = storedToken.family || storedToken.id;
-      await this.prisma.refreshToken.deleteMany({ where: { family } });
+      await this.revokeRefreshTokenFamily(family, storedToken.id);
       this.logger.warn(
         `Refresh token reuse detected for user ${userId}, family ${family} — all tokens revoked.`,
       );
@@ -272,23 +273,37 @@ export class AuthService {
 
     const family = storedToken.family || storedToken.id;
 
-    const accessToken = await this.generateAccessToken(
-      userId,
-      user.email,
-      user.role,
-    );
-    const newRefreshToken = await this.createRefreshToken(
-      userId,
-      user.email,
-      user.role,
-      family,
-    );
+    const [accessToken, newRefreshToken] = await Promise.all([
+      this.generateAccessToken(userId, user.email, user.role),
+      this.prisma.$transaction(async (tx) => {
+        const claimed = await tx.refreshToken.updateMany({
+          where: {
+            id: storedToken.id,
+            userId,
+            replacedAt: null,
+            expiresAt: { gt: new Date() },
+          },
+          data: { replacedAt: new Date() },
+        });
 
-    // Mark old token as replaced (still in DB for reuse detection).
-    await this.prisma.refreshToken.update({
-      where: { token: tokenHash },
-      data: { replacedAt: new Date() },
-    });
+        if (claimed.count !== 1) return null;
+
+        return this.createRefreshToken(
+          userId,
+          user.email,
+          user.role,
+          family,
+          tx,
+        );
+      }),
+    ]);
+
+    if (!newRefreshToken) {
+      await this.revokeRefreshTokenFamily(family, storedToken.id);
+      throw new UnauthorizedException(
+        'Sessão comprometida. Faça login novamente.',
+      );
+    }
 
     const { password: _, featuredRemainder, ...userWithoutPassword } = user;
 
@@ -675,6 +690,7 @@ export class AuthService {
     email: string,
     role: string,
     family: string,
+    tx: Prisma.TransactionClient = this.prisma,
   ): Promise<string> {
     const payload = { sub: userId, email, role, jti: crypto.randomUUID() };
     const refreshToken = await this.jwtService.signAsync(payload, {
@@ -690,7 +706,7 @@ export class AuthService {
     const maxAge = this.parseDuration(expiresIn, 30 * 24 * 60 * 60 * 1000);
     const expiresAt = new Date(Date.now() + maxAge);
 
-    await this.prisma.refreshToken.create({
+    await tx.refreshToken.create({
       data: { token: hashedToken, userId, family, expiresAt },
     });
 
@@ -714,6 +730,15 @@ export class AuthService {
   private async revokeAllUserRefreshTokens(userId: string): Promise<void> {
     await this.prisma.refreshToken.deleteMany({
       where: { userId },
+    });
+  }
+
+  private async revokeRefreshTokenFamily(
+    family: string,
+    legacyTokenId: string,
+  ): Promise<void> {
+    await this.prisma.refreshToken.deleteMany({
+      where: { OR: [{ family }, { id: legacyTokenId }] },
     });
   }
 
