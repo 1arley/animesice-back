@@ -111,18 +111,18 @@ export class CreateListingDto {
 }
 
 export class NewTradeDto {
-  @ApiProperty({ type: [String], minItems: 1, maxItems: 3 })
+  @ApiProperty({ type: [String], minItems: 1, maxItems: 5 })
   @IsArray()
   @ArrayMinSize(1)
-  @ArrayMaxSize(3)
+  @ArrayMaxSize(5)
   @IsString({ each: true })
   @IsNotEmpty({ each: true })
   offeredUserCardIds?: string[];
 
-  @ApiProperty({ type: [String], minItems: 1, maxItems: 3 })
+  @ApiProperty({ type: [String], minItems: 1, maxItems: 5 })
   @IsArray()
   @ArrayMinSize(1)
-  @ArrayMaxSize(3)
+  @ArrayMaxSize(5)
   @IsString({ each: true })
   @IsNotEmpty({ each: true })
   requestedUserCardIds?: string[];
