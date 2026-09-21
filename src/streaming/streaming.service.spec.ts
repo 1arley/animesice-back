@@ -724,7 +724,7 @@ describe('StreamingService.getSource', () => {
     expect(result.src).not.toContain('/embed/proxy');
   });
 
-  it('fallback embedUrl quando ambas as fontes falham mas embedUrl existe', async () => {
+  it('mantém 404 quando ambas as fontes falham (rejeição + nada)', async () => {
     const { prisma, scrapeService, svc } = makeMocks();
     prisma.anime.findUnique.mockResolvedValue({
       id: 'anime-1',
@@ -745,13 +745,9 @@ describe('StreamingService.getSource', () => {
       new Error('upstream indisponível'),
     );
 
-    const result = await svc.getSource(
-      'qualquer-anime',
-      1,
-      'https://api.animesice.app',
-    );
-    expect(result.src).toContain('/embed/proxy?url=');
-    expect(result.src).toContain('example.com');
+    await expect(
+      svc.getSource('qualquer-anime', 1, 'https://api.animesice.app'),
+    ).rejects.toThrow(NotFoundException);
   });
 
   it('mantém 404 quando nenhuma fonte resolve', async () => {
@@ -1089,7 +1085,7 @@ describe('StreamingService.getSource', () => {
     );
   });
 
-  it('fallback embedUrl quando todas as fontes (original, meusanimes, animefire) falham', async () => {
+  it('mantém 404 quando todas as fontes (original, meusanimes, animefire) falham', async () => {
     const { prisma, scrapeService, svc } = makeMocks();
     prisma.anime.findUnique.mockResolvedValue({
       id: 'a1',
@@ -1109,13 +1105,9 @@ describe('StreamingService.getSource', () => {
     scrapeService.scrapeFromMeusanimes.mockResolvedValue(null);
     scrapeService.scrapeFromAnimefire.mockResolvedValue(null);
 
-    const result = await svc.getSource(
-      'anime-all-fail',
-      1,
-      'https://api.animesice.app',
-    );
-    expect(result.src).toContain('/embed/proxy?url=');
-    expect(result.src).toContain('meusanimes.blog');
+    await expect(
+      svc.getSource('anime-all-fail', 1, 'https://api.animesice.app'),
+    ).rejects.toThrow(NotFoundException);
   });
 
   it('doSingleScrape usa tioanime quando meusanimes e animefire falham', async () => {
@@ -1153,7 +1145,7 @@ describe('StreamingService.getSource', () => {
     );
   });
 
-  it('fallback embedUrl quando todas as 4 fontes falham (incluindo tioanime)', async () => {
+  it('mantém 404 quando todas as 4 fontes falham (incluindo tioanime)', async () => {
     const { prisma, scrapeService, svc } = makeMocks();
     prisma.anime.findUnique.mockResolvedValue({
       id: 'a1',
@@ -1174,13 +1166,9 @@ describe('StreamingService.getSource', () => {
     scrapeService.scrapeFromAnimefire.mockResolvedValue(null);
     scrapeService.scrapeFromTioanime.mockResolvedValue(null);
 
-    const result = await svc.getSource(
-      'anime-all-fail-4',
-      1,
-      'https://api.animesice.app',
-    );
-    expect(result.src).toContain('/embed/proxy?url=');
-    expect(result.src).toContain('meusanimes.blog');
+    await expect(
+      svc.getSource('anime-all-fail-4', 1, 'https://api.animesice.app'),
+    ).rejects.toThrow(NotFoundException);
   });
 
   it('em 403 tenta tioanime quando meusanimes e animefire falham no proxyVideo', async () => {
@@ -1908,7 +1896,7 @@ describe('StreamingService (cobertura de recuperação)', () => {
     expect(out.rawVideoUrl).toBe('https://cdn.test/live5.mp4');
   });
 
-  it('fallback embedUrl quando tioanime morto mas embedUrl existe', async () => {
+  it('descarta tioanime morto e mantém 404', async () => {
     const { prisma, scrapeService, svc } = makeMocks();
     mockEpisode(prisma);
     probeSpy.mockImplementation((url: string) =>
@@ -1923,15 +1911,9 @@ describe('StreamingService (cobertura de recuperação)', () => {
     scrapeService.scrapeFromTioanime.mockResolvedValue(
       'https://dead9.test/v.mp4',
     );
-    const result = await svc.getSource(
-      'anime',
-      1,
-      'https://api.test',
-      1,
-      false,
-    );
-    expect(result.src).toContain('/embed/proxy?url=');
-    expect(result.src).toContain('meusanimes.blog');
+    await expect(
+      svc.getSource('anime', 1, 'https://api.test', 1, false),
+    ).rejects.toThrow(NotFoundException);
   });
 
   it('usa API_PREFIX custom no embed de player do job', async () => {
