@@ -1344,7 +1344,8 @@ export class GachaService {
     );
   }
 
-  private sanitizeCardBackSvg(svg: string) {
+  private sanitizeCardBackSvg(svg: string | null | undefined) {
+    if (!svg) return '';
     const clean = svg
       .replace(/<script[\s\S]*?<\/script>/gi, '')
       .replace(/\son\w+\s*=\s*(['"]).*?\1/gi, '')
