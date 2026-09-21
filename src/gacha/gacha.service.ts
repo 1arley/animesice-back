@@ -3199,12 +3199,12 @@ export class GachaService {
         : [requestedUserCardId];
       if (
         offeredIds.length < 1 ||
-        offeredIds.length > 3 ||
+        offeredIds.length > 5 ||
         requestedIds.length < 1 ||
-        requestedIds.length > 3
+        requestedIds.length > 5
       ) {
         throw new BadRequestException(
-          'Cada lado deve conter entre 1 e 3 cartas.',
+          'Cada lado deve conter entre 1 e 5 cartas.',
         );
       }
       if (
