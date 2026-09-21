@@ -98,6 +98,19 @@ describe('extractPlayerVideoEventDriven', () => {
     expect(videos).toEqual(['https://rr.googlevideo.com/videoplayback?tok=1']);
   });
 
+  it('descarta o placeholder novideo.mp4', async () => {
+    const page = makePageMock({
+      requestUrls: ['https://www.yourupload.com/embed/novideo.mp4'],
+    });
+
+    const videos = await extractPlayerVideoEventDriven(
+      page as never,
+      'https://www.yourupload.com/embed/novideo.mp4',
+    );
+
+    expect(videos).toEqual([]);
+  });
+
   it('retorna [] quando nenhuma mídia é capturada', async () => {
     const page = makePageMock({});
 

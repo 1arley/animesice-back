@@ -6,8 +6,18 @@
   Playwright page.on()/evaluate() callback types are complex generics that
   ESLint cannot fully resolve; DOM types not in tsconfig lib. */
 import type { Page, Request as PlaywrightRequest } from 'playwright';
+import { isNoVideoUrl } from './extract';
 
 const VIDEO_HOST_RE = /videoplayback|\.mp4($|\?|#)|\.m3u8($|\?|#)/i;
+
+function isPlayableMediaUrl(url: string): boolean {
+  return (
+    !isNoVideoUrl(url) &&
+    (/\.mp4($|\?|#)/i.test(url) ||
+      /videoplayback/i.test(url) ||
+      /\.m3u8($|\?|#)/i.test(url))
+  );
+}
 
 /** Sinais de que o player embutido (Blogger/YouTube) inicializou a API. */
 const PLAYER_INIT_RE = /(youtubei|batchexecute|googlevideo|videoplayback)/i;
@@ -154,12 +164,7 @@ async function checkVideoReady(
       }
       return videos;
     });
-    const filtered = result.filter(
-      (u) =>
-        /\.mp4($|\?|#)/i.test(u) ||
-        /\.m3u8($|\?|#)/i.test(u) ||
-        /videoplayback/i.test(u),
-    );
+    const filtered = result.filter(isPlayableMediaUrl);
     return { ready: filtered.length > 0, urls: filtered };
   } catch {
     return { ready: false, urls: [] };
@@ -167,12 +172,7 @@ async function checkVideoReady(
 }
 
 function hasVideoMediaUrls(urls: string[]): boolean {
-  return urls.some(
-    (u) =>
-      /\.mp4($|\?|#)/i.test(u) ||
-      /videoplayback/i.test(u) ||
-      /\.m3u8($|\?|#)/i.test(u),
-  );
+  return urls.some(isPlayableMediaUrl);
 }
 
 /**
@@ -326,9 +326,7 @@ export async function resolvePlayerToken(
     }
 
     return {
-      videos: [...new Set(captured)].filter((u) =>
-        /videoplayback|\.mp4($|\?|#)/i.test(u),
-      ),
+      videos: [...new Set(captured)].filter(isPlayableMediaUrl),
       loaded,
     };
   } catch (err) {
