@@ -115,6 +115,19 @@ describe('EconomyService safeguards', () => {
     );
   });
 
+  it('credits a spin reset reward to the inventory', async () => {
+    jest.spyOn(Math, 'random').mockReturnValue(0.51);
+
+    const result = await service.openBox('u1', 'COMMON');
+
+    expect(result.reward).toEqual({ category: 'SPIN_RESET', amount: 1 });
+    expect(db.gachaInventory.upsert).toHaveBeenCalledWith({
+      where: { userId: 'u1' },
+      create: { userId: 'u1', spinResets: 1 },
+      update: { spinResets: { increment: 1 } },
+    });
+  });
+
   it('rejects invalid economic snapshots rather than producing invalid rewards', () => {
     expect(() =>
       economyConfig({ ...ECONOMY_DEFAULTS, box_prices: {} }),

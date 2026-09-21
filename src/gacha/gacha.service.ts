@@ -1117,6 +1117,87 @@ export class GachaService {
     };
   }
 
+  async redeemCrystalCode(userId: string, rawCode: string) {
+    const code = rawCode.trim().toUpperCase();
+    if (!/^[A-Z0-9-]{4,64}$/.test(code)) {
+      throw new BadRequestException('Código inválido.');
+    }
+    return this.prisma.$transaction(async (tx) => {
+      const item = await tx.crystalCode.findUnique({ where: { code } });
+      if (!item || !item.active)
+        throw new NotFoundException('Código inválido ou inativo.');
+      if (item.expiresAt && item.expiresAt <= new Date())
+        throw new GoneException('Código expirado.');
+      if (item.maxUses !== null && item.uses >= item.maxUses)
+        throw new GoneException('Código esgotado.');
+      try {
+        await tx.crystalCodeRedemption.create({
+          data: { codeId: item.id, userId },
+        });
+      } catch (error) {
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2002'
+        ) {
+          throw new ConflictException('Você já resgatou este código.');
+        }
+        throw error;
+      }
+      await tx.crystalCode.update({
+        where: { id: item.id },
+        data: { uses: { increment: 1 } },
+      });
+      await this.changeCrystals(
+        tx,
+        userId,
+        item.crystals,
+        'ADMIN',
+        `crystal-code:${item.id}`,
+        `Código ${item.code}`,
+      );
+      const user = await tx.user.findUniqueOrThrow({
+        where: { id: userId },
+        select: { crystalBalance: true },
+      });
+      return { crystals: item.crystals, balance: user.crystalBalance };
+    });
+  }
+
+  async adminCreateCrystalCode(input: {
+    code?: string;
+    crystals: number;
+    maxUses?: number;
+    expiresAt?: string;
+  }) {
+    const code =
+      input.code?.trim().toUpperCase() ||
+      `ICE-${randomInt(100000, 1000000)}-${randomInt(100000, 1000000)}`;
+    if (!/^[A-Z0-9-]{4,64}$/.test(code))
+      throw new BadRequestException('Código inválido.');
+    const expiresAt = input.expiresAt ? new Date(input.expiresAt) : null;
+    if (expiresAt && Number.isNaN(expiresAt.getTime()))
+      throw new BadRequestException('Validade inválida.');
+    return this.prisma.crystalCode.create({
+      data: {
+        code,
+        crystals: input.crystals,
+        maxUses: input.maxUses ?? null,
+        expiresAt,
+      },
+    });
+  }
+
+  adminCrystalCodes() {
+    return this.prisma.crystalCode.findMany({
+      orderBy: { createdAt: 'desc' },
+      include: { _count: { select: { redemptions: true } } },
+    });
+  }
+
+  adminToggleCrystalCode(id: string, active: boolean) {
+    return this.prisma.crystalCode.update({ where: { id }, data: { active } });
+  }
+
   private async changeCrystals(
     tx: Prisma.TransactionClient,
     userId: string,

@@ -60,6 +60,27 @@ export class GachaEngagementPilotDto {
   percent!: number;
 }
 
+export class CreateCrystalCodeDto {
+  @IsString()
+  @IsOptional()
+  code?: string;
+
+  @IsInt()
+  @Min(1)
+  @Max(2_147_483_647)
+  crystals!: number;
+
+  @IsInt()
+  @IsOptional()
+  @Min(1)
+  @Max(2_147_483_647)
+  maxUses?: number;
+
+  @IsString()
+  @IsOptional()
+  expiresAt?: string;
+}
+
 export class RerollGachaCardDto {
   @ApiProperty({ description: 'ID da UserCard (sua) a rerrolar.' })
   @IsString()

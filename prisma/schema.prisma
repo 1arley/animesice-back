@@ -195,6 +195,7 @@ model User {
   gachaOpeningDays        GachaOpeningDay[]
   gachaOpenings           GachaOpening[]
   crystalPurchases        CrystalPurchase[]
+  crystalRedemptions      CrystalCodeRedemption[]
   gachaBuyOrders          GachaBuyOrder[]
   gachaSkinListings       GachaSkinListing[]
   gachaOfficialOffers     GachaOfficialOffer[]
@@ -1596,4 +1597,30 @@ enum CrystalEventType {
   FEATURED
   COLLECTION
   CHARGEBACK
+}
+
+model CrystalCode {
+  id             String                  @id @default(uuid())
+  code           String                  @unique
+  crystals       Int
+  maxUses        Int?
+  uses           Int                     @default(0)
+  expiresAt      DateTime?               @db.Timestamptz(6)
+  active         Boolean                 @default(true)
+  createdAt      DateTime                @default(now()) @db.Timestamptz(6)
+  redemptions    CrystalCodeRedemption[]
+
+  @@index([active, expiresAt])
+}
+
+model CrystalCodeRedemption {
+  id        String      @id @default(uuid())
+  codeId   String
+  userId   String
+  createdAt DateTime    @default(now()) @db.Timestamptz(6)
+  code     CrystalCode @relation(fields: [codeId], references: [id], onDelete: Cascade)
+  user     User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([codeId, userId])
+  @@index([userId, createdAt(sort: Desc)])
 }
