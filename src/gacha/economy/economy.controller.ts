@@ -25,7 +25,6 @@ import {
   MarketHistoryDto,
   EconomicEventDto,
   EconomyAdminReasonDto,
-  ReviewSaleDto,
 } from './economy.dto';
 import { EconomyService } from './economy.service';
 
