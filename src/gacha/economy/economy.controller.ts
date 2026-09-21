@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Param,
+  ParseUUIDPipe,
   Post,
   Query,
   Req,
@@ -83,25 +84,7 @@ export class EconomyController {
   @Post('admin/sales/:id/review')
   reviewSale(
     @Req() req: AuthenticatedRequest,
-    @Param('id') id: string,
-    @Body() dto: ReviewSaleDto,
-  ) {
-    return this.economy.reviewSale(req.user.id, id, dto);
-  }
-
-  @UseGuards(RolesGuard)
-  @Roles('ADMIN')
-  @Get('admin/sales')
-  reviewedSales() {
-    return this.economy.reviewedSales();
-  }
-
-  @UseGuards(RolesGuard)
-  @Roles('ADMIN')
-  @Post('admin/cards/:id/block')
-  blockCard(
-    @Req() req: AuthenticatedRequest,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: EconomyAdminReasonDto,
   ) {
     return this.economy.blockItem(req.user.id, 'CARD', id, dto.reason);
@@ -112,7 +95,7 @@ export class EconomyController {
   @Post('admin/skins/:id/block')
   blockSkin(
     @Req() req: AuthenticatedRequest,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: EconomyAdminReasonDto,
   ) {
     return this.economy.blockItem(req.user.id, 'SKIN', id, dto.reason);

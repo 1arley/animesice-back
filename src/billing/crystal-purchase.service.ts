@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { timingSafeEqual } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '@/prisma/prisma.service';
 import { LivePixService } from './livepix.service';
@@ -185,7 +186,12 @@ export class CrystalPurchaseService {
 
   assertWebhookSecret(value: string | undefined) {
     const expected = this.config.get<string>('LIVEPIX_WEBHOOK_SECRET');
-    if (!expected || value !== expected) {
+    if (!expected || !value) {
+      throw new ForbiddenException('Webhook não autorizado.');
+    }
+    const a = Buffer.from(expected);
+    const b = Buffer.from(value);
+    if (a.length !== b.length || !timingSafeEqual(a, b)) {
       throw new ForbiddenException('Webhook não autorizado.');
     }
   }

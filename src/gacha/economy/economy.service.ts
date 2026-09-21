@@ -157,7 +157,8 @@ export class EconomyService {
         : this.prisma.gachaListing.findMany({
             where: cardWhere,
             orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
-            take: page * limit,
+            skip: (page - 1) * limit,
+            take: limit,
             select: {
               id: true,
               price: true,
@@ -189,7 +190,8 @@ export class EconomyService {
         : this.prisma.gachaSkinListing.findMany({
             where: skinWhere,
             orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
-            take: page * limit,
+            skip: (page - 1) * limit,
+            take: limit,
             select: {
               id: true,
               price: true,
@@ -225,13 +227,11 @@ export class EconomyService {
         itemType: 'SKIN',
         item: userSkin,
       })),
-    ]
-      .sort(
-        (a, b) =>
-          b.createdAt.getTime() - a.createdAt.getTime() ||
-          a.id.localeCompare(b.id),
-      )
-      .slice((page - 1) * limit, page * limit);
+    ].sort(
+      (a, b) =>
+        b.createdAt.getTime() - a.createdAt.getTime() ||
+        a.id.localeCompare(b.id),
+    );
     return { items, page, limit, total: cardCount + skinCount };
   }
 
@@ -838,6 +838,7 @@ export class EconomyService {
           });
           if (!exists) throw new NotFoundException('Skin não encontrada.');
         }
+        await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${userId} FOR UPDATE`;
         const wallet = await tx.user.findUniqueOrThrow({
           where: { id: userId },
           select: { crystalBalance: true, crystalReserved: true },
@@ -1535,7 +1536,8 @@ export class EconomyService {
       },
       select: { id: true, name: true },
     });
-    const card = candidates[Math.floor(Math.random() * candidates.length)];
+    const cardSeed = this.seededRandom(`mint-card:${userId}:${Date.now()}`);
+    const card = candidates[Math.floor(cardSeed * candidates.length)];
     if (!card) throw new ConflictException('Pool de cartas sem item elegível.');
     const counter = await tx.card.update({
       where: { id: card.id },
@@ -1543,7 +1545,9 @@ export class EconomyService {
       select: { editionCounter: true, rarity: true },
     });
     const foil = weightedPick(config.foil_weights);
-    const condition = Number(Math.random().toFixed(4));
+    const condition = Number(
+      this.seededRandom(`mint-condition:${userId}:${Date.now()}`).toFixed(4),
+    );
     const copy = await tx.userCard.create({
       data: {
         userId,
@@ -1577,7 +1581,8 @@ export class EconomyService {
         id: { notIn: await this.inactiveEventItems(tx, 'skinIds') },
       },
     });
-    const skin = skins[Math.floor(Math.random() * skins.length)];
+    const skinSeed = this.seededRandom(`mint-skin:${userId}:${Date.now()}`);
+    const skin = skins[Math.floor(skinSeed * skins.length)];
     if (!skin) throw new ConflictException('Pool de skins vazio.');
     const copy = await tx.userGachaSkin.create({
       data: {
@@ -1610,7 +1615,8 @@ export class EconomyService {
       },
       orderBy: { key: 'asc' },
     });
-    const item = available[Math.floor(Math.random() * available.length)];
+    const itemSeed = this.seededRandom(`grant-back:${userId}:${Date.now()}`);
+    const item = available[Math.floor(itemSeed * available.length)];
     if (item) {
       await tx.user.update({
         where: { id: userId },
@@ -1626,16 +1632,19 @@ export class EconomyService {
         key: { notIn: await this.inactiveEventItems(tx, 'cardBackKeys') },
       },
     });
-    const fallback = duplicates[Math.floor(Math.random() * duplicates.length)];
+    const fallbackSeed = this.seededRandom(
+      `grant-back-dup:${userId}:${Date.now()}`,
+    );
+    const fallback = duplicates[Math.floor(fallbackSeed * duplicates.length)];
     if (!fallback) throw new ConflictException('Pool de capas vazio.');
-    const crystals = Math.floor((fallback?.price ?? 0) / 2);
+    const crystals = Math.floor(fallback.price / 2);
     if (crystals > 0) {
       await this.credit(
         tx,
         userId,
         crystals,
         'MINT',
-        fallback?.key,
+        fallback.key,
         'Capa duplicada',
       );
     }
