@@ -441,12 +441,10 @@ export class StreamingService {
             break;
           }
         }
-        playerEmbed ??=
-          (result.playerTokens ?? []).find(
-            (t) =>
-              youtubeEmbedUrl(t) !== null ||
-              /blogger\.com\/video\.g\?token=/i.test(t),
-          ) ?? null;
+        // Aceita qualquer player token como fallback iframe quando não há .mp4
+        // direto. YouTube/Blogger ficam em prioridade; demais (StreamSB, Okru,
+        // YourUpload, etc.) são servidos via /embed/proxy no browser do user.
+        playerEmbed ??= (result.playerTokens ?? [])[0] ?? null;
         dbg(
           `[STREAM] fonte persistida resultado: videos=${result.videos.length} rawVideoUrl=${rawVideoUrl?.slice(0, 80) ?? 'null'} playerEmbed=${playerEmbed?.slice(0, 60) ?? 'null'}`,
         );
@@ -566,6 +564,22 @@ export class StreamingService {
     );
 
     if (!rawVideoUrl && !playerEmbed) {
+      // Fallback: servir o embedUrl do episódio como iframe via proxy quando
+      // a extração não conseguiu .mp4 nem playerToken resolvível (ex: tioanime
+      // com embeds IP-bound que morrem no probe mas funcionam no browser do user).
+      if (episode.embedUrl && /^https?:\/\//i.test(episode.embedUrl)) {
+        const embedSrc = `${apiOriginBackend.replace(/\/$/, '')}/${process.env.API_PREFIX || 'api'}/embed/proxy?url=${encodeURIComponent(episode.embedUrl)}`;
+        dbg(`[STREAM] fallback embedUrl — servindo iframe: ${embedSrc}`);
+        return {
+          animeSlug: anime.slug,
+          episodeNumber: episode.number,
+          src: embedSrc,
+          rawVideoUrl: episode.embedUrl,
+          embedUrl: embedSrc,
+          reextracted,
+          thumbnailUrl: episode.thumbnailUrl,
+        };
+      }
       throw new NotFoundException(
         'Vídeo não disponível: re-extração falhou em todas as fontes.',
       );
