@@ -16,18 +16,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '@/prisma/prisma.service';
 import {
-  GACHA_BYPASS_PRICE_CENTS,
-  claimLockMs,
-  GACHA_COSMETICS,
   GACHA_FOILS,
-  GACHA_FOIL_WEIGHTS,
-  GACHA_LISTING_ACTIVE_LIMIT,
-  GACHA_MARKET_TAX_PCT,
-  GACHA_PITY_DAYS,
-  GACHA_PITY_WEIGHTS,
-  GACHA_REROLL_COST_PCT,
-  GACHA_SPINS_PER_HOUR,
-  GACHA_TIER_WEIGHTS,
   GACHA_TIERS,
   GachaFoil,
   GachaTier,
@@ -36,6 +25,12 @@ import {
   isEpicTier,
   pickWeighted,
 } from '@/gacha/gacha.constants';
+import { GachaConfigService } from '@/gacha/gacha-config.service';
+import {
+  dateFromDayKey,
+  dayKey,
+  inactiveEventIds,
+} from '@/gacha/economy/economy.rules';
 import { createHash, randomInt } from 'node:crypto';
 import { WishlistService } from '@/gacha/wishlist.service';
 import {
@@ -45,13 +40,7 @@ import {
 
 const DAY_MS = 86_400_000;
 const HOUR_MS = 3_600_000;
-const TRADE_TTL_MS = 48 * HOUR_MS;
-const TRADE_ACTIVE_LIMIT = 3;
 const EPIC_RARITIES = ['EPICA', 'LENDARIA', 'MITICA', 'GALACTICA'];
-const SKIN_SPIN_COOLDOWN_MS = 12 * HOUR_MS;
-const SKIN_SPIN_PRICE = 1_000;
-const FEATURED_ACCRUAL_LIMIT_MS = 7 * DAY_MS;
-const FEATURED_PRODUCTIVE_MS_PER_DAY = 10 * HOUR_MS;
 const FEATURED_REWARD_DENOMINATOR = BigInt(2 * HOUR_MS * 10_000);
 
 export function gachaPilotBucket(userId: string): number {
@@ -63,6 +52,7 @@ export function featuredProductiveMs(
   startedAt: Date,
   from: Date,
   to: Date,
+  productiveMsPerDay: number,
 ): number {
   if (to <= from) return 0;
   let cursor = Math.max(from.getTime(), startedAt.getTime());
@@ -72,7 +62,7 @@ export function featuredProductiveMs(
     const offset = cursor - startedAt.getTime();
     const dayStart = startedAt.getTime() + Math.floor(offset / DAY_MS) * DAY_MS;
     const nextDay = dayStart + DAY_MS;
-    const paidEnd = dayStart + FEATURED_PRODUCTIVE_MS_PER_DAY;
+    const paidEnd = dayStart + productiveMsPerDay;
     total += Math.max(0, Math.min(end, paidEnd) - cursor);
     cursor = Math.min(end, nextDay);
   }
@@ -235,6 +225,7 @@ export class GachaService {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly config: GachaConfigService,
     @Optional() private readonly wishlistService?: WishlistService,
   ) {}
 
@@ -481,13 +472,14 @@ export class GachaService {
         const paidUntil = new Date(
           Math.min(
             now.getTime(),
-            settledAt.getTime() + FEATURED_ACCRUAL_LIMIT_MS,
+            settledAt.getTime() + this.config.featuredAccrualLimitMs,
           ),
         );
         const productiveMs = featuredProductiveMs(
           startedAt,
           settledAt,
           paidUntil,
+          this.config.featuredProductiveMsPerDay,
         );
         const medal = await tx.gachaCollectionProgress.findFirst({
           where: {
@@ -575,9 +567,12 @@ export class GachaService {
           const reward100At =
             previous?.reward100At ?? (percent >= 100 ? now : null);
           const rewards: Array<readonly [number, number]> = [];
-          if (!previous?.reward25At && reward25At) rewards.push([25, 50]);
-          if (!previous?.reward50At && reward50At) rewards.push([50, 100]);
-          if (!previous?.reward100At && reward100At) rewards.push([100, 200]);
+          if (!previous?.reward25At && reward25At)
+            rewards.push([25, this.config.collectionRewards['25']]);
+          if (!previous?.reward50At && reward50At)
+            rewards.push([50, this.config.collectionRewards['50']]);
+          if (!previous?.reward100At && reward100At)
+            rewards.push([100, this.config.collectionRewards['100']]);
           await tx.gachaCollectionProgress.upsert({
             where: {
               userId_collectionId_version: {
@@ -695,9 +690,9 @@ export class GachaService {
       : 0;
     return {
       pityDaysLeft: since
-        ? Math.max(0, GACHA_PITY_DAYS - daysSince)
-        : GACHA_PITY_DAYS,
-      pityDue: since !== null && daysSince >= GACHA_PITY_DAYS,
+        ? Math.max(0, this.config.pityDays - daysSince)
+        : this.config.pityDays,
+      pityDue: since !== null && daysSince >= this.config.pityDays,
     };
   }
 
@@ -748,11 +743,11 @@ export class GachaService {
       ? Math.floor((Date.now() - since.getTime()) / DAY_MS)
       : 0;
     const pityDaysLeft = since
-      ? Math.max(0, GACHA_PITY_DAYS - daysSince)
-      : GACHA_PITY_DAYS;
+      ? Math.max(0, this.config.pityDays - daysSince)
+      : this.config.pityDays;
 
     const locked = claim !== null && claim.lockedUntil.getTime() > Date.now();
-    const spinsLeft = Math.max(0, GACHA_SPINS_PER_HOUR - spinsUsed);
+    const spinsLeft = Math.max(0, this.config.spinsPerHour - spinsUsed);
 
     return {
       canRoll: false,
@@ -767,12 +762,12 @@ export class GachaService {
       claimWarning: locked
         ? 'Você já guardou uma carta. Girar continua liberado, mas a próxima só pode ser guardada após o fim do bloqueio.'
         : null,
-      bypassPriceCents: locked ? GACHA_BYPASS_PRICE_CENTS : null,
+      bypassPriceCents: locked ? this.config.bypassPriceCents : null,
       crystalBalance: wallet?.crystalBalance ?? 0,
       pointsBalance: points._sum.value ?? 0,
       pointsCosmetics: wallet?.gachaCosmetics ?? [],
       pityDaysLeft,
-      pityDue: since !== null && daysSince >= GACHA_PITY_DAYS,
+      pityDue: since !== null && daysSince >= this.config.pityDays,
     };
   }
 
@@ -795,15 +790,15 @@ export class GachaService {
 
     const pity = await this.pityState(userId);
     const tier = await this.pickTierWithStock(
-      pity.pityDue ? GACHA_PITY_WEIGHTS : GACHA_TIER_WEIGHTS,
+      pity.pityDue ? this.config.pityWeights : this.config.tierWeights,
     );
     const card = await this.drawFromTier(tier, userId);
 
     const condition = Math.random();
-    const foil = pickWeighted(GACHA_FOIL_WEIGHTS);
+    const foil = pickWeighted(this.config.foilWeights);
     // ponytail: slot único (userId,hour,slot) torna giro concorrente
     // race-safe; P2002 = slot ocupado, tenta o próximo.
-    for (let slot = 0; slot < GACHA_SPINS_PER_HOUR; slot++) {
+    for (let slot = 0; slot < this.config.spinsPerHour; slot++) {
       try {
         const spin = await this.prisma.gachaSpin.create({
           data: {
@@ -813,7 +808,14 @@ export class GachaService {
             cardId: card.id,
             condition,
             foil,
-            value: cardValue(tier, condition, foil, 1),
+            value: cardValue(
+              tier,
+              condition,
+              foil,
+              1,
+              this.config.baseValue as Record<GachaTier, number>,
+              this.config.foilMult as Record<GachaFoil, number>,
+            ),
             expiresAt: new Date(hour.getTime() + HOUR_MS),
           },
           select: SPIN_SELECT,
@@ -848,6 +850,11 @@ export class GachaService {
           if (spin.expiresAt.getTime() <= Date.now()) {
             throw new ForbiddenException('Preview expirou na virada da hora.');
           }
+          const event = await tx.gachaConfig.findUnique({
+            where: { key: 'economic_event' },
+          });
+          if (inactiveEventIds(event?.value, 'cardIds').includes(spin.card.id))
+            throw new ForbiddenException('Evento desta carta encerrado.');
 
           const lock = await tx.gachaClaimLock.findUnique({
             where: { userId },
@@ -876,6 +883,8 @@ export class GachaService {
                 spin.condition,
                 spin.foil as GachaFoil,
                 edition,
+                this.config.baseValue as Record<GachaTier, number>,
+                this.config.foilMult as Record<GachaFoil, number>,
               ),
             },
             select: PULL_SELECT,
@@ -891,7 +900,7 @@ export class GachaService {
           if (claimed.count !== 1) {
             throw new NotFoundException('Preview expirada ou já resgatada.');
           }
-          const lockMs = claimLockMs(spin.card.rarity as GachaTier);
+          const lockMs = this.config.claimLockMs(spin.card.rarity as GachaTier);
           await tx.gachaClaimLock.upsert({
             where: { userId },
             create: {
@@ -948,10 +957,10 @@ export class GachaService {
   // não-lerda e cunha um giro garantido (>=EPICA) sem gastar slot da hora nem
   // o cooldown. A updateMany em read=false é a trava de idempotência.
   async claimCompensation(userId: string) {
-    const tier = await this.pickTierWithStock(GACHA_PITY_WEIGHTS);
+    const tier = await this.pickTierWithStock(this.config.pityWeights);
     const card = await this.drawFromTier(tier, userId);
     const condition = Math.random();
-    const foil = pickWeighted(GACHA_FOIL_WEIGHTS);
+    const foil = pickWeighted(this.config.foilWeights);
 
     const pull = await this.prisma.$transaction(
       async (tx) => {
@@ -988,6 +997,8 @@ export class GachaService {
               condition,
               foil,
               edition,
+              this.config.baseValue as Record<GachaTier, number>,
+              this.config.foilMult as Record<GachaFoil, number>,
             ),
           },
           select: PULL_SELECT,
@@ -1094,21 +1105,15 @@ export class GachaService {
     return {
       balance: user.crystalBalance,
       activeCardBack: user.gachaCardBack,
-      cosmetics: [
-        ...GACHA_COSMETICS.map((item) => ({
-          ...item,
-          owned: user.gachaCosmetics.includes(item.key),
-        })),
-        ...custom.map((item) => ({
-          key: item.key,
-          label: item.name,
-          description: item.description ?? '',
-          price: item.price,
-          owned: user.gachaCosmetics.includes(item.key),
-          svg: item.svg,
-          previewUrl: item.previewUrl,
-        })),
-      ],
+      cosmetics: custom.map((item) => ({
+        key: item.key,
+        label: item.name,
+        description: item.description ?? '',
+        price: item.price,
+        owned: user.gachaCosmetics.includes(item.key),
+        svg: item.svg,
+        previewUrl: item.previewUrl,
+      })),
     };
   }
 
@@ -1181,7 +1186,10 @@ export class GachaService {
           );
         const cost = Math.max(
           1,
-          card.value + Math.round(card.value * GACHA_REROLL_COST_PCT),
+          Math.round(
+            this.config.cardFloors[card.card.rarity as GachaTier] *
+              this.config.rerollCostPct,
+          ),
         );
         await this.changeCrystals(
           tx,
@@ -1192,7 +1200,7 @@ export class GachaService {
           `Reroll ${card.card.name} #${card.edition}`,
         );
         const condition = Math.random();
-        const foil = pickWeighted(GACHA_FOIL_WEIGHTS);
+        const foil = pickWeighted(this.config.foilWeights);
         return tx.userCard.update({
           where: { id: userCardId },
           data: {
@@ -1205,6 +1213,8 @@ export class GachaService {
                 condition,
                 foil,
                 card.edition,
+                this.config.baseValue as Record<GachaTier, number>,
+                this.config.foilMult as Record<GachaFoil, number>,
               ),
           },
           select: PULL_SELECT,
@@ -1216,18 +1226,10 @@ export class GachaService {
   }
 
   async buyCosmetic(userId: string, key: string) {
-    const custom = await this.prisma.gachaCardBack.findFirst({
+    const item = await this.prisma.gachaCardBack.findFirst({
       where: { key, status: 'PUBLISHED' },
       select: { key: true, name: true, description: true, price: true },
     });
-    const item = custom
-      ? {
-          key: custom.key,
-          label: custom.name,
-          description: custom.description ?? '',
-          price: custom.price,
-        }
-      : GACHA_COSMETICS.find((cosmetic) => cosmetic.key === key);
     if (!item) {
       throw new BadRequestException('Cosmético inexistente.');
     }
@@ -1249,7 +1251,7 @@ export class GachaService {
           -item.price,
           'SPEND',
           item.key,
-          item.label,
+          item.name,
         );
         await tx.user.update({
           where: { id: userId },
@@ -1282,7 +1284,9 @@ export class GachaService {
       key: string;
       name: string;
       description?: string;
-      svg: string;
+      type?: 'BACK' | 'FRAME' | 'HIGHLIGHT';
+      rarity?: 'COMMON' | 'RARE' | 'EPIC' | 'LEGENDARY';
+      svg?: string;
       previewUrl?: string;
       price?: number;
       status?: 'DRAFT' | 'REVIEW' | 'PUBLISHED' | 'ARCHIVED';
@@ -1292,7 +1296,7 @@ export class GachaService {
     return this.prisma.gachaCardBack.create({
       data: {
         ...data,
-        svg: this.sanitizeCardBackSvg(data.svg),
+        svg: data.svg ? this.sanitizeCardBackSvg(data.svg) : null,
         price: data.price ?? 0,
         createdById,
       },
@@ -1305,6 +1309,8 @@ export class GachaService {
       key?: string;
       name?: string;
       description?: string;
+      type?: 'BACK' | 'FRAME' | 'HIGHLIGHT';
+      rarity?: 'COMMON' | 'RARE' | 'EPIC' | 'LEGENDARY';
       svg?: string;
       previewUrl?: string;
       price?: number;
@@ -1315,7 +1321,9 @@ export class GachaService {
       where: { id },
       data: {
         ...data,
-        ...(data.svg ? { svg: this.sanitizeCardBackSvg(data.svg) } : {}),
+        ...(data.svg !== undefined
+          ? { svg: data.svg ? this.sanitizeCardBackSvg(data.svg) : null }
+          : {}),
       },
     });
   }
@@ -1363,7 +1371,7 @@ export class GachaService {
             id: true,
             value: true,
             edition: true,
-            card: { select: { name: true } },
+            card: { select: { name: true, rarity: true } },
           },
         });
         if (!card) throw new NotFoundException('Carta não encontrada.');
@@ -1406,7 +1414,7 @@ export class GachaService {
           );
         }
 
-        const payout = Math.max(1, Math.floor(card.value * 0.4));
+        const payout = this.config.burnPayout[card.card.rarity as GachaTier];
         await this.changeCrystals(
           tx,
           userId,
@@ -1463,9 +1471,9 @@ export class GachaService {
         const active = await tx.gachaListing.count({
           where: { userId, status: 'ACTIVE' },
         });
-        if (active >= GACHA_LISTING_ACTIVE_LIMIT) {
+        if (active >= this.config.listingActiveLimit) {
           throw new BadRequestException(
-            `Limite de ${GACHA_LISTING_ACTIVE_LIMIT} anúncios ativos atingido.`,
+            `Limite de ${this.config.listingActiveLimit} anúncios ativos atingido.`,
           );
         }
         await tx.user.updateMany({
@@ -1481,7 +1489,7 @@ export class GachaService {
               userId,
               userCardId,
               price,
-              expiresAt: new Date(now.getTime() + TRADE_TTL_MS),
+              expiresAt: new Date(now.getTime() + this.config.listingTtlMs),
             },
             select: LISTING_SELECT,
           });
@@ -1544,10 +1552,18 @@ export class GachaService {
       }),
       this.prisma.gachaListing.count({ where }),
     ]);
-    const presented = items.map((item) => ({
-      ...item,
-      userCard: presentPull(item.userCard),
-    }));
+    const presented = items.map((item) => {
+      const pull = presentPull(item.userCard);
+      return {
+        id: item.id,
+        userCardId: item.userCardId,
+        price: item.price,
+        status: item.status,
+        expiresAt: item.expiresAt,
+        createdAt: item.createdAt,
+        userCard: { ...pull, user: undefined, originalUser: undefined },
+      };
+    });
     const data = this.wishlistService
       ? await Promise.all(
           presented.map(async (item) => ({
@@ -1572,10 +1588,22 @@ export class GachaService {
   }
 
   async myListings(userId: string) {
-    const now = new Date();
-    await this.prisma.gachaListing.updateMany({
-      where: { userId, status: 'ACTIVE', expiresAt: { lte: now } },
-      data: { status: 'EXPIRED' },
+    await this.prisma.$transaction(async (tx) => {
+      const expired = await tx.gachaListing.findMany({
+        where: { userId, status: 'ACTIVE', expiresAt: { lte: new Date() } },
+        select: { id: true, userCardId: true },
+      });
+      for (const listing of expired) {
+        const changed = await tx.gachaListing.updateMany({
+          where: { id: listing.id, status: 'ACTIVE' },
+          data: { status: 'EXPIRED' },
+        });
+        if (changed.count)
+          await tx.userCard.updateMany({
+            where: { id: listing.userCardId, userId, status: 'ESCROW' },
+            data: { status: 'ACTIVE' },
+          });
+      }
     });
     const listings = await this.prisma.gachaListing.findMany({
       where: { userId, status: 'ACTIVE' },
@@ -1663,7 +1691,7 @@ export class GachaService {
           listingId,
           `Compra no mercado: ${listing.userCard.card.name}`,
         );
-        const fee = Math.round(listing.price * GACHA_MARKET_TAX_PCT);
+        const fee = Math.round(listing.price * this.config.marketTaxPct);
         await this.changeCrystals(
           tx,
           listing.userId,
@@ -1723,6 +1751,16 @@ export class GachaService {
     const baseWhere: Prisma.CardWhereInput = {
       rarity: tier,
       status: 'ACTIVE',
+      id: {
+        notIn: inactiveEventIds(
+          (
+            await this.prisma.gachaConfig.findUnique({
+              where: { key: 'economic_event' },
+            })
+          )?.value,
+          'cardIds',
+        ),
+      },
     };
     const [favored, other] = collectionId
       ? await this.prisma.$transaction([
@@ -1963,7 +2001,6 @@ export class GachaService {
     if (!Number.isSafeInteger((safePage - 1) * safeLimit)) {
       throw new BadRequestException('Paginação inválida.');
     }
-    const todayStart = this.dayStartUtc();
     const [events, total, wallet, dailyBonus] = await this.prisma.$transaction([
       this.prisma.crystalEvent.findMany({
         where: { userId },
@@ -1976,14 +2013,14 @@ export class GachaService {
         where: { id: userId },
         select: { crystalBalance: true },
       }),
-      this.prisma.gachaDailyBonus.findUnique({
-        where: { userId },
-        select: { lastClaim: true },
+      this.prisma.gachaDailyClaim.findUnique({
+        where: { userId_day: { userId, day: dateFromDayKey(dayKey()) } },
+        select: { day: true },
       }),
     ]);
     return {
       balance: wallet.crystalBalance,
-      dailyClaimedToday: !!dailyBonus && dailyBonus.lastClaim >= todayStart,
+      dailyClaimedToday: !!dailyBonus,
       events,
       meta: {
         total,
@@ -2066,8 +2103,8 @@ export class GachaService {
       crystalBalance: user.crystalBalance,
       canSpin: !nextSpinAt || nextSpinAt.getTime() <= now,
       nextSpinAt: nextSpinAt?.toISOString() ?? null,
-      spinPrice: SKIN_SPIN_PRICE,
-      cooldownHours: 12,
+      spinPrice: this.config.skinSpinPrice,
+      cooldownHours: this.config.skinSpinCooldownMs / HOUR_MS,
       meta: {
         total,
         page: safePage,
@@ -2089,7 +2126,16 @@ export class GachaService {
           where: {
             active: true,
             blocked: false,
-            owners: { none: { userId } },
+            id: {
+              notIn: inactiveEventIds(
+                (
+                  await tx.gachaConfig.findUnique({
+                    where: { key: 'economic_event' },
+                  })
+                )?.value,
+                'skinIds',
+              ),
+            },
             card: {
               is: { owners: { some: { userId, status: 'ACTIVE' } } },
             },
@@ -2099,6 +2145,7 @@ export class GachaService {
             name: true,
             imageUrl: true,
             sourceUrl: true,
+            rarity: true,
             card: { select: { id: true, name: true, malCharacterId: true } },
           },
         });
@@ -2111,25 +2158,22 @@ export class GachaService {
           user.nextGachaSkinSpinAt.getTime() <= now.getTime();
         const picked = skins[randomInt(skins.length)];
         if (!picked) throw new ConflictException('Nenhuma skin disponível.');
-        if (!free) {
-          await this.changeCrystals(
-            tx,
-            userId,
-            -SKIN_SPIN_PRICE,
-            CrystalEventType.SPEND,
-            picked.id,
-            'Giro de skin',
+        if (!free)
+          throw new ForbiddenException(
+            'Giro de skin disponível uma vez por semana.',
           );
-        }
         await tx.userGachaSkin.create({
           data: {
             userId,
             skinId: picked.id,
             name: picked.name,
             imageUrl: picked.imageUrl,
+            rarity: picked.rarity,
           },
         });
-        const nextSpinAt = new Date(now.getTime() + SKIN_SPIN_COOLDOWN_MS);
+        const nextSpinAt = new Date(
+          now.getTime() + this.config.skinSpinCooldownMs,
+        );
         const updatedUser = await tx.user.update({
           where: { id: userId },
           data: { nextGachaSkinSpinAt: nextSpinAt },
@@ -2137,7 +2181,7 @@ export class GachaService {
         });
         return {
           skin: picked,
-          paid: !free,
+          paid: false,
           nextSpinAt,
           crystalBalance: updatedUser.crystalBalance,
         };
@@ -2147,14 +2191,14 @@ export class GachaService {
     return {
       ...result,
       nextSpinAt: result.nextSpinAt.toISOString(),
-      price: result.paid ? SKIN_SPIN_PRICE : 0,
+      price: result.paid ? this.config.skinSpinPrice : 0,
     };
   }
 
   async equipSkin(userId: string, skinId: string | null) {
     if (skinId !== null) {
-      const owned = await this.prisma.userGachaSkin.findUnique({
-        where: { userId_skinId: { userId, skinId } },
+      const owned = await this.prisma.userGachaSkin.findFirst({
+        where: { userId, skinId, status: 'ACTIVE' },
         select: { skin: { select: { blocked: true } } },
       });
       if (!owned)
@@ -2289,7 +2333,7 @@ export class GachaService {
   async dailyBonus(userId: string) {
     const now = new Date();
     const todayStart = this.dayStartUtc(now);
-    const amount = 200;
+    const amount = this.config.dailyBonus;
 
     await this.prisma.$transaction(async (tx) => {
       await tx.gachaDailyBonus.createMany({
@@ -2753,7 +2797,20 @@ export class GachaService {
         ) as Record<GachaTier, number>,
       );
       const count = await this.prisma.card.count({
-        where: { rarity: tier },
+        where: {
+          rarity: tier,
+          status: 'ACTIVE',
+          id: {
+            notIn: inactiveEventIds(
+              (
+                await this.prisma.gachaConfig.findUnique({
+                  where: { key: 'economic_event' },
+                })
+              )?.value,
+              'cardIds',
+            ),
+          },
+        },
       });
       if (count > 0) return tier;
       delete remaining[tier];
@@ -2931,6 +2988,8 @@ export class GachaService {
           copy.condition,
           copy.foil as GachaFoil,
           copy.edition,
+          this.config.baseValue,
+          this.config.foilMult,
         );
         previousTotal += copy.value;
         nextTotal += nextValue;
@@ -2999,7 +3058,7 @@ export class GachaService {
     if (!card) throw new NotFoundException('Carta não encontrada.');
 
     const condition = Math.random();
-    const foil = pickWeighted(GACHA_FOIL_WEIGHTS);
+    const foil = pickWeighted(this.config.foilWeights);
     return this.prisma.$transaction(async (tx) => {
       const counter = await tx.card.update({
         where: { id: card.id },
@@ -3019,6 +3078,8 @@ export class GachaService {
             condition,
             foil,
             counter.editionCounter,
+            this.config.baseValue as Record<GachaTier, number>,
+            this.config.foilMult as Record<GachaFoil, number>,
           ),
         },
         select: PULL_SELECT,
@@ -3067,6 +3128,8 @@ export class GachaService {
           current.condition,
           current.foil as GachaFoil,
           current.edition,
+          this.config.baseValue,
+          this.config.foilMult,
         );
       const updated = await tx.userCard.update({
         where: { id },
@@ -3231,7 +3294,7 @@ export class GachaService {
           offeredUserCardId: offeredIds[0]!,
           requestedUserId: targetUserId,
           requestedUserCardId: requestedIds[0]!,
-          expiresAt: new Date(Date.now() + TRADE_TTL_MS),
+          expiresAt: new Date(Date.now() + this.config.tradeTtlMs),
           cards: {
             create: [
               ...offered.map((c, i) => ({
@@ -3332,14 +3395,14 @@ export class GachaService {
         'Uma dessas cartas está anunciada no mercado.',
       );
     }
-    if (sentByMe >= TRADE_ACTIVE_LIMIT) {
+    if (sentByMe >= this.config.tradeActiveLimit) {
       throw new ConflictException(
-        `Limite de ${TRADE_ACTIVE_LIMIT} propostas enviadas ativas.`,
+        `Limite de ${this.config.tradeActiveLimit} propostas enviadas ativas.`,
       );
     }
-    if (pendingForMe >= TRADE_ACTIVE_LIMIT) {
+    if (pendingForMe >= this.config.tradeActiveLimit) {
       throw new ConflictException(
-        `Limite de ${TRADE_ACTIVE_LIMIT} propostas recebidas ativas.`,
+        `Limite de ${this.config.tradeActiveLimit} propostas recebidas ativas.`,
       );
     }
 
@@ -3350,7 +3413,7 @@ export class GachaService {
           offeredUserCardId,
           requestedUserId: requested.userId,
           requestedUserCardId,
-          expiresAt: new Date(Date.now() + TRADE_TTL_MS),
+          expiresAt: new Date(Date.now() + this.config.tradeTtlMs),
         },
         select: TRADE_SELECT,
       });

@@ -11,6 +11,7 @@ import { JwtAuthGuard } from '@/auth/jwt-auth.guard';
 import { AuthenticatedRequest } from '@/common/interfaces/request.interface';
 import { GachaController } from '@/gacha/gacha.controller';
 import { GachaService } from '@/gacha/gacha.service';
+import { GachaConfigService } from '@/gacha/gacha-config.service';
 import { PrismaService } from '@/prisma/prisma.service';
 
 async function checkMigration() {
@@ -79,12 +80,18 @@ async function main() {
   await checkMigration();
 
   const prisma = new PrismaService();
-  const service = new GachaService(prisma);
+  const config = new GachaConfigService(prisma);
+  await config.refresh();
+  const service = new GachaService(prisma, config);
   const ids: string[] = [];
   const cardIds: string[] = [];
   const module = await Test.createTestingModule({
     controllers: [GachaController],
-    providers: [GachaService, { provide: PrismaService, useValue: prisma }],
+    providers: [
+      GachaService,
+      { provide: PrismaService, useValue: prisma },
+      { provide: GachaConfigService, useValue: config },
+    ],
   })
     .overrideGuard(JwtAuthGuard)
     .useValue({

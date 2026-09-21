@@ -38,6 +38,13 @@ function makeMocks() {
       declineTrade: jest.fn(),
       cardBackByKey: jest.fn(),
     },
+    gachaConfig: { list: jest.fn(), update: jest.fn() },
+    economy: {
+      createCardListing: jest.fn(),
+      cancelCardListing: jest.fn(),
+      buyCardListing: jest.fn(),
+      claimDaily: jest.fn(),
+    },
   };
 }
 
@@ -49,7 +56,11 @@ describe('GachaController', () => {
 
   beforeEach(() => {
     m = makeMocks();
-    controller = new GachaController(m.gachaService as any);
+    controller = new GachaController(
+      m.gachaService as any,
+      m.gachaConfig as any,
+      m.economy as any,
+    );
     jest.clearAllMocks();
   });
 

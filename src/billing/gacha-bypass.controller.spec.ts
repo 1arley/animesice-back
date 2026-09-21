@@ -1,6 +1,5 @@
 import { NotFoundException } from '@nestjs/common';
 import { GachaBypassController } from '@/billing/gacha-bypass.controller';
-import { GACHA_BYPASS_PRICE_CENTS } from '@/gacha/gacha.constants';
 
 function makeMocks() {
   return {
@@ -26,6 +25,7 @@ function makeMocks() {
     config: {
       get: jest.fn().mockReturnValue('http://localhost:3000'),
     },
+    gachaConfig: { bypassPriceCents: 299, bypassTtlMs: 1_800_000 },
   };
 }
 
@@ -42,6 +42,7 @@ describe('GachaBypassController', () => {
       m.livepix as never,
       m.prisma as never,
       m.config as never,
+      m.gachaConfig as never,
     );
     jest.clearAllMocks();
     m.prisma.$transaction.mockImplementation(
@@ -78,11 +79,11 @@ describe('GachaBypassController', () => {
       expect(result).toEqual({
         reference: 'ref1',
         checkoutUrl: 'https://checkout.livepix.gg/ref1',
-        amountCents: GACHA_BYPASS_PRICE_CENTS,
+        amountCents: 299,
       });
       expect(m.livepix.createBypassCharge).toHaveBeenCalledWith(
         'u',
-        GACHA_BYPASS_PRICE_CENTS,
+        299,
         'http://localhost:3000/gacha?bypass=pending',
       );
       expect(m.prisma.gachaBypass.upsert).toHaveBeenCalledWith(

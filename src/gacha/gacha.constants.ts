@@ -1,10 +1,3 @@
-export const GACHA_ROLLS_PER_DAY = 1;
-export const GACHA_PITY_DAYS = 30;
-export const GACHA_POOL_PER_ANIME = 8;
-export const GACHA_SPINS_PER_HOUR = 5;
-export const GACHA_BYPASS_PRICE_CENTS = 299;
-export const GACHA_BYPASS_TTL_MS = 30 * 60 * 1000;
-
 export const GACHA_TIERS = [
   'COMUM',
   'INCOMUM',
@@ -16,64 +9,8 @@ export const GACHA_TIERS = [
 ] as const;
 export type GachaTier = (typeof GACHA_TIERS)[number];
 
-export const GACHA_CLAIM_LOCK_HOURS: Record<GachaTier, number> = {
-  COMUM: 1,
-  INCOMUM: 2,
-  RARA: 3,
-  EPICA: 4,
-  LENDARIA: 5,
-  MITICA: 6,
-  GALACTICA: 7,
-};
-
-export function claimLockMs(tier: GachaTier): number {
-  return GACHA_CLAIM_LOCK_HOURS[tier] * 60 * 60 * 1000;
-}
-
-export const GACHA_TIER_WEIGHTS: Record<GachaTier, number> = {
-  COMUM: 55,
-  INCOMUM: 25,
-  RARA: 12,
-  EPICA: 5.5,
-  LENDARIA: 2,
-  MITICA: 0.4,
-  GALACTICA: 0.1,
-};
-
-export const GACHA_PITY_WEIGHTS: Record<GachaTier, number> = {
-  COMUM: 0,
-  INCOMUM: 0,
-  RARA: 0,
-  EPICA: 70,
-  LENDARIA: 20,
-  MITICA: 8,
-  GALACTICA: 2,
-};
-
 export const GACHA_FOILS = ['NORMAL', 'HOLO', 'GOLD'] as const;
 export type GachaFoil = (typeof GACHA_FOILS)[number];
-
-export const GACHA_FOIL_WEIGHTS: Record<GachaFoil, number> = {
-  NORMAL: 85,
-  HOLO: 12,
-  GOLD: 3,
-};
-
-export const GACHA_BASE_VALUE: Record<GachaTier, number> = {
-  COMUM: 10,
-  INCOMUM: 25,
-  RARA: 60,
-  EPICA: 150,
-  LENDARIA: 400,
-  MITICA: 800,
-  GALACTICA: 1600,
-};
-
-export const GACHA_FOIL_MULT: Record<GachaFoil, number> = {
-  NORMAL: 1,
-  HOLO: 3,
-  GOLD: 10,
-};
 
 export function conditionLabel(condition: number): string {
   if (condition <= 0.07) return 'MINT';
@@ -96,9 +33,10 @@ export function cardValue(
   condition: number,
   foil: GachaFoil,
   edition: number,
+  baseValues: Record<GachaTier, number>,
+  foilMult: Record<GachaFoil, number>,
 ): number {
-  const base =
-    GACHA_BASE_VALUE[tier] * conditionMult(condition) * GACHA_FOIL_MULT[foil];
+  const base = baseValues[tier] * conditionMult(condition) * foilMult[foil];
   const lowEditionBonus = edition <= 10 ? (base * (11 - edition)) / 10 : 0;
   return Math.round(base + lowEditionBonus);
 }
@@ -122,31 +60,3 @@ export function pickWeighted<T extends string>(
 export function isEpicTier(tier: string): boolean {
   return GACHA_TIERS.indexOf(tier as GachaTier) >= GACHA_TIERS.indexOf('EPICA');
 }
-
-export const GACHA_REROLL_COST_PCT = 0.15;
-export const GACHA_LISTING_ACTIVE_LIMIT = 5;
-export const GACHA_MARKET_TAX_PCT = 0.1;
-
-export const GACHA_COSMETICS = [
-  {
-    key: 'FRAME_AURORA',
-    label: 'Moldura Aurora',
-    description:
-      'Suas cartas exibem uma moldura arco-íris em todas as telas do gacha.',
-    price: 1500,
-  },
-  {
-    key: 'DESTAQUE_CARTA',
-    label: 'Destaque de Carta',
-    description:
-      'Suas cartas ganham brilho dourado na página pública compartilhada.',
-    price: 3000,
-  },
-  {
-    key: 'BACK_ICE',
-    label: 'Verso Ice',
-    description: 'Verso azul cristalino para suas cartas.',
-    price: 1200,
-  },
-] as const;
-export type GachaCosmetic = (typeof GACHA_COSMETICS)[number];
