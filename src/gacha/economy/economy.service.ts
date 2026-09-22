@@ -114,6 +114,7 @@ export class EconomyService {
       version: version.version,
       boxPrices: config.box_prices,
       keyPrice: config.key_price,
+      dailyBonus: config.daily_bonus,
       categories: config.box_category_weights,
       qualities: config.box_quality_weights,
       foilWeights: config.foil_weights,

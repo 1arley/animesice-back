@@ -33,6 +33,7 @@ import {
   EquipGachaSkinDto,
   GachaCollectionPreferencesDto,
   GachaEngagementPilotDto,
+  CreateCrystalCodeDto,
 } from '@/gacha/dto/gacha.dto';
 import { JwtAuthGuard } from '@/auth/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from '@/auth/optional-jwt-auth.guard';
@@ -494,6 +495,39 @@ export class GachaController {
     @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
   ) {
     return this.gachaService.crystals(req.user.id, page, limit);
+  }
+
+  @Post('crystals/redeem')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  redeemCrystalCode(
+    @Req() req: AuthenticatedRequest,
+    @Body() body: { code: string },
+  ) {
+    return this.gachaService.redeemCrystalCode(req.user.id, body.code);
+  }
+
+  @Get('admin/crystal-codes')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  adminCrystalCodes() {
+    return this.gachaService.adminCrystalCodes();
+  }
+
+  @Post('admin/crystal-codes')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  adminCreateCrystalCode(@Body() dto: CreateCrystalCodeDto) {
+    return this.gachaService.adminCreateCrystalCode(dto);
+  }
+
+  @Patch('admin/crystal-codes/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  adminToggleCrystalCode(
+    @Param('id') id: string,
+    @Body() body: { active: boolean },
+  ) {
+    return this.gachaService.adminToggleCrystalCode(id, body.active);
   }
 
   @Post('crystals/daily')
