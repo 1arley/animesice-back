@@ -1106,6 +1106,7 @@ export class GachaService {
       where: { status: 'PUBLISHED' },
       select: {
         key: true,
+        type: true,
         name: true,
         description: true,
         price: true,
@@ -1118,6 +1119,7 @@ export class GachaService {
       activeCardBack: user.gachaCardBack,
       cosmetics: custom.map((item) => ({
         key: item.key,
+        type: item.type,
         label: item.name,
         description: item.description ?? '',
         price: item.price,
@@ -1475,11 +1477,19 @@ export class GachaService {
       select: { gachaCosmetics: true },
     });
     if (!user) throw new NotFoundException('Usuário não encontrado.');
-    if (key && !key.startsWith('BACK_')) {
-      throw new BadRequestException('Cosmético não é capa de carta.');
-    }
-    if (key && !user.gachaCosmetics.includes(key)) {
+    if (key !== null && !user.gachaCosmetics.includes(key)) {
       throw new ForbiddenException('Você não possui esta capa.');
+    }
+    if (key !== null) {
+      const back = await this.prisma.gachaCardBack.findFirst({
+        where: { key, type: 'BACK', status: 'PUBLISHED' },
+        select: { key: true },
+      });
+      if (!back) {
+        throw new BadRequestException(
+          'Cosmético não é capa de carta disponível.',
+        );
+      }
     }
     return this.prisma.user.update({
       where: { id: userId },

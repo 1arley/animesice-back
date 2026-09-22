@@ -3,7 +3,6 @@ import { EmbedService } from '@/embed/embed.service';
 import { EmbedController } from '@/embed/embed.controller';
 import { ScrapeService } from '@/embed/scrape/scrape.service';
 import { BrowserPool } from '@/embed/scrape/browser-pool.service';
-import { AnimefireScrapeSource } from '@/embed/scrape/animefire.source';
 import { AnimesonlineccScrapeSource } from '@/embed/scrape/animesonlinecc.source';
 import { MeusanimesScrapeSource } from '@/embed/scrape/meusanimes.source';
 import { TioanimeScrapeSource } from '@/embed/scrape/tioanime.source';
@@ -25,7 +24,6 @@ import { MetricsService } from '@/metrics/metrics.service';
     EmbedService,
     BrowserPool,
     // Scrape multi-fonte (adapters de extração + orquestrador).
-    AnimefireScrapeSource,
     AnimesonlineccScrapeSource,
     MeusanimesScrapeSource,
     TioanimeScrapeSource,

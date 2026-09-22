@@ -1802,6 +1802,50 @@ describe('GachaService', () => {
       );
     });
 
+    it('equipa capa personalizada comprada sem depender do prefixo da chave', async () => {
+      const key = 'mark-of-sacrifice';
+      mockPrisma.user.findUnique.mockResolvedValue({
+        crystalBalance: 1000,
+        gachaCosmetics: [key],
+        gachaCardBack: null,
+      });
+      mockPrisma.gachaCardBack.findMany.mockResolvedValue([
+        { key, name: 'Mark of sacrifice', type: 'BACK', price: 500 },
+      ]);
+      mockPrisma.gachaCardBack.findFirst.mockResolvedValue({ type: 'BACK' });
+      mockPrisma.user.update.mockResolvedValue({ gachaCardBack: key });
+      const shop = await service.shop('u1');
+      expect(shop.cosmetics[0]?.owned).toBe(true);
+      await expect(service.setCardBack('u1', key)).resolves.toEqual({
+        gachaCardBack: key,
+      });
+      expect(shop.cosmetics[0]).toHaveProperty('type', 'BACK');
+    });
+
+    it('valida posse e tipo cadastrado ao equipar e permite remover a capa', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue({ gachaCosmetics: [] });
+      await expect(
+        service.setCardBack('u1', 'mark-of-sacrifice'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
+      mockPrisma.user.findUnique.mockResolvedValue({
+        gachaCosmetics: ['BACK_FRAME'],
+      });
+      mockPrisma.gachaCardBack.findFirst.mockResolvedValue(null);
+      await expect(
+        service.setCardBack('u1', 'BACK_FRAME'),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(mockPrisma.gachaCardBack.findFirst).toHaveBeenCalledWith({
+        where: { key: 'BACK_FRAME', type: 'BACK', status: 'PUBLISHED' },
+        select: { key: true },
+      });
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
+      mockPrisma.user.update.mockResolvedValue({ gachaCardBack: null });
+      await expect(service.setCardBack('u1', null)).resolves.toEqual({
+        gachaCardBack: null,
+      });
+    });
+
     it('buyCosmetic barra key inexistente, posse duplicada e saldo baixo', async () => {
       mockPrisma.gachaCardBack.findFirst.mockResolvedValue(null);
       await expect(
