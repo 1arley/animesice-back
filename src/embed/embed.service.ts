@@ -380,18 +380,82 @@ export class EmbedService {
     // resposta na borda (Cloudflare reporta 502). O adapter também nos dá um
     // ponto seguro para liberar o Agent pinado quando o stream terminar ou o
     // cliente desconectar.
-    const body = Readable.fromWeb(
+    let body = Readable.fromWeb(
       response.body as import('stream/web').ReadableStream<Uint8Array>,
     );
     body.once('close', () => {
       void dispatcher.close().catch(() => undefined);
     });
 
+    // Alguns CDNs (ex: maximaimg.online) servem HLS (.m3u8) cujos segmentos
+    // têm extensão .webp e URLs absolutas. O browser/hls.js tenta buscar os
+    // segmentos direto do CDN, mas sem Referer correto o anti-hotlinking
+    // bloqueia. Reescrevemos a playlist para rotear segmentos pelo proxy.
+    if (this.isHlsPlaylist(cleanHeaders, validated)) {
+      const rewritten = await this.rewriteHlsPlaylist(body, refOrigin);
+      body.destroy();
+      await dispatcher.close().catch(() => undefined);
+      body = rewritten;
+    }
+
     return {
       status: response.status,
       headers: cleanHeaders,
       body,
     };
+  }
+
+  /**
+   * Detecta playlists HLS (.m3u8) por content-type ou extensão.
+   */
+  private isHlsPlaylist(headers: Record<string, string>, url: string): boolean {
+    const ct = (
+      headers['content-type'] ??
+      headers['Content-Type'] ??
+      ''
+    ).toLowerCase();
+    if (ct.includes('mpegurl') || ct.includes('vnd.apple.mpegurl')) return true;
+    const path = (url.split('?')[0] ?? url).toLowerCase();
+    return path.endsWith('.m3u8');
+  }
+
+  /**
+   * Lê um stream de playlist HLS como texto e reescreve URLs de segmentos
+   * absolutas (CDN) para URLs relativas do proxy (/api/embed/media?url=...).
+   * Assim o browser routa os segmentos pelo proxy, que injeta Referer correto
+   * (anti-hotlinking) e streama o conteúdo.
+   *
+   * URLs já relativas ou não-HTTP são mantidas. Tags (#EXT...) são ignoradas.
+   */
+  private async rewriteHlsPlaylist(
+    stream: Readable,
+    referer: string,
+  ): Promise<Readable> {
+    const collected: Uint8Array[] = [];
+    for await (const chunk of stream) {
+      collected.push(
+        Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array),
+      );
+    }
+    const text = Buffer.concat(collected).toString('utf8');
+    const apiPrefix = process.env.API_PREFIX || 'api';
+    const encodedReferer = encodeURIComponent(referer);
+
+    const lines = text.split('\n');
+    const rewritten = lines
+      .map((line) => {
+        const trimmed = line.trim();
+        // Ignora linhas vazias e tags HLS
+        if (!trimmed || trimmed.startsWith('#')) return line;
+        // Só reescreve URLs absolutas http(s)
+        if (/^https?:\/\//i.test(trimmed)) {
+          return `/${apiPrefix}/embed/media?url=${encodeURIComponent(trimmed)}&referer=${encodedReferer}`;
+        }
+        return line;
+      })
+      .join('\n');
+
+    return Readable.from([Buffer.from(rewritten, 'utf8')]);
   }
 
   /** Cria um Readable a partir de string (mensagens de erro upstream). */
