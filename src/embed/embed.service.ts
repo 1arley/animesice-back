@@ -39,10 +39,17 @@ const ALLOWED_NON_DEFAULT_PORTS = new Set([
   'vidcache.net:8166',
 ]);
 
-/**
- * Allowlist de hosts externos permitidos para chamadas de proxy.
- * Pode ser configurada via env: EMBED_ALLOWED_HOSTS=example.com,cdn.example.com
- */
+function isPortAllowed(host: string, port: string): boolean {
+  const key = `${host}:${port}`;
+  if (ALLOWED_NON_DEFAULT_PORTS.has(key)) return true;
+  const dot = host.indexOf('.');
+  if (dot !== -1) {
+    const parent = host.slice(dot + 1);
+    return ALLOWED_NON_DEFAULT_PORTS.has(`${parent}:${port}`);
+  }
+  return false;
+}
+
 /** Máximo de redirecionamentos seguidos no fetch (anti-SSRF/anti-loops). */
 const MAX_REDIRECTS = 5;
 
@@ -535,7 +542,7 @@ export class EmbedService {
     if (
       parsed.port &&
       parsed.port !== defaultPort &&
-      !ALLOWED_NON_DEFAULT_PORTS.has(`${host}:${parsed.port}`)
+      !isPortAllowed(host, parsed.port)
     ) {
       throw new BadRequestException(
         `Porta de destino não permitida: ${parsed.protocol} só aceita a porta padrão ${defaultPort}.`,
