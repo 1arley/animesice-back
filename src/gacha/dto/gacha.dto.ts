@@ -88,6 +88,13 @@ export class RerollGachaCardDto {
   userCardId!: string;
 }
 
+export class ApplyRankingDto {
+  @ApiProperty({ description: 'ID da UserCard (sua) para aplicar ao ranking.' })
+  @IsString()
+  @IsNotEmpty()
+  userCardId!: string;
+}
+
 export class BurnGachaCardDto {
   @ApiProperty({ description: 'ID da UserCard (sua) a queimar.' })
   @IsString()

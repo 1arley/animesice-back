@@ -189,6 +189,7 @@ async function main() {
         condition: 0.5,
         edition: 1,
         value: 101,
+        rankedValue: 101,
       },
     });
     const listing = await service.createListing(seller, owned.id, 100);

@@ -1066,6 +1066,7 @@ model UserCard {
   foil           String         @default("NORMAL")
   edition        Int
   value          Int
+  rankedValue    Int
   valueOverride  Int?
   status         UserCardStatus @default(ACTIVE)
   obtainedAt     DateTime       @default(now())

@@ -6,6 +6,7 @@ import {
   DefaultValuePipe,
   ForbiddenException,
   Get,
+  HttpCode,
   Param,
   ParseIntPipe,
   Patch,
@@ -18,6 +19,7 @@ import {
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { GachaService } from '@/gacha/gacha.service';
 import {
+  ApplyRankingDto,
   BuyCosmeticDto,
   ApplyGachaSkinDto,
   BurnGachaCardDto,
@@ -292,6 +294,17 @@ export class GachaController {
   })
   reroll(@Req() req: AuthenticatedRequest, @Body() dto: RerollGachaCardDto) {
     return this.gachaService.reroll(req.user.id, dto.userCardId);
+  }
+
+  @Post('apply-ranking')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'Aplica pontos do reroll ao ranking (custa crystals)',
+  })
+  applyRanking(@Req() req: AuthenticatedRequest, @Body() dto: ApplyRankingDto) {
+    return this.gachaService.applyRanking(req.user.id, dto.userCardId);
   }
 
   @Post('burn')

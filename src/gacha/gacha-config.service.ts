@@ -106,6 +106,10 @@ export class GachaConfigService implements OnModuleInit {
     return this.num('reroll_cost_pct');
   }
 
+  get applyCostPct(): number {
+    return this.num('apply_cost_pct');
+  }
+
   get dailyBonus(): number {
     return this.num('daily_bonus');
   }

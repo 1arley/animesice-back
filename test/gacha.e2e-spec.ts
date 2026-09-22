@@ -107,6 +107,7 @@ describe('GachaController (e2e)', () => {
         condition: 0.05,
         edition: 1,
         value: 100,
+        rankedValue: 100,
       },
     });
     const url = `/gacha/collection?userId=${userId}`;

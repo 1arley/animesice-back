@@ -1558,6 +1558,7 @@ export class EconomyService {
         foil,
         edition: counter.editionCounter,
         value: 0,
+        rankedValue: 0,
       },
     });
     await tx.gachaCardDiscovery.createMany({
@@ -2090,6 +2091,7 @@ export class EconomyService {
         foil: payload.foil ?? 'NORMAL',
         edition: counter.editionCounter,
         value: 0,
+        rankedValue: 0,
       },
     });
     return { type: 'CARD', userCardId: copy.id };

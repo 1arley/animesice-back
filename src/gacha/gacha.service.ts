@@ -75,6 +75,7 @@ const PULL_SELECT = {
   foil: true,
   edition: true,
   value: true,
+  rankedValue: true,
   valueOverride: true,
   obtainedAt: true,
   user: {
@@ -870,6 +871,14 @@ export class GachaService {
             select: { editionCounter: true },
           });
           const edition = counter.editionCounter;
+          const calculatedValue = cardValue(
+            spin.card.rarity as GachaTier,
+            spin.condition,
+            spin.foil as GachaFoil,
+            edition,
+            this.config.baseValue,
+            this.config.foilMult,
+          );
           const created = await tx.userCard.create({
             data: {
               userId,
@@ -878,14 +887,8 @@ export class GachaService {
               condition: spin.condition,
               foil: spin.foil,
               edition,
-              value: cardValue(
-                spin.card.rarity as GachaTier,
-                spin.condition,
-                spin.foil as GachaFoil,
-                edition,
-                this.config.baseValue as Record<GachaTier, number>,
-                this.config.foilMult as Record<GachaFoil, number>,
-              ),
+              value: calculatedValue,
+              rankedValue: calculatedValue,
             },
             select: PULL_SELECT,
           });
@@ -993,6 +996,14 @@ export class GachaService {
             foil,
             edition,
             value: cardValue(
+              card.rarity as GachaTier,
+              condition,
+              foil,
+              edition,
+              this.config.baseValue as Record<GachaTier, number>,
+              this.config.foilMult as Record<GachaFoil, number>,
+            ),
+            rankedValue: cardValue(
               card.rarity as GachaTier,
               condition,
               foil,
@@ -1298,6 +1309,40 @@ export class GachaService {
                 this.config.foilMult as Record<GachaFoil, number>,
               ),
           },
+          select: PULL_SELECT,
+        });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+    return presentPull(pull);
+  }
+
+  async applyRanking(userId: string, userCardId: string) {
+    const pull = await this.prisma.$transaction(
+      async (tx) => {
+        const card = await tx.userCard.findFirst({
+          where: { id: userCardId, userId, status: 'ACTIVE' },
+          select: PULL_SELECT,
+        });
+        if (!card) {
+          throw new NotFoundException('Carta não encontrada.');
+        }
+        if (card.value <= card.rankedValue) {
+          throw new BadRequestException('Nenhum ganho de pontos para aplicar.');
+        }
+        const diff = card.value - card.rankedValue;
+        const cost = Math.max(1, Math.round(diff * this.config.applyCostPct));
+        await this.changeCrystals(
+          tx,
+          userId,
+          -cost,
+          'SPEND',
+          userCardId,
+          `Aplicar ranking: ${card.card.name} #${card.edition}`,
+        );
+        return tx.userCard.update({
+          where: { id: userCardId },
+          data: { rankedValue: card.value },
           select: PULL_SELECT,
         });
       },
@@ -2820,9 +2865,9 @@ export class GachaService {
     const safeLimit = Math.min(Math.max(limit, 1), 50);
     const sums = await this.prisma.userCard.groupBy({
       by: ['userId'],
-      _sum: { value: true },
+      _sum: { rankedValue: true },
       _count: { _all: true },
-      orderBy: { _sum: { value: 'desc' } },
+      orderBy: { _sum: { rankedValue: 'desc' } },
       take: safeLimit * 2,
     });
     if (sums.length === 0) return [];
@@ -2856,7 +2901,7 @@ export class GachaService {
               userName: user.userName,
               avatar: user.avatar,
             },
-            totalValue: sum._sum.value ?? 0,
+            totalValue: sum._sum.rankedValue ?? 0,
             pulls: sum._count._all,
           },
         ];
@@ -3156,6 +3201,14 @@ export class GachaService {
           foil,
           edition: counter.editionCounter,
           value: cardValue(
+            card.rarity as GachaTier,
+            condition,
+            foil,
+            counter.editionCounter,
+            this.config.baseValue as Record<GachaTier, number>,
+            this.config.foilMult as Record<GachaFoil, number>,
+          ),
+          rankedValue: cardValue(
             card.rarity as GachaTier,
             condition,
             foil,
