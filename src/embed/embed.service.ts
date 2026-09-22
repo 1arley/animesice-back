@@ -34,7 +34,10 @@ const DEFAULT_PORTS: Readonly<Record<string, string>> = Object.freeze({
   'https:': '443',
 });
 
-const ALLOWED_NON_DEFAULT_PORTS = new Set(['vidcache.net:8161']);
+const ALLOWED_NON_DEFAULT_PORTS = new Set([
+  'vidcache.net:8161',
+  'vidcache.net:8166',
+]);
 
 /**
  * Allowlist de hosts externos permitidos para chamadas de proxy.
