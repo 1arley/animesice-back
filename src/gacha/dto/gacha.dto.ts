@@ -107,6 +107,19 @@ export class UpdateCrystalCodeDto {
   expiresAt?: string;
 }
 
+export class RedeemCrystalCodeDto {
+  @ApiProperty({ description: 'Código a resgatar.' })
+  @IsString()
+  @IsNotEmpty()
+  code!: string;
+}
+
+export class ToggleCrystalCodeDto {
+  @ApiProperty({ description: 'Ativar ou desativar o código.' })
+  @IsBoolean()
+  active!: boolean;
+}
+
 export class RerollGachaCardDto {
   @ApiProperty({ description: 'ID da UserCard (sua) a rerrolar.' })
   @IsString()
