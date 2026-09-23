@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { Page } from 'playwright';
+import { runRustScraper } from './rust-scraper';
 import { fetchSafeRaw } from '@/common/ssrf';
 import {
   ScrapeSource,
@@ -93,6 +94,23 @@ export class AnimefireScrapeSource implements ScrapeSource {
    * de midia, ver EmbedService.proxyMedia).
    */
   async extractHttp(ctx: HttpExtractContext): Promise<ScrapeEpisodeResult> {
+    const binary = process.env.ANIMEFIRE_RUST_BIN;
+    if (binary) {
+      try {
+        const result = await runRustScraper(binary, ctx);
+        if (
+          process.env.ANIMEFIRE_RUST_MODE !== 'shadow' &&
+          result.videos.length === 0 &&
+          result.playerTokens.length === 0
+        )
+          throw new Error('Scraper Rust retornou resultado vazio.');
+        if (process.env.ANIMEFIRE_RUST_MODE !== 'shadow') return result;
+      } catch (error) {
+        console.warn(
+          `[SCRAPE] Rust falhou; usando Node: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
     // Step 1: página do episódio -> data-video-src.
     const { response: pageRes, dispatcher: pageDispatcher } =
       await fetchBoundedSafe(ctx.episodeUrl, {
