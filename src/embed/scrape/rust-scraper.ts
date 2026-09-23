@@ -56,7 +56,7 @@ export function runRustScraper(
             throw new Error('Saída inválida do scraper Rust.');
           resolve(result as RustScrapeResult);
         } catch (error) {
-          reject(error);
+          reject(error instanceof Error ? error : new Error(String(error)));
         }
       }
     });

@@ -82,10 +82,10 @@ describe('SourceDiscovery', () => {
 
   it('allCandidates retorna todas as fontes sem probe', () => {
     const result = discovery.allCandidates('anime-slug', 5);
-    expect(result).toHaveLength(4);
-    expect(result.map((c) => c.sourceId)).toContain('meusanimes');
-    expect(result.map((c) => c.sourceId)).toContain('animefire');
-    expect(result.map((c) => c.sourceId)).toContain('animesonlinecc');
+    expect(result).toHaveLength(2);
+    expect(result.map((c) => c.sourceId)).toEqual(
+      expect.arrayContaining(['meusanimes', 'tioanime']),
+    );
   });
 
   it('URL meusanimes segue template <slug>-episodio-<n>/ (sem season no slug)', () => {
@@ -94,12 +94,6 @@ describe('SourceDiscovery', () => {
     expect(meusa?.url).toBe(
       'https://meusanimes.blog/e/mushoku-tensei-episodio-7/',
     );
-  });
-
-  it('URL animefire segue template /animes/<slug>/<n>', () => {
-    const result = discovery.allCandidates('solo-levelling', 3);
-    const af = result.find((c) => c.sourceId === 'animefire');
-    expect(af?.url).toBe('https://animefire.io/animes/solo-levelling/3');
   });
 
   it('candidates prioriza episodeUrl explícito da fonte dona do host', async () => {

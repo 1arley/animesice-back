@@ -11,6 +11,7 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { chromium } from 'playwright';
 import type { Page, BrowserContext, Browser } from 'playwright';
 import { ScrapeSource, ScrapeEpisodeResult } from './scrape-source.interface';
+import { AnimesonlineccScrapeSource } from './animesonlinecc.source';
 import { MeusanimesScrapeSource } from './meusanimes.source';
 import { TioanimeScrapeSource } from './tioanime.source';
 import { AnimesdigitalScrapeSource } from './animesdigital.source';
@@ -132,6 +133,7 @@ export class ScrapeService {
 
   constructor(
     meusanimes: MeusanimesScrapeSource,
+    animesonlinecc: AnimesonlineccScrapeSource,
     tioanime: TioanimeScrapeSource,
     private readonly prisma: PrismaService,
     @Inject(forwardRef(() => HealthMonitor))
@@ -142,6 +144,7 @@ export class ScrapeService {
   ) {
     this.sources = [
       meusanimes,
+      animesonlinecc,
       tioanime,
       ...(animesdigital ? [animesdigital] : []),
     ];
