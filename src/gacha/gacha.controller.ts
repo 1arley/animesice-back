@@ -36,6 +36,7 @@ import {
   GachaCollectionPreferencesDto,
   GachaEngagementPilotDto,
   CreateCrystalCodeDto,
+  UpdateCrystalCodeDto,
 } from '@/gacha/dto/gacha.dto';
 import { JwtAuthGuard } from '@/auth/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from '@/auth/optional-jwt-auth.guard';
@@ -541,6 +542,30 @@ export class GachaController {
     @Body() body: { active: boolean },
   ) {
     return this.gachaService.adminToggleCrystalCode(id, body.active);
+  }
+
+  @Get('admin/crystal-codes/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  adminGetCrystalCode(@Param('id') id: string) {
+    return this.gachaService.adminGetCrystalCode(id);
+  }
+
+  @Put('admin/crystal-codes/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  adminUpdateCrystalCode(
+    @Param('id') id: string,
+    @Body() dto: UpdateCrystalCodeDto,
+  ) {
+    return this.gachaService.adminUpdateCrystalCode(id, dto);
+  }
+
+  @Delete('admin/crystal-codes/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  adminDeleteCrystalCode(@Param('id') id: string) {
+    return this.gachaService.adminDeleteCrystalCode(id);
   }
 
   @Post('crystals/daily')

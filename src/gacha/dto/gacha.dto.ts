@@ -81,6 +81,32 @@ export class CreateCrystalCodeDto {
   expiresAt?: string;
 }
 
+export class UpdateCrystalCodeDto {
+  @IsString()
+  @IsOptional()
+  code?: string;
+
+  @IsInt()
+  @IsOptional()
+  @Min(1)
+  @Max(2_147_483_647)
+  crystals?: number;
+
+  @IsInt()
+  @IsOptional()
+  @Min(1)
+  @Max(2_147_483_647)
+  maxUses?: number;
+
+  @IsBoolean()
+  @IsOptional()
+  active?: boolean;
+
+  @IsString()
+  @IsOptional()
+  expiresAt?: string;
+}
+
 export class RerollGachaCardDto {
   @ApiProperty({ description: 'ID da UserCard (sua) a rerrolar.' })
   @IsString()

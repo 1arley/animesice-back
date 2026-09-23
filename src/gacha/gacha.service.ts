@@ -1207,8 +1207,61 @@ export class GachaService {
     });
   }
 
+  adminGetCrystalCode(id: string) {
+    return this.prisma.crystalCode.findUniqueOrThrow({
+      where: { id },
+      include: { _count: { select: { redemptions: true } } },
+    });
+  }
+
   adminToggleCrystalCode(id: string, active: boolean) {
     return this.prisma.crystalCode.update({ where: { id }, data: { active } });
+  }
+
+  async adminUpdateCrystalCode(
+    id: string,
+    input: {
+      code?: string;
+      crystals?: number;
+      maxUses?: number;
+      active?: boolean;
+      expiresAt?: string;
+    },
+  ) {
+    const existing = await this.prisma.crystalCode.findUniqueOrThrow({
+      where: { id },
+    });
+    const data: Record<string, unknown> = {};
+
+    if (input.code !== undefined) {
+      const code = input.code.trim().toUpperCase();
+      if (!/^[A-Z0-9-]{4,64}$/.test(code))
+        throw new BadRequestException('Código inválido.');
+      if (code !== existing.code) {
+        const dup = await this.prisma.crystalCode.findUnique({
+          where: { code },
+        });
+        if (dup) throw new BadRequestException('Código já existe.');
+      }
+      data.code = code;
+    }
+    if (input.crystals !== undefined) data.crystals = input.crystals;
+    if (input.maxUses !== undefined)
+      data.maxUses = input.maxUses > 0 ? input.maxUses : null;
+    if (input.active !== undefined) data.active = input.active;
+    if (input.expiresAt !== undefined) {
+      const expiresAt = input.expiresAt ? new Date(input.expiresAt) : null;
+      if (expiresAt && Number.isNaN(expiresAt.getTime()))
+        throw new BadRequestException('Validade inválida.');
+      data.expiresAt = expiresAt;
+    }
+
+    return this.prisma.crystalCode.update({ where: { id }, data });
+  }
+
+  async adminDeleteCrystalCode(id: string) {
+    await this.prisma.crystalCode.findUniqueOrThrow({ where: { id } });
+    return this.prisma.crystalCode.delete({ where: { id } });
   }
 
   private async changeCrystals(
