@@ -37,6 +37,8 @@ import {
   GachaEngagementPilotDto,
   CreateCrystalCodeDto,
   UpdateCrystalCodeDto,
+  RedeemCrystalCodeDto,
+  ToggleCrystalCodeDto,
 } from '@/gacha/dto/gacha.dto';
 import { JwtAuthGuard } from '@/auth/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from '@/auth/optional-jwt-auth.guard';
@@ -515,9 +517,9 @@ export class GachaController {
   @UseGuards(JwtAuthGuard, VerifiedGuard)
   redeemCrystalCode(
     @Req() req: AuthenticatedRequest,
-    @Body() body: { code: string },
+    @Body() dto: RedeemCrystalCodeDto,
   ) {
-    return this.gachaService.redeemCrystalCode(req.user.id, body.code);
+    return this.gachaService.redeemCrystalCode(req.user.id, dto.code);
   }
 
   @Get('admin/crystal-codes')
@@ -539,9 +541,9 @@ export class GachaController {
   @Roles('ADMIN', 'SUPERADMIN')
   adminToggleCrystalCode(
     @Param('id') id: string,
-    @Body() body: { active: boolean },
+    @Body() dto: ToggleCrystalCodeDto,
   ) {
-    return this.gachaService.adminToggleCrystalCode(id, body.active);
+    return this.gachaService.adminToggleCrystalCode(id, dto.active);
   }
 
   @Get('admin/crystal-codes/:id')
