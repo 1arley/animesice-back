@@ -116,6 +116,7 @@ export class ScrapeService {
   private activeScrapes = 0;
   private readonly MAX_CONCURRENT_SCRAPES: number;
   private readonly SCRAPE_QUEUE_TIMEOUT_MS: number;
+  private readonly SCRAPE_NAVIGATION_TIMEOUT_MS: number;
   private readonly scrapeWaiters: Array<{
     resolve: () => void;
     reject: (error: Error) => void;
@@ -158,6 +159,13 @@ export class ScrapeService {
     const queueTimeout = Number(process.env.SCRAPE_QUEUE_TIMEOUT_MS ?? 30_000);
     this.SCRAPE_QUEUE_TIMEOUT_MS =
       Number.isFinite(queueTimeout) && queueTimeout > 0 ? queueTimeout : 30_000;
+    const navigationTimeout = Number(
+      process.env.SCRAPE_NAVIGATION_TIMEOUT_MS ?? 45_000,
+    );
+    this.SCRAPE_NAVIGATION_TIMEOUT_MS =
+      Number.isFinite(navigationTimeout) && navigationTimeout > 0
+        ? navigationTimeout
+        : 45_000;
   }
 
   /** Remove entradas depois da janela SWR, mesmo quando não são acessadas. */
@@ -492,7 +500,7 @@ export class ScrapeService {
 
       await page.goto(episodeUrl, {
         waitUntil: 'domcontentloaded',
-        timeout: 45000,
+        timeout: this.SCRAPE_NAVIGATION_TIMEOUT_MS,
       });
 
       console.error(

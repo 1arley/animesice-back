@@ -2,12 +2,12 @@
 
 ## Fontes
 
-| Adapter | Host | HTTP puro | Playwright |
-|---------|------|-----------|------------|
-| `animefire.source.ts` | animefire.io | ✅ `extractHttp` | fallback inerte |
-| `animesonlinecc.source.ts` | animesonlinecc.to | ❌ | ✅ |
-| `meusanimes.source.ts` | meusanimes.blog | ✅ | fallback Chromium |
-| `animesdigital.source.ts` | animesdigital.org | ✅ | fallback Chromium |
+| Adapter                    | Host              | HTTP puro        | Playwright        |
+| -------------------------- | ----------------- | ---------------- | ----------------- |
+| `animefire.source.ts`      | animefire.io      | ✅ `extractHttp` | fallback inerte   |
+| `animesonlinecc.source.ts` | animesonlinecc.to | ❌               | ✅                |
+| `meusanimes.source.ts`     | meusanimes.blog   | ✅               | fallback Chromium |
+| `animesdigital.source.ts`  | animesdigital.org | ✅               | fallback Chromium |
 
 ## extractHttp (animefire)
 
@@ -25,6 +25,21 @@ Sem browser. 2 fetchs:
 
 Devolve RAW `https://lightspeedst.net/.../hd/N.mp4?token=...&ip=<ip_backend>`. Sem Cloudflare.
 
+### Experimento Rust
+
+O Docker compila `scraper-rust/` como binário `/usr/local/bin/animefire-scraper`,
+mas o Node continua padrão. Configure `ANIMEFIRE_RUST_BIN` para ativá-lo.
+`ANIMEFIRE_RUST_MODE=shadow` roda Rust e Node sequencialmente para comparar
+latência e quantidade de URLs úteis; a resposta continua vindo do Node. Use
+`primary` depois de coletar amostra representativa; erros Rust voltam ao Node.
+O binário aceita somente `animefire.io` e subdomínios, limita tempo e corpo das
+respostas e rejeita redirecionamentos para fora do domínio.
+
+O modo shadow dobra as requisições à fonte durante a medição. Compare janelas
+com tráfego semelhante e acompanhe sucesso, p50/p95 do cliente e CPU do
+contêiner. Não conclua ganho de produção usando apenas a duração isolada do
+extrator: o fluxo é HTTP-bound e o processo Rust inicia a cada chamada.
+
 ## wrapMediaUrl
 
 `ScrapeService.wrapMediaUrl` envolve mp4 externo em `/embed/media?url=...&referer=<origem>`. Anti-hotlinking resolvido no proxy, não no client.
@@ -36,6 +51,7 @@ Devolve RAW `https://lightspeedst.net/.../hd/N.mp4?token=...&ip=<ip_backend>`. S
 ## Re-extração
 
 `reextractEpisodeVideo(animeSlug, episodeNumber)`:
+
 - Busca `Episode.embedUrl`.
 - Encontra adapter com `extractHttp` que suporta a URL.
 - Extrai, atualiza `videoUrl` no DB.

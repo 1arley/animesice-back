@@ -8,6 +8,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends dumb-init xvfb 
 
 WORKDIR /app
 
+FROM rust:1-slim AS rust-scraper
+WORKDIR /src
+COPY scraper-rust/Cargo.toml scraper-rust/Cargo.lock ./
+COPY scraper-rust/src ./src
+RUN cargo build --release
+
 # Stage 2: Dependencies (production only)
 FROM base AS deps
 
@@ -43,6 +49,7 @@ COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=build /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=build /app/prisma.config.ts ./
 COPY package.json ./
+COPY --from=rust-scraper /src/target/release/animefire-scraper /usr/local/bin/animefire-scraper
 
 # Chromium p/ o fluxo Playwright (scrape de fontes + resolver tokens Blogger
 # do meusanimes/meusdoramas -> .mp4 googlevideo). Browser fora do home do user

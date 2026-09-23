@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { Page } from 'playwright';
+import { spawn } from 'node:child_process';
 import { fetchSafeRaw } from '@/common/ssrf';
 import {
   ScrapeSource,
@@ -27,6 +28,54 @@ const FETCH_TIMEOUT_MS = 15_000;
 
 /** Teto de bytes lidos de uma resposta (anti-memória). */
 const MAX_RESPONSE_BYTES = 5 * 1024 * 1024;
+interface RustScrapeResult {
+  videos: string[];
+  iframes: string[];
+  cloudflare: boolean;
+}
+
+function runRustScraper(
+  binary: string,
+  ctx: HttpExtractContext,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(binary, [], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    let size = 0;
+    const timer = setTimeout(
+      () => {
+        child.kill('SIGKILL');
+        reject(new Error('Timeout no scraper Rust.'));
+      },
+      FETCH_TIMEOUT_MS * 2 + 2_000,
+    );
+    child.stdout.on('data', (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > MAX_RESPONSE_BYTES) {
+        child.kill('SIGKILL');
+        return;
+      }
+      stdout.push(chunk);
+    });
+    child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
+    child.once('error', (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.once('close', (code) => {
+      clearTimeout(timer);
+      if (size > MAX_RESPONSE_BYTES) {
+        reject(new Error('Saída do scraper Rust excedeu o limite permitido.'));
+      } else if (code !== 0) {
+        reject(new Error(Buffer.concat(stderr).toString('utf8').slice(0, 500)));
+      } else {
+        resolve(Buffer.concat(stdout).toString('utf8'));
+      }
+    });
+    child.stdin.end(JSON.stringify(ctx));
+  });
+}
 
 async function fetchBoundedSafe(
   url: string,
@@ -93,6 +142,52 @@ export class AnimefireScrapeSource implements ScrapeSource {
    * de midia, ver EmbedService.proxyMedia).
    */
   async extractHttp(ctx: HttpExtractContext): Promise<ScrapeEpisodeResult> {
+    const rustBinary = process.env.ANIMEFIRE_RUST_BIN;
+    if (rustBinary) {
+      const rustStartedAt = performance.now();
+      let result: RustScrapeResult;
+      try {
+        const stdout = await runRustScraper(rustBinary, ctx);
+        result = JSON.parse(stdout) as RustScrapeResult;
+        if (
+          !Array.isArray(result.videos) ||
+          !result.videos.every((video) => typeof video === 'string') ||
+          !Array.isArray(result.iframes) ||
+          !result.iframes.every((iframe) => typeof iframe === 'string') ||
+          typeof result.cloudflare !== 'boolean'
+        ) {
+          throw new Error('Saída inválida do scraper Rust.');
+        }
+        if (
+          process.env.ANIMEFIRE_RUST_MODE !== 'shadow' &&
+          !result.videos.length
+        ) {
+          throw new Error('Scraper Rust retornou zero vídeos.');
+        }
+      } catch (error) {
+        console.warn(
+          `[AF] scraper Rust falhou; usando Node: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        return this.extractHttpNode(ctx);
+      }
+      if (process.env.ANIMEFIRE_RUST_MODE === 'shadow') {
+        const rustMs = Math.round(performance.now() - rustStartedAt);
+        const nodeStartedAt = performance.now();
+        const nodeResult = await this.extractHttpNode(ctx);
+        console.info(
+          `[AF] shadow rustMs=${rustMs} nodeMs=${Math.round(performance.now() - nodeStartedAt)} rustVideos=${result.videos.length} nodeVideos=${nodeResult.videos.length} sameVideoCount=${result.videos.length === nodeResult.videos.length}`,
+        );
+        return nodeResult;
+      }
+      return result;
+    }
+
+    return this.extractHttpNode(ctx);
+  }
+
+  private async extractHttpNode(
+    ctx: HttpExtractContext,
+  ): Promise<ScrapeEpisodeResult> {
     // Step 1: página do episódio -> data-video-src.
     const { response: pageRes, dispatcher: pageDispatcher } =
       await fetchBoundedSafe(ctx.episodeUrl, {
