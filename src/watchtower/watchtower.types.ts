@@ -118,7 +118,7 @@ export const BACKOFF_MS: number[] = [
 ];
 
 /** IDs de fonte canônicos (devem bater com ScrapeSource.id). */
-export const SOURCE_IDS = ['meusanimes', 'animesonlinecc', 'tioanime'] as const;
+export const SOURCE_IDS = ['meusanimes', 'tioanime'] as const;
 
 export const OPTIONAL_SOURCE_IDS = ['animesdigital'] as const;
 

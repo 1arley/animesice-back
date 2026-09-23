@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import type { Page } from 'playwright';
 import { fetchSafeRaw } from '@/common/ssrf';
+import { runRustScraper } from './rust-scraper';
 import {
   ScrapeSource,
   ScrapeEpisodeResult,
@@ -53,6 +54,24 @@ export class MeusanimesScrapeSource implements ScrapeSource {
   }
 
   async extractHttp(ctx: HttpExtractContext): Promise<ScrapeEpisodeResult> {
+    const binary =
+      process.env.MEUSANIMES_RUST_BIN ?? process.env.ANIMEFIRE_RUST_BIN;
+    if (binary) {
+      try {
+        const result = await runRustScraper(binary, ctx);
+        if (
+          process.env.MEUSANIMES_RUST_MODE !== 'shadow' &&
+          result.videos.length === 0 &&
+          result.playerTokens.length === 0
+        )
+          throw new Error('Scraper Rust retornou resultado vazio.');
+        if (process.env.MEUSANIMES_RUST_MODE !== 'shadow') return result;
+      } catch (error) {
+        console.warn(
+          `[SCRAPE] Rust meusanimes falhou; usando Node: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
     const visited = new Set<string>();
     const videos: string[] = [];
     const playerTokens: string[] = [];
