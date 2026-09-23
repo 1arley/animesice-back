@@ -78,6 +78,8 @@ function makeMetrics() {
   return {
     recordCacheHit: jest.fn(),
     recordCacheMiss: jest.fn(),
+    recordCacheHit: jest.fn(),
+    recordDegradedServe: jest.fn(),
     recordDegradedServe: jest.fn(),
     recordExtraction: jest.fn(),
     recordExtractionFailure: jest.fn(),
