@@ -12,6 +12,7 @@ import { chromium } from 'playwright';
 import type { Page, BrowserContext, Browser } from 'playwright';
 import { ScrapeSource, ScrapeEpisodeResult } from './scrape-source.interface';
 import { AnimesonlineccScrapeSource } from './animesonlinecc.source';
+import { AnimefireScrapeSource } from './animefire.source';
 import { MeusanimesScrapeSource } from './meusanimes.source';
 import { TioanimeScrapeSource } from './tioanime.source';
 import { AnimesdigitalScrapeSource } from './animesdigital.source';
@@ -132,8 +133,9 @@ export class ScrapeService {
   private readonly CACHE_MAX_ENTRIES = 200;
 
   constructor(
+    @Optional() animefire: AnimefireScrapeSource | undefined,
+    @Optional() animesonlinecc: AnimesonlineccScrapeSource | undefined,
     meusanimes: MeusanimesScrapeSource,
-    animesonlinecc: AnimesonlineccScrapeSource,
     tioanime: TioanimeScrapeSource,
     private readonly prisma: PrismaService,
     @Inject(forwardRef(() => HealthMonitor))
@@ -143,8 +145,9 @@ export class ScrapeService {
     @Optional() private readonly animesdigital?: AnimesdigitalScrapeSource,
   ) {
     this.sources = [
+      ...(animefire ? [animefire] : []),
+      ...(animesonlinecc ? [animesonlinecc] : []),
       meusanimes,
-      animesonlinecc,
       tioanime,
       ...(animesdigital ? [animesdigital] : []),
     ];
