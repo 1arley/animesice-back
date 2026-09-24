@@ -133,6 +133,7 @@ describe('ScrapeService (orquestração + cache SWR)', () => {
   const origStale = process.env.SCRAPE_CACHE_STALE_MS;
   const origConcurrency = process.env.MAX_CONCURRENT_SCRAPES;
   const origQueueTimeout = process.env.SCRAPE_QUEUE_TIMEOUT_MS;
+  const origNavTimeout = process.env.SCRAPE_NAVIGATION_TIMEOUT_MS;
   const origApiPrefix = process.env.API_PREFIX;
 
   beforeEach(() => {
@@ -145,6 +146,7 @@ describe('ScrapeService (orquestração + cache SWR)', () => {
     delete process.env.SCRAPE_CACHE_STALE_MS;
     delete process.env.MAX_CONCURRENT_SCRAPES;
     delete process.env.SCRAPE_QUEUE_TIMEOUT_MS;
+    delete process.env.SCRAPE_NAVIGATION_TIMEOUT_MS;
     delete process.env.API_PREFIX;
   });
 
@@ -159,6 +161,9 @@ describe('ScrapeService (orquestração + cache SWR)', () => {
     if (origQueueTimeout === undefined)
       delete process.env.SCRAPE_QUEUE_TIMEOUT_MS;
     else process.env.SCRAPE_QUEUE_TIMEOUT_MS = origQueueTimeout;
+    if (origNavTimeout === undefined)
+      delete process.env.SCRAPE_NAVIGATION_TIMEOUT_MS;
+    else process.env.SCRAPE_NAVIGATION_TIMEOUT_MS = origNavTimeout;
     if (origApiPrefix === undefined) delete process.env.API_PREFIX;
     else process.env.API_PREFIX = origApiPrefix;
   });
@@ -168,6 +173,7 @@ describe('ScrapeService (orquestração + cache SWR)', () => {
     staleMs?: number;
     concurrency?: number;
     queueTimeoutMs?: number;
+    navigationTimeoutMs?: number | string;
   }) {
     if (opts?.ttlMs !== undefined) {
       process.env.SCRAPE_CACHE_TTL_MS = String(opts.ttlMs);
@@ -180,6 +186,11 @@ describe('ScrapeService (orquestração + cache SWR)', () => {
     }
     if (opts?.queueTimeoutMs !== undefined) {
       process.env.SCRAPE_QUEUE_TIMEOUT_MS = String(opts.queueTimeoutMs);
+    }
+    if (opts?.navigationTimeoutMs !== undefined) {
+      process.env.SCRAPE_NAVIGATION_TIMEOUT_MS = String(
+        opts.navigationTimeoutMs,
+      );
     }
     const af = makeSource('animefire', ['animefire.io']);
     const aocc = makeSource('animesonlinecc', ['animesonlinecc.to']);
@@ -239,6 +250,33 @@ describe('ScrapeService (orquestração + cache SWR)', () => {
     );
     expect(res.videos[0]).toContain('cdn.animefire');
     expect(af.extractHttp).toHaveBeenCalledTimes(1);
+  });
+
+  it('funciona sem animefire e animesonlinecc injetados (fontes desabilitadas)', async () => {
+    const { ms, ta, prisma, health, metrics, browserPool } = build();
+    const svc = new ScrapeService(
+      undefined,
+      undefined,
+      ms as any,
+      ta as any,
+      prisma as any,
+      health as any,
+      metrics as any,
+      browserPool as any,
+    );
+    health.rankedSources.mockResolvedValue(['meusanimes']);
+    const res = await svc.scrapeEpisodeVideo(
+      'https://meusanimes.blog/a/1',
+      undefined,
+      false,
+    );
+    expect(res.videos[0]).toContain('cdn.meusanimes');
+    expect(ms.extractHttp).toHaveBeenCalledTimes(1);
+  });
+
+  it('usa 45s de timeout de navegação quando a env é inválida', () => {
+    const { svc } = build({ navigationTimeoutMs: 'abc' });
+    expect((svc as any).SCRAPE_NAVIGATION_TIMEOUT_MS).toBe(45_000);
   });
 
   it('honra sourceId explícito mesmo fora da ordem de saúde', async () => {
