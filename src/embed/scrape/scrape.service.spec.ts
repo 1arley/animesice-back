@@ -78,8 +78,6 @@ function makeMetrics() {
   return {
     recordCacheHit: jest.fn(),
     recordCacheMiss: jest.fn(),
-    recordCacheHit: jest.fn(),
-    recordDegradedServe: jest.fn(),
     recordDegradedServe: jest.fn(),
     recordExtraction: jest.fn(),
     recordExtractionFailure: jest.fn(),
@@ -275,62 +273,74 @@ describe('ScrapeService (orquestração + cache SWR)', () => {
 
   it('registra success com latência e NÃO registra em cache hit', async () => {
     const { svc, health } = build();
-    await svc.scrapeEpisodeVideo('https://animefire.io/a/2', undefined, false);
+    await svc.scrapeEpisodeVideo(
+      'https://meusanimes.blog/a/2',
+      undefined,
+      false,
+    );
     expect(health.recordSuccess).toHaveBeenCalledTimes(1);
     expect(health.recordSuccess).toHaveBeenCalledWith(
-      'animefire',
+      'meusanimes',
       expect.any(Number),
     );
 
-    await svc.scrapeEpisodeVideo('https://animefire.io/a/2', undefined, false);
+    await svc.scrapeEpisodeVideo(
+      'https://meusanimes.blog/a/2',
+      undefined,
+      false,
+    );
     expect(health.recordSuccess).toHaveBeenCalledTimes(1);
   });
 
   it('registra failure e propaga erro quando a fonte lança', async () => {
-    const { svc, af, health } = build();
-    af.extractHttp.mockRejectedValueOnce(new Error('boom'));
+    const { svc, ms, health } = build();
+    ms.extractHttp.mockRejectedValueOnce(new Error('boom'));
     await expect(
-      svc.scrapeEpisodeVideo('https://animefire.io/a/3', undefined, false),
+      svc.scrapeEpisodeVideo('https://meusanimes.blog/a/3', undefined, false),
     ).rejects.toThrow('boom');
     expect(health.recordFailure).toHaveBeenCalledWith(
-      'animefire',
+      'meusanimes',
       expect.any(Object),
     );
   });
 
   it('resultado vazio não é cacheado e registra failure', async () => {
-    const { svc, af, health } = build();
-    af.extractHttp.mockResolvedValueOnce({
+    const { svc, ms, health } = build();
+    ms.extractHttp.mockResolvedValueOnce({
       videos: [],
       iframes: [],
       cloudflare: false,
     });
     const res = await svc.scrapeEpisodeVideo(
-      'https://animefire.io/a/4',
+      'https://meusanimes.blog/a/4',
       undefined,
       false,
     );
     expect(res.videos).toHaveLength(0);
     expect(health.recordFailure).toHaveBeenCalledWith(
-      'animefire',
+      'meusanimes',
       expect.any(Object),
     );
 
-    await svc.scrapeEpisodeVideo('https://animefire.io/a/4', undefined, false);
-    expect(af.extractHttp).toHaveBeenCalledTimes(2);
+    await svc.scrapeEpisodeVideo(
+      'https://meusanimes.blog/a/4',
+      undefined,
+      false,
+    );
+    expect(ms.extractHttp).toHaveBeenCalledTimes(2);
   });
 
   it('SWR: dentro da janela stale serve imediatamente e revalida em background', async () => {
-    const { svc, af, health } = build({ ttlMs: 50, staleMs: 60_000 });
+    const { svc, ms, health } = build({ ttlMs: 50, staleMs: 60_000 });
     const first = await svc.scrapeEpisodeVideo(
-      'https://animefire.io/a/5',
+      'https://meusanimes.blog/a/5',
       undefined,
       false,
     );
     await sleep(120);
 
     let release!: (r: ScrapeEpisodeResult) => void;
-    af.extractHttp.mockImplementationOnce(
+    ms.extractHttp.mockImplementationOnce(
       () =>
         new Promise<ScrapeEpisodeResult>((res) => {
           release = res;
@@ -338,12 +348,12 @@ describe('ScrapeService (orquestração + cache SWR)', () => {
     );
 
     const second = await svc.scrapeEpisodeVideo(
-      'https://animefire.io/a/5',
+      'https://meusanimes.blog/a/5',
       undefined,
       false,
     );
     expect(second.videos).toEqual(first.videos);
-    expect(af.extractHttp).toHaveBeenCalledTimes(2);
+    expect(ms.extractHttp).toHaveBeenCalledTimes(2);
     expect(second.videos[0]).not.toContain('cdn.fresh');
 
     release({
@@ -355,7 +365,7 @@ describe('ScrapeService (orquestração + cache SWR)', () => {
     expect(health.recordSuccess).toHaveBeenCalledTimes(2);
 
     const third = await svc.scrapeEpisodeVideo(
-      'https://animefire.io/a/5',
+      'https://meusanimes.blog/a/5',
       undefined,
       false,
     );
@@ -363,17 +373,21 @@ describe('ScrapeService (orquestração + cache SWR)', () => {
   });
 
   it('além da janela stale: refetch síncrono e cache atualizado', async () => {
-    const { svc, af, health } = build({ ttlMs: 30, staleMs: 60 });
-    await svc.scrapeEpisodeVideo('https://animefire.io/a/6', undefined, false);
-    await sleep(150);
-
-    const second = await svc.scrapeEpisodeVideo(
-      'https://animefire.io/a/6',
+    const { svc, ms, health } = build({ ttlMs: 30, staleMs: 60 });
+    await svc.scrapeEpisodeVideo(
+      'https://meusanimes.blog/a/6',
       undefined,
       false,
     );
-    expect(second.videos[0]).toContain('cdn.animefire');
-    expect(af.extractHttp).toHaveBeenCalledTimes(2);
+    await sleep(150);
+
+    const second = await svc.scrapeEpisodeVideo(
+      'https://meusanimes.blog/a/6',
+      undefined,
+      false,
+    );
+    expect(second.videos[0]).toContain('cdn.meusanimes');
+    expect(ms.extractHttp).toHaveBeenCalledTimes(2);
     expect(health.recordSuccess).toHaveBeenCalledTimes(2);
   });
 
@@ -406,23 +420,23 @@ describe('ScrapeService (orquestração + cache SWR)', () => {
   });
 
   it('degradação: fetch falha além da janela mas serve stale em vez de quebrar', async () => {
-    const { svc, af, health } = build({ ttlMs: 30, staleMs: 60 });
+    const { svc, ms, health } = build({ ttlMs: 30, staleMs: 60 });
     const first = await svc.scrapeEpisodeVideo(
-      'https://animefire.io/a/7',
+      'https://meusanimes.blog/a/7',
       undefined,
       false,
     );
     await sleep(150);
 
-    af.extractHttp.mockRejectedValueOnce(new Error('provider down'));
+    ms.extractHttp.mockRejectedValueOnce(new Error('provider down'));
     const second = await svc.scrapeEpisodeVideo(
-      'https://animefire.io/a/7',
+      'https://meusanimes.blog/a/7',
       undefined,
       false,
     );
     expect(second.videos).toEqual(first.videos);
     expect(health.recordFailure).toHaveBeenCalledWith(
-      'animefire',
+      'meusanimes',
       expect.any(Object),
     );
   });
@@ -484,24 +498,24 @@ describe('ScrapeService (orquestração + cache SWR)', () => {
   });
 
   it('reextractEpisodeVideo usa fonte saudável, invalida e semeia o cache', async () => {
-    const { svc, af, prisma, health } = build();
+    const { svc, ms, prisma, health } = build();
     prisma.episode.findUnique.mockResolvedValue({
       id: 'e1',
-      embedUrl: 'https://animefire.io/animes/x/1',
+      embedUrl: 'https://meusanimes.blog/animes/x/1',
     });
-    const url = 'https://animefire.io/animes/x/1';
+    const url = 'https://meusanimes.blog/animes/x/1';
 
     await svc.scrapeEpisodeVideo(url, undefined, false);
     const fresh = await svc.reextractEpisodeVideo('x', 1, 1);
-    expect(fresh).toContain('cdn.animefire');
+    expect(fresh).toContain('cdn.meusanimes');
     expect(health.recordSuccess).toHaveBeenCalledWith(
-      'animefire',
+      'meusanimes',
       expect.any(Number),
     );
 
     const again = await svc.scrapeEpisodeVideo(url, undefined, false);
-    expect(again.videos[0]).toContain('cdn.animefire');
-    expect(af.extractHttp).toHaveBeenCalledTimes(2);
+    expect(again.videos[0]).toContain('cdn.meusanimes');
+    expect(ms.extractHttp).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -632,24 +646,24 @@ describe('ScrapeService (cobertura avançada)', () => {
   });
 
   it('revalidação em background que falha é engolida e serve stale', async () => {
-    const { svc, af, health } = build({ ttlMs: 50, staleMs: 60_000 });
+    const { svc, ms, health } = build({ ttlMs: 50, staleMs: 60_000 });
     await svc.scrapeEpisodeVideo(
-      'https://animefire.io/a/stale-fail',
+      'https://meusanimes.blog/a/stale-fail',
       undefined,
       false,
     );
     await sleep(120);
-    af.extractHttp.mockRejectedValueOnce(new Error('bg down'));
+    ms.extractHttp.mockRejectedValueOnce(new Error('bg down'));
     const res = await svc.scrapeEpisodeVideo(
-      'https://animefire.io/a/stale-fail',
+      'https://meusanimes.blog/a/stale-fail',
       undefined,
       false,
     );
-    expect(res.videos[0]).toContain('cdn.animefire');
+    expect(res.videos[0]).toContain('cdn.meusanimes');
     await sleep(30);
-    expect(af.extractHttp).toHaveBeenCalledTimes(2);
+    expect(ms.extractHttp).toHaveBeenCalledTimes(2);
     expect(health.recordFailure).toHaveBeenCalledWith(
-      'animefire',
+      'meusanimes',
       expect.any(Object),
     );
   });
@@ -1248,33 +1262,33 @@ describe('ScrapeService (cobertura avançada)', () => {
   });
 
   it('reextract registra failure e retorna null quando extractHttp lança', async () => {
-    const { svc, prisma, af, health } = build();
+    const { svc, prisma, ms, health } = build();
     prisma.episode.findUnique.mockResolvedValue({
       id: 'e1',
-      embedUrl: 'https://animefire.io/animes/x/1',
+      embedUrl: 'https://meusanimes.blog/animes/x/1',
     });
-    af.extractHttp.mockRejectedValueOnce(new Error('boom'));
+    ms.extractHttp.mockRejectedValueOnce(new Error('boom'));
     expect(await svc.reextractEpisodeVideo('x', 1)).toBeNull();
     expect(health.recordFailure).toHaveBeenCalledWith(
-      'animefire',
+      'meusanimes',
       expect.any(Object),
     );
   });
 
   it('reextract retorna null quando extração HTTP devolve sem vídeo', async () => {
-    const { svc, prisma, af, health } = build();
+    const { svc, prisma, ms, health } = build();
     prisma.episode.findUnique.mockResolvedValue({
       id: 'e1',
-      embedUrl: 'https://animefire.io/animes/x/1',
+      embedUrl: 'https://meusanimes.blog/animes/x/1',
     });
-    af.extractHttp.mockResolvedValueOnce({
+    ms.extractHttp.mockResolvedValueOnce({
       videos: [],
       iframes: [],
       cloudflare: false,
     });
     expect(await svc.reextractEpisodeVideo('x', 1)).toBeNull();
     expect(health.recordFailure).toHaveBeenCalledWith(
-      'animefire',
+      'meusanimes',
       expect.any(Object),
     );
   });
@@ -1582,11 +1596,15 @@ describe('ScrapeService (cobertura de recuperação)', () => {
   });
 
   it('reextract retorna null com rejeição não-Error', async () => {
-    const { svc, af, health } = build();
-    af.extractHttp.mockRejectedValueOnce('extract down string');
+    const { svc, prisma, ms, health } = build();
+    prisma.episode.findUnique.mockResolvedValue({
+      id: 'e1',
+      embedUrl: 'https://meusanimes.blog/e/foo-episodio-1/',
+    });
+    ms.extractHttp.mockRejectedValueOnce('extract down string');
     await expect(svc.reextractEpisodeVideo('foo', 1, 1)).resolves.toBeNull();
     expect(health.recordFailure).toHaveBeenCalledWith(
-      'animefire',
+      'meusanimes',
       expect.any(Object),
     );
   });

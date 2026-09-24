@@ -910,8 +910,8 @@ describe('GachaService', () => {
   describe('ranking', () => {
     it('ordena por valor e respeita opt-out', async () => {
       mockPrisma.userCard.groupBy.mockResolvedValue([
-        { userId: 'u1', _sum: { value: 500 }, _count: { _all: 3 } },
-        { userId: 'u2', _sum: { value: 900 }, _count: { _all: 1 } },
+        { userId: 'u1', _sum: { rankedValue: 500 }, _count: { _all: 3 } },
+        { userId: 'u2', _sum: { rankedValue: 900 }, _count: { _all: 1 } },
       ]);
       mockPrisma.user.findMany.mockResolvedValue([
         {
