@@ -46,6 +46,7 @@ describe('SourceDiscovery', () => {
       if (url.includes('meusanimes')) return { status: 404 } as any;
       if (url.includes('animefire')) return { status: 404 } as any;
       if (url.includes('animesonlinecc')) return { status: 404 } as any;
+      if (url.includes('tioanime')) return { status: 404 } as any;
       return { status: 200 } as any;
     });
     global.fetch = fetchFn as any;

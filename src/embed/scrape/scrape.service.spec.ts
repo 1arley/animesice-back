@@ -1590,7 +1590,7 @@ describe('ScrapeService (cobertura de recuperação)', () => {
   it('scrapeFromAnimefire pula sem tentar quando a fonte está disabled', async () => {
     const { svc, health } = build();
     health.isDisabled.mockImplementation(
-      async (id: string) => id === 'meusanimes',
+      async (id: string) => id === 'animefire',
     );
     const spy = jest.spyOn(svc, 'scrapeEpisodeVideo');
     await expect(svc.scrapeFromAnimefire('foo', 1)).resolves.toBeNull();
