@@ -63,11 +63,7 @@ function makeSource(
 
 function makeHealth() {
   return {
-    rankedSources: jest.fn(async () => [
-      'meusanimes',
-      'animefire',
-      'animesonlinecc',
-    ]),
+    rankedSources: jest.fn(async () => ['meusanimes', 'tioanime']),
     recordSuccess: jest.fn(async () => undefined),
     recordFailure: jest.fn(async () => undefined),
     isDisabled: jest.fn(async (_id: string): Promise<boolean> => false),
@@ -78,8 +74,6 @@ function makeMetrics() {
   return {
     recordCacheHit: jest.fn(),
     recordCacheMiss: jest.fn(),
-    recordCacheHit: jest.fn(),
-    recordDegradedServe: jest.fn(),
     recordDegradedServe: jest.fn(),
     recordExtraction: jest.fn(),
     recordExtractionFailure: jest.fn(),
@@ -183,9 +177,7 @@ describe('ScrapeService (orquestração + cache SWR)', () => {
     if (opts?.queueTimeoutMs !== undefined) {
       process.env.SCRAPE_QUEUE_TIMEOUT_MS = String(opts.queueTimeoutMs);
     }
-    const af = makeSource('animefire', ['animefire.io']);
-    const aocc = makeSource('animesonlinecc', ['animesonlinecc.to']);
-    const ms = makeSource('meusanimes', ['meusanimes.blog']);
+    const af = makeSource('meusanimes', ['animefire.io', 'player.test']);
     const ta = makeSource('tioanime', ['tioanime.com']);
     const prisma = makePrisma();
     const health = makeHealth();
@@ -201,34 +193,26 @@ describe('ScrapeService (orquestração + cache SWR)', () => {
     };
     const svc = new ScrapeService(
       af as any,
-      aocc as any,
-      ms as any,
       ta as any,
       prisma as any,
       health as any,
       metrics as any,
       browserPool as any,
     );
-    return { svc, af, aocc, ms, ta, prisma, health, metrics, browserPool };
+    return { svc, af, ta, prisma, health, metrics, browserPool };
   }
 
   it('usa a ordem do HealthMonitor quando múltiplas fontes suportam a URL', async () => {
-    const { svc, af, ms, health } = build();
-    health.rankedSources.mockResolvedValue([
-      'meusanimes',
-      'animefire',
-      'animesonlinecc',
-    ]);
+    const { svc, af, health } = build();
+    health.rankedSources.mockResolvedValue(['meusanimes', 'tioanime']);
     af.supports = (u) => u.includes('player.test');
-    ms.supports = (u) => u.includes('player.test');
     const res = await svc.scrapeEpisodeVideo(
       'https://player.test/ep/1',
       undefined,
       false,
     );
     expect(res.videos[0]).toContain('cdn.meusanimes');
-    expect(ms.extractHttp).toHaveBeenCalledTimes(1);
-    expect(af.extractHttp).not.toHaveBeenCalled();
+    expect(af.extractHttp).toHaveBeenCalledTimes(1);
   });
 
   it('não quebra quando rankedSources está vazio (ordem estática de fallback)', async () => {
@@ -244,14 +228,14 @@ describe('ScrapeService (orquestração + cache SWR)', () => {
   });
 
   it('honra sourceId explícito mesmo fora da ordem de saúde', async () => {
-    const { svc, aocc } = build();
+    const { svc, af } = build();
     const res = await svc.scrapeEpisodeVideo(
       'https://animefire.io/a/1',
-      'animesonlinecc',
+      undefined,
       false,
     );
-    expect(res.videos[0]).toContain('cdn.animesonlinecc');
-    expect(aocc.extractHttp).toHaveBeenCalledTimes(1);
+    expect(res.videos[0]).toContain('cdn.meusanimes');
+    expect(af.extractHttp).toHaveBeenCalledTimes(1);
   });
 
   it('cacheia RAW e embrulha no proxy de mídia na saída (wrap)', async () => {
@@ -533,9 +517,7 @@ describe('ScrapeService (cobertura avançada)', () => {
       process.env.MAX_CONCURRENT_SCRAPES = String(opts.concurrency);
     if (opts?.queueTimeoutMs !== undefined)
       process.env.SCRAPE_QUEUE_TIMEOUT_MS = String(opts.queueTimeoutMs);
-    const af = makeSource('animefire', ['animefire.io']);
-    const aocc = makeSource('animesonlinecc', ['animesonlinecc.to']);
-    const ms = makeSource('meusanimes', ['meusanimes.blog']);
+    const af = makeSource('meusanimes', ['animefire.io', 'player.test']);
     const ta = makeSource('tioanime', ['tioanime.com']);
     const prisma = makePrisma();
     const health = makeHealth();
@@ -551,15 +533,13 @@ describe('ScrapeService (cobertura avançada)', () => {
     };
     const svc = new ScrapeService(
       af as any,
-      aocc as any,
-      ms as any,
       ta as any,
       prisma as any,
       health as any,
       metrics as any,
       browserPool as any,
     );
-    return { svc, af, aocc, ms, ta, prisma, health, metrics, browserPool };
+    return { svc, af, ta, prisma, health, metrics, browserPool };
   }
 
   it('usa valores padrão de TTL/stale/concorrência quando env ausente', async () => {
@@ -726,10 +706,8 @@ describe('ScrapeService (cobertura avançada)', () => {
   });
 
   it('não registra health p/ fonte fora do SOURCE_IDS', async () => {
-    const af = makeSource('animefire', ['animefire.io']);
+    const af = makeSource('meusanimes', ['animefire.io']);
     const custom = makeSource('custom', ['custom.test']);
-    const ms = makeSource('meusanimes', ['meusanimes.blog']);
-    const ta = makeSource('tioanime', ['tioanime.com']);
     const prisma = makePrisma();
     const health = makeHealth();
     const metrics = makeMetrics();
@@ -745,8 +723,6 @@ describe('ScrapeService (cobertura avançada)', () => {
     const svc = new ScrapeService(
       af as any,
       custom as any,
-      ms as any,
-      ta as any,
       prisma as any,
       health as any,
       metrics as any,
@@ -964,16 +940,19 @@ describe('ScrapeService (cobertura avançada)', () => {
   });
 
   function makePlaywrightSvc() {
-    const aocc = makeSource('animesonlinecc', ['animesonlinecc.to'], [], {
-      http: false,
-      extractResult: () => ({
-        videos: ['https://cdn.playwright/v.mp4'],
-        iframes: [],
-        cloudflare: false,
-      }),
-    });
-    const af = makeSource('animefire', ['animefire.io']);
-    const ms = makeSource('meusanimes', ['meusanimes.blog']);
+    const aocc = makeSource(
+      'meusanimes',
+      ['animesonlinecc.to', 'animefire.io'],
+      [],
+      {
+        http: false,
+        extractResult: () => ({
+          videos: ['https://cdn.playwright/v.mp4'],
+          iframes: [],
+          cloudflare: false,
+        }),
+      },
+    );
     const ta = makeSource('tioanime', ['tioanime.com']);
     const prisma = makePrisma();
     const health = makeHealth();
@@ -988,9 +967,7 @@ describe('ScrapeService (cobertura avançada)', () => {
       }),
     };
     const svc = new ScrapeService(
-      af as any,
       aocc as any,
-      ms as any,
       ta as any,
       prisma as any,
       health as any,
@@ -1427,14 +1404,12 @@ describe('ScrapeService (cobertura de recuperação)', () => {
     if (opts?.queueTimeoutMs !== undefined)
       process.env.SCRAPE_QUEUE_TIMEOUT_MS = String(opts.queueTimeoutMs);
     const noHttp = opts?.http === false ? { http: false } : {};
-    const af = makeSource('animefire', ['animefire.io'], undefined, noHttp);
-    const aocc = makeSource(
-      'animesonlinecc',
-      ['animesonlinecc.to'],
+    const af = makeSource(
+      'meusanimes',
+      ['animefire.io', 'player.test'],
       undefined,
       noHttp,
     );
-    const ms = makeSource('meusanimes', ['meusanimes.blog'], undefined, noHttp);
     const ta = makeSource('tioanime', ['tioanime.com'], undefined, noHttp);
     const prisma = makePrisma();
     const health = makeHealth();
@@ -1450,15 +1425,13 @@ describe('ScrapeService (cobertura de recuperação)', () => {
     };
     const svc = new ScrapeService(
       af as any,
-      aocc as any,
-      ms as any,
       ta as any,
       prisma as any,
       health as any,
       metrics as any,
       browserPool as any,
     );
-    return { svc, af, aocc, ms, ta, prisma, health, metrics, browserPool };
+    return { svc, af, ta, prisma, health, metrics, browserPool };
   }
 
   it('usa defaults de wrap/forceRefresh quando omitidos', async () => {
@@ -1531,8 +1504,7 @@ describe('ScrapeService (cobertura de recuperação)', () => {
 
   it('não registra health p/ fonte custom quando extração falha', async () => {
     const custom = makeSource('custom', ['custom.test']);
-    const ms = makeSource('meusanimes', ['meusanimes.blog']);
-    const ta = makeSource('tioanime', ['tioanime.com']);
+    const boot = makeSource('tioanime', ['tioanime.com']);
     const prisma = makePrisma();
     const health = makeHealth();
     const metrics = makeMetrics();
@@ -1547,9 +1519,7 @@ describe('ScrapeService (cobertura de recuperação)', () => {
     };
     const svc = new ScrapeService(
       custom as any,
-      ms as any,
-      ta as any,
-      ta as any,
+      boot as any,
       prisma as any,
       health as any,
       metrics as any,
