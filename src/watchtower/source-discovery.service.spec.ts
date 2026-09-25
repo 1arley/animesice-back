@@ -1,12 +1,9 @@
 import { SourceDiscovery } from '@/watchtower/source-discovery.service';
+import { SOURCE_IDS } from '@/watchtower/watchtower.types';
 
 function makeMockHealth() {
   return {
-    rankedSources: jest.fn(async () => [
-      'meusanimes',
-      'animefire',
-      'animesonlinecc',
-    ]),
+    rankedSources: jest.fn(async () => ['meusanimes', 'tioanime']),
     recordSuccess: jest.fn(async () => undefined),
     recordFailure: jest.fn(async () => undefined),
     reviveOne: jest.fn(async () => null),
@@ -82,10 +79,9 @@ describe('SourceDiscovery', () => {
 
   it('allCandidates retorna todas as fontes sem probe', () => {
     const result = discovery.allCandidates('anime-slug', 5);
-    expect(result).toHaveLength(4);
+    expect(result).toHaveLength(SOURCE_IDS.length);
     expect(result.map((c) => c.sourceId)).toContain('meusanimes');
-    expect(result.map((c) => c.sourceId)).toContain('animefire');
-    expect(result.map((c) => c.sourceId)).toContain('animesonlinecc');
+    expect(result.map((c) => c.sourceId)).toContain('tioanime');
   });
 
   it('URL meusanimes segue template <slug>-episodio-<n>/ (sem season no slug)', () => {
@@ -96,10 +92,10 @@ describe('SourceDiscovery', () => {
     );
   });
 
-  it('URL animefire segue template /animes/<slug>/<n>', () => {
+  it('URL tioanime segue template /ver/<slug>-<n>', () => {
     const result = discovery.allCandidates('solo-levelling', 3);
-    const af = result.find((c) => c.sourceId === 'animefire');
-    expect(af?.url).toBe('https://animefire.io/animes/solo-levelling/3');
+    const ta = result.find((c) => c.sourceId === 'tioanime');
+    expect(ta?.url).toBe('https://tioanime.com/ver/solo-levelling-3');
   });
 
   it('candidates prioriza episodeUrl explícito da fonte dona do host', async () => {

@@ -1308,7 +1308,7 @@ describe('ScrapeService (cobertura avançada)', () => {
   it('monta URL de episodio do meusanimes', () => {
     const { svc } = build();
     expect(svc.meusanimesEpisodeUrl('kaguya-sama', 2)).toBe(
-      'https://meusanimes.io/animes/kaguya-sama/2',
+      'https://meusanimes.blog/e/kaguya-sama-episodio-2/',
     );
   });
 
@@ -1322,7 +1322,7 @@ describe('ScrapeService (cobertura avançada)', () => {
     const v = await svc.scrapeFromAnimefire('foo', 1);
     expect(v).toBe('https://cdn.meusanimes.test/v.mp4');
     expect(spy).toHaveBeenCalledWith(
-      'https://meusanimes.io/animes/foo/1',
+      'https://animefire.io/animes/foo/1',
       undefined,
       false,
     );
