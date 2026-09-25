@@ -14,11 +14,12 @@ export class AvatarService {
     mimetype: string,
   ): Promise<string> {
     await this.prisma.$executeRaw`
-      INSERT INTO "AvatarFile" ("userId", "data", "contentType")
-      VALUES (${userId}, ${buffer}, ${mimetype})
+      INSERT INTO "AvatarFile" ("userId", "data", "contentType", "updatedAt")
+      VALUES (${userId}, ${buffer}, ${mimetype}, CURRENT_TIMESTAMP)
       ON CONFLICT ("userId") DO UPDATE SET
         "data" = EXCLUDED."data",
-        "contentType" = EXCLUDED."contentType"
+        "contentType" = EXCLUDED."contentType",
+        "updatedAt" = CURRENT_TIMESTAMP
     `;
     return `/avatars/${userId}`;
   }

@@ -81,8 +81,54 @@ export class CreateCrystalCodeDto {
   expiresAt?: string;
 }
 
+export class UpdateCrystalCodeDto {
+  @IsString()
+  @IsOptional()
+  code?: string;
+
+  @IsInt()
+  @IsOptional()
+  @Min(1)
+  @Max(2_147_483_647)
+  crystals?: number;
+
+  @IsInt()
+  @IsOptional()
+  @Min(1)
+  @Max(2_147_483_647)
+  maxUses?: number;
+
+  @IsBoolean()
+  @IsOptional()
+  active?: boolean;
+
+  @IsString()
+  @IsOptional()
+  expiresAt?: string;
+}
+
+export class RedeemCrystalCodeDto {
+  @ApiProperty({ description: 'Código a resgatar.' })
+  @IsString()
+  @IsNotEmpty()
+  code!: string;
+}
+
+export class ToggleCrystalCodeDto {
+  @ApiProperty({ description: 'Ativar ou desativar o código.' })
+  @IsBoolean()
+  active!: boolean;
+}
+
 export class RerollGachaCardDto {
   @ApiProperty({ description: 'ID da UserCard (sua) a rerrolar.' })
+  @IsString()
+  @IsNotEmpty()
+  userCardId!: string;
+}
+
+export class ApplyRankingDto {
+  @ApiProperty({ description: 'ID da UserCard (sua) para aplicar ao ranking.' })
   @IsString()
   @IsNotEmpty()
   userCardId!: string;

@@ -75,6 +75,7 @@ const PULL_SELECT = {
   foil: true,
   edition: true,
   value: true,
+  rankedValue: true,
   valueOverride: true,
   obtainedAt: true,
   user: {
@@ -870,6 +871,14 @@ export class GachaService {
             select: { editionCounter: true },
           });
           const edition = counter.editionCounter;
+          const calculatedValue = cardValue(
+            spin.card.rarity as GachaTier,
+            spin.condition,
+            spin.foil as GachaFoil,
+            edition,
+            this.config.baseValue,
+            this.config.foilMult,
+          );
           const created = await tx.userCard.create({
             data: {
               userId,
@@ -878,14 +887,8 @@ export class GachaService {
               condition: spin.condition,
               foil: spin.foil,
               edition,
-              value: cardValue(
-                spin.card.rarity as GachaTier,
-                spin.condition,
-                spin.foil as GachaFoil,
-                edition,
-                this.config.baseValue as Record<GachaTier, number>,
-                this.config.foilMult as Record<GachaFoil, number>,
-              ),
+              value: calculatedValue,
+              rankedValue: calculatedValue,
             },
             select: PULL_SELECT,
           });
@@ -1000,6 +1003,14 @@ export class GachaService {
               this.config.baseValue as Record<GachaTier, number>,
               this.config.foilMult as Record<GachaFoil, number>,
             ),
+            rankedValue: cardValue(
+              card.rarity as GachaTier,
+              condition,
+              foil,
+              edition,
+              this.config.baseValue as Record<GachaTier, number>,
+              this.config.foilMult as Record<GachaFoil, number>,
+            ),
           },
           select: PULL_SELECT,
         });
@@ -1095,6 +1106,7 @@ export class GachaService {
       where: { status: 'PUBLISHED' },
       select: {
         key: true,
+        type: true,
         name: true,
         description: true,
         price: true,
@@ -1107,6 +1119,7 @@ export class GachaService {
       activeCardBack: user.gachaCardBack,
       cosmetics: custom.map((item) => ({
         key: item.key,
+        type: item.type,
         label: item.name,
         description: item.description ?? '',
         price: item.price,
@@ -1122,45 +1135,48 @@ export class GachaService {
     if (!/^[A-Z0-9-]{4,64}$/.test(code)) {
       throw new BadRequestException('Código inválido.');
     }
-    return this.prisma.$transaction(async (tx) => {
-      const item = await tx.crystalCode.findUnique({ where: { code } });
-      if (!item || !item.active)
-        throw new NotFoundException('Código inválido ou inativo.');
-      if (item.expiresAt && item.expiresAt <= new Date())
-        throw new GoneException('Código expirado.');
-      if (item.maxUses !== null && item.uses >= item.maxUses)
-        throw new GoneException('Código esgotado.');
-      try {
-        await tx.crystalCodeRedemption.create({
-          data: { codeId: item.id, userId },
-        });
-      } catch (error) {
-        if (
-          error instanceof Prisma.PrismaClientKnownRequestError &&
-          error.code === 'P2002'
-        ) {
-          throw new ConflictException('Você já resgatou este código.');
+    return this.prisma.$transaction(
+      async (tx) => {
+        const item = await tx.crystalCode.findUnique({ where: { code } });
+        if (!item || !item.active)
+          throw new NotFoundException('Código inválido ou inativo.');
+        if (item.expiresAt && item.expiresAt <= new Date())
+          throw new GoneException('Código expirado.');
+        if (item.maxUses !== null && item.uses >= item.maxUses)
+          throw new GoneException('Código esgotado.');
+        try {
+          await tx.crystalCodeRedemption.create({
+            data: { codeId: item.id, userId },
+          });
+        } catch (error) {
+          if (
+            error instanceof Prisma.PrismaClientKnownRequestError &&
+            error.code === 'P2002'
+          ) {
+            throw new ConflictException('Você já resgatou este código.');
+          }
+          throw error;
         }
-        throw error;
-      }
-      await tx.crystalCode.update({
-        where: { id: item.id },
-        data: { uses: { increment: 1 } },
-      });
-      await this.changeCrystals(
-        tx,
-        userId,
-        item.crystals,
-        'ADMIN',
-        `crystal-code:${item.id}`,
-        `Código ${item.code}`,
-      );
-      const user = await tx.user.findUniqueOrThrow({
-        where: { id: userId },
-        select: { crystalBalance: true },
-      });
-      return { crystals: item.crystals, balance: user.crystalBalance };
-    });
+        await tx.crystalCode.update({
+          where: { id: item.id },
+          data: { uses: { increment: 1 } },
+        });
+        await this.changeCrystals(
+          tx,
+          userId,
+          item.crystals,
+          'ADMIN',
+          `crystal-code:${item.id}`,
+          `Código ${item.code}`,
+        );
+        const user = await tx.user.findUniqueOrThrow({
+          where: { id: userId },
+          select: { crystalBalance: true },
+        });
+        return { crystals: item.crystals, balance: user.crystalBalance };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
   }
 
   async adminCreateCrystalCode(input: {
@@ -1169,22 +1185,42 @@ export class GachaService {
     maxUses?: number;
     expiresAt?: string;
   }) {
-    const code =
+    if (!Number.isFinite(input.crystals) || input.crystals < 1)
+      throw new BadRequestException('Crystals deve ser um inteiro >= 1.');
+    const baseCode =
       input.code?.trim().toUpperCase() ||
       `ICE-${randomInt(100000, 1000000)}-${randomInt(100000, 1000000)}`;
-    if (!/^[A-Z0-9-]{4,64}$/.test(code))
+    if (!/^[A-Z0-9-]{4,64}$/.test(baseCode))
       throw new BadRequestException('Código inválido.');
     const expiresAt = input.expiresAt ? new Date(input.expiresAt) : null;
     if (expiresAt && Number.isNaN(expiresAt.getTime()))
       throw new BadRequestException('Validade inválida.');
-    return this.prisma.crystalCode.create({
-      data: {
-        code,
-        crystals: input.crystals,
-        maxUses: input.maxUses ?? null,
-        expiresAt,
-      },
-    });
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        return await this.prisma.crystalCode.create({
+          data: {
+            code: attempt === 0 ? baseCode : `${baseCode}-${attempt + 1}`,
+            crystals: input.crystals,
+            maxUses: input.maxUses ?? null,
+            expiresAt,
+          },
+        });
+      } catch (e: unknown) {
+        if (
+          attempt < 2 &&
+          typeof e === 'object' &&
+          e !== null &&
+          'code' in e &&
+          (e as { code: string }).code === 'P2002'
+        ) {
+          lastError = e;
+          continue;
+        }
+        throw e;
+      }
+    }
+    throw lastError;
   }
 
   adminCrystalCodes() {
@@ -1194,8 +1230,68 @@ export class GachaService {
     });
   }
 
+  adminGetCrystalCode(id: string) {
+    return this.prisma.crystalCode.findUniqueOrThrow({
+      where: { id },
+      include: { _count: { select: { redemptions: true } } },
+    });
+  }
+
   adminToggleCrystalCode(id: string, active: boolean) {
     return this.prisma.crystalCode.update({ where: { id }, data: { active } });
+  }
+
+  async adminUpdateCrystalCode(
+    id: string,
+    input: {
+      code?: string;
+      crystals?: number;
+      maxUses?: number;
+      active?: boolean;
+      expiresAt?: string;
+    },
+  ) {
+    await this.prisma.crystalCode.findUniqueOrThrow({ where: { id } });
+    const data: Record<string, unknown> = {};
+
+    if (input.code !== undefined) {
+      const code = input.code.trim().toUpperCase();
+      if (!/^[A-Z0-9-]{4,64}$/.test(code))
+        throw new BadRequestException('Código inválido.');
+      data.code = code;
+    }
+    if (input.crystals !== undefined) {
+      if (!Number.isFinite(input.crystals) || input.crystals < 1)
+        throw new BadRequestException('Crystals deve ser um inteiro >= 1.');
+      data.crystals = input.crystals;
+    }
+    if (input.maxUses !== undefined)
+      data.maxUses = input.maxUses > 0 ? input.maxUses : null;
+    if (input.active !== undefined) data.active = input.active;
+    if (input.expiresAt !== undefined) {
+      const expiresAt = input.expiresAt ? new Date(input.expiresAt) : null;
+      if (expiresAt && Number.isNaN(expiresAt.getTime()))
+        throw new BadRequestException('Validade inválida.');
+      data.expiresAt = expiresAt;
+    }
+
+    try {
+      return await this.prisma.crystalCode.update({ where: { id }, data });
+    } catch (e: unknown) {
+      if (
+        typeof e === 'object' &&
+        e !== null &&
+        'code' in e &&
+        (e as { code: string }).code === 'P2002'
+      )
+        throw new BadRequestException('Código já existe.');
+      throw e;
+    }
+  }
+
+  async adminDeleteCrystalCode(id: string) {
+    await this.prisma.crystalCode.findUniqueOrThrow({ where: { id } });
+    return this.prisma.crystalCode.delete({ where: { id } });
   }
 
   private async changeCrystals(
@@ -1298,6 +1394,40 @@ export class GachaService {
                 this.config.foilMult as Record<GachaFoil, number>,
               ),
           },
+          select: PULL_SELECT,
+        });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+    return presentPull(pull);
+  }
+
+  async applyRanking(userId: string, userCardId: string) {
+    const pull = await this.prisma.$transaction(
+      async (tx) => {
+        const card = await tx.userCard.findFirst({
+          where: { id: userCardId, userId, status: 'ACTIVE' },
+          select: PULL_SELECT,
+        });
+        if (!card) {
+          throw new NotFoundException('Carta não encontrada.');
+        }
+        if (card.value <= card.rankedValue) {
+          throw new BadRequestException('Nenhum ganho de pontos para aplicar.');
+        }
+        const diff = card.value - card.rankedValue;
+        const cost = Math.max(1, Math.round(diff * this.config.applyCostPct));
+        await this.changeCrystals(
+          tx,
+          userId,
+          -cost,
+          'SPEND',
+          userCardId,
+          `Aplicar ranking: ${card.card.name} #${card.edition}`,
+        );
+        return tx.userCard.update({
+          where: { id: userCardId },
+          data: { rankedValue: card.value },
           select: PULL_SELECT,
         });
       },
@@ -1430,11 +1560,19 @@ export class GachaService {
       select: { gachaCosmetics: true },
     });
     if (!user) throw new NotFoundException('Usuário não encontrado.');
-    if (key && !key.startsWith('BACK_')) {
-      throw new BadRequestException('Cosmético não é capa de carta.');
-    }
-    if (key && !user.gachaCosmetics.includes(key)) {
+    if (key !== null && !user.gachaCosmetics.includes(key)) {
       throw new ForbiddenException('Você não possui esta capa.');
+    }
+    if (key !== null) {
+      const back = await this.prisma.gachaCardBack.findFirst({
+        where: { key, type: 'BACK', status: 'PUBLISHED' },
+        select: { key: true },
+      });
+      if (!back) {
+        throw new BadRequestException(
+          'Cosmético não é capa de carta disponível.',
+        );
+      }
     }
     return this.prisma.user.update({
       where: { id: userId },
@@ -2820,9 +2958,9 @@ export class GachaService {
     const safeLimit = Math.min(Math.max(limit, 1), 50);
     const sums = await this.prisma.userCard.groupBy({
       by: ['userId'],
-      _sum: { value: true },
+      _sum: { rankedValue: true },
       _count: { _all: true },
-      orderBy: { _sum: { value: 'desc' } },
+      orderBy: { _sum: { rankedValue: 'desc' } },
       take: safeLimit * 2,
     });
     if (sums.length === 0) return [];
@@ -2856,7 +2994,7 @@ export class GachaService {
               userName: user.userName,
               avatar: user.avatar,
             },
-            totalValue: sum._sum.value ?? 0,
+            totalValue: sum._sum.rankedValue ?? 0,
             pulls: sum._count._all,
           },
         ];
@@ -3156,6 +3294,14 @@ export class GachaService {
           foil,
           edition: counter.editionCounter,
           value: cardValue(
+            card.rarity as GachaTier,
+            condition,
+            foil,
+            counter.editionCounter,
+            this.config.baseValue as Record<GachaTier, number>,
+            this.config.foilMult as Record<GachaFoil, number>,
+          ),
+          rankedValue: cardValue(
             card.rarity as GachaTier,
             condition,
             foil,

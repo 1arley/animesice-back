@@ -6,6 +6,7 @@ import {
   DefaultValuePipe,
   ForbiddenException,
   Get,
+  HttpCode,
   Param,
   ParseIntPipe,
   Patch,
@@ -18,6 +19,7 @@ import {
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { GachaService } from '@/gacha/gacha.service';
 import {
+  ApplyRankingDto,
   BuyCosmeticDto,
   ApplyGachaSkinDto,
   BurnGachaCardDto,
@@ -34,6 +36,9 @@ import {
   GachaCollectionPreferencesDto,
   GachaEngagementPilotDto,
   CreateCrystalCodeDto,
+  UpdateCrystalCodeDto,
+  RedeemCrystalCodeDto,
+  ToggleCrystalCodeDto,
 } from '@/gacha/dto/gacha.dto';
 import { JwtAuthGuard } from '@/auth/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from '@/auth/optional-jwt-auth.guard';
@@ -294,6 +299,17 @@ export class GachaController {
     return this.gachaService.reroll(req.user.id, dto.userCardId);
   }
 
+  @Post('apply-ranking')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  @HttpCode(200)
+  @ApiOperation({
+    summary: 'Aplica pontos do reroll ao ranking (custa crystals)',
+  })
+  applyRanking(@Req() req: AuthenticatedRequest, @Body() dto: ApplyRankingDto) {
+    return this.gachaService.applyRanking(req.user.id, dto.userCardId);
+  }
+
   @Post('burn')
   @UseGuards(JwtAuthGuard, VerifiedGuard)
   @ApiBearerAuth('JWT-auth')
@@ -501,9 +517,9 @@ export class GachaController {
   @UseGuards(JwtAuthGuard, VerifiedGuard)
   redeemCrystalCode(
     @Req() req: AuthenticatedRequest,
-    @Body() body: { code: string },
+    @Body() dto: RedeemCrystalCodeDto,
   ) {
-    return this.gachaService.redeemCrystalCode(req.user.id, body.code);
+    return this.gachaService.redeemCrystalCode(req.user.id, dto.code);
   }
 
   @Get('admin/crystal-codes')
@@ -525,9 +541,33 @@ export class GachaController {
   @Roles('ADMIN', 'SUPERADMIN')
   adminToggleCrystalCode(
     @Param('id') id: string,
-    @Body() body: { active: boolean },
+    @Body() dto: ToggleCrystalCodeDto,
   ) {
-    return this.gachaService.adminToggleCrystalCode(id, body.active);
+    return this.gachaService.adminToggleCrystalCode(id, dto.active);
+  }
+
+  @Get('admin/crystal-codes/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  adminGetCrystalCode(@Param('id') id: string) {
+    return this.gachaService.adminGetCrystalCode(id);
+  }
+
+  @Put('admin/crystal-codes/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  adminUpdateCrystalCode(
+    @Param('id') id: string,
+    @Body() dto: UpdateCrystalCodeDto,
+  ) {
+    return this.gachaService.adminUpdateCrystalCode(id, dto);
+  }
+
+  @Delete('admin/crystal-codes/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  adminDeleteCrystalCode(@Param('id') id: string) {
+    return this.gachaService.adminDeleteCrystalCode(id);
   }
 
   @Post('crystals/daily')

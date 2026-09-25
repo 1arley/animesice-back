@@ -79,6 +79,7 @@ async function main() {
         condition: 0.1,
         edition: 1,
         value: 0,
+        rankedValue: 0,
         status: 'ESCROW',
       },
     });
