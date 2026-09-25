@@ -2,6 +2,11 @@ jest.mock('child_process', () => ({
   spawn: jest.fn(),
 }));
 
+jest.mock('fs', () => ({
+  existsSync: jest.fn(),
+  default: { existsSync: jest.fn() },
+}));
+
 function fakeProc(
   overrides: { exitCode?: number | null; signalCode?: string | null } = {},
 ) {
@@ -19,6 +24,7 @@ describe('xvfb.helper', () => {
   let ensureXvfb: typeof import('./xvfb.helper').ensureXvfb;
   let waitForXvfb: typeof import('./xvfb.helper').waitForXvfb;
   let mockedSpawn: jest.Mock;
+  let mockedExistsSync: jest.Mock;
 
   beforeEach(() => {
     delete process.env.DISPLAY;
@@ -27,6 +33,11 @@ describe('xvfb.helper', () => {
     const childProcess = require('child_process');
     mockedSpawn = childProcess.spawn;
     mockedSpawn.mockReset();
+    const fs = require('fs');
+    mockedExistsSync = fs.existsSync;
+    mockedExistsSync.mockReset();
+    // Padrão: nenhum display vivo (socket ausente) → força criar/recriar.
+    mockedExistsSync.mockReturnValue(false);
     const mod = require('./xvfb.helper') as typeof import('./xvfb.helper');
     ensureXvfb = mod.ensureXvfb;
     waitForXvfb = mod.waitForXvfb;
@@ -44,11 +55,30 @@ describe('xvfb.helper', () => {
     }
   });
 
-  it('retorna DISPLAY quando já está setado', async () => {
+  it('retorna DISPLAY quando já está setado e X server vivo', async () => {
     process.env.DISPLAY = ':0';
+    mockedExistsSync.mockReturnValue(true);
     const result = await ensureXvfb();
     expect(result).toBe(':0');
     expect(mockedSpawn).not.toHaveBeenCalled();
+  });
+
+  it('descarta DISPLAY órfão (X morto) e relança Xvfb', async () => {
+    // socket ausente simulando Xvfb do entrypoint que morreu
+    mockedExistsSync.mockReturnValue(false);
+    process.env.DISPLAY = ':99';
+    const proc = fakeProc();
+    mockedSpawn.mockReturnValue(proc);
+
+    const promise = ensureXvfb();
+    jest.advanceTimersByTime(500);
+    const result = await promise;
+    expect(result).toBe(':99');
+    expect(mockedSpawn).toHaveBeenCalledWith(
+      '/usr/bin/Xvfb',
+      [':99', '-screen', '0', '1366x768x24'],
+      { stdio: 'ignore', detached: true },
+    );
   });
 
   it('inicia Xvfb e retorna display quando processo fica vivo', async () => {
@@ -77,7 +107,7 @@ describe('xvfb.helper', () => {
     expect(result).toBeNull();
   });
 
-  it('retorna display cacheado quando já iniciado anteriormente', async () => {
+  it('retorna display cacheado quando já iniciado e vivo', async () => {
     const proc = fakeProc();
     mockedSpawn.mockReturnValue(proc);
     const p1 = ensureXvfb();
@@ -85,9 +115,27 @@ describe('xvfb.helper', () => {
     await p1;
 
     mockedSpawn.mockClear();
+    mockedExistsSync.mockReturnValue(true);
     const r2 = await ensureXvfb();
     expect(r2).toBe(':99');
     expect(mockedSpawn).not.toHaveBeenCalled();
+  });
+
+  it('relança Xvfb quando display anterior morreu', async () => {
+    const proc = fakeProc();
+    mockedSpawn.mockReturnValue(proc);
+    const p1 = ensureXvfb();
+    jest.advanceTimersByTime(500);
+    await p1;
+
+    // Xvfb morreu: socket some, DISPLAY continua setado.
+    mockedExistsSync.mockReturnValue(false);
+    mockedSpawn.mockClear();
+    const p2 = ensureXvfb();
+    jest.advanceTimersByTime(500);
+    const r2 = await p2;
+    expect(r2).toBe(':99');
+    expect(mockedSpawn).toHaveBeenCalled();
   });
 
   it('limpa cache quando Xvfb emite error', async () => {
