@@ -14,6 +14,16 @@ interface CatalogEntry {
   url: string;
 }
 
+/** Resultado de um scan: entradas + a fonte que de fato as produziu. */
+interface CatalogScan {
+  sourceId: string;
+  /** Slug real na fonte (p/ persistir como AnimeSource.externalKey). */
+  sourceSlug: string;
+  entries: CatalogEntry[];
+}
+
+const EMPTY_SCAN: CatalogScan = { sourceId: '', sourceSlug: '', entries: [] };
+
 @Injectable()
 export class CatalogScanner implements OnModuleInit {
   constructor(
@@ -28,14 +38,38 @@ export class CatalogScanner implements OnModuleInit {
   }
 
   /**
-   * Escaneia um anime específico no meusanimes.blog e retorna todas as temporadas+episódios.
-   * Se o slug sibling (ex: "kaguya-sama-love-is-war-2") 404, tenta o slug base
-   * (ex: "kaguya-sama-love-is-war") — meusanimes publica todas temporadas na mesma página.
+   * Escaneia um anime em todas as fontes conhecidas, na ordem de prioridade, e
+   * devolve a PRIMEIRA que tiver episódios + qual fonte foi a vencedora.
+   *
+   * Ordem: meusanimes (base) -> animesdigital (fallback). Fontes sem URL
+   * derivável por slug (animesdigital usa post-ID do WordPress) só entram pelo
+   * caminho de descoberta de catálogo, nunca por template.
    */
+  async scanAnimeResolved(
+    animeSlug: string,
+    animeId?: string,
+  ): Promise<CatalogScan> {
+    const meusanimes = await this.scanMeusanimes(animeSlug, animeId);
+    if (meusanimes.entries.length > 0) return meusanimes;
+    return this.scanAnimesdigital(animeSlug, animeId);
+  }
+
+  /** Compatibilidade: só as entradas (sem metadados da fonte). */
   async scanAnime(
     animeSlug: string,
     animeId?: string,
   ): Promise<CatalogEntry[]> {
+    return (await this.scanAnimeResolved(animeSlug, animeId)).entries;
+  }
+
+  /**
+   * Escaneia no meusanimes.blog. Se o slug sibling (ex: "kaguya-...-2") 404,
+   * tenta o slug base — meusanimes publica todas temporadas na mesma página.
+   */
+  private async scanMeusanimes(
+    animeSlug: string,
+    animeId?: string,
+  ): Promise<CatalogScan> {
     const mapping = animeId
       ? await Promise.resolve(
           this.prisma.animeSource?.findUnique({
@@ -45,20 +79,73 @@ export class CatalogScanner implements OnModuleInit {
         ).catch(() => null)
       : null;
     const mappedSlug = mapping?.externalKey ?? animeSlug;
-    const entries = await this.tryScan(mappedSlug);
-    if (entries.length > 0) return entries;
+    const found = async (slug: string): Promise<CatalogScan> => {
+      const entries = await this.tryScan(slug);
+      return entries.length > 0
+        ? { sourceId: 'meusanimes', sourceSlug: slug, entries }
+        : EMPTY_SCAN;
+    };
+
+    const entries = await found(mappedSlug);
+    if (entries.entries.length > 0) return entries;
 
     // Slug sibling 404 — tenta slug base (sem sufixo de temporada)
     const baseSlug = mappedSlug.replace(/-\d+$/, '');
     if (baseSlug !== mappedSlug) {
       console.error(
-        `[CATALOG] ${animeSlug} vazio — tentando slug base: ${baseSlug}`,
+        `[CATALOG] ${animeSlug} vazio no meusanimes — tentando slug base: ${baseSlug}`,
       );
-      return this.tryScan(baseSlug);
+      const viaBase = await found(baseSlug);
+      if (viaBase.entries.length > 0) return viaBase;
     }
-    if (process.env.NODE_ENV === 'test') return [];
+    if (process.env.NODE_ENV === 'test') return EMPTY_SCAN;
+
     const discovered = await this.discoverSlug(animeSlug);
-    return discovered ? this.tryScan(discovered) : [];
+    return discovered ? found(discovered) : EMPTY_SCAN;
+  }
+
+  /**
+   * Escaneia no animesdigital.org (fallback). O slug costuma bater com o
+   * animesice, mas a busca do site é usada como plano B — nunca por reescrita
+   * de slug. IMPORTANTE: as páginas de episódio usam post-ID do WordPress
+   * (`/video/a/<id>/`), então não existe template por slug; o catálogo é a
+   * única forma de obter as URLs. Site de temporada única: tudo vai p/ S1.
+   */
+  private async scanAnimesdigital(
+    animeSlug: string,
+    animeId?: string,
+  ): Promise<CatalogScan> {
+    if (process.env.ANIMESDIGITAL_ENABLED !== 'true') return EMPTY_SCAN;
+
+    const mapping = animeId
+      ? await Promise.resolve(
+          this.prisma.animeSource?.findUnique({
+            where: { animeId_sourceId: { animeId, sourceId: 'animesdigital' } },
+            select: { externalKey: true },
+          }),
+        ).catch(() => null)
+      : null;
+
+    const candidates: string[] = [];
+    for (const raw of [mapping?.externalKey, animeSlug]) {
+      const slug = raw?.replace(/-\d+$/, '').trim();
+      if (slug && !candidates.includes(slug)) candidates.push(slug);
+    }
+
+    for (const slug of candidates) {
+      const entries = await this.tryScanAnimesdigital(slug);
+      if (entries.length > 0) {
+        return { sourceId: 'animesdigital', sourceSlug: slug, entries };
+      }
+    }
+
+    if (process.env.NODE_ENV === 'test') return EMPTY_SCAN;
+    const discovered = await this.discoverAnimesdigitalSlug(animeSlug);
+    if (!discovered) return EMPTY_SCAN;
+    const entries = await this.tryScanAnimesdigital(discovered);
+    return entries.length > 0
+      ? { sourceId: 'animesdigital', sourceSlug: discovered, entries }
+      : EMPTY_SCAN;
   }
 
   /** Resolve MeusAnimes identity via its own search, never by slug rewriting. */
@@ -97,6 +184,107 @@ export class CatalogScanner implements OnModuleInit {
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, ' ')
       .trim();
+  }
+
+  /** Busca no animesdigital.org -> slug da página /anime/a/<slug>. */
+  private async discoverAnimesdigitalSlug(
+    animeSlug: string,
+  ): Promise<string | null> {
+    const query = animeSlug.replace(/-\d+$/, '').replace(/-/g, ' ').trim();
+    if (!query) return null;
+    const url = `https://animesdigital.org/?s=${encodeURIComponent(query)}`;
+    let html: string;
+    try {
+      const res = await fetch(url, {
+        headers: { 'user-agent': UA, accept: 'text/html' },
+        redirect: 'follow',
+      });
+      if (!res.ok) return null;
+      html = await res.text();
+    } catch {
+      return null;
+    }
+
+    const wantedDub = /\bdublado\b/i.test(query);
+    const normalizedQuery = this.normalize(query);
+    const links = [
+      ...html.matchAll(
+        /href=['"](?:https:\/\/animesdigital\.org)?\/anime\/a\/([^/'"?#]+)\/?['"]/gi,
+      ),
+    ]
+      .map((m) => m[1]!)
+      .filter((s) => /\bdublado\b/i.test(s) === wantedDub);
+    const exact = links.find(
+      (s) => this.normalize(s.replace(/-/g, ' ')) === normalizedQuery,
+    );
+    return exact ?? links[0] ?? null;
+  }
+
+  /** Baixa a página /anime/a/<slug> do animesdigital e extrai os episódios. */
+  private async tryScanAnimesdigital(slug: string): Promise<CatalogEntry[]> {
+    const url = `https://animesdigital.org/anime/a/${slug}`;
+    console.error(`[CATALOG] scanning ${url}`);
+
+    let html: string;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20_000);
+    try {
+      const res = await fetch(url, {
+        headers: {
+          'user-agent': UA,
+          accept: 'text/html,application/xhtml+xml',
+          'accept-language': 'pt-BR,pt;q=0.9',
+        },
+        redirect: 'follow',
+        signal: controller.signal,
+      });
+      if (!res.ok) throw new Error(`${url} retornou ${res.status}`);
+      html = await res.text();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[CATALOG] fetch falhou p/ ${url}:`, msg);
+      return [];
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    const entries = this.parseAnimesdigitalCatalog(html);
+    console.error(
+      `[CATALOG] animesdigital ${slug}: ${entries.length} episódios encontrados`,
+    );
+    return entries;
+  }
+
+  /**
+   * Parseia a listagem do animesdigital.org. Cada episódio é um card
+   * `<a href=".../video/a/<postId>/">` cujo corpo traz o rótulo
+   * "… Episódio NN" (no <img alt>/<title> ou em div.title_anime).
+   *
+   * O corpo do anchor é limitado a 1200 chars e não pode conter outro `<a`, o
+   * que impede o regex de atravessar o card e capturar o "Episódio" do seguinte.
+   */
+  private parseAnimesdigitalCatalog(html: string): CatalogEntry[] {
+    const entries: CatalogEntry[] = [];
+    const seen = new Set<number>();
+
+    const cardRe =
+      /<a\s+href=['"](https:\/\/animesdigital\.org\/video\/a\/\d+)\/?['"][^>]*>((?:(?!<a[\s>])[\s\S]){0,1200}?)<\/a>/gi;
+
+    let match: RegExpExecArray | null;
+    while ((match = cardRe.exec(html)) !== null) {
+      const url = (match[1] ?? '').trim();
+      const label = match[2] ?? '';
+      const num = label.match(/Epis[oó]dio\s*0*(\d{1,4})/i)?.[1];
+      if (!url || !num) continue;
+      const episode = parseInt(num, 10);
+      if (!Number.isFinite(episode) || episode <= 0) continue;
+      if (seen.has(episode)) continue;
+      seen.add(episode);
+      entries.push({ season: 1, episode, url });
+    }
+
+    entries.sort((a, b) => a.episode - b.episode);
+    return entries;
   }
 
   private async tryScan(animeSlug: string): Promise<CatalogEntry[]> {
@@ -203,7 +391,8 @@ export class CatalogScanner implements OnModuleInit {
     animeId: string,
     slug: string,
   ): Promise<{ found: number; missing: number }> {
-    const entries = await this.scanAnime(slug, animeId);
+    const scan = await this.scanAnimeResolved(slug, animeId);
+    const { entries } = scan;
     if (entries.length === 0) return { found: 0, missing: 0 };
 
     // Detecta se este anime é um sibling (slug termina em -<n>)
@@ -240,16 +429,27 @@ export class CatalogScanner implements OnModuleInit {
     });
     if (!baseAnime) return { found: 0, missing: 0 };
 
-    const catalogSlug = entries[0]?.url.match(
-      /https:\/\/meusanimes\.blog\/e\/([^/]+)\//i,
-    )?.[1];
-    const seriesSlug = catalogSlug?.replace(/-episodio-\d+.*$/i, '') ?? slug;
+    // Persiste o mapeamento na fonte que de fato respondeu.
+    // meusanimes: mantém o comportamento anterior — externalKey é derivado da
+    // URL do episódio (o catálogo publica as temporadas na mesma página).
+    // animesdigital: é série única, então o slug da própria página é a chave.
+    const sourceId = scan.sourceId || 'meusanimes';
+    const seriesSlug =
+      entries[0]?.url
+        .match(/https:\/\/meusanimes\.blog\/e\/([^/]+)\//i)?.[1]
+        ?.replace(/-episodio-\d+.*$/i, '') ?? slug;
+    const externalKey =
+      sourceId === 'animesdigital' ? scan.sourceSlug : seriesSlug;
+    const externalUrl =
+      sourceId === 'animesdigital'
+        ? `https://animesdigital.org/anime/a/${scan.sourceSlug}`
+        : `https://meusanimes.blog/a/${seriesSlug}/`;
     await this.prisma.animeSource
       ?.upsert({
-        where: { animeId_sourceId: { animeId, sourceId: 'meusanimes' } },
+        where: { animeId_sourceId: { animeId, sourceId } },
         update: {
-          externalUrl: `https://meusanimes.blog/a/${seriesSlug}/`,
-          externalKey: seriesSlug,
+          externalUrl,
+          externalKey,
           audio: baseAnime.audio,
           confidence: 1,
           verifiedAt: new Date(),
@@ -257,9 +457,9 @@ export class CatalogScanner implements OnModuleInit {
         },
         create: {
           animeId,
-          sourceId: 'meusanimes',
-          externalUrl: `https://meusanimes.blog/a/${seriesSlug}/`,
-          externalKey: seriesSlug,
+          sourceId,
+          externalUrl,
+          externalKey,
           audio: baseAnime.audio,
           confidence: 1,
           verifiedAt: new Date(),
