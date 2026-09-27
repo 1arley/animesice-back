@@ -282,4 +282,109 @@ describe('EmbedService (proxy HTML/mídia + anti-SSRF)', () => {
       service.proxyHtml('https://animefire.io/start'),
     ).rejects.toThrow(BadGatewayException);
   });
+
+  describe('rewriteHlsPlaylist (proxy de segmentos HLS)', () => {
+    const read = async (res: { body: Readable }) => {
+      const chunks: Buffer[] = [];
+      for await (const c of res.body) {
+        chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c as Uint8Array));
+      }
+      return Buffer.concat(chunks).toString('utf8');
+    };
+
+    const playlist = (...lines: string[]) =>
+      new Response(lines.join('\n'), {
+        status: 200,
+        headers: { 'content-type': 'application/vnd.apple.mpegurl' },
+      });
+
+    it('reescreve segmentos absolutos para o proxy', async () => {
+      (global.fetch as jest.Mock).mockResolvedValue(
+        playlist(
+          '#EXTM3U',
+          '#EXTINF:10.000,',
+          'https://cdn.animefire.io/stream/ep1/seg-1.webp',
+          '',
+        ),
+      );
+      const out = await read(
+        await service.proxyMedia('https://cdn.animefire.io/stream/ep1.m3u8'),
+      );
+      expect(out).toContain(
+        `/api/embed/media?url=${encodeURIComponent(
+          'https://cdn.animefire.io/stream/ep1/seg-1.webp',
+        )}`,
+      );
+    });
+
+    it('resolve segmentos RELATIVOS contra a URL da playlist (animesdigital)', async () => {
+      // animesdigital/mywallpaper publica HLS com caminhos relativos; sem
+      // resolver, o hls.js buscaria "seg-1.webp" contra /api/embed/media.
+      // O host precisa estar na EMBED_ALLOWED_HOSTS (fail-closed).
+      const adService = createService(
+        `${allowedHosts},mywallpaper-4k-image.net`,
+      );
+      (global.fetch as jest.Mock).mockResolvedValue(
+        playlist(
+          '#EXTM3U',
+          '#EXTINF:10.000,',
+          'seg-1-v1-a1.webp',
+          '#EXTINF:10.000,',
+          'seg-2-v1-a1.webp',
+          '',
+        ),
+      );
+      const out = await read(
+        await adService.proxyMedia(
+          'https://mywallpaper-4k-image.net/stream/sv/j/jojo/01.mp4/index.m3u8',
+        ),
+      );
+      expect(out).toContain(
+        `/api/embed/media?url=${encodeURIComponent(
+          'https://mywallpaper-4k-image.net/stream/sv/j/jojo/01.mp4/seg-1-v1-a1.webp',
+        )}`,
+      );
+      expect(out).toContain(
+        `/api/embed/media?url=${encodeURIComponent(
+          'https://mywallpaper-4k-image.net/stream/sv/j/jojo/01.mp4/seg-2-v1-a1.webp',
+        )}`,
+      );
+    });
+
+    it('recusa host de mídia fora da allowlist (fail-closed)', async () => {
+      await expect(
+        service.proxyMedia('https://mywallpaper-4k-image.net/ep.m3u8'),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('resolve segmento relativo com query string própria', async () => {
+      (global.fetch as jest.Mock).mockResolvedValue(
+        playlist('#EXTM3U', 'seg-1.ts?token=abc', ''),
+      );
+      const out = await read(
+        await service.proxyMedia('https://cdn.animefire.io/a/b/index.m3u8'),
+      );
+      expect(out).toContain(
+        encodeURIComponent('https://cdn.animefire.io/a/b/seg-1.ts?token=abc'),
+      );
+    });
+
+    it('mantém tags HLS intactas', async () => {
+      (global.fetch as jest.Mock).mockResolvedValue(
+        playlist(
+          '#EXTM3U',
+          '#EXT-X-TARGETDURATION:10',
+          '#EXTINF:10.000,',
+          'seg-1.webp',
+          '',
+        ),
+      );
+      const out = await read(
+        await service.proxyMedia('https://cdn.animefire.io/ep.m3u8'),
+      );
+      expect(out).toContain('#EXT-X-TARGETDURATION:10');
+      expect(out).toContain('#EXTINF:10.000,');
+      expect(out).not.toContain('media?url=%23EXT');
+    });
+  });
 });
