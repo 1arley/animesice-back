@@ -391,8 +391,15 @@ export class EmbedService {
     // têm extensão .webp e URLs absolutas. O browser/hls.js tenta buscar os
     // segmentos direto do CDN, mas sem Referer correto o anti-hotlinking
     // bloqueia. Reescrevemos a playlist para rotear segmentos pelo proxy.
+    // animesdigital (mywallpaper-4k-image.net) publica o mesmo HLS com
+    // segmentos RELATIVOS — precisam ser resolvidos contra a URL da playlist
+    // antes de virarem URL de proxy, senão o player resolve contra /api/embed.
     if (this.isHlsPlaylist(cleanHeaders, validated)) {
-      const rewritten = await this.rewriteHlsPlaylist(body, refOrigin);
+      const rewritten = await this.rewriteHlsPlaylist(
+        body,
+        refOrigin,
+        validated,
+      );
       body.destroy();
       await dispatcher.close().catch(() => undefined);
       body = rewritten;
@@ -421,15 +428,20 @@ export class EmbedService {
 
   /**
    * Lê um stream de playlist HLS como texto e reescreve URLs de segmentos
-   * absolutas (CDN) para URLs relativas do proxy (/api/embed/media?url=...).
+   * (CDN) para URLs relativas do proxy (/api/embed/media?url=...).
    * Assim o browser routa os segmentos pelo proxy, que injeta Referer correto
    * (anti-hotlinking) e streama o conteúdo.
    *
-   * URLs já relativas ou não-HTTP são mantidas. Tags (#EXT...) são ignoradas.
+   * Segmentos relativos (animesdigital) são resolvidos contra `playlistUrl`
+   * antes da reescrita — sem isso o hls.js os resolveria contra
+   * /api/embed/media?url=... e o stream não tocaria. URLs já absolutas
+   * permanecem idênticas, então fontes existentes não mudam de comportamento.
+   * Linhas vazias, tags (#EXT...) e URIs não-http são mantidas.
    */
   private async rewriteHlsPlaylist(
     stream: Readable,
     referer: string,
+    playlistUrl: string,
   ): Promise<Readable> {
     const collected: Uint8Array[] = [];
     for await (const chunk of stream) {
@@ -447,11 +459,18 @@ export class EmbedService {
         const trimmed = line.trim();
         // Ignora linhas vazias e tags HLS
         if (!trimmed || trimmed.startsWith('#')) return line;
-        // Só reescreve URLs absolutas http(s)
-        if (/^https?:\/\//i.test(trimmed)) {
-          return `/${apiPrefix}/embed/media?url=${encodeURIComponent(trimmed)}&referer=${encodedReferer}`;
+
+        let absolute = trimmed;
+        if (!/^https?:\/\//i.test(trimmed)) {
+          try {
+            absolute = new URL(trimmed, playlistUrl).toString();
+          } catch {
+            return line; // não é um URI resolvível — mantém como está
+          }
+          if (!/^https?:\/\//i.test(absolute)) return line;
         }
-        return line;
+
+        return `/${apiPrefix}/embed/media?url=${encodeURIComponent(absolute)}&referer=${encodedReferer}`;
       })
       .join('\n');
 
