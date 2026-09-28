@@ -140,12 +140,12 @@ describe('HealthMonitor', () => {
     const result = await health.rankedSources();
     expect(result).toHaveLength(SOURCE_IDS.length);
     expect(result).toContain('meusanimes');
-    expect(result).toContain('tioanime');
+    expect(result).toContain('animesonline');
   });
 
   it('rankedSources exclui fontes disabled', async () => {
-    mock.store.set('tioanime', {
-      sourceId: 'tioanime',
+    mock.store.set('animesonline', {
+      sourceId: 'animesonline',
       successCount: 1,
       failureCount: 0,
       consecutiveFailures: 0,
@@ -153,7 +153,7 @@ describe('HealthMonitor', () => {
       disabled: true,
     });
     const result = await health.rankedSources();
-    expect(result).not.toContain('tioanime');
+    expect(result).not.toContain('animesonline');
     expect(result).toHaveLength(SOURCE_IDS.length - 1);
   });
 

@@ -21,7 +21,7 @@ function makeMocks() {
     scrapeEpisodeVideo: jest.fn(),
     scrapeFromMeusanimes: jest.fn(),
     scrapeFromAnimefire: jest.fn(),
-    scrapeFromTioanime: jest.fn(),
+    scrapeFromAnimesonline: jest.fn(),
     reextractEpisodeVideo: jest.fn(),
   };
   const extractionJobs = {
@@ -1110,7 +1110,7 @@ describe('StreamingService.getSource', () => {
     ).rejects.toThrow(NotFoundException);
   });
 
-  it('doSingleScrape usa tioanime quando meusanimes e animefire falham', async () => {
+  it('doSingleScrape usa animesonline quando meusanimes e animefire falham', async () => {
     const { prisma, scrapeService, svc } = makeMocks();
     prisma.anime.findUnique.mockResolvedValue({
       id: 'a1',
@@ -1128,8 +1128,8 @@ describe('StreamingService.getSource', () => {
     );
     scrapeService.scrapeFromMeusanimes.mockResolvedValue(null);
     scrapeService.scrapeFromAnimefire.mockResolvedValue(null);
-    scrapeService.scrapeFromTioanime.mockResolvedValue(
-      'https://cdn.tioanime.example/v.mp4',
+    scrapeService.scrapeFromAnimesonline.mockResolvedValue(
+      'https://cdn.animesonline.example/v.mp4',
     );
 
     const result = await svc.getSource(
@@ -1137,15 +1137,15 @@ describe('StreamingService.getSource', () => {
       1,
       'https://api.animesice.app',
     );
-    expect(result.rawVideoUrl).toBe('https://cdn.tioanime.example/v.mp4');
+    expect(result.rawVideoUrl).toBe('https://cdn.animesonline.example/v.mp4');
     expect(result.reextracted).toBe(true);
-    expect(scrapeService.scrapeFromTioanime).toHaveBeenCalledWith(
+    expect(scrapeService.scrapeFromAnimesonline).toHaveBeenCalledWith(
       'anime-tio-fallback',
       1,
     );
   });
 
-  it('mantém 404 quando todas as 4 fontes falham (incluindo tioanime)', async () => {
+  it('mantém 404 quando todas as 4 fontes falham (incluindo animesonline)', async () => {
     const { prisma, scrapeService, svc } = makeMocks();
     prisma.anime.findUnique.mockResolvedValue({
       id: 'a1',
@@ -1164,14 +1164,14 @@ describe('StreamingService.getSource', () => {
     });
     scrapeService.scrapeFromMeusanimes.mockResolvedValue(null);
     scrapeService.scrapeFromAnimefire.mockResolvedValue(null);
-    scrapeService.scrapeFromTioanime.mockResolvedValue(null);
+    scrapeService.scrapeFromAnimesonline.mockResolvedValue(null);
 
     await expect(
       svc.getSource('anime-all-fail-4', 1, 'https://api.animesice.app'),
     ).rejects.toThrow(NotFoundException);
   });
 
-  it('em 403 tenta tioanime quando meusanimes e animefire falham no proxyVideo', async () => {
+  it('em 403 tenta animesonline quando meusanimes e animefire falham no proxyVideo', async () => {
     const { prisma, embedService, scrapeService, svc } = makeMocks();
     const expiresAt = new Date(Date.now() + 9999000);
     prisma.streamingToken.findUnique.mockResolvedValue({
@@ -1197,14 +1197,17 @@ describe('StreamingService.getSource', () => {
     scrapeService.reextractEpisodeVideo.mockResolvedValue(null);
     scrapeService.scrapeFromMeusanimes.mockResolvedValue(null);
     scrapeService.scrapeFromAnimefire.mockResolvedValue(null);
-    scrapeService.scrapeFromTioanime.mockResolvedValue(
-      'https://cdn.tioanime.example/v.mp4',
+    scrapeService.scrapeFromAnimesonline.mockResolvedValue(
+      'https://cdn.animesonline.example/v.mp4',
     );
 
     const future = Math.floor(Date.now() / 1000) + 9999;
     const result = await svc.proxyVideo('tok', future, '127.0.0.1');
     expect(result.status).toBe(200);
-    expect(scrapeService.scrapeFromTioanime).toHaveBeenCalledWith('anime', 1);
+    expect(scrapeService.scrapeFromAnimesonline).toHaveBeenCalledWith(
+      'anime',
+      1,
+    );
   });
 });
 
@@ -1664,7 +1667,7 @@ describe('StreamingService (cobertura de recuperação)', () => {
     expect(out.rawVideoUrl).toBe('https://cdn.test/live3.mp4');
   });
 
-  it('descarta fallbacks mortos e usa tioanime', async () => {
+  it('descarta fallbacks mortos e usa animesonline', async () => {
     const { prisma, scrapeService, svc } = makeMocks();
     mockEpisode(prisma);
     probeSpy.mockImplementation((url: string) =>
@@ -1680,7 +1683,7 @@ describe('StreamingService (cobertura de recuperação)', () => {
     scrapeService.scrapeFromAnimefire.mockResolvedValue(
       'https://dead2.test/v.mp4',
     );
-    scrapeService.scrapeFromTioanime.mockResolvedValue(
+    scrapeService.scrapeFromAnimesonline.mockResolvedValue(
       'https://cdn.test/live4.mp4',
     );
     const out = await svc.getSource('anime', 1, 'https://api.test', 1, false);
@@ -1697,7 +1700,7 @@ describe('StreamingService (cobertura de recuperação)', () => {
     });
     scrapeService.scrapeFromMeusanimes.mockResolvedValue(null);
     scrapeService.scrapeFromAnimefire.mockResolvedValue(null);
-    scrapeService.scrapeFromTioanime.mockResolvedValue(null);
+    scrapeService.scrapeFromAnimesonline.mockResolvedValue(null);
     const out = await svc.getSource('anime', 1, 'https://api.test', 1, false);
     expect(out.src).toContain('/api/embed/proxy');
   });
@@ -1827,7 +1830,7 @@ describe('StreamingService (cobertura de recuperação)', () => {
     scrapeService.scrapeFromAnimefire.mockResolvedValue(
       'https://dead3.test/v.mp4',
     );
-    scrapeService.scrapeFromTioanime.mockResolvedValue(
+    scrapeService.scrapeFromAnimesonline.mockResolvedValue(
       'https://cdn.test/final.mp4',
     );
     const result = await svc.proxyVideo('tok', future, '127.0.0.1');
@@ -1843,7 +1846,7 @@ describe('StreamingService (cobertura de recuperação)', () => {
     });
   });
 
-  it('proxyVideo lança 403 quando até o tioanime está morto', async () => {
+  it('proxyVideo lança 403 quando até o animesonline está morto', async () => {
     const { prisma, embedService, scrapeService, svc } = makeMocks();
     const future = mockValidToken(prisma);
     probeSpy.mockImplementation((url: string) =>
@@ -1857,7 +1860,7 @@ describe('StreamingService (cobertura de recuperação)', () => {
     scrapeService.scrapeFromAnimefire.mockResolvedValue(
       'https://dead3.test/v.mp4',
     );
-    scrapeService.scrapeFromTioanime.mockResolvedValue(
+    scrapeService.scrapeFromAnimesonline.mockResolvedValue(
       'https://dead4.test/v.mp4',
     );
     await expect(svc.proxyVideo('tok', future, '127.0.0.1')).rejects.toThrow(
@@ -1880,7 +1883,7 @@ describe('StreamingService (cobertura de recuperação)', () => {
     expect(result.status).toBe(206);
   });
 
-  it('usa tioanime quando fallbacks retornam null', async () => {
+  it('usa animesonline quando fallbacks retornam null', async () => {
     const { prisma, scrapeService, svc } = makeMocks();
     mockEpisode(prisma);
     scrapeService.scrapeEpisodeVideo.mockResolvedValue({
@@ -1889,14 +1892,14 @@ describe('StreamingService (cobertura de recuperação)', () => {
     });
     scrapeService.scrapeFromMeusanimes.mockResolvedValue(null);
     scrapeService.scrapeFromAnimefire.mockResolvedValue(null);
-    scrapeService.scrapeFromTioanime.mockResolvedValue(
+    scrapeService.scrapeFromAnimesonline.mockResolvedValue(
       'https://cdn.test/live5.mp4',
     );
     const out = await svc.getSource('anime', 1, 'https://api.test', 1, false);
     expect(out.rawVideoUrl).toBe('https://cdn.test/live5.mp4');
   });
 
-  it('descarta tioanime morto e mantém 404', async () => {
+  it('descarta animesonline morto e mantém 404', async () => {
     const { prisma, scrapeService, svc } = makeMocks();
     mockEpisode(prisma);
     probeSpy.mockImplementation((url: string) =>
@@ -1908,7 +1911,7 @@ describe('StreamingService (cobertura de recuperação)', () => {
     });
     scrapeService.scrapeFromMeusanimes.mockResolvedValue(null);
     scrapeService.scrapeFromAnimefire.mockResolvedValue(null);
-    scrapeService.scrapeFromTioanime.mockResolvedValue(
+    scrapeService.scrapeFromAnimesonline.mockResolvedValue(
       'https://dead9.test/v.mp4',
     );
     await expect(

@@ -63,7 +63,7 @@ function makeSource(
 
 function makeHealth() {
   return {
-    rankedSources: jest.fn(async () => ['meusanimes', 'tioanime']),
+    rankedSources: jest.fn(async () => ['meusanimes', 'animesonline']),
     recordSuccess: jest.fn(async () => undefined),
     recordFailure: jest.fn(async () => undefined),
     isDisabled: jest.fn(async (_id: string): Promise<boolean> => false),
@@ -178,7 +178,7 @@ describe('ScrapeService (orquestração + cache SWR)', () => {
       process.env.SCRAPE_QUEUE_TIMEOUT_MS = String(opts.queueTimeoutMs);
     }
     const af = makeSource('meusanimes', ['meusanimes.io', 'player.test']);
-    const ta = makeSource('tioanime', ['tioanime.com']);
+    const ta = makeSource('animesonline', ['animesonline.cloud']);
     const prisma = makePrisma();
     const health = makeHealth();
     const metrics = makeMetrics();
@@ -204,7 +204,7 @@ describe('ScrapeService (orquestração + cache SWR)', () => {
 
   it('usa a ordem do HealthMonitor quando múltiplas fontes suportam a URL', async () => {
     const { svc, af, health } = build();
-    health.rankedSources.mockResolvedValue(['meusanimes', 'tioanime']);
+    health.rankedSources.mockResolvedValue(['meusanimes', 'animesonline']);
     af.supports = (u) => u.includes('player.test');
     const res = await svc.scrapeEpisodeVideo(
       'https://player.test/ep/1',
@@ -518,7 +518,7 @@ describe('ScrapeService (cobertura avançada)', () => {
     if (opts?.queueTimeoutMs !== undefined)
       process.env.SCRAPE_QUEUE_TIMEOUT_MS = String(opts.queueTimeoutMs);
     const af = makeSource('meusanimes', ['meusanimes.io', 'player.test']);
-    const ta = makeSource('tioanime', ['tioanime.com']);
+    const ta = makeSource('animesonline', ['animesonline.cloud']);
     const prisma = makePrisma();
     const health = makeHealth();
     const metrics = makeMetrics();
@@ -953,7 +953,7 @@ describe('ScrapeService (cobertura avançada)', () => {
         }),
       },
     );
-    const ta = makeSource('tioanime', ['tioanime.com']);
+    const ta = makeSource('animesonline', ['animesonline.cloud']);
     const prisma = makePrisma();
     const health = makeHealth();
     const metrics = makeMetrics();
@@ -1412,7 +1412,12 @@ describe('ScrapeService (cobertura de recuperação)', () => {
       undefined,
       noHttp,
     );
-    const ta = makeSource('tioanime', ['tioanime.com'], undefined, noHttp);
+    const ta = makeSource(
+      'animesonline',
+      ['animesonline.cloud'],
+      undefined,
+      noHttp,
+    );
     const prisma = makePrisma();
     const health = makeHealth();
     const metrics = makeMetrics();
@@ -1506,7 +1511,7 @@ describe('ScrapeService (cobertura de recuperação)', () => {
 
   it('não registra health p/ fonte custom quando extração falha', async () => {
     const custom = makeSource('custom', ['custom.test']);
-    const boot = makeSource('tioanime', ['tioanime.com']);
+    const boot = makeSource('animesonline', ['animesonline.cloud']);
     const prisma = makePrisma();
     const health = makeHealth();
     const metrics = makeMetrics();
@@ -1620,33 +1625,33 @@ describe('ScrapeService (cobertura de recuperação)', () => {
     expect(spy).toHaveBeenCalled();
   });
 
-  it('scrapeFromTioanime retorna vídeo quando resolve', async () => {
+  it('scrapeFromAnimesonline retorna vídeo quando resolve', async () => {
     const { svc } = build();
     jest.spyOn(svc, 'scrapeEpisodeVideo').mockResolvedValue({
       videos: ['https://cdn.test/t.mp4'],
       iframes: [],
       cloudflare: false,
     });
-    await expect(svc.scrapeFromTioanime('foo', 1)).resolves.toBe(
+    await expect(svc.scrapeFromAnimesonline('foo', 1)).resolves.toBe(
       'https://cdn.test/t.mp4',
     );
   });
 
-  it('scrapeFromTioanime retorna null sem vídeo ou com erro', async () => {
+  it('scrapeFromAnimesonline retorna null sem vídeo ou com erro', async () => {
     const { svc } = build();
     const spy = jest.spyOn(svc, 'scrapeEpisodeVideo');
     spy.mockResolvedValueOnce({ videos: [], iframes: [], cloudflare: false });
-    await expect(svc.scrapeFromTioanime('foo', 1)).resolves.toBeNull();
-    spy.mockRejectedValueOnce(new Error('tio down'));
-    await expect(svc.scrapeFromTioanime('foo', 1)).resolves.toBeNull();
-    spy.mockRejectedValueOnce('tio down string');
-    await expect(svc.scrapeFromTioanime('foo', 1)).resolves.toBeNull();
+    await expect(svc.scrapeFromAnimesonline('foo', 1)).resolves.toBeNull();
+    spy.mockRejectedValueOnce(new Error('animesonline down'));
+    await expect(svc.scrapeFromAnimesonline('foo', 1)).resolves.toBeNull();
+    spy.mockRejectedValueOnce('animesonline down string');
+    await expect(svc.scrapeFromAnimesonline('foo', 1)).resolves.toBeNull();
   });
 
-  it('monta URL de episódio do tioanime', () => {
+  it('monta URL de episódio do animesonline', () => {
     const { svc } = build();
-    expect(svc.tioanimeEpisodeUrl('foo', 2)).toBe(
-      'https://tioanime.com/ver/foo-2',
+    expect(svc.animesonlineEpisodeUrl('foo', 2)).toBe(
+      'https://animesonline.cloud/episodio/foo-episodio-2',
     );
   });
 

@@ -477,8 +477,9 @@ export class StreamingService {
             this.scrapeService.scrapeFromAnimefire(animeSlug, episodeNumber),
         ],
         [
-          'tioanime',
-          () => this.scrapeService.scrapeFromTioanime(animeSlug, episodeNumber),
+          'animesonline',
+          () =>
+            this.scrapeService.scrapeFromAnimesonline(animeSlug, episodeNumber),
         ],
       ] as const) {
         try {
@@ -918,9 +919,9 @@ export class StreamingService {
             );
             if (fresh && (await probeMediaUrlDead(fresh, true))) fresh = null;
           }
-          // Fallback tioanime.com.
+          // Fallback animesonline.cloud.
           if (!fresh) {
-            fresh = await this.scrapeService.scrapeFromTioanime(
+            fresh = await this.scrapeService.scrapeFromAnimesonline(
               animeSlug,
               episodeNumber,
             );

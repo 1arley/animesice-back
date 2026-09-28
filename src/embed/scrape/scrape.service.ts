@@ -12,7 +12,7 @@ import { chromium } from 'playwright';
 import type { Page, BrowserContext, Browser } from 'playwright';
 import { ScrapeSource, ScrapeEpisodeResult } from './scrape-source.interface';
 import { MeusanimesScrapeSource } from './meusanimes.source';
-import { TioanimeScrapeSource } from './tioanime.source';
+import { AnimesonlineScrapeSource } from './animesonline.source';
 import { AnimesdigitalScrapeSource } from './animesdigital.source';
 import { youtubeEmbedUrl } from './extract';
 import {
@@ -96,7 +96,7 @@ interface ScrapeCacheEntry {
  *
  * Extração técnica de URL .mp4/.m3u8 + iframes de episódio, multi-fonte via
  * Playwright (chromium headless) e caminho HTTP puro (extractHttp) quando a
- * fonte permite (animefire, meusanimes).
+ * fonte permite (animefire, meusanimes, animesonline).
  *
  * AVISO DE IP-VINCULO (CRITICO):
  *   Tokens .mp4 de CDNs pirates frequentemente VINCULAM ao IP. O IP que abriu
@@ -131,7 +131,7 @@ export class ScrapeService {
 
   constructor(
     meusanimes: MeusanimesScrapeSource,
-    tioanime: TioanimeScrapeSource,
+    animesonline: AnimesonlineScrapeSource,
     private readonly prisma: PrismaService,
     @Inject(forwardRef(() => HealthMonitor))
     private readonly health: HealthMonitor,
@@ -141,7 +141,7 @@ export class ScrapeService {
   ) {
     this.sources = [
       meusanimes,
-      tioanime,
+      animesonline,
       ...(animesdigital ? [animesdigital] : []),
     ];
     const ttl = Number(process.env.SCRAPE_CACHE_TTL_MS ?? 10 * 60_000);
@@ -174,7 +174,7 @@ export class ScrapeService {
    * single-flight -> wrap no proxy de mídia.
    *
    * @param episodeUrl URL absoluta do episodio.
-   * @param sourceId opcional força um adapter (animefire/animesonlinecc/meusanimes);
+   * @param sourceId opcional força um adapter (meusanimes/animesonline/animesdigital);
    *                 sem source, escolhe dinamicamente o provider mais saudável
    *                 que suporta a URL (pula disabled do HealthMonitor).
    * @param wrap se true (default), URLs externas sao embrulhadas no proxy de
@@ -831,43 +831,33 @@ export class ScrapeService {
   }
 
   /**
-   * Constrói a URL de um episódio no tioanime.com a partir do slug do anime e
-   * número do episódio.
-   * Padrão: tioanime.com/ver/<slug>-<n>
+   * Constrói a URL de um episódio no animesonline.cloud a partir do slug do
+   * anime e número do episódio.
+   * Padrão: animesonline.cloud/episodio/<slug>-episodio-<n>
    *
-   * Nota: o tioanime usa slugs em romanji/japones (ex: "fullmetal-alchemist-
-   * brotherhood"), NAO os mesmos slugs do animefire/meusanimes. O slug
-   * exato precisa ser descoberto por busca no catálogo do tioanime.
-   * Por enquanto, usa o slug do anime como tentativa direta.
+   * Nota: o animesonline.cloud é um WordPress próprio (slugs podem divergir
+   * dos do animefire/meusanimes). Esta URL é uma candidata; a extração real
+   * só acontece se a página existir (probe 404 descarta antes do fetch).
    */
-  tioanimeEpisodeUrl(animeSlug: string, episodeNumber: number): string {
-    return `https://tioanime.com/ver/${animeSlug}-${episodeNumber}`;
+  animesonlineEpisodeUrl(animeSlug: string, episodeNumber: number): string {
+    return `https://animesonline.cloud/episodio/${animeSlug}-episodio-${episodeNumber}`;
   }
 
   /**
-   * Tenta extrair vídeo de um episódio via tioanime.com (fallback quando
-   * meusanimes e animefire falharam).
+   * Tenta extrair vídeo de um episódio via animesonline.cloud (pt-BR).
    *
-   * O tioanime retorna multiple fontes de vídeo inline no HTML como JSON:
-   *   var videos = [["nome","url",0,0],...]
-   *
-   * Fontes incluem: StreamSB, Mega, Okru, YourUpload, Amus, Mepu, Netu, Maru.
-   * Funciona de IPs de datacenter (sem Cloudflare).
+   * O site renderiza os players server-side: a página do episódio traz
+   * <source src="...mp4"> (animeflix.blog) + iframe Blogger de reserva.
+   * Funciona de IPs de datacenter (sem Cloudflare challenge).
    *
    * Retorna a URL .mp4 RAW (sem wrap) ou null se falhar.
    */
-  async scrapeFromTioanime(
+  async scrapeFromAnimesonline(
     animeSlug: string,
     episodeNumber: number,
   ): Promise<string | null> {
-    if (
-      process.env.NODE_ENV !== 'test' &&
-      process.env.TIOANIME_ENABLED !== 'true'
-    ) {
-      return null;
-    }
-    const episodeUrl = this.tioanimeEpisodeUrl(animeSlug, episodeNumber);
-    dbg(`[TIOANIME] try ${animeSlug}/${episodeNumber} -> ${episodeUrl}`);
+    const episodeUrl = this.animesonlineEpisodeUrl(animeSlug, episodeNumber);
+    dbg(`[ANIMESONLINE] try ${animeSlug}/${episodeNumber} -> ${episodeUrl}`);
     try {
       const result = await this.scrapeEpisodeVideo(
         episodeUrl,
@@ -877,14 +867,14 @@ export class ScrapeService {
       const video = result.videos[0] ?? null;
       if (video) {
         dbg(
-          `[TIOANIME] OK ${animeSlug}/${episodeNumber}: ${video.slice(0, 80)}...`,
+          `[ANIMESONLINE] OK ${animeSlug}/${episodeNumber}: ${video.slice(0, 80)}...`,
         );
         return video;
       }
-      dbg(`[TIOANIME] no video returned ${animeSlug}/${episodeNumber}`);
+      dbg(`[ANIMESONLINE] no video returned ${animeSlug}/${episodeNumber}`);
     } catch (err) {
       dbg(
-        `[TIOANIME] failed ${episodeUrl}: ${err instanceof Error ? err.message : String(err)}`,
+        `[ANIMESONLINE] failed ${episodeUrl}: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
     return null;
