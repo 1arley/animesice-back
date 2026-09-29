@@ -200,8 +200,10 @@ describe('GachaService', () => {
       findFirst: jest.fn(),
       findUnique: jest.fn(),
       findMany: jest.fn(),
+      create: jest.fn(),
       update: jest.fn(),
     },
+    anime: { findUnique: jest.fn() },
     privacySettings: { findUnique: jest.fn() },
     post: { create: jest.fn() },
     notification: {
@@ -1092,6 +1094,68 @@ describe('GachaService', () => {
       expect(mockPrisma.gachaClaimLock.deleteMany).toHaveBeenCalledWith({
         where: { userId: 'u1' },
       });
+    });
+
+    it('adminCreateCard grava animeTitle e recusa anime inexistente', async () => {
+      mockPrisma.anime.findUnique.mockResolvedValue({
+        id: 'a1',
+        title: 'IS: Infinite Stratos',
+      });
+      mockPrisma.card.create.mockResolvedValue({ id: 'c1' });
+
+      await service.adminCreateCard({
+        name: 'Ichika',
+        rarity: 'RARA',
+        animeId: 'a1',
+      });
+
+      expect(mockPrisma.card.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            animeId: 'a1',
+            animeTitle: 'IS: Infinite Stratos',
+          }),
+        }),
+      );
+
+      mockPrisma.anime.findUnique.mockResolvedValue(null);
+      await expect(
+        service.adminCreateCard({
+          name: 'Ichika',
+          rarity: 'RARA',
+          animeId: 'fantasma',
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('exige motivo só quando anime ou raridade mudam de fato', async () => {
+      mockPrisma.card.findUnique.mockResolvedValue({
+        rarity: 'RARA',
+        animeId: 'a1',
+        animeTitle: 'Naruto',
+        image: 'https://img.test/card.jpg',
+        name: 'Card',
+      });
+      mockPrisma.card.update.mockResolvedValue({ id: 'c1', rarity: 'RARA' });
+
+      // Mesmo anime e mesma raridade: não é uma mudança, não pede motivo.
+      await service.adminUpdateCard(
+        'c1',
+        { name: 'Renomeado', animeId: 'a1', rarity: 'RARA' },
+        { adminId: 'admin' },
+      );
+      expect(mockPrisma.card.update).toHaveBeenCalledWith({
+        where: { id: 'c1' },
+        data: { name: 'Renomeado', animeId: 'a1', animeTitle: 'Naruto' },
+      });
+
+      await expect(
+        service.adminUpdateCard(
+          'c1',
+          { animeId: 'a2' },
+          { adminId: 'admin', reason: 'curto' },
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
     });
   });
 

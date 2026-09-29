@@ -44,6 +44,7 @@ describe('AdminController', () => {
         1,
         50,
         undefined,
+        { counts: true },
       );
     });
 
@@ -56,6 +57,7 @@ describe('AdminController', () => {
         3,
         25,
         'naruto',
+        { counts: true },
       );
     });
 
@@ -68,6 +70,7 @@ describe('AdminController', () => {
         1,
         200,
         undefined,
+        { counts: true },
       );
     });
 
@@ -80,6 +83,20 @@ describe('AdminController', () => {
         1,
         50,
         undefined,
+        { counts: true },
+      );
+    });
+
+    it('desliga a contagem de episódios para o autocomplete', async () => {
+      adminService.listAnimesForAdmin.mockResolvedValue([]);
+
+      await controller.listAnimes('1', '25', 'naruto', 'false');
+
+      expect(adminService.listAnimesForAdmin).toHaveBeenCalledWith(
+        1,
+        25,
+        'naruto',
+        { counts: false },
       );
     });
   });
