@@ -137,7 +137,6 @@ export class EconomyService {
   }
 
   async listings(query: MarketQueryDto, userId?: string) {
-    await this.expireMarket();
     const { page, limit, itemType, itemId } = query;
     const where = {
       status: 'ACTIVE' as const,
@@ -237,7 +236,6 @@ export class EconomyService {
   }
 
   async orders(query: MarketQueryDto, userId?: string) {
-    await this.expireMarket();
     const where: Prisma.GachaBuyOrderWhereInput = {
       status: 'ACTIVE',
       expiresAt: { gt: new Date() },

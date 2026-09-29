@@ -19,6 +19,7 @@ import {
   ApiBody,
   ApiConsumes,
   ApiOperation,
+  ApiQuery,
   ApiTags,
 } from '@nestjs/swagger';
 import { AdminService } from '@/admin/admin.service';
@@ -76,10 +77,16 @@ export class AdminController {
   // --- Overview -----------------------------------------------------------
   @Get('animes')
   @ApiOperation({ summary: 'Listar animes (admin, com contagem de episódios)' })
+  @ApiQuery({
+    name: 'counts',
+    required: false,
+    description: 'false omite genres/_count.episodes (autocomplete leve)',
+  })
   listAnimes(
     @Query('page') page: string,
     @Query('limit') limit: string,
     @Query('search') search?: string,
+    @Query('counts') counts?: string,
   ) {
     const pageNumber = Math.max(parseInt(page || '1', 10) || 1, 1);
     const limitNumber = Math.min(
@@ -90,6 +97,7 @@ export class AdminController {
       pageNumber,
       limitNumber,
       search?.trim() || undefined,
+      { counts: counts !== 'false' && counts !== '0' },
     );
   }
 

@@ -815,11 +815,6 @@ export class GachaController {
       throw new BadRequestException('Imagem deve usar HTTPS.');
     if (body.status !== undefined && req?.user.role !== 'SUPERADMIN')
       throw new ForbiddenException('Somente SUPERADMIN pode alterar status.');
-    if (
-      (body.rarity !== undefined || body.animeId !== undefined) &&
-      (!body.reason || body.reason.trim().length < 10)
-    )
-      throw new BadRequestException('Motivo deve ter ao menos 10 caracteres.');
     const { reason, ...data } = body;
     return this.gachaService.adminUpdateCard(id, data, {
       adminId: req!.user.id,
