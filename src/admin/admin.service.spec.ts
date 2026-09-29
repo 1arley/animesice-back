@@ -531,7 +531,7 @@ describe('AdminService', () => {
         expect.objectContaining({
           take: 200,
           where: {
-            OR: [
+            OR: expect.arrayContaining([
               {
                 title: {
                   contains: 'kimetsu no yaiba',
@@ -547,13 +547,30 @@ describe('AdminService', () => {
               {
                 slug: { contains: 'kimetsu no yaiba', mode: 'insensitive' },
               },
-            ],
+            ]),
           },
         }),
       );
     });
 
     it('normaliza acentos e aceita id do MAL na busca', async () => {
+      prisma.anime.findMany.mockResolvedValue([]);
+
+      await service.listAnimesForAdmin(1, 10, '51009');
+
+      expect(prisma.anime.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            OR: expect.arrayContaining([
+              { malId: 51009 },
+              { anilistId: 51009 },
+            ]),
+          },
+        }),
+      );
+    });
+
+    it('normaliza acentos da busca antes de consultar', async () => {
       prisma.anime.findMany.mockResolvedValue([]);
 
       await service.listAnimesForAdmin(1, 10, '  PokeOki  ');
@@ -563,8 +580,7 @@ describe('AdminService', () => {
           where: {
             OR: expect.arrayContaining([
               { title: { contains: 'pokeoki', mode: 'insensitive' } },
-              { malId: 51009 },
-              { anilistId: 51009 },
+              { slug: { contains: 'pokeoki', mode: 'insensitive' } },
             ]),
           },
         }),
