@@ -1449,7 +1449,11 @@ export class EconomyService {
           offer.slot < 7
             ? dateFromDayKey(dayKey())
             : await this.nightMarketDay();
-        if (!validDay || dayKey(offer.day) !== dayKey(validDay))
+        if (
+          !validDay ||
+          offer.day.toISOString().slice(0, 10) !==
+            validDay.toISOString().slice(0, 10)
+        )
           throw new ConflictException('Oferta expirada.');
         if (
           (offer.card && offer.card.status !== 'ACTIVE') ||
