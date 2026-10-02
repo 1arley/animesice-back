@@ -62,3 +62,10 @@ bun.lock
 /generated/prisma
 
 .agents/
+
+# Husky (shims gerados localmente pelo `husky install`)
+.husky/_/
+.husky/post-checkout
+.husky/post-commit
+.husky/post-merge
+.husky/push
