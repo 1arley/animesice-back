@@ -72,6 +72,7 @@ Multi-stage build (base → deps → build → production). Chromium + Xvfb inst
 - `dev` branch → prerelease (`vX.Y.Z-dev.N`) → no deploy
 - Images pushed to Docker Hub (`DOCKERHUB_REPO` secret, tag + `latest`) → Watchtower on the VPS applies them (no SSH)
 - Deploy is gated on tags/releases only — never from a PR, and automatic builds skip prereleases. Manual `workflow_dispatch` is the rollback path.
+- `deploy.yml` has a single automatic trigger: `workflow_run` on the Release workflow (`main`). Do not re-add a `release: [published]` trigger — semantic-release pushes with `GITHUB_TOKEN`, which never spawns workflow runs, so it is dead config that can double-build a tag when a release is published by hand. There is no `dev` image publish; the only image builder for releases is `deploy.yml`.
 
 ## Key env vars
 

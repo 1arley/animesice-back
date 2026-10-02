@@ -12,13 +12,13 @@
 # NOTE on triggers: semantic-release creates tags/releases with the default
 # GITHUB_TOKEN, and events caused by GITHUB_TOKEN never spawn new workflow
 # runs — so a bare `release: [published]` trigger would never fire here.
-# The `workflow_run` trigger on the Release workflow is the reliable path
-# (workflow_run events are delivered regardless of token provenance).
+# The `workflow_run` trigger on the Release workflow is the single automatic
+# path (workflow_run events are delivered regardless of token provenance).
+# Releases published by hand are covered by `workflow_dispatch` instead, which
+# keeps exactly one automatic trigger and avoids building the same tag twice.
 name: Build & push image
 
 on:
-  release:
-    types: [published]
   workflow_run:
     workflows: ['Release']
     branches: [main]
@@ -46,12 +46,12 @@ jobs:
 
     # Safety gates:
     # - never from a PR
-    # - automatic build only for stable releases (not prereleases from `dev`)
-    # - after the Release workflow succeeds on main (semantic-release tag)
+    # - automatic build only after the Release workflow succeeds on main
+    #   (semantic-release stable tag); prereleases from `dev` produce no tag
+    #   in release-info.json, so the resolve step below skips them.
     # - workflow_dispatch always allowed (explicit rollback / hotfixes)
     if: >
       github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'release' && github.event.release.prerelease == false) ||
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.head_branch == 'main')
@@ -70,12 +70,11 @@ jobs:
         shell: bash
         env:
           EVENT_NAME: ${{ github.event_name }}
-          RELEASE_EVENT_TAG: ${{ github.event.release.tag_name }}
           MANUAL_TAG: ${{ inputs.tag }}
         run: |
-          if [ "$EVENT_NAME" = "release" ]; then
-            tag="$RELEASE_EVENT_TAG"
-          elif [ "$EVENT_NAME" = "workflow_run" ]; then
+          if [ "$EVENT_NAME" = "workflow_run" ]; then
+            # Release grava o tag no artifact; vazio = semantic-release não
+            # produziu release (ex.: commit sem mudança relevante).
             tag="$(jq -r '.tag // empty' release-info.json)"
           elif [ -n "$MANUAL_TAG" ]; then
             tag="$MANUAL_TAG"
