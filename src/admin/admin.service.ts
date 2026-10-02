@@ -523,7 +523,10 @@ export class AdminService {
       const clauses: Prisma.AnimeWhereInput[] = [
         { title: { contains: term, mode: 'insensitive' } },
         { japaneseTitle: { contains: term, mode: 'insensitive' } },
+        // slug é ASCII puro: é o que faz "pokeoki" achar "PokéOki".
         { slug: { contains: term, mode: 'insensitive' } },
+        // `has` é igualdade de elemento em text[]; busca parcial dentro do
+        // array exigiria raw SQL, então mantemos o título alternativo exato.
         { alternativeTitles: { has: search?.trim() ?? term } },
       ];
       if (/^\d+$/.test(term)) {

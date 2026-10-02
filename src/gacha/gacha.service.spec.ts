@@ -1129,6 +1129,10 @@ describe('GachaService', () => {
     });
 
     it('exige motivo só quando anime ou raridade mudam de fato', async () => {
+      mockPrisma.anime.findUnique.mockResolvedValue({
+        id: 'a1',
+        title: 'Naruto',
+      });
       mockPrisma.card.findUnique.mockResolvedValue({
         rarity: 'RARA',
         animeId: 'a1',
@@ -1146,7 +1150,12 @@ describe('GachaService', () => {
       );
       expect(mockPrisma.card.update).toHaveBeenCalledWith({
         where: { id: 'c1' },
-        data: { name: 'Renomeado', animeId: 'a1', animeTitle: 'Naruto' },
+        data: {
+          name: 'Renomeado',
+          rarity: 'RARA',
+          animeId: 'a1',
+          animeTitle: 'Naruto',
+        },
       });
 
       await expect(
