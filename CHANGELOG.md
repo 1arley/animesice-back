@@ -1,3 +1,12 @@
+## [1.30.1](https://github.com/1arley/animesice-back/compare/v1.30.0...v1.30.1) (2026-10-02)
+
+
+### Bug Fixes
+
+* **ci:** gate image publish on actual releases ([bb21197](https://github.com/1arley/animesice-back/commit/bb21197aa59691619a1baa59e037e86969030dd0))
+* **lint:** remover type assertions desnecessárias em outboundFetch ([d259e92](https://github.com/1arley/animesice-back/commit/d259e92235dfc885e9c0313baac17823cb821b6f))
+* **watchtower:** resolve extraction and source issues ([bbeb4a6](https://github.com/1arley/animesice-back/commit/bbeb4a6aa6d7d79b7bc10222159ced9ce389bd93))
+
 # [1.29.0](https://github.com/1arley/animesice-back/compare/v1.28.0...v1.29.0) (2026-09-28)
 
 
