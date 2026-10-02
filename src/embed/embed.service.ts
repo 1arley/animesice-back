@@ -16,9 +16,9 @@ import { fetch as undiciFetch, type Dispatcher } from 'undici';
 
 // Os testes existentes mockam global.fetch. Em runtime, o Agent e o fetch
 // precisam vir da mesma instalação de undici (veja fetchSafe).
-const outboundFetch: typeof undiciFetch = (...args) =>
+const outboundFetch = (...args: Parameters<typeof undiciFetch>) =>
   process.env.NODE_ENV === 'test'
-    ? (globalThis.fetch as unknown as typeof undiciFetch)(...args)
+    ? globalThis.fetch(...args)
     : undiciFetch(...args);
 
 /** Regex p/ validar scheme: somente http/https. */

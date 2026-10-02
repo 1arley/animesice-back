@@ -18,9 +18,9 @@ import { fetch as undiciFetch } from 'undici';
 import { pinnedDispatcher, resolveSafeUrl } from '@/common/ssrf';
 import { refererForMediaUrl } from '@/common/url-utils';
 
-const outboundFetch: typeof undiciFetch = (...args) =>
+const outboundFetch = (...args: Parameters<typeof undiciFetch>) =>
   process.env.NODE_ENV === 'test'
-    ? (globalThis.fetch as unknown as typeof undiciFetch)(...args)
+    ? globalThis.fetch(...args)
     : undiciFetch(...args);
 
 export function shouldReextractMedia(status: number): boolean {

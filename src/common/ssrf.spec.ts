@@ -8,7 +8,11 @@ import {
   assertHostResolvesSafely,
   fetchSafeRaw,
 } from '@/common/ssrf';
-import { Agent, fetch as undiciFetch } from 'undici';
+import {
+  Agent,
+  fetch as undiciFetch,
+  Response as UndiciResponse,
+} from 'undici';
 
 jest.mock('dns/promises', () => ({ lookup: jest.fn() }));
 
@@ -393,7 +397,7 @@ describe('fetchSafeRaw', () => {
   it('keeps the deadline active while consuming a stalled body', async () => {
     lookupSuccess(['8.8.8.8', 4]);
     mockedUndiciFetch.mockImplementationOnce(async (_url, init) => {
-      return new Response(
+      return new UndiciResponse(
         new ReadableStream({
           start(controller) {
             controller.enqueue(new TextEncoder().encode('partial'));
@@ -402,7 +406,7 @@ describe('fetchSafeRaw', () => {
             );
           },
         }),
-      ) as any;
+      );
     });
     const { response, dispatcher } = await fetchSafeRaw(
       'https://cdn.example/a.mp4',
