@@ -93,8 +93,8 @@ export class WorkerService {
           await this.release.checkAll();
           break;
         case JOB_TYPE.BACKFILL_ANILIST:
-          await this.schedule.backfillAnilist();
-          break;
+          await this.handleBackfillAnilist(job);
+          return;
         case JOB_TYPE.SYNC_SCHEDULES:
           await this.handleSyncSchedules(job);
           return;
@@ -141,6 +141,26 @@ export class WorkerService {
       const msg = err instanceof Error ? err.message : String(err);
       await this.jobs.fail(job.id, job.lockedBy ?? '', msg);
       throw err;
+    }
+  }
+
+  private async handleBackfillAnilist(job: WatchtowerJobRow): Promise<void> {
+    const payload = (job.payload ?? {}) as { afterId?: string };
+    const result = await this.schedule.backfillAnilistPage(payload.afterId);
+    if (!result.nextAfterId) {
+      await this.jobs.complete(job.id, job.lockedBy ?? '');
+      return;
+    }
+    const rescheduled = await this.jobs.reschedule(
+      job.id,
+      job.lockedBy ?? '',
+      { afterId: result.nextAfterId },
+      new Date(Date.now() + SYNC_PAGE_DELAY_MS),
+    );
+    if (!rescheduled) {
+      throw new Error(
+        `reschedule do backfill falhou: lock ${job.lockedBy ?? '(none)'} não pertence mais a este worker`,
+      );
     }
   }
 

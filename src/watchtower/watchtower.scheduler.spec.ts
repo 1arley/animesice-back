@@ -97,7 +97,14 @@ describe('WatchtowerScheduler', () => {
     ];
     m.jobs.claimBatch.mockResolvedValueOnce(fakeJobs as any);
     await scheduler.tick();
-    expect(m.jobs.claimBatch).toHaveBeenCalledTimes(1);
+    const concurrency = Number(process.env.MAX_CONCURRENT_SCRAPES ?? 2);
+    const batchSize = Number(process.env.WT_TICK_BATCH ?? 20);
+    expect(m.jobs.claimBatch).toHaveBeenCalledWith(
+      Math.min(
+        Number.isInteger(concurrency) && concurrency > 0 ? concurrency : 2,
+        batchSize,
+      ),
+    );
     expect(m.worker.process).toHaveBeenCalledTimes(2);
   });
 

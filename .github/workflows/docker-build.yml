@@ -2,11 +2,13 @@ name: Build & Push Docker Image
 
 on:
   push:
-    branches: [main, dev]
+    branches: [dev]
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    if: github.ref_name == 'dev' || github.event_name == 'workflow_dispatch'
 
     steps:
       - name: Checkout
@@ -24,10 +26,10 @@ jobs:
       - name: Determine image tag
         id: tag
         run: |
-          if [ "${{ github.ref_name }}" = "main" ]; then
-            echo "tag=latest" >> $GITHUB_OUTPUT
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=manual-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
           else
-            echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build and push

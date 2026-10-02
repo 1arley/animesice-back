@@ -116,11 +116,7 @@ export class HealthMonitor {
 
     const enabledIds = [...SOURCE_IDS, ...OPTIONAL_SOURCE_IDS].filter(
       (id) =>
-        (id !== 'tioanime' ||
-          process.env.NODE_ENV === 'test' ||
-          process.env.TIOANIME_ENABLED === 'true') &&
-        (id !== 'animesdigital' ||
-          process.env.ANIMESDIGITAL_ENABLED === 'true'),
+        id !== 'animesdigital' || process.env.ANIMESDIGITAL_ENABLED === 'true',
     );
     const scored: SourceScore[] = enabledIds.map((id) => {
       const row = map.get(id);

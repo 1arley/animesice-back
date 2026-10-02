@@ -1,7 +1,7 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '@/prisma/prisma.service';
 import { JobsService } from './jobs.service';
-import { JOB_TYPE, PRIORITY } from './watchtower.types';
+import { extractJobKey, JOB_TYPE, PRIORITY } from './watchtower.types';
 import { audioTypeFromTitle } from '@/common/anime-audio';
 
 const UA =
@@ -509,7 +509,7 @@ export class CatalogScanner implements OnModuleInit {
             missing++;
             await this.jobs.enqueue({
               type: JOB_TYPE.EXTRACT_EPISODE,
-              dedupeKey: `extract:${targetId}:1:${entry.episode}`,
+              dedupeKey: extractJobKey(targetId, 1, entry.episode),
               payload: {
                 animeId: targetId,
                 slug: targetSlug,
@@ -560,7 +560,7 @@ export class CatalogScanner implements OnModuleInit {
         missing++;
         await this.jobs.enqueue({
           type: JOB_TYPE.EXTRACT_EPISODE,
-          dedupeKey: `extract:${targetId}:1:${entry.episode}`,
+          dedupeKey: extractJobKey(targetId, 1, entry.episode),
           payload: {
             animeId: targetId,
             slug: targetSlug,

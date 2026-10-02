@@ -118,16 +118,19 @@ export const BACKOFF_MS: number[] = [
 ];
 
 /** IDs de fonte canônicos (devem bater com ScrapeSource.id). */
-export const SOURCE_IDS = ['meusanimes', 'tioanime'] as const;
+export const SOURCE_IDS = ['meusanimes'] as const;
 
 export const OPTIONAL_SOURCE_IDS = ['animesdigital'] as const;
 
-/** Template de URL de episódio por fonte.
- *
- * Post-split: cada anime sibling tem slug que já codifica a temporada
- * (ex: "kaguya-sama-love-is-war-2"). O parâmetro `season` é mantido para
- * compatibilidade de assinatura mas NÃO é injetado no slug do meusanimes.
- */
+export function extractJobKey(
+  animeId: string,
+  season: number,
+  episodeNumber: number,
+): string {
+  return `extract:${animeId}:${season}:${episodeNumber}`;
+}
+
+/** Template de URL de episódio por fonte. */
 export function sourceEpisodeUrl(
   sourceId: string,
   animeSlug: string,
@@ -139,8 +142,6 @@ export function sourceEpisodeUrl(
       return `https://meusanimes.blog/e/${animeSlug}-episodio-${episodeNumber}/`;
     case 'animesonlinecc':
       return `https://animesonlinecc.to/episodio/${animeSlug}-episodio-${episodeNumber}/`;
-    case 'tioanime':
-      return `https://tioanime.com/ver/${animeSlug}-${episodeNumber}`;
     default:
       return null;
   }

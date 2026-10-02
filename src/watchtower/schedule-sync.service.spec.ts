@@ -73,21 +73,26 @@ describe('ScheduleSync', () => {
     expect(m.prisma.anime.update).not.toHaveBeenCalled();
   });
 
-  it('backfillAnilist auto-enfileira continua quando há pendentes', async () => {
+  it('backfillAnilist pagina por id sem repetir registros sem correspondência', async () => {
     const m = makeMocks();
-    m.prisma.anime.findMany.mockResolvedValue([
-      { id: 'anime-1', slug: 'x', title: 'X' },
-    ]);
+    m.prisma.anime.findMany.mockResolvedValue(
+      Array.from({ length: 30 }, (_, i) => ({
+        id: `anime-${String(i).padStart(2, '0')}`,
+        slug: 'x',
+        title: 'X',
+      })),
+    );
     m.prisma.anime.count.mockResolvedValue(12);
     const svc = new ScheduleSync(
       m.prisma as any,
       m.anilist as any,
       m.jobs as any,
     );
-    await svc.backfillAnilist();
-    expect(m.jobs.enqueue).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'BACKFILL_ANILIST' }),
-    );
+    await expect(svc.backfillAnilistPage()).resolves.toEqual({
+      matched: 0,
+      nextAfterId: 'anime-29',
+    });
+    expect(m.jobs.enqueue).not.toHaveBeenCalled();
   });
 
   it('syncSchedules sincroniza status e deriva horário fixo do mediaSchedule', async () => {

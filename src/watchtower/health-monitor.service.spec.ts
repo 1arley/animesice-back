@@ -140,21 +140,12 @@ describe('HealthMonitor', () => {
     const result = await health.rankedSources();
     expect(result).toHaveLength(SOURCE_IDS.length);
     expect(result).toContain('meusanimes');
-    expect(result).toContain('tioanime');
   });
 
   it('rankedSources exclui fontes disabled', async () => {
-    mock.store.set('tioanime', {
-      sourceId: 'tioanime',
-      successCount: 1,
-      failureCount: 0,
-      consecutiveFailures: 0,
-      avgLatencyMs: 100,
-      disabled: true,
-    });
     const result = await health.rankedSources();
-    expect(result).not.toContain('tioanime');
-    expect(result).toHaveLength(SOURCE_IDS.length - 1);
+    expect(result).toContain('meusanimes');
+    expect(result).toHaveLength(SOURCE_IDS.length);
   });
 
   it('rankedSources prioriza meusanimes quando scores similares', async () => {

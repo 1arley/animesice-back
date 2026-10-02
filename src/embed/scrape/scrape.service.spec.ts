@@ -63,7 +63,7 @@ function makeSource(
 
 function makeHealth() {
   return {
-    rankedSources: jest.fn(async () => ['meusanimes', 'tioanime']),
+    rankedSources: jest.fn(async () => ['meusanimes']),
     recordSuccess: jest.fn(async () => undefined),
     recordFailure: jest.fn(async () => undefined),
     isDisabled: jest.fn(async (_id: string): Promise<boolean> => false),
@@ -178,7 +178,6 @@ describe('ScrapeService (orquestração + cache SWR)', () => {
       process.env.SCRAPE_QUEUE_TIMEOUT_MS = String(opts.queueTimeoutMs);
     }
     const af = makeSource('meusanimes', ['meusanimes.io', 'player.test']);
-    const ta = makeSource('tioanime', ['tioanime.com']);
     const prisma = makePrisma();
     const health = makeHealth();
     const metrics = makeMetrics();
@@ -193,18 +192,17 @@ describe('ScrapeService (orquestração + cache SWR)', () => {
     };
     const svc = new ScrapeService(
       af as any,
-      ta as any,
       prisma as any,
       health as any,
       metrics as any,
       browserPool as any,
     );
-    return { svc, af, ta, prisma, health, metrics, browserPool };
+    return { svc, af, prisma, health, metrics, browserPool };
   }
 
   it('usa a ordem do HealthMonitor quando múltiplas fontes suportam a URL', async () => {
     const { svc, af, health } = build();
-    health.rankedSources.mockResolvedValue(['meusanimes', 'tioanime']);
+    health.rankedSources.mockResolvedValue(['meusanimes']);
     af.supports = (u) => u.includes('player.test');
     const res = await svc.scrapeEpisodeVideo(
       'https://player.test/ep/1',
@@ -518,7 +516,6 @@ describe('ScrapeService (cobertura avançada)', () => {
     if (opts?.queueTimeoutMs !== undefined)
       process.env.SCRAPE_QUEUE_TIMEOUT_MS = String(opts.queueTimeoutMs);
     const af = makeSource('meusanimes', ['meusanimes.io', 'player.test']);
-    const ta = makeSource('tioanime', ['tioanime.com']);
     const prisma = makePrisma();
     const health = makeHealth();
     const metrics = makeMetrics();
@@ -533,13 +530,12 @@ describe('ScrapeService (cobertura avançada)', () => {
     };
     const svc = new ScrapeService(
       af as any,
-      ta as any,
       prisma as any,
       health as any,
       metrics as any,
       browserPool as any,
     );
-    return { svc, af, ta, prisma, health, metrics, browserPool };
+    return { svc, af, prisma, health, metrics, browserPool };
   }
 
   it('usa valores padrão de TTL/stale/concorrência quando env ausente', async () => {
@@ -722,11 +718,11 @@ describe('ScrapeService (cobertura avançada)', () => {
     };
     const svc = new ScrapeService(
       af as any,
-      custom as any,
       prisma as any,
       health as any,
       metrics as any,
       browserPool as any,
+      custom as any,
     );
     await svc.scrapeEpisodeVideo('https://custom.test/x', 'custom', false);
     expect(health.recordSuccess).not.toHaveBeenCalled();
@@ -953,7 +949,6 @@ describe('ScrapeService (cobertura avançada)', () => {
         }),
       },
     );
-    const ta = makeSource('tioanime', ['tioanime.com']);
     const prisma = makePrisma();
     const health = makeHealth();
     const metrics = makeMetrics();
@@ -968,7 +963,6 @@ describe('ScrapeService (cobertura avançada)', () => {
     };
     const svc = new ScrapeService(
       aocc as any,
-      ta as any,
       prisma as any,
       health as any,
       metrics as any,
@@ -1412,7 +1406,6 @@ describe('ScrapeService (cobertura de recuperação)', () => {
       undefined,
       noHttp,
     );
-    const ta = makeSource('tioanime', ['tioanime.com'], undefined, noHttp);
     const prisma = makePrisma();
     const health = makeHealth();
     const metrics = makeMetrics();
@@ -1427,13 +1420,12 @@ describe('ScrapeService (cobertura de recuperação)', () => {
     };
     const svc = new ScrapeService(
       af as any,
-      ta as any,
       prisma as any,
       health as any,
       metrics as any,
       browserPool as any,
     );
-    return { svc, af, ta, prisma, health, metrics, browserPool };
+    return { svc, af, prisma, health, metrics, browserPool };
   }
 
   it('usa defaults de wrap/forceRefresh quando omitidos', async () => {
@@ -1506,7 +1498,6 @@ describe('ScrapeService (cobertura de recuperação)', () => {
 
   it('não registra health p/ fonte custom quando extração falha', async () => {
     const custom = makeSource('custom', ['custom.test']);
-    const boot = makeSource('tioanime', ['tioanime.com']);
     const prisma = makePrisma();
     const health = makeHealth();
     const metrics = makeMetrics();
@@ -1521,7 +1512,6 @@ describe('ScrapeService (cobertura de recuperação)', () => {
     };
     const svc = new ScrapeService(
       custom as any,
-      boot as any,
       prisma as any,
       health as any,
       metrics as any,
@@ -1618,36 +1608,6 @@ describe('ScrapeService (cobertura de recuperação)', () => {
       'https://cdn/v.mp4',
     );
     expect(spy).toHaveBeenCalled();
-  });
-
-  it('scrapeFromTioanime retorna vídeo quando resolve', async () => {
-    const { svc } = build();
-    jest.spyOn(svc, 'scrapeEpisodeVideo').mockResolvedValue({
-      videos: ['https://cdn.test/t.mp4'],
-      iframes: [],
-      cloudflare: false,
-    });
-    await expect(svc.scrapeFromTioanime('foo', 1)).resolves.toBe(
-      'https://cdn.test/t.mp4',
-    );
-  });
-
-  it('scrapeFromTioanime retorna null sem vídeo ou com erro', async () => {
-    const { svc } = build();
-    const spy = jest.spyOn(svc, 'scrapeEpisodeVideo');
-    spy.mockResolvedValueOnce({ videos: [], iframes: [], cloudflare: false });
-    await expect(svc.scrapeFromTioanime('foo', 1)).resolves.toBeNull();
-    spy.mockRejectedValueOnce(new Error('tio down'));
-    await expect(svc.scrapeFromTioanime('foo', 1)).resolves.toBeNull();
-    spy.mockRejectedValueOnce('tio down string');
-    await expect(svc.scrapeFromTioanime('foo', 1)).resolves.toBeNull();
-  });
-
-  it('monta URL de episódio do tioanime', () => {
-    const { svc } = build();
-    expect(svc.tioanimeEpisodeUrl('foo', 2)).toBe(
-      'https://tioanime.com/ver/foo-2',
-    );
   });
 
   it('resultado sem playerTokens não é cacheado e registra failure', async () => {

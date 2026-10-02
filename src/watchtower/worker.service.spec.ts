@@ -97,7 +97,10 @@ function makeMocks() {
       processScanCatalog: jest.fn(async () => ({ found: 0, missing: 0 })),
     },
     schedule: {
-      backfillAnilist: jest.fn(async () => 0),
+      backfillAnilistPage: jest.fn(async () => ({
+        matched: 0,
+        nextAfterId: null,
+      })),
       syncSchedules: jest.fn(),
     },
   };
@@ -313,7 +316,7 @@ describe('WorkerService', () => {
         payload: {},
       }),
     );
-    expect(m.schedule.backfillAnilist).toHaveBeenCalledTimes(1);
+    expect(m.schedule.backfillAnilistPage).toHaveBeenCalledTimes(1);
     expect(m.jobs.complete).toHaveBeenCalledWith('job-ba', '');
   });
 
