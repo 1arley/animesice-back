@@ -157,6 +157,18 @@ describe('JobsService', () => {
     expect(row.priority).toBe(50);
   });
 
+  it('enqueue trata payload nulo como sem slug', async () => {
+    await svc.enqueue({
+      type: 'EXTRACT_EPISODE',
+      dedupeKey: 'extract:null-payload',
+      payload: null,
+    });
+    expect([...mock.store.values()][0]).toMatchObject({
+      payload: {},
+      priority: 100,
+    });
+  });
+
   it('enqueue idempotente não duplica', async () => {
     await svc.enqueue({
       type: 'EXTRACT_EPISODE',
@@ -209,6 +221,25 @@ describe('JobsService', () => {
     });
     expect(mock.store.size).toBe(1);
     expect(before.nextRunAt).toBe(originalNextRunAt);
+  });
+
+  it('enqueue preserva prioridade padrão em job legado sem prioridade', async () => {
+    await svc.enqueue({
+      type: 'EXTRACT_EPISODE',
+      dedupeKey: 'extract:null-priority',
+      payload: {},
+    });
+    const row = [...mock.store.values()][0]!;
+    row.priority = null;
+
+    await svc.enqueue({
+      type: 'EXTRACT_EPISODE',
+      dedupeKey: 'extract:null-priority',
+      payload: {},
+      priority: 150,
+    });
+
+    expect(row.priority).toBe(100);
   });
 
   it('claimBatch marca jobs como RUNNING', async () => {
@@ -344,6 +375,20 @@ describe('JobsService', () => {
     expect(loggerSpy).toHaveBeenCalled();
   });
 
+  it('enqueue registra falha lançada como string', async () => {
+    mock.watchtowerJob.findUnique.mockResolvedValue(null);
+    mock.watchtowerJob.create.mockRejectedValue('db down');
+    const loggerSpy = jest.spyOn(svc['logger'], 'error').mockImplementation();
+
+    await svc.enqueue({
+      type: 'EXTRACT_EPISODE',
+      dedupeKey: 'extract:string-error',
+      payload: {},
+    });
+
+    expect(loggerSpy).toHaveBeenCalledWith(expect.stringContaining('db down'));
+  });
+
   it('complete com count 0 não lança erro', async () => {
     mock.watchtowerJob.updateMany.mockResolvedValue({ count: 0 });
     await expect(svc.complete('nope', 'lock')).resolves.toBeUndefined();
@@ -365,6 +410,22 @@ describe('JobsService', () => {
     await expect(svc.fail(jobId, 'wrong-lock', 'err')).resolves.toBeUndefined();
   });
 
+  it('fail não altera job quando o lock muda durante a gravação', async () => {
+    await svc.enqueue({
+      type: 'EXTRACT_EPISODE',
+      dedupeKey: 'extract:lost-lock:1',
+      payload: {},
+    });
+    const [job] = await svc.claimBatch(1);
+    mock.watchtowerJob.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    await expect(
+      svc.fail(job!.id, job!.lockedBy!, 'err'),
+    ).resolves.toBeUndefined();
+
+    expect(mock.store.get(job!.id)!.status).toBe('RUNNING');
+  });
+
   it('enqueueMany insere múltiplos jobs', async () => {
     await svc.enqueueMany([
       {
@@ -378,6 +439,18 @@ describe('JobsService', () => {
         payload: { slug: 'b' },
       },
     ]);
+    expect(mock.$executeRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it('enqueueMany substitui payload nulo por objeto vazio', async () => {
+    await svc.enqueueMany([
+      {
+        type: 'EXTRACT_EPISODE',
+        dedupeKey: 'extract:batch:null-payload',
+        payload: null,
+      },
+    ]);
+
     expect(mock.$executeRaw).toHaveBeenCalledTimes(1);
   });
 
