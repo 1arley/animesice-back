@@ -162,4 +162,135 @@ describe('AniListClient', () => {
       expect(result.hasNext).toBe(false);
     });
   });
+
+  describe('mediaCharacters', () => {
+    it('retorna personagens ordenados por favoritos', async () => {
+      (global.fetch as jest.Mock).mockResolvedValue({
+        json: jest.fn().mockResolvedValue({
+          data: {
+            Media: {
+              characters: {
+                nodes: [
+                  { id: 1, name: { full: 'Saitama' }, favourites: 900 },
+                  { id: 2, name: { full: 'Genos' }, favourites: 500 },
+                ],
+              },
+            },
+          },
+        }),
+      });
+
+      const result = await client.mediaCharacters(1);
+      expect(result.map((c) => c.name.full)).toEqual(['Saitama', 'Genos']);
+    });
+  });
+
+  describe('resiliência HTTP (429 / 5xx)', () => {
+    beforeEach(() => {
+      // Backoff e rate limit usam setTimeout; sem timers falsos o teste
+      // esperaria minutos reais entre as tentativas.
+      jest.useFakeTimers();
+    });
+
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    const okResponse = () => ({
+      status: 200,
+      headers: { get: () => null },
+      json: jest.fn().mockResolvedValue({
+        data: { Media: { id: 7, title: { romaji: 'X' } } },
+      }),
+    });
+
+    const tooMany = (retryAfter: string | null) => ({
+      status: 429,
+      headers: { get: () => retryAfter },
+      json: jest.fn(),
+    });
+
+    it('respeita Retry-After numérico e refaz a chamada', async () => {
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce(tooMany('30'))
+        .mockResolvedValueOnce(okResponse());
+
+      const pending = client.fetchMedia(7);
+      await jest.advanceTimersByTimeAsync(120_000);
+
+      await expect(pending).resolves.toMatchObject({ id: 7 });
+      expect(global.fetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('usa o backoff padrão quando não há Retry-After', async () => {
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce(tooMany(null))
+        .mockResolvedValueOnce(okResponse());
+
+      const pending = client.fetchMedia(7);
+      await jest.advanceTimersByTimeAsync(120_000);
+
+      await expect(pending).resolves.toMatchObject({ id: 7 });
+      expect(global.fetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('interpreta Retry-After como data HTTP quando não é numérico', async () => {
+      const httpDate = new Date(Date.now() + 60_000).toUTCString();
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce(tooMany(httpDate))
+        .mockResolvedValueOnce(okResponse());
+
+      const pending = client.fetchMedia(7);
+      await jest.advanceTimersByTimeAsync(180_000);
+
+      await expect(pending).resolves.toMatchObject({ id: 7 });
+      expect(global.fetch).toHaveBeenCalledTimes(2);
+    });
+
+    it('desiste após esgotar as tentativas de 429', async () => {
+      (global.fetch as jest.Mock).mockImplementation(async () => tooMany(null));
+
+      const pending = client.fetchMedia(7);
+      const assertion = expect(pending).rejects.toThrow(
+        'rate limit (429) — max retries exhausted',
+      );
+      await jest.advanceTimersByTimeAsync(600_000);
+      await assertion;
+
+      // 1 chamada inicial + 3 retries.
+      expect(global.fetch).toHaveBeenCalledTimes(4);
+    });
+
+    it('refaz uma vez em 5xx e depois propaga a resposta', async () => {
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce({
+          status: 503,
+          headers: { get: () => null },
+          json: jest.fn().mockResolvedValue({ data: null }),
+        })
+        .mockResolvedValueOnce({
+          status: 503,
+          headers: { get: () => null },
+          json: jest.fn().mockResolvedValue({ data: null }),
+        });
+
+      const pending = client.fetchMedia(7);
+      const assertion = expect(pending).rejects.toThrow('resposta vazia');
+      await jest.advanceTimersByTimeAsync(120_000);
+
+      await assertion;
+      expect(global.fetch).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('erros GraphQL', () => {
+    it('usa mensagem genérica quando o erro não traz message', async () => {
+      (global.fetch as jest.Mock).mockResolvedValue({
+        status: 200,
+        json: jest.fn().mockResolvedValue({ errors: [{}] }),
+      });
+
+      await expect(client.fetchMedia(1)).rejects.toThrow('erro desconhecido');
+    });
+  });
 });

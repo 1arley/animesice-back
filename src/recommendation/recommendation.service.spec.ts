@@ -132,6 +132,52 @@ describe('RecommendationService', () => {
 
       expect(result).toHaveLength(1);
     });
+
+    it('trata candidates sem rating e sem year como score zero', async () => {
+      const { svc, prisma } = build();
+      prisma.rating.findMany.mockResolvedValue([
+        { anime: { genres: [{ id: 'g1', slug: 'acao' }] } },
+      ]);
+      prisma.userAnimeList.findMany.mockResolvedValue([]);
+      prisma.watchHistory.findMany.mockResolvedValue([]);
+      prisma.anime.findMany.mockResolvedValue([
+        // rating e year ausentes: exercita os fallbacks `?? 0` e o guard de
+        // bônus de ano, que sem isso ficam branches nunca cobertas.
+        { id: 'a1', genres: [{ id: 'g1', slug: 'acao' }] },
+        { id: 'a2', genres: [{ id: 'g2', slug: 'drama' }], rating: null },
+        {
+          id: 'a3',
+          genres: [{ id: 'g2', slug: 'drama' }],
+          rating: 5,
+          year: null,
+        },
+      ]);
+
+      const result = await svc.getPersonalized('u1', 10);
+
+      // a3 tem rating 5 e lidera; a1 e a2 empatam em 0, então a ordem
+      // entre eles fica a cargo do sort estável — não é o que o teste quer fixar.
+      expect(result[0]?.id).toBe('a3');
+      expect(result.map((a) => a.id).sort()).toEqual(['a1', 'a2', 'a3']);
+    });
+
+    it('aplica bônus de ano para candidates recentes', async () => {
+      const { svc, prisma } = build();
+      prisma.rating.findMany.mockResolvedValue([
+        { anime: { genres: [{ id: 'g1', slug: 'acao' }] } },
+      ]);
+      prisma.userAnimeList.findMany.mockResolvedValue([]);
+      prisma.watchHistory.findMany.mockResolvedValue([]);
+      const thisYear = new Date().getFullYear();
+      prisma.anime.findMany.mockResolvedValue([
+        { id: 'antigo', genres: [{ id: 'g1' }], rating: 5, year: 1999 },
+        { id: 'recente', genres: [{ id: 'g1' }], rating: 5, year: thisYear },
+      ]);
+
+      const result = await svc.getPersonalized('u1', 10);
+
+      expect(result[0]?.id).toBe('recente');
+    });
   });
 
   describe('getSimilar', () => {
@@ -204,6 +250,41 @@ describe('RecommendationService', () => {
       const result = await svc.getSimilar('anime-slug', 12);
 
       expect(result).toEqual([]);
+    });
+
+    it('concede bônus de ano quando a diferença é de até 2 anos', async () => {
+      const { svc, prisma } = build();
+      prisma.anime.findUnique.mockResolvedValue({
+        id: 'a1',
+        year: 2020,
+        genres: [{ id: 'g1' }],
+      });
+      prisma.anime.findMany.mockResolvedValue([
+        // year null no candidato e no original: exercita os guards do yearBonus.
+        { id: 'a2', year: null, rating: 8, genres: [{ id: 'g1' }] },
+        { id: 'a3', year: 2022, rating: 8, genres: [{ id: 'g1' }] },
+        { id: 'a4', year: 2030, rating: 8, genres: [{ id: 'g1' }] },
+      ]);
+
+      const result = await svc.getSimilar('anime-slug', 12);
+
+      expect(result.map((a) => a.id)).toEqual(['a3', 'a2', 'a4']);
+    });
+
+    it('trata candidato sem rating como nota zero', async () => {
+      const { svc, prisma } = build();
+      prisma.anime.findUnique.mockResolvedValue({
+        id: 'a1',
+        year: 2020,
+        genres: [{ id: 'g1' }],
+      });
+      prisma.anime.findMany.mockResolvedValue([
+        { id: 'a2', year: 2021, rating: null, genres: [{ id: 'g1' }] },
+      ]);
+
+      const result = await svc.getSimilar('anime-slug', 12);
+
+      expect(result).toHaveLength(1);
     });
   });
 
