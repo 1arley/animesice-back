@@ -9,7 +9,7 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '@/prisma/prisma.service';
 import { AniListClient } from './anilist-client.service';
 import { JobsService } from './jobs.service';
-import { JOB_TYPE, PRIORITY } from './watchtower.types';
+import { extractJobKey, JOB_TYPE, PRIORITY } from './watchtower.types';
 
 @Injectable()
 export class ReleaseMonitor {
@@ -42,7 +42,7 @@ export class ReleaseMonitor {
           if (!have.has(ep.episode)) {
             await this.jobs.enqueue({
               type: JOB_TYPE.EXTRACT_EPISODE,
-              dedupeKey: `extract:${anime.id}:${ep.episode}`,
+              dedupeKey: extractJobKey(anime.id, 1, ep.episode),
               payload: {
                 animeId: anime.id,
                 slug: anime.slug,
@@ -84,7 +84,7 @@ export class ReleaseMonitor {
       if (!have.has(ep.episode)) {
         await this.jobs.enqueue({
           type: JOB_TYPE.EXTRACT_EPISODE,
-          dedupeKey: `extract:${anime.id}:${ep.episode}`,
+          dedupeKey: extractJobKey(anime.id, 1, ep.episode),
           payload: {
             animeId: anime.id,
             slug: anime.slug,

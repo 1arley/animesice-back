@@ -12,7 +12,6 @@ import { chromium } from 'playwright';
 import type { Page, BrowserContext, Browser } from 'playwright';
 import { ScrapeSource, ScrapeEpisodeResult } from './scrape-source.interface';
 import { MeusanimesScrapeSource } from './meusanimes.source';
-import { TioanimeScrapeSource } from './tioanime.source';
 import { AnimesdigitalScrapeSource } from './animesdigital.source';
 import { youtubeEmbedUrl } from './extract';
 import {
@@ -131,7 +130,6 @@ export class ScrapeService {
 
   constructor(
     meusanimes: MeusanimesScrapeSource,
-    tioanime: TioanimeScrapeSource,
     private readonly prisma: PrismaService,
     @Inject(forwardRef(() => HealthMonitor))
     private readonly health: HealthMonitor,
@@ -139,11 +137,7 @@ export class ScrapeService {
     private readonly browserPool: BrowserPool,
     @Optional() private readonly animesdigital?: AnimesdigitalScrapeSource,
   ) {
-    this.sources = [
-      meusanimes,
-      tioanime,
-      ...(animesdigital ? [animesdigital] : []),
-    ];
+    this.sources = [meusanimes, ...(animesdigital ? [animesdigital] : [])];
     const ttl = Number(process.env.SCRAPE_CACHE_TTL_MS ?? 10 * 60_000);
     const stale = Number(process.env.SCRAPE_CACHE_STALE_MS ?? 60 * 60_000);
     this.CACHE_TTL_MS = Number.isFinite(ttl) && ttl > 0 ? ttl : 10 * 60_000;
@@ -825,66 +819,6 @@ export class ScrapeService {
     } catch (err) {
       dbg(
         `[ANIMEFIRE] failed ${episodeUrl}: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-    return null;
-  }
-
-  /**
-   * Constrói a URL de um episódio no tioanime.com a partir do slug do anime e
-   * número do episódio.
-   * Padrão: tioanime.com/ver/<slug>-<n>
-   *
-   * Nota: o tioanime usa slugs em romanji/japones (ex: "fullmetal-alchemist-
-   * brotherhood"), NAO os mesmos slugs do animefire/meusanimes. O slug
-   * exato precisa ser descoberto por busca no catálogo do tioanime.
-   * Por enquanto, usa o slug do anime como tentativa direta.
-   */
-  tioanimeEpisodeUrl(animeSlug: string, episodeNumber: number): string {
-    return `https://tioanime.com/ver/${animeSlug}-${episodeNumber}`;
-  }
-
-  /**
-   * Tenta extrair vídeo de um episódio via tioanime.com (fallback quando
-   * meusanimes e animefire falharam).
-   *
-   * O tioanime retorna multiple fontes de vídeo inline no HTML como JSON:
-   *   var videos = [["nome","url",0,0],...]
-   *
-   * Fontes incluem: StreamSB, Mega, Okru, YourUpload, Amus, Mepu, Netu, Maru.
-   * Funciona de IPs de datacenter (sem Cloudflare).
-   *
-   * Retorna a URL .mp4 RAW (sem wrap) ou null se falhar.
-   */
-  async scrapeFromTioanime(
-    animeSlug: string,
-    episodeNumber: number,
-  ): Promise<string | null> {
-    if (
-      process.env.NODE_ENV !== 'test' &&
-      process.env.TIOANIME_ENABLED !== 'true'
-    ) {
-      return null;
-    }
-    const episodeUrl = this.tioanimeEpisodeUrl(animeSlug, episodeNumber);
-    dbg(`[TIOANIME] try ${animeSlug}/${episodeNumber} -> ${episodeUrl}`);
-    try {
-      const result = await this.scrapeEpisodeVideo(
-        episodeUrl,
-        undefined,
-        false,
-      );
-      const video = result.videos[0] ?? null;
-      if (video) {
-        dbg(
-          `[TIOANIME] OK ${animeSlug}/${episodeNumber}: ${video.slice(0, 80)}...`,
-        );
-        return video;
-      }
-      dbg(`[TIOANIME] no video returned ${animeSlug}/${episodeNumber}`);
-    } catch (err) {
-      dbg(
-        `[TIOANIME] failed ${episodeUrl}: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
     return null;

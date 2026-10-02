@@ -18,7 +18,6 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '@/prisma/prisma.service';
 import { AniListClient } from './anilist-client.service';
 import { JobsService } from './jobs.service';
-import { JOB_TYPE, PRIORITY } from './watchtower.types';
 
 /** Batch de backfill por run — enfileira continuar se ainda houver pendentes. */
 const BACKFILL_BATCH = Number(process.env.WT_BACKFILL_BATCH ?? 30);
@@ -49,14 +48,22 @@ export class ScheduleSync {
   ) {}
 
   /**
-   * Casa animes sem anilistId com AniList e grava metadados. Retorna quantos
-   * foram casados neste run; se ainda houver pendentes, auto-enfileira um novo
-   * job BACKFILL_ANILIST para continuar nos próximos ticks.
+   * Casa um lote de animes sem anilistId com AniList e grava metadados.
    */
   async backfillAnilist(): Promise<number> {
+    return (await this.backfillAnilistPage()).matched;
+  }
+
+  async backfillAnilistPage(
+    afterId?: string,
+  ): Promise<{ matched: number; nextAfterId: string | null }> {
     const pending = await this.prisma.anime.findMany({
-      where: { anilistId: null },
+      where: {
+        anilistId: null,
+        ...(afterId ? { id: { gt: afterId } } : {}),
+      },
       select: { id: true, slug: true, title: true },
+      orderBy: { id: 'asc' },
       take: BACKFILL_BATCH,
     });
 
@@ -147,22 +154,21 @@ export class ScheduleSync {
       `;
     }
 
-    const remaining = await this.prisma.anime.count({
-      where: { anilistId: null },
-    });
-    if (remaining > 0) {
-      await this.jobs.enqueue({
-        type: JOB_TYPE.BACKFILL_ANILIST,
-        dedupeKey: 'backfill-anilist',
-        payload: {},
-        priority: PRIORITY.BACKFILL_ANILIST,
-      });
-    }
+    const lastId = pending[pending.length - 1]?.id;
+    const remaining = lastId
+      ? await this.prisma.anime.count({
+          where: { anilistId: null, id: { gt: lastId } },
+        })
+      : 0;
+    const nextAfterId =
+      pending.length === BACKFILL_BATCH && remaining > 0
+        ? (lastId ?? null)
+        : null;
 
     console.error(
       `[WATCHTOWER] backfillAnilist: ${pending.length} processados, ${matched} casados, ${remaining} restantes`,
     );
-    return matched;
+    return { matched, nextAfterId };
   }
 
   /**

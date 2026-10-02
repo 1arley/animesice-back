@@ -10,8 +10,8 @@
 import { Injectable } from '@nestjs/common';
 
 const ANILIST_ENDPOINT = 'https://graphql.anilist.co';
-const SLEEP_MS = 700;
-const MAX_429_RETRIES = 5;
+const SLEEP_MS = 2000;
+const MAX_429_RETRIES = 3;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -290,7 +290,19 @@ export class AniListClient {
       if (retries <= 0) {
         throw new Error('AniList: rate limit (429) — max retries exhausted');
       }
-      await sleep(5000);
+      const retryAfter = res.headers?.get('retry-after');
+      const retryAfterValue = retryAfter ? Number(retryAfter) : NaN;
+      const retryAfterMs = Number.isFinite(retryAfterValue)
+        ? retryAfterValue * 1000
+        : retryAfter
+          ? Math.max(0, (Date.parse(retryAfter) || Date.now()) - Date.now())
+          : 0;
+      // ponytail: pacing is per process; use a shared limiter if replicas sharing the IP still hit 429s.
+      const backoffMs = Math.min(
+        5 * 60_000,
+        5000 * 2 ** (MAX_429_RETRIES - retries),
+      );
+      await sleep(Math.max(retryAfterMs, backoffMs) + Math.random() * 1000);
       return this.request<T>(body, retries - 1);
     }
 

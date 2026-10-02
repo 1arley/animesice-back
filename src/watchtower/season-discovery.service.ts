@@ -11,7 +11,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '@/prisma/prisma.service';
 import { AniListClient, AniListMediaSummary } from './anilist-client.service';
 import { JobsService } from './jobs.service';
-import { JOB_TYPE, PRIORITY } from './watchtower.types';
+import { extractJobKey, JOB_TYPE, PRIORITY } from './watchtower.types';
 
 type Season = 'WINTER' | 'SPRING' | 'SUMMER' | 'FALL';
 
@@ -222,7 +222,7 @@ export class SeasonDiscovery {
                   .filter((item) => item.airingAt * 1000 <= Date.now())
                   .map((ep) => ({
                     type: JOB_TYPE.EXTRACT_EPISODE,
-                    dedupeKey: `extract:${animeId}:${ep.episode}`,
+                    dedupeKey: extractJobKey(animeId, 1, ep.episode),
                     payload: {
                       animeId,
                       slug: finalSlug,

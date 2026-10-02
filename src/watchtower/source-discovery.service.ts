@@ -6,8 +6,7 @@
  * Templates:
  *  meusanimes:  https://meusanimes.blog/e/<slug>-<season>-episodio-<n>/
  *               (também sem sufixo p/ filmes/singles)
- *  animefire:   https://animefire.io/animes/<slug>/<n>
- *  animesonlinecc: https://animesonlinecc.to/episodio/<slug>-episodio-<n>/
+ *  animesonline: https://animesonline.cloud/episodio/<slug>-episodio-<n>
  *
  * Quando o catálogo fornece a URL real do episódio (episodeUrl), ela é usada
  * como primeira candidata da fonte correspondente — evitando divergência entre
@@ -112,9 +111,6 @@ export class SourceDiscovery {
     }
     if (/animesonlinecc\.to/i.test(lower)) {
       return { sourceId: 'animesonlinecc', url: episodeUrl };
-    }
-    if (/tioanime\.com/i.test(lower)) {
-      return { sourceId: 'tioanime', url: episodeUrl };
     }
     if (/animesdigital\.org/i.test(lower)) {
       return { sourceId: 'animesdigital', url: episodeUrl };

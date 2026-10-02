@@ -49,6 +49,11 @@ const CONTROL_JOB_TYPES = new Set<string>([
   JOB_TYPE.BACKFILL_ANILIST,
   JOB_TYPE.SYNC_SCHEDULES,
 ]);
+const configuredConcurrency = Number(process.env.MAX_CONCURRENT_SCRAPES ?? 2);
+const TICK_CONCURRENCY =
+  Number.isInteger(configuredConcurrency) && configuredConcurrency > 0
+    ? configuredConcurrency
+    : 2;
 
 @Injectable()
 export class WatchtowerScheduler implements OnModuleInit {
@@ -110,10 +115,10 @@ export class WatchtowerScheduler implements OnModuleInit {
     if (!this.enabled() || this.running) return;
     this.running = true;
     try {
-      const batch = await this.jobs.claimBatch(TICK_BATCH);
-      for (const job of batch) {
-        await this.processWithTimeout(job);
-      }
+      const batch = await this.jobs.claimBatch(
+        Math.min(TICK_BATCH, TICK_CONCURRENCY),
+      );
+      await Promise.all(batch.map((job) => this.processWithTimeout(job)));
     } finally {
       this.running = false;
     }
