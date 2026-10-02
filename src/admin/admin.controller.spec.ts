@@ -1,9 +1,7 @@
 import { Test } from '@nestjs/testing';
-import { BadRequestException } from '@nestjs/common';
 import { AdminController } from '@/admin/admin.controller';
 import { AdminService } from '@/admin/admin.service';
 import { EpisodeService } from '@/episode/episode.service';
-import { SupabaseService } from '@/upload/supabase.service';
 
 describe('AdminController', () => {
   let controller: AdminController;
@@ -18,7 +16,6 @@ describe('AdminController', () => {
     deleteEpisode: jest.fn(),
     createGenre: jest.fn(),
   };
-  const supabaseService = { uploadVideo: jest.fn() };
   const episodeService = { findByAnimeSlugAndNumber: jest.fn() };
 
   beforeEach(async () => {
@@ -27,7 +24,6 @@ describe('AdminController', () => {
       controllers: [AdminController],
       providers: [
         { provide: AdminService, useValue: adminService },
-        { provide: SupabaseService, useValue: supabaseService },
         { provide: EpisodeService, useValue: episodeService },
       ],
     }).compile();
@@ -173,96 +169,6 @@ describe('AdminController', () => {
       await controller.deleteEpisode('naruto', 1, undefined);
 
       expect(adminService.deleteEpisode).toHaveBeenCalledWith('naruto', 1, 1);
-    });
-  });
-
-  describe('uploadEpisodeVideo', () => {
-    it('lança BadRequestException quando o arquivo não é enviado', async () => {
-      await expect(
-        controller.uploadEpisodeVideo('naruto', 1, undefined, undefined as any),
-      ).rejects.toBeInstanceOf(BadRequestException);
-    });
-
-    it('rejeita mimetype não suportado', async () => {
-      const file = {
-        mimetype: 'text/plain',
-        buffer: Buffer.from('nada'),
-        originalname: 'x.txt',
-      } as any;
-
-      await expect(
-        controller.uploadEpisodeVideo('naruto', 1, undefined, file),
-      ).rejects.toBeInstanceOf(BadRequestException);
-    });
-
-    it('rejeita mp4 sem magic bytes ftyp', async () => {
-      const file = {
-        mimetype: 'video/mp4',
-        buffer: Buffer.from([0, 0, 0, 0, 0, 0, 0, 0]),
-        originalname: 'x.mp4',
-      } as any;
-
-      await expect(
-        controller.uploadEpisodeVideo('naruto', 1, undefined, file),
-      ).rejects.toBeInstanceOf(BadRequestException);
-    });
-
-    it('faz upload de mp4 válido e atualiza o episódio', async () => {
-      const buffer = Buffer.from([
-        0, 0, 0, 0, 0x66, 0x74, 0x79, 0x70, 0x70, 0x6d, 0x70, 0x34,
-      ]);
-      const file = {
-        mimetype: 'video/mp4',
-        buffer,
-        originalname: 'ep1.mp4',
-      } as any;
-      supabaseService.uploadVideo.mockResolvedValue({
-        url: 'https://cdn/ep1.mp4',
-        path: 'videos/x.mp4',
-      });
-      adminService.updateEpisode.mockResolvedValue({});
-
-      await controller.uploadEpisodeVideo('naruto', 1, undefined, file);
-
-      expect(supabaseService.uploadVideo).toHaveBeenCalledWith(
-        buffer,
-        'video/mp4',
-        'ep1.mp4',
-      );
-      expect(adminService.updateEpisode).toHaveBeenCalledWith(
-        'naruto',
-        1,
-        { videoUrl: 'https://cdn/ep1.mp4' },
-        1,
-      );
-    });
-
-    it('aceita .ts (video/mp2t) com sync byte 0x47', async () => {
-      const file = {
-        mimetype: 'video/mp2t',
-        buffer: Buffer.from([0x47, 0, 0, 0]),
-        originalname: 'ep1.ts',
-      } as any;
-      supabaseService.uploadVideo.mockResolvedValue({ url: 'u', path: 'p' });
-      adminService.updateEpisode.mockResolvedValue({});
-
-      await controller.uploadEpisodeVideo('naruto', 1, undefined, file);
-
-      expect(adminService.updateEpisode).toHaveBeenCalled();
-    });
-
-    it('aceita .m3u8 com header #EXTM3U', async () => {
-      const file = {
-        mimetype: 'application/vnd.apple.mpegurl',
-        buffer: Buffer.from('#EXTM3U\n#EXT-X-VERSION:3'),
-        originalname: 'ep1.m3u8',
-      } as any;
-      supabaseService.uploadVideo.mockResolvedValue({ url: 'u', path: 'p' });
-      adminService.updateEpisode.mockResolvedValue({});
-
-      await controller.uploadEpisodeVideo('naruto', 1, undefined, file);
-
-      expect(adminService.updateEpisode).toHaveBeenCalled();
     });
   });
 

@@ -11,7 +11,7 @@ import { TtlCache } from '@/common/ttl-cache';
 
 /**
  * Cache de leitura em-processo p/ GETs públicos de catálogo (sem dados por
- * usuário). Derruba a leitura repetida do Postgres via pooler do Supabase que o
+ * usuário). Derruba a leitura repetida do Postgres que o
  * SSR (Vercel) dispara a cada page-view — o maior multiplicador de egress.
  *
  * Chave = método + URL completa (query incluída), então filtros de busca e o

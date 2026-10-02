@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -9,15 +8,10 @@ import {
   Patch,
   Post,
   Query,
-  UploadedFile,
   UseGuards,
-  UseInterceptors,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
 import {
   ApiBearerAuth,
-  ApiBody,
-  ApiConsumes,
   ApiOperation,
   ApiQuery,
   ApiTags,
@@ -35,32 +29,7 @@ import {
 } from '@/admin/dto/update-episode.dto';
 import { CreateGenreDto } from '@/admin/dto/create-genre.dto';
 import { ImportAnimeDto } from '@/admin/dto/import-anime.dto';
-import { SupabaseService } from '@/upload/supabase.service';
 import { CreateExternalAnimeDto } from '@/admin/dto/create-external-anime.dto';
-
-const ALLOWED_VIDEO_MIMETYPES = [
-  'video/mp4',
-  'video/mp2t',
-  'application/vnd.apple.mpegurl',
-  'application/x-mpegURL',
-];
-
-/** Teto de tamanho de upload (500MB). */
-const MAX_UPLOAD_BYTES = 500 * 1024 * 1024;
-
-/** Valida o arquivo por mimetype exato + magic bytes (não confia no cliente). */
-function isAllowedVideoFile(buffer: Buffer, mimetype: string): boolean {
-  if (!ALLOWED_VIDEO_MIMETYPES.includes(mimetype)) return false;
-
-  if (mimetype === 'video/mp4') {
-    return buffer.length > 8 && buffer.toString('latin1', 4, 8) === 'ftyp';
-  }
-  if (mimetype === 'video/mp2t') {
-    return buffer.length > 0 && buffer[0] === 0x47;
-  }
-  const head = buffer.subarray(0, 1024).toString('latin1');
-  return head.includes('#EXTM3U');
-}
 
 @ApiTags('admin')
 @ApiBearerAuth('JWT-auth')
@@ -70,7 +39,6 @@ function isAllowedVideoFile(buffer: Buffer, mimetype: string): boolean {
 export class AdminController {
   constructor(
     private readonly adminService: AdminService,
-    private readonly supabaseService: SupabaseService,
     private readonly episodeService: EpisodeService,
   ) {}
 
@@ -184,60 +152,6 @@ export class AdminController {
       slug,
       number,
       dto,
-      season ? parseInt(season, 10) || 1 : 1,
-    );
-  }
-
-  @Post('episode/:slug/:number/upload')
-  @Audit('UPLOAD_VIDEO', 'Episode')
-  @ApiOperation({
-    summary: 'Upload de vídeo (.mp4/.m3u8/.ts) p/ Supabase Storage',
-  })
-  @ApiConsumes('multipart/form-data')
-  @ApiBody({
-    schema: {
-      type: 'object',
-      properties: {
-        file: {
-          type: 'string',
-          format: 'binary',
-        },
-      },
-      required: ['file'],
-    },
-  })
-  @UseInterceptors(
-    FileInterceptor('file', {
-      limits: { fileSize: MAX_UPLOAD_BYTES },
-    }),
-  )
-  async uploadEpisodeVideo(
-    @Param('slug') slug: string,
-    @Param('number', ParseIntPipe) number: number,
-    @Query('season') season: string | undefined,
-    @UploadedFile() file: Express.Multer.File,
-  ) {
-    if (!file) {
-      throw new BadRequestException('Arquivo de vídeo não enviado.');
-    }
-
-    const mimetype = file.mimetype?.toLowerCase() ?? '';
-    if (!isAllowedVideoFile(file.buffer, mimetype)) {
-      throw new BadRequestException(
-        'Tipo de arquivo inválido. Aceitos: .mp4, .m3u8, .ts (video/mp4, video/mp2t, application/vnd.apple.mpegurl, application/x-mpegURL).',
-      );
-    }
-
-    const { url } = await this.supabaseService.uploadVideo(
-      file.buffer,
-      file.mimetype,
-      file.originalname,
-    );
-
-    return this.adminService.updateEpisode(
-      slug,
-      number,
-      { videoUrl: url },
       season ? parseInt(season, 10) || 1 : 1,
     );
   }

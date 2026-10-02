@@ -13,8 +13,8 @@ services:
     env_file:
       - .env
     environment:
-      # DATABASE_URL vem do .env — em prod aponta pro Supabase pooler
-      # (postgres.svuaszdqsgztnetefcex.pooler.supabase.com), não pro postgres local.
+      # DATABASE_URL vem do .env — em prod aponta pro Postgres da VPS,
+      # não pro container local.
       - DATABASE_URL=${DATABASE_URL}
     volumes:
       - .:/app
