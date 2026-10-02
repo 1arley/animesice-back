@@ -6,6 +6,7 @@ import { EconomyService } from './economy.service';
 import { EconomyController } from './economy.controller';
 import { ECONOMY_DEFAULTS, economyConfig } from './economy.config';
 import { MarketQueryDto } from './economy.dto';
+import { dayKey } from './economy.rules';
 
 function model() {
   return Object.fromEntries(
@@ -384,5 +385,34 @@ describe('EconomyService safeguards', () => {
       ConflictException,
     );
     expect(db.crystalEvent.create).not.toHaveBeenCalled();
+  });
+
+  it('buys todays official offer stored as a postgres date', async () => {
+    db.gachaOfficialOffer.findFirst.mockResolvedValue({
+      id: 'offer-1',
+      day: new Date(`${dayKey()}T00:00:00.000Z`),
+      slot: 0,
+      itemType: 'CARD',
+      cardId: 'card-1',
+      skinId: null,
+      price: 1000,
+      discount: 20,
+      payload: { foil: 'NORMAL', condition: 0.5 },
+      purchasedAt: null,
+      card: { id: 'card-1', name: 'Carta', status: 'ACTIVE' },
+      skin: null,
+    });
+    db.gachaOfficialOffer.updateMany.mockResolvedValue({ count: 1 });
+    db.card.update.mockResolvedValue({ editionCounter: 7 });
+    db.userCard.create.mockResolvedValue({ id: 'uc-1' });
+    db.user.update.mockResolvedValue({});
+
+    await expect(service.buyOfficialOffer('u1', 'offer-1')).resolves.toEqual({
+      offerId: 'offer-1',
+      reward: { type: 'CARD', userCardId: 'uc-1' },
+    });
+    expect(db.crystalEvent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ delta: -1000, type: 'SPEND' }),
+    });
   });
 });
