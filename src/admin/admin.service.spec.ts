@@ -486,34 +486,6 @@ describe('AdminService', () => {
   });
 
   describe('listAnimesForAdmin', () => {
-    it('lista animes com paginação e busca', async () => {
-      const animes = [{ id: 'a1', title: 'Naruto' }];
-      prisma.$transaction.mockResolvedValue([animes, 1]);
-
-      const result = await service.listAnimesForAdmin(2, 20, 'naruto');
-
-      expect(result.data).toEqual(animes);
-      expect(result.meta).toEqual({
-        total: 1,
-        page: 2,
-        limit: 20,
-        totalPages: 1,
-      });
-      expect(prisma.anime.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({
-          skip: 20,
-          take: 20,
-          where: {
-            OR: [
-              { title: { contains: 'naruto', mode: 'insensitive' } },
-              { japaneseTitle: { contains: 'naruto', mode: 'insensitive' } },
-              { slug: { contains: 'naruto', mode: 'insensitive' } },
-            ],
-          },
-        }),
-      );
-    });
-
     it('lista sem busca usando paginação padrão', async () => {
       prisma.$transaction.mockResolvedValue([[], 0]);
 
@@ -526,6 +498,101 @@ describe('AdminService', () => {
         totalPages: 0,
       });
       expect(prisma.anime.findMany.mock.calls[0][0].where).toEqual({});
+    });
+
+    it('ordena a busca por relevância, com o título exato primeiro', async () => {
+      const row = (title: string) => ({
+        id: title,
+        title,
+        japaneseTitle: null,
+        slug: title.toLowerCase().replace(/\s+/g, '-'),
+        alternativeTitles: [],
+      });
+      prisma.anime.findMany.mockResolvedValue([
+        row('Demon Slayer: Kimetsu no Yaiba Dublado 3'),
+        row('Demon Slayer: Kimetsu no Yaiba'),
+        row('Demon Slayer: Kimetsu no Yaiba 2'),
+      ]);
+
+      const result = await service.listAnimesForAdmin(
+        1,
+        10,
+        'kimetsu no yaiba',
+      );
+
+      expect(result.data.map((a) => a.title)).toEqual([
+        'Demon Slayer: Kimetsu no Yaiba',
+        'Demon Slayer: Kimetsu no Yaiba 2',
+        'Demon Slayer: Kimetsu no Yaiba Dublado 3',
+      ]);
+      expect(result.meta.total).toBe(3);
+      // A busca não pagina por createdAt: lê uma janela e rankeia em JS.
+      expect(prisma.anime.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          take: 200,
+          where: {
+            OR: expect.arrayContaining([
+              {
+                title: {
+                  contains: 'kimetsu no yaiba',
+                  mode: 'insensitive',
+                },
+              },
+              {
+                japaneseTitle: {
+                  contains: 'kimetsu no yaiba',
+                  mode: 'insensitive',
+                },
+              },
+              {
+                slug: { contains: 'kimetsu no yaiba', mode: 'insensitive' },
+              },
+            ]),
+          },
+        }),
+      );
+    });
+
+    it('normaliza acentos e aceita id do MAL na busca', async () => {
+      prisma.anime.findMany.mockResolvedValue([]);
+
+      await service.listAnimesForAdmin(1, 10, '51009');
+
+      expect(prisma.anime.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            OR: expect.arrayContaining([
+              { malId: 51009 },
+              { anilistId: 51009 },
+            ]),
+          },
+        }),
+      );
+    });
+
+    it('normaliza acentos da busca antes de consultar', async () => {
+      prisma.anime.findMany.mockResolvedValue([]);
+
+      await service.listAnimesForAdmin(1, 10, '  PokeOki  ');
+
+      expect(prisma.anime.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            OR: expect.arrayContaining([
+              { title: { contains: 'pokeoki', mode: 'insensitive' } },
+              { slug: { contains: 'pokeoki', mode: 'insensitive' } },
+            ]),
+          },
+        }),
+      );
+    });
+
+    it('omite genres e contagem quando counts é false', async () => {
+      prisma.$transaction.mockResolvedValue([[], 0]);
+
+      await service.listAnimesForAdmin(1, 10, undefined, { counts: false });
+
+      expect(prisma.anime.findMany.mock.calls[0][0].include).toBeUndefined();
     });
   });
 });

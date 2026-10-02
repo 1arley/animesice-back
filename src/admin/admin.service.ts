@@ -18,6 +18,9 @@ import { AnimeFormat, AnimeSeason, AudioType } from '@prisma/client';
 import { audioTypeFromTitle } from '@/common/anime-audio';
 import { CreateExternalAnimeDto } from '@/admin/dto/create-external-anime.dto';
 
+/** Candidatos lidos antes do ranking por relevância na busca de animes. */
+const ANIME_SEARCH_WINDOW = 200;
+
 @Injectable()
 export class AdminService {
   constructor(
@@ -67,6 +70,58 @@ export class AdminService {
       n += 1;
     }
     return slug;
+  }
+
+  /**
+   * Normaliza texto para busca tolerante a acentos e tipografia — o catálogo
+   * real tem títulos como "PokéOki", "Arbeit Shiyou!! Let’s Arbeit!" e
+   * "2×1", que o ILIKE puro não casa quando o admin digita sem acento.
+   */
+  private foldForSearch(input: string | null | undefined): string {
+    return (input ?? '')
+      .normalize('NFD')
+      .replace(/\p{Diacritic}/gu, '')
+      .replace(/[’‘`´]/g, "'")
+      .replace(/[“”]/g, '"')
+      .replace(/[–—]/g, '-')
+      .replace(/…/g, '...')
+      .replace(/[×✕✖]/g, 'x')
+      .toLowerCase()
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  /**
+   * Pontuação de relevância: menor é melhor. O catálogo guarda variantes
+   * ("… Dublado", "… 2", "… – Hashira Geiko-hen") como animes separados, então
+   * ordenar só por `createdAt` escondia o título exato atrás de 10 linhas
+   * parecidas — o sintoma clássico de "o anime não aparece na busca".
+   */
+  private animeRelevance(
+    term: string,
+    anime: {
+      title: string;
+      japaneseTitle: string | null;
+      slug: string | null;
+      alternativeTitles: string[];
+    },
+  ): number {
+    let best = Number.MAX_SAFE_INTEGER;
+    const consider = (value: string | null | undefined) => {
+      if (!value) return;
+      const folded = this.foldForSearch(value);
+      if (folded === term) best = Math.min(best, 0);
+      else if (folded.startsWith(term)) best = Math.min(best, 1);
+      else if (folded.split(' ').some((word) => word.startsWith(term)))
+        best = Math.min(best, 2);
+      else if (folded.includes(term)) best = Math.min(best, 3);
+    };
+    consider(anime.title);
+    consider(anime.japaneseTitle);
+    for (const alt of anime.alternativeTitles ?? []) consider(alt);
+    // slug é ASCII puro: cobre a busca sem acento ("pokeoki" → "PokéOki").
+    if (anime.slug?.includes(term)) best = Math.min(best, 4);
+    return best;
   }
 
   // --- Anime -------------------------------------------------------------
@@ -445,28 +500,80 @@ export class AdminService {
 
   // --- Admin overview -----------------------------------------------------
 
-  async listAnimesForAdmin(page = 1, limit = 50, search?: string) {
-    const skip = (page - 1) * limit;
+  /**
+   * Lista animes para o admin. Com `search`, ordena por relevância (título
+   * exato → prefixo → palavra → conteúdo) em vez de `createdAt`, para que o
+   * anime procurado apareça no topo do typeahead. `counts: false` omite
+   * `genres`/`_count.episodes` — usado pelo autocomplete, que não precisa deles.
+   */
+  async listAnimesForAdmin(
+    page = 1,
+    limit = 50,
+    search?: string,
+    options: { counts?: boolean } = {},
+  ) {
+    const include =
+      options.counts === false
+        ? undefined
+        : { genres: true, _count: { select: { episodes: true } } };
+    const term = this.foldForSearch(search);
     const where: Prisma.AnimeWhereInput = {};
-    if (search) {
-      where.OR = [
-        { title: { contains: search, mode: 'insensitive' } },
-        { japaneseTitle: { contains: search, mode: 'insensitive' } },
-        { slug: { contains: search, mode: 'insensitive' } },
+
+    if (term) {
+      const clauses: Prisma.AnimeWhereInput[] = [
+        { title: { contains: term, mode: 'insensitive' } },
+        { japaneseTitle: { contains: term, mode: 'insensitive' } },
+        // slug é ASCII puro: é o que faz "pokeoki" achar "PokéOki".
+        { slug: { contains: term, mode: 'insensitive' } },
+        // `has` é igualdade de elemento em text[]; busca parcial dentro do
+        // array exigiria raw SQL, então mantemos o título alternativo exato.
+        { alternativeTitles: { has: search?.trim() ?? term } },
       ];
+      if (/^\d+$/.test(term)) {
+        const externalId = Number(term);
+        clauses.push({ malId: externalId }, { anilistId: externalId });
+      }
+      where.OR = clauses;
     }
-    const [animes, total] = await this.prisma.$transaction([
-      this.prisma.anime.findMany({
-        where,
-        skip,
-        take: limit,
-        orderBy: { createdAt: 'desc' },
-        include: { genres: true, _count: { select: { episodes: true } } },
-      }),
-      this.prisma.anime.count({ where }),
-    ]);
+
+    if (!term) {
+      const [animes, total] = await this.prisma.$transaction([
+        this.prisma.anime.findMany({
+          where,
+          skip: (page - 1) * limit,
+          take: limit,
+          orderBy: { createdAt: 'desc' },
+          ...(include ? { include } : {}),
+        }),
+        this.prisma.anime.count({ where }),
+      ]);
+      return {
+        data: animes,
+        meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+      };
+    }
+
+    // Janela de candidatos: o ranking é feito em JS para pontuar o título exato,
+    // então buscamos uma margem e ordenamos por relevância antes de paginar.
+    const candidates = await this.prisma.anime.findMany({
+      where,
+      take: ANIME_SEARCH_WINDOW,
+      orderBy: { createdAt: 'desc' },
+      ...(include ? { include } : {}),
+    });
+    const ranked = candidates
+      .map((anime) => ({ anime, rank: this.animeRelevance(term, anime) }))
+      .filter((row) => row.rank < Number.MAX_SAFE_INTEGER)
+      .sort(
+        (a, b) =>
+          a.rank - b.rank ||
+          a.anime.title.length - b.anime.title.length ||
+          a.anime.title.localeCompare(b.anime.title, 'pt-BR'),
+      );
+    const total = ranked.length;
+    const start = (page - 1) * limit;
     return {
-      data: animes,
+      data: ranked.slice(start, start + limit).map((row) => row.anime),
       meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
     };
   }

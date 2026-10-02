@@ -476,6 +476,11 @@ export class StreamingService {
           () =>
             this.scrapeService.scrapeFromAnimefire(animeSlug, episodeNumber),
         ],
+        [
+          'animesonline',
+          () =>
+            this.scrapeService.scrapeFromAnimesonline(animeSlug, episodeNumber),
+        ],
       ] as const) {
         try {
           const candidate = await run();
@@ -909,6 +914,14 @@ export class StreamingService {
           // Fallback animefire.io.
           if (!fresh) {
             fresh = await this.scrapeService.scrapeFromAnimefire(
+              animeSlug,
+              episodeNumber,
+            );
+            if (fresh && (await probeMediaUrlDead(fresh, true))) fresh = null;
+          }
+          // Fallback animesonline.cloud.
+          if (!fresh) {
+            fresh = await this.scrapeService.scrapeFromAnimesonline(
               animeSlug,
               episodeNumber,
             );

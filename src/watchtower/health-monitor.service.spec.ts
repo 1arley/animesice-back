@@ -140,12 +140,21 @@ describe('HealthMonitor', () => {
     const result = await health.rankedSources();
     expect(result).toHaveLength(SOURCE_IDS.length);
     expect(result).toContain('meusanimes');
+    expect(result).toContain('animesonline');
   });
 
   it('rankedSources exclui fontes disabled', async () => {
+    mock.store.set('animesonline', {
+      sourceId: 'animesonline',
+      successCount: 1,
+      failureCount: 0,
+      consecutiveFailures: 0,
+      avgLatencyMs: 100,
+      disabled: true,
+    });
     const result = await health.rankedSources();
-    expect(result).toContain('meusanimes');
-    expect(result).toHaveLength(SOURCE_IDS.length);
+    expect(result).not.toContain('animesonline');
+    expect(result).toHaveLength(SOURCE_IDS.length - 1);
   });
 
   it('rankedSources prioriza meusanimes quando scores similares', async () => {

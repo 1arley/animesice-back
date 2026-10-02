@@ -3111,7 +3111,7 @@ export class GachaService {
     return this.prisma.gachaRarity.update({ where: { id }, data });
   }
 
-  adminCreateCard(data: {
+  async adminCreateCard(data: {
     name: string;
     image?: string;
     rarity: string;
@@ -3121,6 +3121,11 @@ export class GachaService {
     variantName?: string;
     variantType?: string;
   }) {
+    const anime = await this.prisma.anime.findUnique({
+      where: { id: data.animeId },
+      select: { id: true, title: true },
+    });
+    if (!anime) throw new BadRequestException('Anime não encontrado.');
     // ponytail: malCharacterId negativo sintético p/ carta manual; colidir
     // com carta real do MAL é impossível (IDs MAL são positivos).
     const malCharacterId = -randomInt(1, 2_000_000_000);
@@ -3130,7 +3135,10 @@ export class GachaService {
         image: data.image,
         imageHidden: data.imageHidden ?? false,
         rarity: data.rarity,
-        animeId: data.animeId,
+        animeId: anime.id,
+        // Desnormalizado de propósito: o admin lista cartas mesmo quando a
+        // relação é nula, e `animeTitle` é o fallback exibido nesse caso.
+        animeTitle: anime.title,
         variantName: data.variantName,
         variantType: data.variantType,
         malCharacterId,
@@ -3160,12 +3168,26 @@ export class GachaService {
         select: {
           rarity: true,
           animeId: true,
+          animeTitle: true,
           image: true,
           imageHidden: true,
           name: true,
         },
       });
       if (!current) throw new NotFoundException('Carta não encontrada.');
+      const animeChanged =
+        data.animeId !== undefined && data.animeId !== current.animeId;
+      const rarityChanged =
+        data.rarity !== undefined && data.rarity !== current.rarity;
+      if (
+        actor &&
+        (animeChanged || rarityChanged) &&
+        (actor.reason?.trim().length ?? 0) < 10
+      ) {
+        throw new BadRequestException(
+          'Motivo deve ter ao menos 10 caracteres.',
+        );
+      }
       if (
         data.status === 'ACTIVE' &&
         ((!data.animeId && !current.animeId) ||
@@ -3176,9 +3198,29 @@ export class GachaService {
           'Carta precisa de anime, nome e imagem para publicar.',
         );
       }
-      const { status, ...fields } = data;
-      const rarityChanged =
-        data.rarity !== undefined && data.rarity !== current.rarity;
+      const {
+        status,
+        ...fields
+      }: {
+        name?: string;
+        image?: string;
+        rarity?: string;
+        animeId?: string;
+        animeTitle?: string;
+        imageHidden?: boolean;
+        status?: string;
+        variantName?: string;
+        variantType?: string;
+      } = data;
+      if (data.animeId) {
+        const anime = await tx.anime.findUnique({
+          where: { id: data.animeId },
+          select: { id: true, title: true },
+        });
+        if (!anime) throw new BadRequestException('Anime não encontrado.');
+        fields.animeId = anime.id;
+        fields.animeTitle = anime.title;
+      }
       const copies = rarityChanged
         ? await tx.userCard.findMany({
             where: { cardId: id, valueOverride: null },

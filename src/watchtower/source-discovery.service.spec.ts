@@ -3,7 +3,7 @@ import { SOURCE_IDS } from '@/watchtower/watchtower.types';
 
 function makeMockHealth() {
   return {
-    rankedSources: jest.fn(async () => ['meusanimes']),
+    rankedSources: jest.fn(async () => ['meusanimes', 'animesonline']),
     recordSuccess: jest.fn(async () => undefined),
     recordFailure: jest.fn(async () => undefined),
     reviveOne: jest.fn(async () => null),
@@ -46,6 +46,7 @@ describe('SourceDiscovery', () => {
       if (url.includes('meusanimes')) return { status: 404 } as any;
       if (url.includes('animefire')) return { status: 404 } as any;
       if (url.includes('animesonlinecc')) return { status: 404 } as any;
+      if (url.includes('animesonline.cloud')) return { status: 404 } as any;
       return { status: 200 } as any;
     });
     global.fetch = fetchFn as any;
@@ -81,7 +82,7 @@ describe('SourceDiscovery', () => {
     const result = discovery.allCandidates('anime-slug', 5);
     expect(result).toHaveLength(SOURCE_IDS.length);
     expect(result.map((c) => c.sourceId)).toContain('meusanimes');
-    expect(result.map((c) => c.sourceId)).toEqual(['meusanimes']);
+    expect(result.map((c) => c.sourceId)).toContain('animesonline');
   });
 
   it('URL meusanimes segue template <slug>-episodio-<n>/ (sem season no slug)', () => {
@@ -89,6 +90,14 @@ describe('SourceDiscovery', () => {
     const meusa = result.find((c) => c.sourceId === 'meusanimes');
     expect(meusa?.url).toBe(
       'https://meusanimes.blog/e/mushoku-tensei-episodio-7/',
+    );
+  });
+
+  it('URL animesonline segue template /episodio/<slug>-episodio-<n>', () => {
+    const result = discovery.allCandidates('solo-levelling', 3);
+    const ta = result.find((c) => c.sourceId === 'animesonline');
+    expect(ta?.url).toBe(
+      'https://animesonline.cloud/episodio/solo-levelling-episodio-3',
     );
   });
 

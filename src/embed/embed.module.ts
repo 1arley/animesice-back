@@ -4,6 +4,7 @@ import { EmbedController } from '@/embed/embed.controller';
 import { ScrapeService } from '@/embed/scrape/scrape.service';
 import { BrowserPool } from '@/embed/scrape/browser-pool.service';
 import { MeusanimesScrapeSource } from '@/embed/scrape/meusanimes.source';
+import { AnimesonlineScrapeSource } from '@/embed/scrape/animesonline.source';
 import { AnimesdigitalScrapeSource } from '@/embed/scrape/animesdigital.source';
 import { PrismaModule } from '@/prisma/prisma.module';
 import { WatchtowerModule } from '@/watchtower/watchtower.module';
@@ -23,6 +24,7 @@ import { MetricsService } from '@/metrics/metrics.service';
     BrowserPool,
     // Scrape multi-fonte (adapters de extração + orquestrador).
     MeusanimesScrapeSource,
+    AnimesonlineScrapeSource,
     AnimesdigitalScrapeSource,
     ScrapeService,
     MetricsService,

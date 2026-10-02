@@ -12,6 +12,7 @@ import { chromium } from 'playwright';
 import type { Page, BrowserContext, Browser } from 'playwright';
 import { ScrapeSource, ScrapeEpisodeResult } from './scrape-source.interface';
 import { MeusanimesScrapeSource } from './meusanimes.source';
+import { AnimesonlineScrapeSource } from './animesonline.source';
 import { AnimesdigitalScrapeSource } from './animesdigital.source';
 import { youtubeEmbedUrl } from './extract';
 import {
@@ -95,7 +96,7 @@ interface ScrapeCacheEntry {
  *
  * Extração técnica de URL .mp4/.m3u8 + iframes de episódio, multi-fonte via
  * Playwright (chromium headless) e caminho HTTP puro (extractHttp) quando a
- * fonte permite (animefire, meusanimes).
+ * fonte permite (animefire, meusanimes, animesonline).
  *
  * AVISO DE IP-VINCULO (CRITICO):
  *   Tokens .mp4 de CDNs pirates frequentemente VINCULAM ao IP. O IP que abriu
@@ -130,6 +131,7 @@ export class ScrapeService {
 
   constructor(
     meusanimes: MeusanimesScrapeSource,
+    animesonline: AnimesonlineScrapeSource,
     private readonly prisma: PrismaService,
     @Inject(forwardRef(() => HealthMonitor))
     private readonly health: HealthMonitor,
@@ -137,7 +139,11 @@ export class ScrapeService {
     private readonly browserPool: BrowserPool,
     @Optional() private readonly animesdigital?: AnimesdigitalScrapeSource,
   ) {
-    this.sources = [meusanimes, ...(animesdigital ? [animesdigital] : [])];
+    this.sources = [
+      meusanimes,
+      animesonline,
+      ...(animesdigital ? [animesdigital] : []),
+    ];
     const ttl = Number(process.env.SCRAPE_CACHE_TTL_MS ?? 10 * 60_000);
     const stale = Number(process.env.SCRAPE_CACHE_STALE_MS ?? 60 * 60_000);
     this.CACHE_TTL_MS = Number.isFinite(ttl) && ttl > 0 ? ttl : 10 * 60_000;
@@ -168,7 +174,7 @@ export class ScrapeService {
    * single-flight -> wrap no proxy de mídia.
    *
    * @param episodeUrl URL absoluta do episodio.
-   * @param sourceId opcional força um adapter (animefire/animesonlinecc/meusanimes);
+   * @param sourceId opcional força um adapter (meusanimes/animesonline/animesdigital);
    *                 sem source, escolhe dinamicamente o provider mais saudável
    *                 que suporta a URL (pula disabled do HealthMonitor).
    * @param wrap se true (default), URLs externas sao embrulhadas no proxy de
@@ -819,6 +825,56 @@ export class ScrapeService {
     } catch (err) {
       dbg(
         `[ANIMEFIRE] failed ${episodeUrl}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    return null;
+  }
+
+  /**
+   * Constrói a URL de um episódio no animesonline.cloud a partir do slug do
+   * anime e número do episódio.
+   * Padrão: animesonline.cloud/episodio/<slug>-episodio-<n>
+   *
+   * Nota: o animesonline.cloud é um WordPress próprio (slugs podem divergir
+   * dos do animefire/meusanimes). Esta URL é uma candidata; a extração real
+   * só acontece se a página existir (probe 404 descarta antes do fetch).
+   */
+  animesonlineEpisodeUrl(animeSlug: string, episodeNumber: number): string {
+    return `https://animesonline.cloud/episodio/${animeSlug}-episodio-${episodeNumber}`;
+  }
+
+  /**
+   * Tenta extrair vídeo de um episódio via animesonline.cloud (pt-BR).
+   *
+   * O site renderiza os players server-side: a página do episódio traz
+   * <source src="...mp4"> (animeflix.blog) + iframe Blogger de reserva.
+   * Funciona de IPs de datacenter (sem Cloudflare challenge).
+   *
+   * Retorna a URL .mp4 RAW (sem wrap) ou null se falhar.
+   */
+  async scrapeFromAnimesonline(
+    animeSlug: string,
+    episodeNumber: number,
+  ): Promise<string | null> {
+    const episodeUrl = this.animesonlineEpisodeUrl(animeSlug, episodeNumber);
+    dbg(`[ANIMESONLINE] try ${animeSlug}/${episodeNumber} -> ${episodeUrl}`);
+    try {
+      const result = await this.scrapeEpisodeVideo(
+        episodeUrl,
+        undefined,
+        false,
+      );
+      const video = result.videos[0] ?? null;
+      if (video) {
+        dbg(
+          `[ANIMESONLINE] OK ${animeSlug}/${episodeNumber}: ${video.slice(0, 80)}...`,
+        );
+        return video;
+      }
+      dbg(`[ANIMESONLINE] no video returned ${animeSlug}/${episodeNumber}`);
+    } catch (err) {
+      dbg(
+        `[ANIMESONLINE] failed ${episodeUrl}: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
     return null;

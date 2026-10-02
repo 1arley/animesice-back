@@ -118,7 +118,7 @@ export const BACKOFF_MS: number[] = [
 ];
 
 /** IDs de fonte canônicos (devem bater com ScrapeSource.id). */
-export const SOURCE_IDS = ['meusanimes'] as const;
+export const SOURCE_IDS = ['meusanimes', 'animesonline'] as const;
 
 export const OPTIONAL_SOURCE_IDS = ['animesdigital'] as const;
 
@@ -142,6 +142,8 @@ export function sourceEpisodeUrl(
       return `https://meusanimes.blog/e/${animeSlug}-episodio-${episodeNumber}/`;
     case 'animesonlinecc':
       return `https://animesonlinecc.to/episodio/${animeSlug}-episodio-${episodeNumber}/`;
+    case 'animesonline':
+      return `https://animesonline.cloud/episodio/${animeSlug}-episodio-${episodeNumber}`;
     default:
       return null;
   }
