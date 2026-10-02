@@ -36,6 +36,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
+  actions: read
   contents: read
 
 jobs:
@@ -56,53 +57,56 @@ jobs:
        github.event.workflow_run.head_branch == 'main')
 
     steps:
+      - name: Download release result
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@v7
+        with:
+          name: release-info
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
       - name: Resolve deploy ref
         id: ref
         shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_EVENT_TAG: ${{ github.event.release.tag_name }}
+          MANUAL_TAG: ${{ inputs.tag }}
         run: |
-          if [ "${{ github.event_name }}" = "release" ]; then
-            echo "ref=${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
-          elif [ "${{ github.event_name }}" = "workflow_run" ]; then
-            # Release workflow tags the exact commit it ran against; checkout
-            # that SHA and resolve the tag locally in the next step.
-            echo "ref=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_OUTPUT"
-          elif [ -n "${{ inputs.tag }}" ]; then
-            echo "ref=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          if [ "$EVENT_NAME" = "release" ]; then
+            tag="$RELEASE_EVENT_TAG"
+          elif [ "$EVENT_NAME" = "workflow_run" ]; then
+            tag="$(jq -r '.tag // empty' release-info.json)"
+          elif [ -n "$MANUAL_TAG" ]; then
+            tag="$MANUAL_TAG"
           else
-            echo "ref=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            tag="$GITHUB_REF_NAME"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if [ -z "$tag" ]; then
+            echo "No release was created; skipping image publish."
           fi
 
-      - name: Checkout at deploy ref
+      - name: Checkout release tag
+        if: steps.ref.outputs.tag != ''
         uses: actions/checkout@v7
         with:
-          ref: ${{ steps.ref.outputs.ref }}
+          ref: refs/tags/${{ steps.ref.outputs.tag }}
           fetch-depth: 0
 
-      # On workflow_run the ref is the release commit SHA; resolve the actual
-      # release tag via the API (git describe would return the previous tag,
-      # since the semantic-release tag points at a child commit).
-      - name: Resolve release tag
-        id: tag
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_run" ]; then
-            echo "tag=$(gh api repos/${{ github.repository }}/releases/latest --jq .tag_name)" >> "$GITHUB_OUTPUT"
-          else
-            echo "tag=${{ steps.ref.outputs.ref }}" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Set up Docker Buildx
+        if: steps.ref.outputs.tag != ''
         uses: docker/setup-buildx-action@v4
 
       - name: Log in to Docker Hub
+        if: steps.ref.outputs.tag != ''
         uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build & push image
+        if: steps.ref.outputs.tag != ''
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -111,6 +115,6 @@ jobs:
           # na VPS detecta o novo `latest` e atualiza o container (com migração
           # no boot), então nenhum passo remoto é necessário aqui.
           tags: |
-            ${{ secrets.DOCKERHUB_REPO }}:${{ steps.tag.outputs.tag }}
+            ${{ secrets.DOCKERHUB_REPO }}:${{ steps.ref.outputs.tag }}
             ${{ secrets.DOCKERHUB_REPO }}:latest
           provenance: false
