@@ -342,6 +342,25 @@ export class GachaController {
     return this.gachaService.setCardBack(req.user.id, body.key);
   }
 
+  @Get('loadout')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Loadout de cosméticos equipados' })
+  gachaLoadout(@Req() req: AuthenticatedRequest) {
+    return this.gachaService.gachaLoadout(req.user.id);
+  }
+
+  @Patch('loadout')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Equipa moldura ou destaque (key null desequipa)' })
+  setLoadout(
+    @Req() req: AuthenticatedRequest,
+    @Body() body: { slot: string; key: string | null },
+  ) {
+    return this.gachaService.setLoadout(req.user.id, body.slot, body.key);
+  }
+
   @Get('admin/card-backs')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN', 'SUPERADMIN')

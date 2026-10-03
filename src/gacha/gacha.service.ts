@@ -12,6 +12,7 @@ import {
   CardSource,
   CardStatus,
   CrystalEventType,
+  GachaCosmeticType,
   Prisma,
 } from '@prisma/client';
 import { PrismaService } from '@/prisma/prisma.service';
@@ -37,6 +38,23 @@ import {
   UpsertCardWishlistDto,
   UpsertSetWishlistDto,
 } from '@/gacha/dto/gacha.dto';
+
+/** Slots de loadout que não são capa. A capa tem coluna própria (gachaCardBack). */
+export type GachaLoadout = {
+  FRAME: string | null;
+  HIGHLIGHT: string | null;
+};
+
+/**
+ * Normaliza o JSON de loadout. Aceita o formato antigo/objeto solto e sempre
+ * devolve os dois slots presentes, para o front nunca lidar com undefined.
+ */
+export function normalizeLoadout(value: unknown): GachaLoadout {
+  const raw = (value ?? {}) as Record<string, unknown>;
+  const pick = (key: keyof GachaLoadout) =>
+    typeof raw[key] === 'string' && raw[key] ? raw[key] : null;
+  return { FRAME: pick('FRAME'), HIGHLIGHT: pick('HIGHLIGHT') };
+}
 
 const DAY_MS = 86_400_000;
 const HOUR_MS = 3_600_000;
@@ -86,6 +104,7 @@ const PULL_SELECT = {
       avatar: true,
       gachaCosmetics: true,
       gachaCardBack: true,
+      gachaLoadout: true,
     },
   },
   originalUser: {
@@ -1551,33 +1570,94 @@ export class GachaService {
     return back;
   }
 
-  async setCardBack(userId: string, key: string | null) {
-    if (key !== null && typeof key !== 'string') {
-      throw new BadRequestException('Capa inválida.');
-    }
+  /** Valida posse + publicação de um cosmético de loadout. */
+  private async assertEquippable(
+    userId: string,
+    key: string,
+    type: GachaCosmeticType,
+  ) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: { gachaCosmetics: true },
     });
     if (!user) throw new NotFoundException('Usuário não encontrado.');
-    if (key !== null && !user.gachaCosmetics.includes(key)) {
-      throw new ForbiddenException('Você não possui esta capa.');
+    if (!user.gachaCosmetics.includes(key)) {
+      throw new ForbiddenException('Você não possui este cosmético.');
+    }
+    const item = await this.prisma.gachaCardBack.findFirst({
+      where: { key, type, status: 'PUBLISHED' },
+      select: { key: true },
+    });
+    if (!item) {
+      const typeLabel =
+        type === 'BACK'
+          ? 'capa de carta'
+          : type === 'FRAME'
+            ? 'moldura'
+            : 'destaque';
+      throw new BadRequestException(`Cosmético não é ${typeLabel} disponível.`);
+    }
+  }
+
+  /** Lê o loadout normalizado. Legacy cai no default {FRAME:null,HIGHLIGHT:null}. */
+  async gachaLoadout(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { gachaLoadout: true, gachaCardBack: true },
+    });
+    if (!user) throw new NotFoundException('Usuário não encontrado.');
+    return {
+      loadout: normalizeLoadout(user.gachaLoadout),
+      cardBack: user.gachaCardBack,
+    };
+  }
+
+  async setCardBack(userId: string, key: string | null) {
+    if (key !== null && typeof key !== 'string') {
+      throw new BadRequestException('Capa inválida.');
     }
     if (key !== null) {
-      const back = await this.prisma.gachaCardBack.findFirst({
-        where: { key, type: 'BACK', status: 'PUBLISHED' },
-        select: { key: true },
-      });
-      if (!back) {
-        throw new BadRequestException(
-          'Cosmético não é capa de carta disponível.',
-        );
-      }
+      await this.assertEquippable(userId, key, 'BACK');
     }
     return this.prisma.user.update({
       where: { id: userId },
       data: { gachaCardBack: key },
       select: { gachaCardBack: true },
+    });
+  }
+
+  /**
+   * Equipa moldura ou destaque. key=null desequipa o slot.
+   * Aceita apenas FRAME/HIGHLIGHT — a capa tem endpoint próprio.
+   * A escrita roda em transação com FOR UPDATE para não sobrescrever
+   * o slot paralelo em requisições concorrentes (lost update).
+   */
+  async setLoadout(userId: string, slot: string, key: string | null) {
+    if (slot !== 'FRAME' && slot !== 'HIGHLIGHT') {
+      throw new BadRequestException('Slot de loadout inválido.');
+    }
+    if (key !== null && typeof key !== 'string') {
+      throw new BadRequestException('Cosmético inválido.');
+    }
+    if (key !== null) {
+      await this.assertEquippable(userId, key, slot);
+    }
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${userId} FOR UPDATE`;
+      const user = await tx.user.findUnique({
+        where: { id: userId },
+        select: { gachaLoadout: true },
+      });
+      if (!user) throw new NotFoundException('Usuário não encontrado.');
+      const next = {
+        ...normalizeLoadout(user.gachaLoadout),
+        [slot]: key,
+      };
+      return tx.user.update({
+        where: { id: userId },
+        data: { gachaLoadout: next },
+        select: { gachaLoadout: true },
+      });
     });
   }
 
