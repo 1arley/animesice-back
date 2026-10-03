@@ -170,6 +170,62 @@ describe('HttpExceptionFilter', () => {
     });
   });
 
+  describe('erros do body-parser', () => {
+    let parserErrorSpy: jest.SpyInstance;
+
+    beforeEach(() => {
+      parserErrorSpy = jest
+        .spyOn(Logger.prototype, 'error')
+        .mockImplementation(() => undefined);
+    });
+
+    afterEach(() => {
+      parserErrorSpy.mockRestore();
+    });
+
+    it('mapeia entity.too.large para 413 em vez de 500', () => {
+      const response = buildResponse();
+      const host = makeHost(
+        {
+          method: 'POST',
+          originalUrl: '/api/gacha/admin/card-backs',
+          url: '/api/gacha/admin/card-backs',
+        },
+        response,
+      );
+      const tooLarge: any = new Error('request entity too large');
+      tooLarge.type = 'entity.too.large';
+      tooLarge.status = 413;
+
+      filter.catch(tooLarge, host);
+
+      expect(response.status).toHaveBeenCalledWith(413);
+      expect(response.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          statusCode: 413,
+          path: '/api/gacha/admin/card-backs',
+          message: 'Payload muito grande.',
+        }),
+      );
+      // Erro do cliente nao deve virar "UNCAUGHT".
+      expect(parserErrorSpy).not.toHaveBeenCalled();
+    });
+
+    it('mantem 500 para erro de parser com type desconhecido', () => {
+      const response = buildResponse();
+      const host = makeHost(
+        { method: 'POST', originalUrl: '/x', url: '/x' },
+        response,
+      );
+      const unknown: any = new Error('boom');
+      unknown.type = 'entity.parse.weird';
+
+      filter.catch(unknown, host);
+
+      expect(response.status).toHaveBeenCalledWith(500);
+    });
+  });
+
   it('inclui timestamp ISO no response', () => {
     const response = buildResponse();
     const host = makeHost(
