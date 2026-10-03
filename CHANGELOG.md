@@ -1,3 +1,15 @@
+# [1.33.0](https://github.com/1arley/animesice-back/compare/v1.32.1...v1.33.0) (2026-10-03)
+
+
+### Bug Fixes
+
+* **gacha:** mensagem de capa em assertEquippable e serializa setLoadout ([e1d9a0a](https://github.com/1arley/animesice-back/commit/e1d9a0a1119040128adfbad99ac64fed44c51158))
+
+
+### Features
+
+* **gacha:** adiciona loadout equipado de moldura e destaque ([bca4324](https://github.com/1arley/animesice-back/commit/bca43240226fd14b49dec8bb4a6373a37c9fc12c))
+
 ## [1.32.1](https://github.com/1arley/animesice-back/compare/v1.32.0...v1.32.1) (2026-10-03)
 
 
