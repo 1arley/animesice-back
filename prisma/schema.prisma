@@ -182,6 +182,9 @@ model User {
   legacyPointEvents         GachaPointEvent[]
   gachaCosmetics            String[]                   @default([])
   gachaCardBack             String?
+  /// Cósméticos equipados (loadout único). A capa segue em gachaCardBack por
+  /// compatibilidade; moldura e destaque ficam aqui, {FRAME?: key, HIGHLIGHT?: key}.
+  gachaLoadout              Json?
   gachaWishlistPublic       Boolean                    @default(true)
   gachaCardWishlists        GachaCardWishlist[]
   gachaSetWishlists         GachaSetWishlist[]

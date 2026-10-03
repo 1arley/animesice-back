@@ -1912,7 +1912,68 @@ describe('GachaService', () => {
         where: { key: 'BACK_FRAME', type: 'BACK', status: 'PUBLISHED' },
         select: { key: true },
       });
+    });
+
+    it('equipa moldura e destaque no loadout preservando o outro slot', async () => {
+      mockPrisma.user.findUnique
+        .mockResolvedValueOnce({ gachaCosmetics: ['FRAME_AURORA'] })
+        .mockResolvedValueOnce({
+          gachaLoadout: { HIGHLIGHT: 'DESTAQUE_CARTA' },
+        });
+      mockPrisma.gachaCardBack.findFirst.mockResolvedValue({
+        key: 'FRAME_AURORA',
+      });
+      mockPrisma.user.update.mockResolvedValue({
+        gachaLoadout: { FRAME: 'FRAME_AURORA', HIGHLIGHT: 'DESTAQUE_CARTA' },
+      });
+
+      await expect(
+        service.setLoadout('u1', 'FRAME', 'FRAME_AURORA'),
+      ).resolves.toEqual({
+        gachaLoadout: { FRAME: 'FRAME_AURORA', HIGHLIGHT: 'DESTAQUE_CARTA' },
+      });
+      expect(mockPrisma.gachaCardBack.findFirst).toHaveBeenCalledWith({
+        where: { key: 'FRAME_AURORA', type: 'FRAME', status: 'PUBLISHED' },
+        select: { key: true },
+      });
+    });
+
+    it('recusa slot invalido, cosmético não possuído e item de tipo errado', async () => {
+      mockPrisma.user.findUnique.mockResolvedValue({ gachaCosmetics: [] });
+      await expect(
+        service.setLoadout('u1', 'BACK', 'BACK_X'),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      await expect(
+        service.setLoadout('u1', 'FRAME', 'FRAME_AURORA'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
       expect(mockPrisma.user.update).not.toHaveBeenCalled();
+
+      mockPrisma.user.findUnique.mockResolvedValue({
+        gachaCosmetics: ['DESTAQUE_CARTA'],
+      });
+      mockPrisma.gachaCardBack.findFirst.mockResolvedValue(null);
+      await expect(
+        service.setLoadout('u1', 'FRAME', 'DESTAQUE_CARTA'),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('desequipa com key null e normaliza loadout legado', async () => {
+      mockPrisma.user.findUnique
+        .mockResolvedValueOnce({ gachaLoadout: null, gachaCardBack: 'BACK_X' })
+        .mockResolvedValueOnce({ gachaLoadout: { FRAME: 'FRAME_AURORA' } });
+      mockPrisma.user.update.mockResolvedValue({
+        gachaLoadout: { FRAME: null, HIGHLIGHT: null },
+      });
+
+      await expect(service.gachaLoadout('u1')).resolves.toEqual({
+        loadout: { FRAME: null, HIGHLIGHT: null },
+        cardBack: 'BACK_X',
+      });
+      await expect(service.setLoadout('u1', 'FRAME', null)).resolves.toEqual({
+        gachaLoadout: { FRAME: null, HIGHLIGHT: null },
+      });
+      // key null não consulta o catálogo: desequipar não exige posse.
+      expect(mockPrisma.gachaCardBack.findFirst).not.toHaveBeenCalled();
       mockPrisma.user.update.mockResolvedValue({ gachaCardBack: null });
       await expect(service.setCardBack('u1', null)).resolves.toEqual({
         gachaCardBack: null,
