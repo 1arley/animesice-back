@@ -141,6 +141,27 @@ export class CreateSkinListingDto {
   price!: number;
 }
 
+export class CreateMarketOfferDto {
+  @IsEnum(['CARD', 'SKIN'])
+  itemType!: 'CARD' | 'SKIN';
+
+  @IsString()
+  @IsNotEmpty()
+  listingId!: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(2_147_483_647)
+  crystals?: number;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @IsString({ each: true })
+  offeredUserCardIds?: string[];
+}
+
 export class CreateCardListingDto {
   @IsString()
   @IsNotEmpty()

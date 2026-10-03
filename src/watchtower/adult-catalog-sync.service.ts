@@ -36,7 +36,7 @@ export class AdultCatalogSyncService implements OnApplicationBootstrap {
   onApplicationBootstrap(): void | Promise<void> {
     // Full-copy na 1ª boot só. Sem marcador => nunca sincronizou => roda.
     // Com marcador => deploys seguintes pulam (o cron 04:00 mantém o refresh).
-    // Cada full-copy cruza o catálogo inteiro pelo pooler do Supabase (egress);
+    // Cada full-copy cruza o catálogo inteiro no Postgres (egress);
     // com release automático isso re-copiava tudo a cada deploy. Fire-and-forget
     // de propósito: o sync bloquearia app.listen() (healthcheck 502 no Traefik).
     if (!syncEnabled()) return;

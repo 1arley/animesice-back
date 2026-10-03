@@ -20,6 +20,7 @@ import {
 } from './economy.rules';
 import {
   CreateBuyOrderDto,
+  CreateMarketOfferDto,
   MarketQueryDto,
   EconomicEventDto,
   ReviewSaleDto,
@@ -40,6 +41,150 @@ const QUALITY_TIERS: Record<PrizeQuality, string[]> = {
   RARE: ['RARA'],
   EPIC: ['EPICA', 'MITICA'],
   LEGENDARY: ['LENDARIA', 'GALACTICA'],
+};
+
+const MARKET_OFFER_ESCROW_SELECT = {
+  id: true,
+  offeredUserId: true,
+  requestedUserId: true,
+  cardListingId: true,
+  skinListingId: true,
+  crystals: true,
+  status: true,
+  expiresAt: true,
+  offeredCards: { select: { userCardId: true } },
+} satisfies Prisma.GachaMarketOfferSelect;
+
+const MARKET_OFFER_DETAILS = {
+  id: true,
+  offeredUserId: true,
+  requestedUserId: true,
+  crystals: true,
+  status: true,
+  expiresAt: true,
+  createdAt: true,
+  completedAt: true,
+  offeredUser: {
+    select: { id: true, name: true, userName: true, avatar: true },
+  },
+  requestedUser: {
+    select: { id: true, name: true, userName: true, avatar: true },
+  },
+  cardListing: {
+    select: {
+      id: true,
+      price: true,
+      userCard: {
+        select: {
+          id: true,
+          condition: true,
+          foil: true,
+          edition: true,
+          card: {
+            select: {
+              name: true,
+              image: true,
+              imageHidden: true,
+              rarity: true,
+            },
+          },
+        },
+      },
+    },
+  },
+  skinListing: {
+    select: {
+      id: true,
+      price: true,
+      userSkin: {
+        select: { id: true, name: true, imageUrl: true, rarity: true },
+      },
+    },
+  },
+  offeredCards: {
+    orderBy: { position: 'asc' },
+    select: {
+      userCard: {
+        select: {
+          id: true,
+          condition: true,
+          foil: true,
+          edition: true,
+          card: {
+            select: {
+              name: true,
+              image: true,
+              imageHidden: true,
+              rarity: true,
+            },
+          },
+        },
+      },
+    },
+  },
+} satisfies Prisma.GachaMarketOfferSelect;
+
+const presentMarketOffer = (
+  offer: Prisma.GachaMarketOfferGetPayload<{
+    select: typeof MARKET_OFFER_DETAILS;
+  }>,
+) => {
+  const presentCard = (copy: {
+    id: string;
+    condition: number;
+    foil: string;
+    edition: number;
+    card: {
+      name: string;
+      image: string | null;
+      imageHidden: boolean;
+      rarity: string;
+    };
+  }) => ({
+    id: copy.id,
+    condition: copy.condition,
+    foil: copy.foil,
+    edition: copy.edition,
+    name: copy.card.imageHidden ? '???' : copy.card.name,
+    image: copy.card.imageHidden ? null : copy.card.image,
+    rarity: copy.card.rarity,
+  });
+  const listing = offer.cardListing
+    ? {
+        id: offer.cardListing.id,
+        itemType: 'CARD' as const,
+        price: offer.cardListing.price,
+        item: presentCard(offer.cardListing.userCard),
+      }
+    : offer.skinListing
+      ? {
+          id: offer.skinListing.id,
+          itemType: 'SKIN' as const,
+          price: offer.skinListing.price,
+          item: {
+            id: offer.skinListing.userSkin.id,
+            name: offer.skinListing.userSkin.name,
+            image: offer.skinListing.userSkin.imageUrl,
+            rarity: offer.skinListing.userSkin.rarity,
+          },
+        }
+      : null;
+  return {
+    id: offer.id,
+    offeredUserId: offer.offeredUserId,
+    requestedUserId: offer.requestedUserId,
+    crystals: offer.crystals,
+    status: offer.status,
+    expiresAt: offer.expiresAt,
+    createdAt: offer.createdAt,
+    completedAt: offer.completedAt,
+    offeredUser: offer.offeredUser,
+    requestedUser: offer.requestedUser,
+    listing,
+    offeredCards: offer.offeredCards.map(({ userCard }) =>
+      presentCard(userCard),
+    ),
+  };
 };
 
 @Injectable()
@@ -165,6 +310,7 @@ export class EconomyService {
               status: true,
               createdAt: true,
               expiresAt: true,
+              user: { select: { id: true, name: true, userName: true } },
               userCard: {
                 select: {
                   id: true,
@@ -198,6 +344,7 @@ export class EconomyService {
               status: true,
               createdAt: true,
               expiresAt: true,
+              user: { select: { id: true, name: true, userName: true } },
               userSkin: {
                 select: {
                   id: true,
@@ -300,6 +447,13 @@ export class EconomyService {
   async expireMarket() {
     return this.prisma.$transaction(async (tx) => {
       await this.expireOrders(tx);
+      const expiredOffers = await tx.gachaMarketOffer.findMany({
+        where: { status: 'PENDING', expiresAt: { lte: new Date() } },
+        select: MARKET_OFFER_ESCROW_SELECT,
+      });
+      for (const offer of expiredOffers) {
+        await this.releaseMarketOffer(tx, offer, 'EXPIRED');
+      }
       const [cards, skins] = await Promise.all([
         tx.gachaListing.findMany({
           where: { status: 'ACTIVE', expiresAt: { lte: new Date() } },
@@ -315,7 +469,8 @@ export class EconomyService {
           where: { id: listing.id, status: 'ACTIVE' },
           data: { status: 'EXPIRED' },
         });
-        if (expired.count)
+        if (expired.count) {
+          await this.cancelMarketOffersForListing(tx, 'CARD', listing.id);
           await tx.userCard.updateMany({
             where: {
               id: listing.userCardId,
@@ -324,13 +479,15 @@ export class EconomyService {
             },
             data: { status: 'ACTIVE' },
           });
+        }
       }
       for (const listing of skins) {
         const expired = await tx.gachaSkinListing.updateMany({
           where: { id: listing.id, status: 'ACTIVE' },
           data: { status: 'EXPIRED' },
         });
-        if (expired.count)
+        if (expired.count) {
+          await this.cancelMarketOffersForListing(tx, 'SKIN', listing.id);
           await tx.userGachaSkin.updateMany({
             where: {
               id: listing.userSkinId,
@@ -339,6 +496,7 @@ export class EconomyService {
             },
             data: { status: 'ACTIVE' },
           });
+        }
       }
     });
   }
@@ -482,6 +640,7 @@ export class EconomyService {
               data: { crystalReserved: { decrement: order.price } },
             });
         }
+        await this.cancelMarketOffersForItem(tx, itemType, itemId);
         let compensated = 0;
         if (itemType === 'CARD') {
           const card = await tx.card.update({
@@ -806,6 +965,417 @@ export class EconomyService {
     });
   }
 
+  async createMarketOffer(userId: string, dto: CreateMarketOfferDto) {
+    await this.expireMarket();
+    const cardIds = dto.offeredUserCardIds ?? [];
+    const crystals = dto.crystals ?? 0;
+    if (cardIds.length > 5 || (crystals === 0 && cardIds.length === 0)) {
+      throw new BadRequestException(
+        'Ofereça Cristais, de 1 a 5 cartas, ou os dois juntos.',
+      );
+    }
+    return this.prisma.$transaction(
+      async (tx) => {
+        await this.assertMarketEligible(tx, userId);
+        const listing =
+          dto.itemType === 'CARD'
+            ? await tx.gachaListing.findUnique({
+                where: { id: dto.listingId },
+                select: {
+                  id: true,
+                  userId: true,
+                  status: true,
+                  expiresAt: true,
+                },
+              })
+            : await tx.gachaSkinListing.findUnique({
+                where: { id: dto.listingId },
+                select: {
+                  id: true,
+                  userId: true,
+                  status: true,
+                  expiresAt: true,
+                },
+              });
+        if (
+          !listing ||
+          listing.status !== 'ACTIVE' ||
+          listing.expiresAt <= new Date()
+        ) {
+          throw new ConflictException('Anúncio não está mais ativo.');
+        }
+        if (listing.userId === userId) {
+          throw new BadRequestException(
+            'Você não pode ofertar no próprio anúncio.',
+          );
+        }
+        await this.assertMarketEligible(tx, listing.userId);
+        const { config } = await this.currentVersion(tx);
+        const active = await tx.gachaMarketOffer.count({
+          where: {
+            offeredUserId: userId,
+            status: 'PENDING',
+            expiresAt: { gt: new Date() },
+          },
+        });
+        if (active >= config.buy_order_active_limit) {
+          throw new ConflictException('Limite de propostas ativas atingido.');
+        }
+
+        if (crystals > 0) {
+          await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${userId} FOR UPDATE`;
+          const wallet = await tx.user.findUniqueOrThrow({
+            where: { id: userId },
+            select: { crystalBalance: true, crystalReserved: true },
+          });
+          if (wallet.crystalBalance - wallet.crystalReserved < crystals) {
+            throw new BadRequestException(
+              'Cristais disponíveis insuficientes.',
+            );
+          }
+          await tx.user.update({
+            where: { id: userId },
+            data: { crystalReserved: { increment: crystals } },
+          });
+        }
+
+        if (cardIds.length > 0) {
+          const copies = await tx.userCard.findMany({
+            where: { id: { in: cardIds }, userId, status: 'ACTIVE' },
+            select: { id: true },
+          });
+          if (copies.length !== cardIds.length) {
+            throw new ConflictException(
+              'Uma carta oferecida não está disponível.',
+            );
+          }
+          const pendingTrade = await tx.gachaTrade.count({
+            where: {
+              status: 'PENDING',
+              OR: [
+                { offeredUserCardId: { in: cardIds } },
+                { requestedUserCardId: { in: cardIds } },
+                { cards: { some: { userCardId: { in: cardIds } } } },
+              ],
+            },
+          });
+          if (pendingTrade) {
+            throw new ConflictException(
+              'Uma carta já está numa troca pendente.',
+            );
+          }
+          for (const copy of copies) {
+            await this.prepareCardForSale(tx, userId, copy.id);
+          }
+          const held = await tx.userCard.updateMany({
+            where: { id: { in: cardIds }, userId, status: 'ACTIVE' },
+            data: { status: 'ESCROW' },
+          });
+          if (held.count !== cardIds.length) {
+            throw new ConflictException(
+              'Uma carta oferecida não está disponível.',
+            );
+          }
+        }
+
+        const expiresAt = new Date(
+          Math.min(
+            listing.expiresAt.getTime(),
+            Date.now() + 48 * 60 * 60 * 1000,
+          ),
+        );
+        const offer = await tx.gachaMarketOffer.create({
+          data: {
+            offeredUserId: userId,
+            requestedUserId: listing.userId,
+            cardListingId: dto.itemType === 'CARD' ? listing.id : null,
+            skinListingId: dto.itemType === 'SKIN' ? listing.id : null,
+            crystals,
+            expiresAt,
+            offeredCards: {
+              create: cardIds.map((userCardId, position) => ({
+                userCardId,
+                position,
+              })),
+            },
+          },
+          select: { id: true, status: true, expiresAt: true },
+        });
+        const consideration = [
+          crystals > 0 ? `${crystals.toLocaleString('pt-BR')} Cristais` : null,
+          cardIds.length > 0 ? `${cardIds.length} carta(s)` : null,
+        ]
+          .filter(Boolean)
+          .join(' + ');
+        await tx.notification.create({
+          data: {
+            userId: listing.userId,
+            type: 'SYSTEM',
+            title: 'Nova proposta no mercado',
+            body: `Você recebeu uma proposta de ${consideration}.`,
+            linkUrl: '/gacha/mercado',
+            targetId: offer.id,
+          },
+        });
+        return offer;
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+  }
+
+  async myMarketOffers(userId: string) {
+    await this.expireMarket();
+    const offers = await this.prisma.gachaMarketOffer.findMany({
+      where: { OR: [{ offeredUserId: userId }, { requestedUserId: userId }] },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+      select: MARKET_OFFER_DETAILS,
+    });
+    return offers.map(presentMarketOffer);
+  }
+
+  async acceptMarketOffer(userId: string, offerId: string) {
+    await this.expireMarket();
+    return this.prisma.$transaction(
+      async (tx) => {
+        const offer = await tx.gachaMarketOffer.findUnique({
+          where: { id: offerId },
+          select: MARKET_OFFER_ESCROW_SELECT,
+        });
+        if (!offer) throw new NotFoundException('Proposta não encontrada.');
+        if (offer.requestedUserId !== userId) {
+          throw new ForbiddenException(
+            'Só quem recebeu pode aceitar a proposta.',
+          );
+        }
+        if (offer.status !== 'PENDING' || offer.expiresAt <= new Date()) {
+          throw new ConflictException('Proposta não está mais ativa.');
+        }
+        const cardListing = offer.cardListingId
+          ? await tx.gachaListing.findUnique({
+              where: { id: offer.cardListingId },
+              select: {
+                id: true,
+                userId: true,
+                userCardId: true,
+                status: true,
+              },
+            })
+          : null;
+        const skinListing = offer.skinListingId
+          ? await tx.gachaSkinListing.findUnique({
+              where: { id: offer.skinListingId },
+              select: {
+                id: true,
+                userId: true,
+                userSkinId: true,
+                status: true,
+              },
+            })
+          : null;
+        const listing = cardListing ?? skinListing;
+        if (
+          !listing ||
+          listing.status !== 'ACTIVE' ||
+          listing.userId !== userId
+        ) {
+          throw new ConflictException('O anúncio não está mais disponível.');
+        }
+        await this.assertMarketEligible(tx, offer.offeredUserId);
+        await this.assertMarketEligible(tx, userId);
+        const accepted = await tx.gachaMarketOffer.updateMany({
+          where: { id: offerId, status: 'PENDING' },
+          data: { status: 'ACCEPTED', completedAt: new Date() },
+        });
+        if (accepted.count !== 1) {
+          throw new ConflictException('Proposta não está mais ativa.');
+        }
+
+        if (cardListing) {
+          const sold = await tx.gachaListing.updateMany({
+            where: { id: cardListing.id, status: 'ACTIVE' },
+            data: {
+              status: 'SOLD',
+              buyerId: offer.offeredUserId,
+              completedAt: new Date(),
+            },
+          });
+          if (sold.count !== 1)
+            throw new ConflictException('Anúncio indisponível.');
+          const moved = await tx.userCard.updateMany({
+            where: {
+              id: cardListing.userCardId,
+              userId,
+              status: 'ESCROW',
+            },
+            data: { userId: offer.offeredUserId, status: 'ACTIVE' },
+          });
+          if (moved.count !== 1)
+            throw new ConflictException('Carta indisponível.');
+        } else if (skinListing) {
+          const sold = await tx.gachaSkinListing.updateMany({
+            where: { id: skinListing.id, status: 'ACTIVE' },
+            data: {
+              status: 'FILLED',
+              buyerId: offer.offeredUserId,
+              completedAt: new Date(),
+            },
+          });
+          if (sold.count !== 1)
+            throw new ConflictException('Anúncio indisponível.');
+          const moved = await tx.userGachaSkin.updateMany({
+            where: {
+              id: skinListing.userSkinId,
+              userId,
+              status: 'ESCROW',
+            },
+            data: { userId: offer.offeredUserId, status: 'ACTIVE' },
+          });
+          if (moved.count !== 1)
+            throw new ConflictException('Skin indisponível.');
+        }
+
+        if (offer.offeredCards.length > 0) {
+          const moved = await tx.userCard.updateMany({
+            where: {
+              id: { in: offer.offeredCards.map((card) => card.userCardId) },
+              userId: offer.offeredUserId,
+              status: 'ESCROW',
+            },
+            data: { userId, status: 'ACTIVE' },
+          });
+          if (moved.count !== offer.offeredCards.length) {
+            throw new ConflictException(
+              'Uma carta da oferta não está disponível.',
+            );
+          }
+        }
+
+        let saleId: string | null = null;
+        let sellerProceeds = 0;
+        if (offer.crystals > 0) {
+          await tx.user.update({
+            where: { id: offer.offeredUserId },
+            data: {
+              crystalBalance: { decrement: offer.crystals },
+              crystalReserved: { decrement: offer.crystals },
+            },
+          });
+          await tx.crystalEvent.create({
+            data: {
+              userId: offer.offeredUserId,
+              delta: -offer.crystals,
+              type: 'SPEND',
+              refId: offer.id,
+              reason: 'Oferta aceita no mercado',
+            },
+          });
+          const fee = Math.round(
+            offer.crystals *
+              (await this.currentVersion(tx)).config.market_tax_pct,
+          );
+          const proceeds = offer.crystals - fee;
+          sellerProceeds = proceeds;
+          if (proceeds > 0) {
+            await this.credit(
+              tx,
+              userId,
+              proceeds,
+              'SALE',
+              offer.id,
+              'Oferta aceita no mercado',
+            );
+          }
+          const sale = await tx.gachaMarketSale.create({
+            data: {
+              sellerId: userId,
+              buyerId: offer.offeredUserId,
+              itemType: cardListing ? 'CARD' : 'SKIN',
+              userCardId: cardListing?.userCardId,
+              userSkinId: skinListing?.userSkinId,
+              price: offer.crystals,
+              fee,
+              variant: { marketOfferId: offer.id },
+            },
+          });
+          saleId = sale.id;
+        }
+        await this.cancelMarketOffersForListing(
+          tx,
+          cardListing ? 'CARD' : 'SKIN',
+          listing.id,
+          offer.id,
+        );
+        await tx.notification.create({
+          data: {
+            userId: offer.offeredUserId,
+            type: 'SYSTEM',
+            title: 'Proposta aceita',
+            body: 'Sua proposta no mercado foi aceita.',
+            linkUrl: '/gacha/mercado',
+            targetId: offer.id,
+          },
+        });
+        const acceptedSummary = [
+          offer.crystals > 0
+            ? `${sellerProceeds.toLocaleString('pt-BR')} Cristais líquidos`
+            : null,
+          offer.offeredCards.length > 0
+            ? `${offer.offeredCards.length} carta(s)`
+            : null,
+        ]
+          .filter(Boolean)
+          .join(' + ');
+        await tx.notification.create({
+          data: {
+            userId,
+            type: 'SYSTEM',
+            title: 'Proposta aceita',
+            body: `Você recebeu ${acceptedSummary}.`,
+            linkUrl: '/gacha/mercado',
+            targetId: offer.id,
+          },
+        });
+        return { accepted: true, saleId };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+  }
+
+  declineMarketOffer(userId: string, offerId: string) {
+    return this.closeMarketOffer(userId, offerId, 'DECLINED');
+  }
+
+  cancelMarketOffer(userId: string, offerId: string) {
+    return this.closeMarketOffer(userId, offerId, 'CANCELLED');
+  }
+
+  private async closeMarketOffer(
+    userId: string,
+    offerId: string,
+    status: 'DECLINED' | 'CANCELLED',
+  ) {
+    await this.expireMarket();
+    return this.prisma.$transaction(async (tx) => {
+      const offer = await tx.gachaMarketOffer.findUnique({
+        where: { id: offerId },
+        select: MARKET_OFFER_ESCROW_SELECT,
+      });
+      if (!offer) throw new NotFoundException('Proposta não encontrada.');
+      const allowed =
+        status === 'DECLINED'
+          ? offer.requestedUserId === userId
+          : offer.offeredUserId === userId;
+      if (!allowed)
+        throw new ForbiddenException('Você não pode encerrar esta proposta.');
+      if (offer.status !== 'PENDING') {
+        throw new ConflictException('Proposta não está mais ativa.');
+      }
+      await this.releaseMarketOffer(tx, offer, status);
+      return { closed: true };
+    });
+  }
+
   async createBuyOrder(userId: string, dto: CreateBuyOrderDto) {
     if (
       dto.itemType === 'SKIN' &&
@@ -1059,6 +1629,7 @@ export class EconomyService {
         });
         if (sold.count !== 1)
           throw new ConflictException('Anúncio não está mais ativo.');
+        await this.cancelMarketOffersForListing(tx, 'CARD', listing.id);
         await tx.userCard.update({
           where: { id: listing.userCardId },
           data: { userId, status: 'ACTIVE' },
@@ -1108,6 +1679,7 @@ export class EconomyService {
       });
       if (!cancelled.count)
         throw new ConflictException('Anúncio não está ativo.');
+      await this.cancelMarketOffersForListing(tx, 'CARD', listing.id);
       await tx.userCard.updateMany({
         where: { id: listing.userCardId, userId, status: 'ESCROW' },
         data: { status: 'ACTIVE' },
@@ -1202,6 +1774,7 @@ export class EconomyService {
         });
         if (sold.count !== 1)
           throw new ConflictException('Anúncio não está mais ativo.');
+        await this.cancelMarketOffersForListing(tx, 'SKIN', listing.id);
         await tx.userGachaSkin.update({
           where: { id: listing.userSkinId },
           data: { userId, status: 'ACTIVE' },
@@ -1246,6 +1819,7 @@ export class EconomyService {
       });
       if (!cancelled.count)
         throw new ConflictException('Anúncio não está ativo.');
+      await this.cancelMarketOffersForListing(tx, 'SKIN', listing.id);
       await tx.userGachaSkin.updateMany({
         where: { id: listing.userSkinId, userId, status: 'ESCROW' },
         data: { status: 'ACTIVE' },
@@ -1816,6 +2390,82 @@ export class EconomyService {
         targetId: saleId,
       },
     });
+  }
+
+  private async releaseMarketOffer(
+    tx: Tx,
+    offer: Prisma.GachaMarketOfferGetPayload<{
+      select: typeof MARKET_OFFER_ESCROW_SELECT;
+    }>,
+    status: 'DECLINED' | 'CANCELLED' | 'EXPIRED',
+  ) {
+    const closed = await tx.gachaMarketOffer.updateMany({
+      where: { id: offer.id, status: 'PENDING' },
+      data: { status, completedAt: new Date() },
+    });
+    if (closed.count !== 1) return false;
+    const cardIds = offer.offeredCards.map((card) => card.userCardId);
+    if (cardIds.length > 0) {
+      await tx.userCard.updateMany({
+        where: {
+          id: { in: cardIds },
+          userId: offer.offeredUserId,
+          status: 'ESCROW',
+        },
+        data: { status: 'ACTIVE' },
+      });
+    }
+    if (offer.crystals > 0) {
+      await tx.user.update({
+        where: { id: offer.offeredUserId },
+        data: { crystalReserved: { decrement: offer.crystals } },
+      });
+    }
+    return true;
+  }
+
+  private async cancelMarketOffersForListing(
+    tx: Tx,
+    itemType: 'CARD' | 'SKIN',
+    listingId: string,
+    exceptId?: string,
+  ) {
+    const offers = await tx.gachaMarketOffer.findMany({
+      where: {
+        status: 'PENDING',
+        ...(exceptId ? { id: { not: exceptId } } : {}),
+        ...(itemType === 'CARD'
+          ? { cardListingId: listingId }
+          : { skinListingId: listingId }),
+      },
+      select: MARKET_OFFER_ESCROW_SELECT,
+    });
+    for (const offer of offers) {
+      await this.releaseMarketOffer(tx, offer, 'CANCELLED');
+    }
+  }
+
+  private async cancelMarketOffersForItem(
+    tx: Tx,
+    itemType: 'CARD' | 'SKIN',
+    itemId: string,
+  ) {
+    const offers = await tx.gachaMarketOffer.findMany({
+      where: {
+        status: 'PENDING',
+        OR:
+          itemType === 'CARD'
+            ? [
+                { cardListing: { userCard: { cardId: itemId } } },
+                { offeredCards: { some: { userCard: { cardId: itemId } } } },
+              ]
+            : [{ skinListing: { userSkin: { skinId: itemId } } }],
+      },
+      select: MARKET_OFFER_ESCROW_SELECT,
+    });
+    for (const offer of offers) {
+      await this.releaseMarketOffer(tx, offer, 'CANCELLED');
+    }
   }
 
   private async assertListingLimit(tx: Tx, userId: string) {

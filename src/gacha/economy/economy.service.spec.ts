@@ -50,6 +50,7 @@ describe('EconomyService safeguards', () => {
         'gachaSkinListing',
         'crystalEvent',
         'gachaMarketSale',
+        'gachaMarketOffer',
         'gachaAdminChange',
         'gachaTrade',
         'gachaOfficialOffer',
@@ -72,6 +73,7 @@ describe('EconomyService safeguards', () => {
       role: 'USER',
     });
     db.gachaBuyOrder.findMany.mockResolvedValue([]);
+    db.gachaMarketOffer.findMany.mockResolvedValue([]);
     db.gachaListing.findMany.mockResolvedValue([]);
     db.gachaSkinListing.findMany.mockResolvedValue([]);
     db.gachaInventory.updateMany.mockResolvedValue({ count: 1 });
@@ -287,11 +289,13 @@ describe('EconomyService safeguards', () => {
     );
   });
 
-  it('public market selects no owner or original owner identity', async () => {
+  it('public market exposes seller profile without original owner identity', async () => {
     await service.listings(new MarketQueryDto());
     const selection = db.gachaListing.findMany.mock.calls.at(-1)[0].select;
     expect(selection.userId).toBeUndefined();
-    expect(selection.user).toBeUndefined();
+    expect(selection.user).toEqual({
+      select: { id: true, name: true, userName: true },
+    });
     expect(selection.userCard.select.userId).toBeUndefined();
     expect(selection.userCard.select.originalUser).toBeUndefined();
   });

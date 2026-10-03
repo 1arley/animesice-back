@@ -80,6 +80,17 @@ describe('NotificationService', () => {
         expect.objectContaining({ take: 100 }),
       );
     });
+
+    it('deve retornar resultado vazio quando a transação falhar', async () => {
+      const { svc, prisma } = build();
+      prisma.$transaction.mockRejectedValue(new Error('database unavailable'));
+
+      await expect(svc.list(userId, 2, 10)).resolves.toEqual({
+        data: [],
+        unreadCount: 0,
+        meta: { total: 0, page: 2, limit: 10, totalPages: 0 },
+      });
+    });
   });
 
   describe('markAsRead', () => {

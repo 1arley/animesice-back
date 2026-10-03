@@ -27,7 +27,7 @@ const FUZZY_MAX_CANDIDATES = 500;
  * Colunas que os CARDS do frontend consomem (mapeado em src/components/common/
  * AnimeCard). Omitir os TEXT gordos (`synopsis`/`editorial*`) e os arrays que
  * nenhum card renderiza (`studios`/`themes`/`alternativeTitles`/`japaneseTitle`)
- * corta egress do pooler do Supabase por linha. O detalhe (`findBySlug`) mantém
+ * corta egress do banco por linha. O detalhe (`findBySlug`) mantém
  * todas as colunas — lá `synopsis`/`editorial*` são de fato exibidos.
  */
 const CARD_SELECT = {
