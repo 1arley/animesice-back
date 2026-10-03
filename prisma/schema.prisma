@@ -117,100 +117,101 @@ enum WishlistPriority {
 }
 
 model User {
-  id                      String                    @id @default(uuid())
-  email                   String                    @unique
-  password                String
-  name                    String?
-  userName                String?                   @unique
-  role                    Role                      @default(USER)
-  isVerified              Boolean                   @default(false)
-  avatar                  String?
-  bio                     String?
-  myAnimeList             String?
-  suspendedUntil          DateTime?
-  suspendedReason         String?
-  createdAt               DateTime                  @default(now())
-  updatedAt               DateTime                  @updatedAt
-  refreshTokens           RefreshToken[]
-  emailChangeTokens       EmailChangeToken[]
-  passwordResetTokens     PasswordResetToken[]
-  emailVerificationCodes  EmailVerificationCode[]
-  comments                Comment[]
-  adminAuditLogs          AdminAuditLog[]           @relation("AdminActions")
-  ratings                 Rating[]
-  favorites               Favorite[]
-  watchHistories          WatchHistory[]
-  notifications           Notification[]
-  commentLikes            CommentLike[]
-  rooms                   Room[]
-  roomMessages            RoomMessage[]
-  animeList               UserAnimeList[]
-  notificationPreferences NotificationPreference[]
-  reportsFiled            Report[]                  @relation("ReportReporter")
-  moderationActions       ModerationAction[]
-  moderatedReports        Report[]                  @relation("ReportModerator")
-  moderationActionsGiven  ModerationAction[]        @relation("ModerationModerator")
-  animeRequests           AnimeRequest[]            @relation("AnimeRequestUser")
-  animeRequestVotes       AnimeRequestVote[]        @relation("AnimeRequestVoteUser")
-  siteFeedbacks           SiteFeedback[]            @relation("SiteFeedbackUser")
-  siteFeedbackUpvotes     SiteFeedbackUpvote[]
-  privacySettings         PrivacySettings?
-  userCards               UserCard[]
-  originalUserCards       UserCard[]                @relation("OriginalUserCards")
-  featuredUserCardId      String?                   @unique
-  featuredUserCard        UserCard?                 @relation("FeaturedUserCard", fields: [featuredUserCardId], references: [id], onDelete: SetNull)
-  featuredStartedAt       DateTime?                 @db.Timestamptz(6)
-  featuredSettledAt       DateTime?                 @db.Timestamptz(6)
-  featuredRemainder       BigInt                    @default(0)
-  favoriteCollectionId    String?
-  favoriteCollection      GachaCollection?          @relation("FavoriteGachaCollection", fields: [favoriteCollectionId], references: [id], onDelete: SetNull)
-  pinnedCollectionIds     String[]                  @default([])
-  gachaDiscoveries        GachaCardDiscovery[]
-  gachaCollectionProgress GachaCollectionProgress[]
-  gachaRollDays           GachaRollDay[]
-  gachaSpins              GachaSpin[]
-  gachaClaimLock          GachaClaimLock?
-  crystalEvents           CrystalEvent[]
-  gachaDailyBonus         GachaDailyBonus?
-  gachaBypasses           GachaBypass[]
-  gachaListings           GachaListing[]
-  legacyPointsBalance     Int                       @default(0) @map("pointsBalance")
-  crystalBalance          Int                       @default(0)
-  crystalReserved         Int                       @default(0)
-  gachaMarketBlockedAt    DateTime?                 @db.Timestamptz(6)
-  gachaMarketBlockReason  String?
-  legacyPointEvents       GachaPointEvent[]
-  gachaCosmetics          String[]                  @default([])
-  gachaCardBack           String?
-  gachaWishlistPublic     Boolean                   @default(true)
-  gachaCardWishlists      GachaCardWishlist[]
-  gachaSetWishlists       GachaSetWishlist[]
-  gachaSkins              UserGachaSkin[]
-  equippedGachaSkinId     String?
-  equippedGachaSkin       GachaSkin?                @relation("EquippedGachaSkin", fields: [equippedGachaSkinId], references: [id], onDelete: SetNull)
-  nextGachaSkinSpinAt     DateTime?                 @db.Timestamptz(6)
-  gachaInventory          GachaInventory?
-  gachaRetention          GachaRetention?
-  gachaDailyClaims        GachaDailyClaim[]
-  gachaOpeningDays        GachaOpeningDay[]
-  gachaOpenings           GachaOpening[]
-  crystalPurchases        CrystalPurchase[]
-  crystalRedemptions      CrystalCodeRedemption[]
-  gachaBuyOrders          GachaBuyOrder[]
-  gachaSkinListings       GachaSkinListing[]
-  gachaMarketOffersSent     GachaMarketOffer[] @relation("MarketOfferSender")
-  gachaMarketOffersReceived GachaMarketOffer[] @relation("MarketOfferRecipient")
-  gachaOfficialOffers     GachaOfficialOffer[]
-  gachaMarketVisits       GachaMarketVisit[]
-  gachaMarketMissions     GachaMarketMission[]
-  gachaSalesAsSeller      GachaMarketSale[]         @relation("GachaSaleSeller")
-  gachaSalesAsBuyer       GachaMarketSale[]         @relation("GachaSaleBuyer")
-  posts                   Post[]
-  postLikes               PostLike[]
-  postComments            PostComment[]
-  postShares              PostShare[]
-  following               Follow[]                  @relation("Follower")
-  followers               Follow[]                  @relation("Followee")
+  id                        String                     @id @default(uuid())
+  email                     String                     @unique
+  password                  String
+  name                      String?
+  userName                  String?                    @unique
+  role                      Role                       @default(USER)
+  isVerified                Boolean                    @default(false)
+  avatar                    String?
+  bio                       String?
+  myAnimeList               String?
+  suspendedUntil            DateTime?
+  suspendedReason           String?
+  createdAt                 DateTime                   @default(now())
+  updatedAt                 DateTime                   @updatedAt
+  refreshTokens             RefreshToken[]
+  emailChangeTokens         EmailChangeToken[]
+  passwordResetTokens       PasswordResetToken[]
+  emailVerificationCodes    EmailVerificationCode[]
+  comments                  Comment[]
+  adminAuditLogs            AdminAuditLog[]            @relation("AdminActions")
+  ratings                   Rating[]
+  favorites                 Favorite[]
+  watchHistories            WatchHistory[]
+  notifications             Notification[]
+  commentLikes              CommentLike[]
+  rooms                     Room[]
+  roomMessages              RoomMessage[]
+  animeList                 UserAnimeList[]
+  notificationPreferences   NotificationPreference[]
+  reportsFiled              Report[]                   @relation("ReportReporter")
+  moderationActions         ModerationAction[]
+  moderatedReports          Report[]                   @relation("ReportModerator")
+  moderationActionsGiven    ModerationAction[]         @relation("ModerationModerator")
+  animeRequests             AnimeRequest[]             @relation("AnimeRequestUser")
+  animeRequestVotes         AnimeRequestVote[]         @relation("AnimeRequestVoteUser")
+  siteFeedbacks             SiteFeedback[]             @relation("SiteFeedbackUser")
+  siteFeedbackUpvotes       SiteFeedbackUpvote[]
+  privacySettings           PrivacySettings?
+  userCards                 UserCard[]
+  originalUserCards         UserCard[]                 @relation("OriginalUserCards")
+  featuredUserCardId        String?                    @unique
+  featuredUserCard          UserCard?                  @relation("FeaturedUserCard", fields: [featuredUserCardId], references: [id], onDelete: SetNull)
+  featuredStartedAt         DateTime?                  @db.Timestamptz(6)
+  featuredSettledAt         DateTime?                  @db.Timestamptz(6)
+  featuredRemainder         BigInt                     @default(0)
+  favoriteCollectionId      String?
+  favoriteCollection        GachaCollection?           @relation("FavoriteGachaCollection", fields: [favoriteCollectionId], references: [id], onDelete: SetNull)
+  pinnedCollectionIds       String[]                   @default([])
+  gachaDiscoveries          GachaCardDiscovery[]
+  gachaCollectionProgress   GachaCollectionProgress[]
+  gachaRollDays             GachaRollDay[]
+  gachaSpins                GachaSpin[]
+  gachaClaimLock            GachaClaimLock?
+  crystalEvents             CrystalEvent[]
+  gachaDailyBonus           GachaDailyBonus?
+  gachaBypasses             GachaBypass[]
+  gachaListings             GachaListing[]
+  legacyPointsBalance       Int                        @default(0) @map("pointsBalance")
+  crystalBalance            Int                        @default(0)
+  crystalReserved           Int                        @default(0)
+  gachaMarketBlockedAt      DateTime?                  @db.Timestamptz(6)
+  gachaMarketBlockReason    String?
+  legacyPointEvents         GachaPointEvent[]
+  gachaCosmetics            String[]                   @default([])
+  gachaCardBack             String?
+  gachaWishlistPublic       Boolean                    @default(true)
+  gachaCardWishlists        GachaCardWishlist[]
+  gachaSetWishlists         GachaSetWishlist[]
+  gachaSkins                UserGachaSkin[]
+  equippedGachaSkinId       String?
+  equippedGachaSkin         GachaSkin?                 @relation("EquippedGachaSkin", fields: [equippedGachaSkinId], references: [id], onDelete: SetNull)
+  nextGachaSkinSpinAt       DateTime?                  @db.Timestamptz(6)
+  gachaInventory            GachaInventory?
+  gachaRetention            GachaRetention?
+  gachaDailyClaims          GachaDailyClaim[]
+  gachaOpeningDays          GachaOpeningDay[]
+  gachaOpenings             GachaOpening[]
+  crystalPurchases          CrystalPurchase[]
+  crystalRedemptions        CrystalCodeRedemption[]
+  gachaBuyOrders            GachaBuyOrder[]
+  gachaSkinListings         GachaSkinListing[]
+  gachaMarketOffersSent     GachaMarketOffer[]         @relation("MarketOfferSender")
+  gachaMarketOffersReceived GachaMarketOffer[]         @relation("MarketOfferRecipient")
+  gachaOfficialOffers       GachaOfficialOffer[]
+  gachaMarketVisits         GachaMarketVisit[]
+  gachaMarketMissions       GachaMarketMission[]
+  gachaOfficialOfferReveals GachaOfficialOfferReveal[]
+  gachaSalesAsSeller        GachaMarketSale[]          @relation("GachaSaleSeller")
+  gachaSalesAsBuyer         GachaMarketSale[]          @relation("GachaSaleBuyer")
+  posts                     Post[]
+  postLikes                 PostLike[]
+  postComments              PostComment[]
+  postShares                PostShare[]
+  following                 Follow[]                   @relation("Follower")
+  followers                 Follow[]                   @relation("Followee")
 }
 
 /// Configuração global do site (chave-valor) — persistida no DB, com
@@ -1073,8 +1074,8 @@ model UserCard {
   status         UserCardStatus @default(ACTIVE)
   obtainedAt     DateTime       @default(now())
 
-  tradeOffered   GachaTrade[]      @relation("TradeOffered")
-  tradeRequested GachaTrade[]      @relation("TradeRequested")
+  tradeOffered   GachaTrade[]           @relation("TradeOffered")
+  tradeRequested GachaTrade[]           @relation("TradeRequested")
   tradeCards     GachaTradeCard[]
   listings       GachaListing[]
   marketOffers   GachaMarketOfferCard[]
@@ -1549,23 +1550,35 @@ model GachaMarketSale {
 }
 
 model GachaOfficialOffer {
-  id          String                 @id @default(uuid())
+  id          String                     @id @default(uuid())
   userId      String
-  day         DateTime               @db.Date
+  day         DateTime                   @db.Date
   slot        Int
   itemType    GachaOfficialOfferType
   cardId      String?
   skinId      String?
   price       Int
-  discount    Int                    @default(0)
+  discount    Int                        @default(0)
   payload     Json?
-  purchasedAt DateTime?              @db.Timestamptz(6)
-  user        User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  card        Card?                  @relation(fields: [cardId], references: [id], onDelete: SetNull)
-  skin        GachaSkin?             @relation(fields: [skinId], references: [id], onDelete: SetNull)
+  purchasedAt DateTime?                  @db.Timestamptz(6)
+  user        User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  card        Card?                      @relation(fields: [cardId], references: [id], onDelete: SetNull)
+  skin        GachaSkin?                 @relation(fields: [skinId], references: [id], onDelete: SetNull)
+  reveals     GachaOfficialOfferReveal[]
 
   @@unique([userId, day, slot])
   @@index([userId, day])
+}
+
+model GachaOfficialOfferReveal {
+  userId     String
+  offerId    String
+  revealedAt DateTime           @default(now()) @db.Timestamptz(6)
+  user       User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  offer      GachaOfficialOffer @relation(fields: [offerId], references: [id], onDelete: Cascade)
+
+  @@id([userId, offerId])
+  @@index([offerId])
 }
 
 model GachaMarketVisit {
@@ -1650,26 +1663,26 @@ enum CrystalEventType {
 }
 
 model CrystalCode {
-  id             String                  @id @default(uuid())
-  code           String                  @unique
-  crystals       Int
-  maxUses        Int?
-  uses           Int                     @default(0)
-  expiresAt      DateTime?               @db.Timestamptz(6)
-  active         Boolean                 @default(true)
-  createdAt      DateTime                @default(now()) @db.Timestamptz(6)
-  redemptions    CrystalCodeRedemption[]
+  id          String                  @id @default(uuid())
+  code        String                  @unique
+  crystals    Int
+  maxUses     Int?
+  uses        Int                     @default(0)
+  expiresAt   DateTime?               @db.Timestamptz(6)
+  active      Boolean                 @default(true)
+  createdAt   DateTime                @default(now()) @db.Timestamptz(6)
+  redemptions CrystalCodeRedemption[]
 
   @@index([active, expiresAt])
 }
 
 model CrystalCodeRedemption {
   id        String      @id @default(uuid())
-  codeId   String
-  userId   String
+  codeId    String
+  userId    String
   createdAt DateTime    @default(now()) @db.Timestamptz(6)
-  code     CrystalCode @relation(fields: [codeId], references: [id], onDelete: Cascade)
-  user     User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  code      CrystalCode @relation(fields: [codeId], references: [id], onDelete: Cascade)
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([codeId, userId])
   @@index([userId, createdAt(sort: Desc)])
