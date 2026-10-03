@@ -306,7 +306,6 @@ export class EconomyService {
             take: limit,
             select: {
               id: true,
-              userId: true,
               price: true,
               status: true,
               createdAt: true,
@@ -341,7 +340,6 @@ export class EconomyService {
             take: limit,
             select: {
               id: true,
-              userId: true,
               price: true,
               status: true,
               createdAt: true,
