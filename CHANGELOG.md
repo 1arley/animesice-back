@@ -1,3 +1,10 @@
+## [1.32.1](https://github.com/1arley/animesice-back/compare/v1.32.0...v1.32.1) (2026-10-03)
+
+
+### Bug Fixes
+
+* **api:** aceita SVG grande no admin de capas e devolve 413 em payload excedente ([#105](https://github.com/1arley/animesice-back/issues/105)) ([48bfd74](https://github.com/1arley/animesice-back/commit/48bfd74ccdd02768218cd9eee9584accc3c9cd3f))
+
 # [1.32.0](https://github.com/1arley/animesice-back/compare/v1.31.0...v1.32.0) (2026-10-03)
 
 
