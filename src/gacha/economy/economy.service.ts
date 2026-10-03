@@ -1991,7 +1991,7 @@ export class EconomyService {
       }))
     )
       await this.generateNightOffers(userId, nightDay);
-    return this.prisma.gachaOfficialOffer.findMany({
+    const offers = await this.prisma.gachaOfficialOffer.findMany({
       where: {
         userId,
         OR: [
@@ -2002,6 +2002,37 @@ export class EconomyService {
       orderBy: { slot: 'asc' },
       include: { card: true, skin: true },
     });
+    const nightOfferIds = offers
+      .filter((offer) => offer.slot >= 7)
+      .map((offer) => offer.id);
+    const reveals = nightOfferIds.length
+      ? await this.prisma.gachaOfficialOfferReveal.findMany({
+          where: { userId, offerId: { in: nightOfferIds } },
+          select: { offerId: true },
+        })
+      : [];
+    const revealedIds = new Set(reveals.map((reveal) => reveal.offerId));
+    return offers.map((offer) => ({
+      ...offer,
+      revealed: revealedIds.has(offer.id),
+    }));
+  }
+
+  async revealOfficialOffer(userId: string, offerId: string) {
+    await this.assertMarketEligible(this.prisma, userId);
+    const day = await this.nightMarketDay();
+    if (!day) throw new ConflictException('Mercado Noturno fora do período.');
+    const offer = await this.prisma.gachaOfficialOffer.findFirst({
+      where: { id: offerId, userId, day, slot: { gte: 7 } },
+      select: { id: true },
+    });
+    if (!offer) throw new NotFoundException('Oferta não encontrada.');
+    await this.prisma.gachaOfficialOfferReveal.upsert({
+      where: { userId_offerId: { userId, offerId } },
+      create: { userId, offerId },
+      update: {},
+    });
+    return { offerId, revealed: true };
   }
 
   buyOfficialOffer(userId: string, offerId: string) {
@@ -2601,11 +2632,55 @@ export class EconomyService {
       }),
     ]);
     const seed = `${userId}:${dayKey(day)}:night`;
-    const cardOffers = this.selectOfficialCards(cards, seed, config).slice(
-      0,
-      3,
+    const previousDay = dateFromDayKey(
+      dayKey(new Date(day.getTime() - 7 * 86_400_000)),
     );
-    const skinOffers = this.stableOrder(skins, `${seed}:skins`).slice(0, 3);
+    const previousOffers = await this.prisma.gachaOfficialOffer.findMany({
+      where: { userId, day: previousDay, slot: { gte: 7 } },
+      select: { cardId: true, skinId: true },
+    });
+    const previousCardIds = new Set(
+      previousOffers.flatMap((offer) => (offer.cardId ? [offer.cardId] : [])),
+    );
+    const previousSkinIds = new Set(
+      previousOffers.flatMap((offer) => (offer.skinId ? [offer.skinId] : [])),
+    );
+    const freshCards = cards.filter((card) => !previousCardIds.has(card.id));
+    const selectedFreshCards = this.selectOfficialCards(
+      freshCards.length ? freshCards : cards,
+      `${seed}:fresh-cards`,
+      config,
+    ).slice(0, Math.min(3, freshCards.length || 3));
+    const oldCardFill = this.selectOfficialCards(
+      cards.filter(
+        (card) =>
+          !selectedFreshCards.some((selected) => selected.id === card.id),
+      ),
+      `${seed}:card-fill`,
+      config,
+    ).filter(
+      (card) => !selectedFreshCards.some((selected) => selected.id === card.id),
+    );
+    const cardOffers = [
+      ...selectedFreshCards,
+      ...oldCardFill.slice(0, 3 - selectedFreshCards.length),
+    ];
+    const freshSkins = skins.filter((skin) => !previousSkinIds.has(skin.id));
+    const selectedFreshSkins = this.stableOrder(
+      freshSkins.length ? freshSkins : skins,
+      `${seed}:fresh-skins`,
+    ).slice(0, Math.min(3, freshSkins.length || 3));
+    const oldSkinFill = this.stableOrder(
+      skins.filter(
+        (skin) =>
+          !selectedFreshSkins.some((selected) => selected.id === skin.id),
+      ),
+      `${seed}:skin-fill`,
+    );
+    const skinOffers = [
+      ...selectedFreshSkins,
+      ...oldSkinFill.slice(0, 3 - selectedFreshSkins.length),
+    ];
     const data: Prisma.GachaOfficialOfferCreateManyInput[] = [];
     for (const [index, card] of cardOffers.entries()) {
       const foil = weightedPick(
@@ -2863,12 +2938,14 @@ export class EconomyService {
         where: { key: 'night_market_duration_days' },
       }),
     ]);
-    const start = Number(startConfig?.value ?? 1);
-    const duration = Number(durationConfig?.value ?? 7);
-    const day = Number(dayKey().slice(-2));
-    return day >= start && day < start + duration
+    const start = Number(startConfig?.value ?? 6);
+    const duration = Number(durationConfig?.value ?? 2);
+    const today = dateFromDayKey(dayKey());
+    const weekday = today.getUTCDay() || 7;
+    const daysSinceStart = (weekday - start + 7) % 7;
+    return daysSinceStart < duration
       ? dateFromDayKey(
-          `${dayKey().slice(0, 8)}${String(start).padStart(2, '0')}`,
+          dayKey(new Date(today.getTime() - daysSinceStart * 86_400_000)),
         )
       : null;
   }

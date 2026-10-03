@@ -260,6 +260,11 @@ export class EconomyController {
     return this.economy.officialShop(req.user.id);
   }
 
+  @Post('shop/:id/reveal')
+  revealOffer(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.economy.revealOfficialOffer(req.user.id, id);
+  }
+
   @Post('shop/:id/buy')
   buyOffer(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
     return this.economy.buyOfficialOffer(req.user.id, id);
