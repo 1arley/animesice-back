@@ -49,6 +49,7 @@ jobs:
       # back to the branch, then creates a GitHub Release with auto-generated
       # notes. The release includes a `v*` tag used by the Deploy workflow.
       - name: Run semantic-release
+        id: release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -57,6 +58,7 @@ jobs:
           git fetch --tags
           after="$(git tag --list 'v*' | sort -V)"
           tag="$(comm -13 <(printf '%s\n' "$before") <(printf '%s\n' "$after") | tail -n 1)"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
           printf '{"tag":"%s"}\n' "$tag" > release-info.json
 
       - name: Save release result for deployment
@@ -65,3 +67,45 @@ jobs:
           name: release-info
           path: release-info.json
           if-no-files-found: error
+
+      - name: Announce release in Discord
+        if: >
+          steps.release.outputs.tag != '' &&
+          ((github.event_name == 'workflow_dispatch' && github.ref_name == 'main') ||
+           (github.event_name == 'workflow_run' && github.event.workflow_run.head_branch == 'main'))
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          if [ -z "$DISCORD_WEBHOOK_URL" ]; then
+            echo "::warning::Set the DISCORD_WEBHOOK_URL repository secret to enable Discord announcements."
+            exit 0
+          fi
+
+          if ! payload="$(gh release view "$RELEASE_TAG" --json name,body,url | jq \
+            --arg tag "$RELEASE_TAG" \
+            --arg component "Backend" '
+              . as $release |
+              ($release.body // "Veja o release para os detalhes desta versão.") as $notes |
+              {
+                content: ("🚀 **Novidades do AnimeSice** — versão `" + $tag + "`"),
+                embeds: [{
+                  title: ($release.name // ("Versão " + $tag)),
+                  url: $release.url,
+                  description: (if ($notes | length) > 3700 then $notes[:3600] + "\n\n… notas completas no GitHub." else $notes end),
+                  color: 5793266,
+                  footer: {text: ("AnimeSice • " + $component + " • Notas oficiais")}
+                }]
+              }
+            ')"; then
+            echo "::warning::Could not prepare the Discord announcement for $RELEASE_TAG."
+            exit 0
+          fi
+
+          if ! curl --fail-with-body --silent --show-error \
+            -H 'Content-Type: application/json' \
+            --data-binary "$payload" \
+            "$DISCORD_WEBHOOK_URL"; then
+            echo "::warning::Discord announcement failed for $RELEASE_TAG; the release remains successful."
+          fi

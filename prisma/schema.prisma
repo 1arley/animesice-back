@@ -198,6 +198,8 @@ model User {
   crystalRedemptions      CrystalCodeRedemption[]
   gachaBuyOrders          GachaBuyOrder[]
   gachaSkinListings       GachaSkinListing[]
+  gachaMarketOffersSent     GachaMarketOffer[] @relation("MarketOfferSender")
+  gachaMarketOffersReceived GachaMarketOffer[] @relation("MarketOfferRecipient")
   gachaOfficialOffers     GachaOfficialOffer[]
   gachaMarketVisits       GachaMarketVisit[]
   gachaMarketMissions     GachaMarketMission[]
@@ -1075,6 +1077,7 @@ model UserCard {
   tradeRequested GachaTrade[]      @relation("TradeRequested")
   tradeCards     GachaTradeCard[]
   listings       GachaListing[]
+  marketOffers   GachaMarketOfferCard[]
   buyOrderSales  GachaMarketSale[]
 
   @@index([userId, obtainedAt(sort: Desc)])
@@ -1284,6 +1287,7 @@ model GachaListing {
   expiresAt   DateTime
   createdAt   DateTime           @default(now())
   completedAt DateTime?
+  offers      GachaMarketOffer[]
 
   @@unique([userCardId], where: raw("status = 'ACTIVE'"))
   @@index([status, expiresAt])
@@ -1468,10 +1472,55 @@ model GachaSkinListing {
   completedAt DateTime?              @db.Timestamptz(6)
   user        User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
   userSkin    UserGachaSkin          @relation(fields: [userSkinId], references: [id], onDelete: Restrict)
+  offers      GachaMarketOffer[]
 
   @@unique([userSkinId], where: raw("status = 'ACTIVE'"))
   @@index([userId, status])
   @@index([status, expiresAt])
+}
+
+model GachaMarketOffer {
+  id              String                 @id @default(uuid())
+  offeredUserId   String
+  requestedUserId String
+  cardListingId   String?
+  skinListingId   String?
+  crystals        Int                    @default(0)
+  status          GachaMarketOfferStatus @default(PENDING)
+  expiresAt       DateTime               @db.Timestamptz(6)
+  createdAt       DateTime               @default(now()) @db.Timestamptz(6)
+  completedAt     DateTime?              @db.Timestamptz(6)
+  offeredUser     User                   @relation("MarketOfferSender", fields: [offeredUserId], references: [id], onDelete: Cascade)
+  requestedUser   User                   @relation("MarketOfferRecipient", fields: [requestedUserId], references: [id], onDelete: Cascade)
+  cardListing     GachaListing?          @relation(fields: [cardListingId], references: [id], onDelete: Restrict)
+  skinListing     GachaSkinListing?      @relation(fields: [skinListingId], references: [id], onDelete: Restrict)
+  offeredCards    GachaMarketOfferCard[]
+
+  @@index([offeredUserId, status, createdAt(sort: Desc)])
+  @@index([requestedUserId, status, createdAt(sort: Desc)])
+  @@index([cardListingId, status])
+  @@index([skinListingId, status])
+  @@index([status, expiresAt])
+}
+
+model GachaMarketOfferCard {
+  offerId    String
+  userCardId String
+  position   Int
+  offer      GachaMarketOffer @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  userCard   UserCard         @relation(fields: [userCardId], references: [id], onDelete: Cascade)
+
+  @@id([offerId, userCardId])
+  @@unique([offerId, position])
+  @@index([userCardId])
+}
+
+enum GachaMarketOfferStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  CANCELLED
+  EXPIRED
 }
 
 model GachaMarketSale {

@@ -18,6 +18,7 @@ import type { AuthenticatedRequest } from '@/common/interfaces/request.interface
 import {
   BuyBoxDto,
   CreateBuyOrderDto,
+  CreateMarketOfferDto,
   CreateCardListingDto,
   CreateSkinListingDto,
   OpenBoxDto,
@@ -146,6 +147,37 @@ export class EconomyController {
   @Post('market/orders/:id/cancel')
   cancelBuyOrder(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
     return this.economy.cancelBuyOrder(req.user.id, id);
+  }
+
+  @Post('market/offers')
+  createMarketOffer(
+    @Req() req: AuthenticatedRequest,
+    @Body() dto: CreateMarketOfferDto,
+  ) {
+    return this.economy.createMarketOffer(req.user.id, dto);
+  }
+
+  @Get('market/offers/mine')
+  myMarketOffers(@Req() req: AuthenticatedRequest) {
+    return this.economy.myMarketOffers(req.user.id);
+  }
+
+  @Post('market/offers/:id/accept')
+  acceptMarketOffer(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.economy.acceptMarketOffer(req.user.id, id);
+  }
+
+  @Post('market/offers/:id/decline')
+  declineMarketOffer(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+  ) {
+    return this.economy.declineMarketOffer(req.user.id, id);
+  }
+
+  @Post('market/offers/:id/cancel')
+  cancelMarketOffer(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.economy.cancelMarketOffer(req.user.id, id);
   }
 
   @Post('market/cards/:id/sell-now')
