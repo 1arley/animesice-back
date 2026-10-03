@@ -19,9 +19,11 @@ export class HttpExceptionFilter implements ExceptionFilter {
 
     // Prisma conhecido fora de serviços: evita 500 genérico sem mudar
     // contratos existentes (serviços que já mapeiam continuam vencendo).
-    const prismaMapped = mapPrismaError(exception);
+    // Erros do body-parser entram pelo mesmo caminho: sem isto, payload acima
+    // do limite chega como 500 "Internal server error" e esconde a causa.
+    const mapped = mapPrismaError(exception) ?? mapBodyParserError(exception);
     const httpException =
-      exception instanceof HttpException ? exception : prismaMapped;
+      exception instanceof HttpException ? exception : mapped;
 
     const status = httpException
       ? httpException.getStatus()
@@ -62,6 +64,26 @@ function prismaCode(exception: unknown): string | undefined {
   if (typeof exception !== 'object' || exception === null) return undefined;
   const code = (exception as { code?: unknown }).code;
   return typeof code === 'string' ? code : undefined;
+}
+
+function bodyParserType(exception: unknown): string | undefined {
+  if (typeof exception !== 'object' || exception === null) return undefined;
+  const type = (exception as { type?: unknown }).type;
+  return typeof type === 'string' ? type : undefined;
+}
+
+// body-parser lança http-errors (type/status), não HttpException do Nest: sem
+// isto, body acima de BODY_LIMIT vira 500 "Internal server error" e esconde a
+// causa (travou o admin de capas com SVG grande). JSON malformado já chega
+// convertido pelo Nest, então só entity.too.large é mapeado aqui.
+function mapBodyParserError(exception: unknown): HttpException | null {
+  if (bodyParserType(exception) === 'entity.too.large') {
+    return new HttpException(
+      'Payload muito grande.',
+      HttpStatus.PAYLOAD_TOO_LARGE,
+    );
+  }
+  return null;
 }
 
 // Mapeia apenas códigos estáveis do Prisma para 4xx sem vazar detalhe interno.
