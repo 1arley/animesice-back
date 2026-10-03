@@ -1,3 +1,16 @@
+# [1.31.0](https://github.com/1arley/animesice-back/compare/v1.30.1...v1.31.0) (2026-10-03)
+
+
+### Bug Fixes
+
+* **gacha:** remover userId do select público de anúncios do mercado ([bb8d1bc](https://github.com/1arley/animesice-back/commit/bb8d1bc3f5d06063afa854612e13be9183c9bd58))
+* **notifications:** tolerar falha de transação no list retornando lista vazia ([2516828](https://github.com/1arley/animesice-back/commit/251682828ba7fece825da59f8b14a8074ae0583b))
+
+
+### Features
+
+* **gacha:** adiciona ofertas de troca no mercado ([1d8e74d](https://github.com/1arley/animesice-back/commit/1d8e74d6139016f764d8ef32e4190b7dc6f46df7))
+
 ## [1.30.1](https://github.com/1arley/animesice-back/compare/v1.30.0...v1.30.1) (2026-10-02)
 
 
