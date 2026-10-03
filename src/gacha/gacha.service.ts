@@ -1589,9 +1589,13 @@ export class GachaService {
       select: { key: true },
     });
     if (!item) {
-      throw new BadRequestException(
-        `Cosmético não é ${type === 'FRAME' ? 'moldura' : 'destaque'} disponível.`,
-      );
+      const typeLabel =
+        type === 'BACK'
+          ? 'capa de carta'
+          : type === 'FRAME'
+            ? 'moldura'
+            : 'destaque';
+      throw new BadRequestException(`Cosmético não é ${typeLabel} disponível.`);
     }
   }
 
@@ -1625,6 +1629,8 @@ export class GachaService {
   /**
    * Equipa moldura ou destaque. key=null desequipa o slot.
    * Aceita apenas FRAME/HIGHLIGHT — a capa tem endpoint próprio.
+   * A escrita roda em transação com FOR UPDATE para não sobrescrever
+   * o slot paralelo em requisições concorrentes (lost update).
    */
   async setLoadout(userId: string, slot: string, key: string | null) {
     if (slot !== 'FRAME' && slot !== 'HIGHLIGHT') {
@@ -1636,19 +1642,22 @@ export class GachaService {
     if (key !== null) {
       await this.assertEquippable(userId, key, slot);
     }
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: { gachaLoadout: true },
-    });
-    if (!user) throw new NotFoundException('Usuário não encontrado.');
-    const next = {
-      ...normalizeLoadout(user.gachaLoadout),
-      [slot]: key,
-    };
-    return this.prisma.user.update({
-      where: { id: userId },
-      data: { gachaLoadout: next },
-      select: { gachaLoadout: true },
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${userId} FOR UPDATE`;
+      const user = await tx.user.findUnique({
+        where: { id: userId },
+        select: { gachaLoadout: true },
+      });
+      if (!user) throw new NotFoundException('Usuário não encontrado.');
+      const next = {
+        ...normalizeLoadout(user.gachaLoadout),
+        [slot]: key,
+      };
+      return tx.user.update({
+        where: { id: userId },
+        data: { gachaLoadout: next },
+        select: { gachaLoadout: true },
+      });
     });
   }
 

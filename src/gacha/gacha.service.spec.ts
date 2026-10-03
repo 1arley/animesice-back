@@ -248,6 +248,7 @@ describe('GachaService', () => {
       create: jest.fn(),
       findMany: jest.fn(),
     },
+    $queryRaw: jest.fn(async () => []),
     $transaction: jest.fn(),
   };
 
@@ -1905,9 +1906,9 @@ describe('GachaService', () => {
         gachaCosmetics: ['BACK_FRAME'],
       });
       mockPrisma.gachaCardBack.findFirst.mockResolvedValue(null);
-      await expect(
-        service.setCardBack('u1', 'BACK_FRAME'),
-      ).rejects.toBeInstanceOf(BadRequestException);
+      await expect(service.setCardBack('u1', 'BACK_FRAME')).rejects.toThrow(
+        'Cosmético não é capa de carta disponível.',
+      );
       expect(mockPrisma.gachaCardBack.findFirst).toHaveBeenCalledWith({
         where: { key: 'BACK_FRAME', type: 'BACK', status: 'PUBLISHED' },
         select: { key: true },
@@ -1936,6 +1937,36 @@ describe('GachaService', () => {
         where: { key: 'FRAME_AURORA', type: 'FRAME', status: 'PUBLISHED' },
         select: { key: true },
       });
+      // FOR UPDATE serializa escritas concorrentes no mesmo loadout.
+      expect(mockPrisma.$queryRaw).toHaveBeenCalled();
+    });
+
+    it('equipa destaque no loadout preservando a moldura', async () => {
+      mockPrisma.user.findUnique
+        .mockResolvedValueOnce({ gachaCosmetics: ['DESTAQUE_CARTA'] })
+        .mockResolvedValueOnce({
+          gachaLoadout: { FRAME: 'FRAME_AURORA' },
+        });
+      mockPrisma.gachaCardBack.findFirst.mockResolvedValue({
+        key: 'DESTAQUE_CARTA',
+      });
+      mockPrisma.user.update.mockResolvedValue({
+        gachaLoadout: { FRAME: 'FRAME_AURORA', HIGHLIGHT: 'DESTAQUE_CARTA' },
+      });
+
+      await expect(
+        service.setLoadout('u1', 'HIGHLIGHT', 'DESTAQUE_CARTA'),
+      ).resolves.toEqual({
+        gachaLoadout: { FRAME: 'FRAME_AURORA', HIGHLIGHT: 'DESTAQUE_CARTA' },
+      });
+      expect(mockPrisma.gachaCardBack.findFirst).toHaveBeenCalledWith({
+        where: {
+          key: 'DESTAQUE_CARTA',
+          type: 'HIGHLIGHT',
+          status: 'PUBLISHED',
+        },
+        select: { key: true },
+      });
     });
 
     it('recusa slot invalido, cosmético não possuído e item de tipo errado', async () => {
@@ -1954,7 +1985,7 @@ describe('GachaService', () => {
       mockPrisma.gachaCardBack.findFirst.mockResolvedValue(null);
       await expect(
         service.setLoadout('u1', 'FRAME', 'DESTAQUE_CARTA'),
-      ).rejects.toBeInstanceOf(BadRequestException);
+      ).rejects.toThrow('Cosmético não é moldura disponível.');
     });
 
     it('desequipa com key null e normaliza loadout legado', async () => {
