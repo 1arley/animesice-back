@@ -1,3 +1,10 @@
+# [1.32.0](https://github.com/1arley/animesice-back/compare/v1.31.0...v1.32.0) (2026-10-03)
+
+
+### Features
+
+* **gacha:** persiste revelacao do Mercado Noturno e torna a oferta semanal ([de98d46](https://github.com/1arley/animesice-back/commit/de98d4676f932d8d6084bd575820cd1fe8cb68f3))
+
 # [1.31.0](https://github.com/1arley/animesice-back/compare/v1.30.1...v1.31.0) (2026-10-03)
 
 
