@@ -6,6 +6,7 @@ import {
   QUALITY_WEIGHTS,
   CARD_FLOOR,
 } from './economy.rules';
+import type { GachaFoil, GachaTier } from '@/gacha/gacha.constants';
 
 export const ECONOMY_DEFAULTS = {
   key_price: 1500,
@@ -13,6 +14,16 @@ export const ECONOMY_DEFAULTS = {
   box_category_weights: CATEGORY_WEIGHTS,
   box_quality_weights: QUALITY_WEIGHTS,
   foil_weights: { NORMAL: 85, HOLO: 12, GOLD: 3 },
+  base_value: {
+    COMUM: 10,
+    INCOMUM: 25,
+    RARA: 60,
+    EPICA: 150,
+    LENDARIA: 400,
+    MITICA: 800,
+    GALACTICA: 1600,
+  } as Record<GachaTier, number>,
+  foil_mult: { NORMAL: 1, HOLO: 3, GOLD: 10 } as Record<GachaFoil, number>,
   card_floors: CARD_FLOOR,
   skin_floors: {
     COMMON: 2000,

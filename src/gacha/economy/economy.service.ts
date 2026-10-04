@@ -9,6 +9,8 @@ import { Prisma } from '@prisma/client';
 import { createHash } from 'node:crypto';
 import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '@/prisma/prisma.service';
+import { cardValue } from '@/gacha/gacha.constants';
+import type { GachaFoil, GachaTier } from '@/gacha/gacha.constants';
 import {
   BoxTier,
   dateFromDayKey,
@@ -2156,6 +2158,14 @@ export class EconomyService {
     const condition = Number(
       this.seededRandom(`mint-condition:${userId}:${Date.now()}`).toFixed(4),
     );
+    const value = cardValue(
+      counter.rarity as GachaTier,
+      condition,
+      foil,
+      counter.editionCounter,
+      config.base_value,
+      config.foil_mult,
+    );
     const copy = await tx.userCard.create({
       data: {
         userId,
@@ -2164,8 +2174,8 @@ export class EconomyService {
         condition,
         foil,
         edition: counter.editionCounter,
-        value: 0,
-        rankedValue: 0,
+        value,
+        rankedValue: value,
       },
     });
     await tx.gachaCardDiscovery.createMany({
@@ -2768,7 +2778,7 @@ export class EconomyService {
       cardId: string | null;
       skinId: string | null;
       payload: Prisma.JsonValue;
-      card: { id: string; name: string } | null;
+      card: { id: string; name: string; rarity: string } | null;
       skin: {
         id: string;
         name: string;
@@ -2809,16 +2819,27 @@ export class EconomyService {
       data: { editionCounter: { increment: 1 } },
       select: { editionCounter: true },
     });
+    const { config } = await this.currentVersion(tx);
+    const condition = payload.condition ?? 0.5;
+    const foil = payload.foil ?? 'NORMAL';
+    const value = cardValue(
+      offer.card.rarity as GachaTier,
+      condition,
+      foil as GachaFoil,
+      counter.editionCounter,
+      config.base_value,
+      config.foil_mult,
+    );
     const copy = await tx.userCard.create({
       data: {
         userId,
         originalUserId: userId,
         cardId: offer.card.id,
-        condition: payload.condition ?? 0.5,
-        foil: payload.foil ?? 'NORMAL',
+        condition,
+        foil,
         edition: counter.editionCounter,
-        value: 0,
-        rankedValue: 0,
+        value,
+        rankedValue: value,
       },
     });
     return { type: 'CARD', userCardId: copy.id };
