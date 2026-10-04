@@ -1,3 +1,10 @@
+## [1.33.1](https://github.com/1arley/animesice-back/compare/v1.33.0...v1.33.1) (2026-10-04)
+
+
+### Bug Fixes
+
+* calculate value and rankedValue by rarity, condition, foil and edition for store cards and box rewards ([41fbb6e](https://github.com/1arley/animesice-back/commit/41fbb6ecaabed4afeb8b128eff08f4ee4c690282))
+
 # [1.33.0](https://github.com/1arley/animesice-back/compare/v1.32.1...v1.33.0) (2026-10-03)
 
 
