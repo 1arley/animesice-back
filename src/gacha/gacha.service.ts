@@ -16,6 +16,7 @@ import {
   Prisma,
 } from '@prisma/client';
 import { PrismaService } from '@/prisma/prisma.service';
+import { CrystalAccountingService } from '@/gacha/crystal-accounting.service';
 import {
   GACHA_FOILS,
   GACHA_TIERS,
@@ -247,6 +248,7 @@ export class GachaService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: GachaConfigService,
+    private readonly crystalAccounting: CrystalAccountingService,
     @Optional() private readonly wishlistService?: WishlistService,
   ) {}
 
@@ -1322,27 +1324,14 @@ export class GachaService {
     refId: string | null,
     reason: string,
   ) {
-    if (!Number.isSafeInteger(delta) || Math.abs(delta) > 2_147_483_647) {
-      throw new BadRequestException('Valor de Crystal inválido.');
-    }
-    const changed = await tx.user.updateMany({
-      where: {
-        id: userId,
-        crystalBalance: {
-          gte: Math.max(0, -delta),
-          lte: 2_147_483_647 - Math.max(0, delta),
-        },
-      },
-      data: { crystalBalance: { increment: delta } },
-    });
-    if (changed.count !== 1) {
-      throw new BadRequestException(
-        delta < 0 ? 'Crystals insuficientes.' : 'Limite de Crystals excedido.',
-      );
-    }
-    return tx.crystalEvent.create({
-      data: { userId, delta, type, refId, reason },
-    });
+    return this.crystalAccounting.change(
+      tx,
+      userId,
+      delta,
+      type,
+      refId,
+      reason,
+    );
   }
 
   async reroll(userId: string, userCardId: string) {

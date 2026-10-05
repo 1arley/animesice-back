@@ -9,6 +9,7 @@ import { Prisma } from '@prisma/client';
 import { createHash } from 'node:crypto';
 import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '@/prisma/prisma.service';
+import { CrystalAccountingService } from '@/gacha/crystal-accounting.service';
 import { cardValue } from '@/gacha/gacha.constants';
 import type { GachaFoil, GachaTier } from '@/gacha/gacha.constants';
 import {
@@ -191,7 +192,10 @@ const presentMarketOffer = (
 
 @Injectable()
 export class EconomyService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly crystalAccounting: CrystalAccountingService,
+  ) {}
 
   private async currentVersion(tx: Tx) {
     const version = await tx.gachaEconomyVersion.findFirst({
@@ -637,10 +641,7 @@ export class EconomyService {
             data: { status: 'CANCELLED' },
           });
           if (cancelled.count)
-            await tx.user.update({
-              where: { id: order.userId },
-              data: { crystalReserved: { decrement: order.price } },
-            });
+            await this.crystalAccounting.release(tx, order.userId, order.price);
         }
         await this.cancelMarketOffersForItem(tx, itemType, itemId);
         let compensated = 0;
@@ -1025,20 +1026,12 @@ export class EconomyService {
         }
 
         if (crystals > 0) {
-          await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${userId} FOR UPDATE`;
-          const wallet = await tx.user.findUniqueOrThrow({
-            where: { id: userId },
-            select: { crystalBalance: true, crystalReserved: true },
-          });
-          if (wallet.crystalBalance - wallet.crystalReserved < crystals) {
-            throw new BadRequestException(
-              'Cristais disponíveis insuficientes.',
-            );
-          }
-          await tx.user.update({
-            where: { id: userId },
-            data: { crystalReserved: { increment: crystals } },
-          });
+          await this.crystalAccounting.reserve(
+            tx,
+            userId,
+            crystals,
+            'Cristais disponíveis insuficientes.',
+          );
         }
 
         if (cardIds.length > 0) {
@@ -1256,22 +1249,14 @@ export class EconomyService {
         let saleId: string | null = null;
         let sellerProceeds = 0;
         if (offer.crystals > 0) {
-          await tx.user.update({
-            where: { id: offer.offeredUserId },
-            data: {
-              crystalBalance: { decrement: offer.crystals },
-              crystalReserved: { decrement: offer.crystals },
-            },
-          });
-          await tx.crystalEvent.create({
-            data: {
-              userId: offer.offeredUserId,
-              delta: -offer.crystals,
-              type: 'SPEND',
-              refId: offer.id,
-              reason: 'Oferta aceita no mercado',
-            },
-          });
+          await this.crystalAccounting.consumeReserved(
+            tx,
+            offer.offeredUserId,
+            offer.crystals,
+            'SPEND',
+            offer.id,
+            'Oferta aceita no mercado',
+          );
           const fee = Math.round(
             offer.crystals *
               (await this.currentVersion(tx)).config.market_tax_pct,
@@ -1409,17 +1394,7 @@ export class EconomyService {
           });
           if (!exists) throw new NotFoundException('Skin não encontrada.');
         }
-        await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${userId} FOR UPDATE`;
-        const wallet = await tx.user.findUniqueOrThrow({
-          where: { id: userId },
-          select: { crystalBalance: true, crystalReserved: true },
-        });
-        if (wallet.crystalBalance - wallet.crystalReserved < dto.price)
-          throw new BadRequestException('Crystal disponível insuficiente.');
-        await tx.user.update({
-          where: { id: userId },
-          data: { crystalReserved: { increment: dto.price } },
-        });
+        await this.crystalAccounting.reserve(tx, userId, dto.price);
         return tx.gachaBuyOrder.create({
           data: {
             userId,
@@ -1450,10 +1425,7 @@ export class EconomyService {
       });
       if (!cancelled.count)
         throw new ConflictException('Ordem não está ativa.');
-      await tx.user.update({
-        where: { id: userId },
-        data: { crystalReserved: { decrement: order.price } },
-      });
+      await this.crystalAccounting.release(tx, userId, order.price);
       return { cancelled: true };
     });
   }
@@ -2308,22 +2280,14 @@ export class EconomyService {
     });
     if (moved.count !== 1)
       throw new ConflictException('Carta não está disponível.');
-    await tx.user.update({
-      where: { id: order.userId },
-      data: {
-        crystalBalance: { decrement: order.price },
-        crystalReserved: { decrement: order.price },
-      },
-    });
-    await tx.crystalEvent.create({
-      data: {
-        userId: order.userId,
-        delta: -order.price,
-        type: 'PURCHASE',
-        refId: order.id,
-        reason: 'Ordem de compra executada',
-      },
-    });
+    await this.crystalAccounting.consumeReserved(
+      tx,
+      order.userId,
+      order.price,
+      'PURCHASE',
+      order.id,
+      'Ordem de compra executada',
+    );
     const fee = Math.round(
       order.price * (await this.currentVersion(tx)).config.market_tax_pct,
     );
@@ -2373,22 +2337,14 @@ export class EconomyService {
     });
     if (moved.count !== 1)
       throw new ConflictException('Skin não está disponível.');
-    await tx.user.update({
-      where: { id: order.userId },
-      data: {
-        crystalBalance: { decrement: order.price },
-        crystalReserved: { decrement: order.price },
-      },
-    });
-    await tx.crystalEvent.create({
-      data: {
-        userId: order.userId,
-        delta: -order.price,
-        type: 'PURCHASE',
-        refId: order.id,
-        reason: 'Ordem de skin executada',
-      },
-    });
+    await this.crystalAccounting.consumeReserved(
+      tx,
+      order.userId,
+      order.price,
+      'PURCHASE',
+      order.id,
+      'Ordem de skin executada',
+    );
     const fee = Math.round(
       order.price * (await this.currentVersion(tx)).config.market_tax_pct,
     );
@@ -2457,10 +2413,11 @@ export class EconomyService {
       });
     }
     if (offer.crystals > 0) {
-      await tx.user.update({
-        where: { id: offer.offeredUserId },
-        data: { crystalReserved: { decrement: offer.crystals } },
-      });
+      await this.crystalAccounting.release(
+        tx,
+        offer.offeredUserId,
+        offer.crystals,
+      );
     }
     return true;
   }
@@ -2996,10 +2953,7 @@ export class EconomyService {
         data: { status: 'EXPIRED' },
       });
       if (changed.count)
-        await tx.user.update({
-          where: { id: order.userId },
-          data: { crystalReserved: { decrement: order.price } },
-        });
+        await this.crystalAccounting.release(tx, order.userId, order.price);
     }
   }
 
@@ -3011,21 +2965,14 @@ export class EconomyService {
     refId: string,
   ) {
     await this.assertEconomyEnabled(tx, userId);
-    await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${userId} FOR UPDATE`;
-    const user = await tx.user.findUniqueOrThrow({
-      where: { id: userId },
-      select: { crystalBalance: true, crystalReserved: true },
-    });
-    if (user.crystalBalance - user.crystalReserved < amount) {
-      throw new BadRequestException('Crystal disponível insuficiente.');
-    }
-    await tx.user.update({
-      where: { id: userId },
-      data: { crystalBalance: { decrement: amount } },
-    });
-    await tx.crystalEvent.create({
-      data: { userId, delta: -amount, type: 'SPEND', refId, reason },
-    });
+    await this.crystalAccounting.debitAvailable(
+      tx,
+      userId,
+      amount,
+      'SPEND',
+      refId,
+      reason,
+    );
   }
 
   private async credit(
@@ -3036,13 +2983,14 @@ export class EconomyService {
     refId: string | null | undefined,
     reason: string,
   ) {
-    await tx.user.update({
-      where: { id: userId },
-      data: { crystalBalance: { increment: amount } },
-    });
-    await tx.crystalEvent.create({
-      data: { userId, delta: amount, type, refId, reason },
-    });
+    await this.crystalAccounting.credit(
+      tx,
+      userId,
+      amount,
+      type,
+      refId,
+      reason,
+    );
   }
 
   private isUniqueError(error: unknown): boolean {

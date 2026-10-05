@@ -7,6 +7,8 @@ import { EconomyController } from './economy.controller';
 import { ECONOMY_DEFAULTS, economyConfig } from './economy.config';
 import { MarketQueryDto } from './economy.dto';
 import { dayKey } from './economy.rules';
+import { CrystalAccountingService } from '@/gacha/crystal-accounting.service';
+import { createTransactionAwarePrismaMock } from '@test/gacha/transaction-prisma.mock';
 
 function model() {
   return Object.fromEntries(
@@ -29,6 +31,7 @@ function model() {
 
 describe('EconomyService safeguards', () => {
   let db: any;
+  let prismaMocks: ReturnType<typeof createTransactionAwarePrismaMock>;
   let service: EconomyService;
   beforeEach(() => {
     db = Object.fromEntries(
@@ -57,8 +60,15 @@ describe('EconomyService safeguards', () => {
         'gachaSpin',
       ].map((name) => [name, model()]),
     );
-    db.$transaction = jest.fn((work) => work(db));
+    db.$transaction = jest.fn();
     db.$queryRaw = jest.fn().mockResolvedValue([]);
+    prismaMocks = createTransactionAwarePrismaMock(db);
+    prismaMocks.reset();
+    db.user.findUnique.mockResolvedValue({
+      crystalBalance: 10_000,
+      crystalReserved: 0,
+    });
+    db.user.updateMany.mockResolvedValue({ count: 1 });
     db.gachaEconomyVersion.findFirst.mockResolvedValue({
       id: 'version-2',
       version: 2,
@@ -83,7 +93,10 @@ describe('EconomyService safeguards', () => {
     db.gachaOpening.create.mockImplementation(
       ({ data }: { data: Record<string, unknown> }) => Promise.resolve(data),
     );
-    service = new EconomyService(db);
+    service = new EconomyService(
+      prismaMocks.root as never,
+      new CrystalAccountingService(),
+    );
   });
 
   afterEach(() => jest.restoreAllMocks());
@@ -229,9 +242,9 @@ describe('EconomyService safeguards', () => {
     ]);
     db.gachaSkinListing.updateMany.mockResolvedValue({ count: 1 });
     await service.expireMarket();
-    expect(db.user.update).toHaveBeenCalledTimes(1);
-    expect(db.user.update).toHaveBeenCalledWith({
-      where: { id: 'u1' },
+    expect(db.user.updateMany).toHaveBeenCalledTimes(1);
+    expect(db.user.updateMany).toHaveBeenCalledWith({
+      where: { id: 'u1', crystalReserved: { gte: 200 } },
       data: { crystalReserved: { decrement: 200 } },
     });
     expect(db.userCard.updateMany).toHaveBeenCalledWith({
