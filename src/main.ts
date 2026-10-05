@@ -15,11 +15,11 @@ async function bootstrap() {
 
   // bodyParser:false para registrar os parsers com o limite real do projeto.
   // O default do Nest/Express é 100kb, incompatível com endpoints que recebem
-  // SVG inline (admin de capas aceita até 500.000 caracteres em
-  // sanitizeCardBackSvg) — acima disso o body-parser aborta com
-  // PayloadTooLargeError antes do controller, virando 500 sem contexto.
+  // SVG inline (admin de capas aceita até 2 MiB em
+  // sanitizeCardBackSvg) — acima disso o body-parser responde 413 antes do
+  // controller.
   const app = await NestFactory.create(AppModule, { bodyParser: false });
-  const bodyLimit = process.env.BODY_LIMIT || '2mb';
+  const bodyLimit = process.env.BODY_LIMIT || '3mb';
   app.use(json({ limit: bodyLimit }));
   app.use(urlencoded({ extended: true, limit: bodyLimit }));
 

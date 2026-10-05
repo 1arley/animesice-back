@@ -58,6 +58,7 @@ export function normalizeLoadout(value: unknown): GachaLoadout {
 
 const DAY_MS = 86_400_000;
 const HOUR_MS = 3_600_000;
+const MAX_CARD_BACK_SVG_BYTES = 2 * 1024 * 1024;
 const EPIC_RARITIES = ['EPICA', 'LENDARIA', 'MITICA', 'GALACTICA'];
 const FEATURED_REWARD_DENOMINATOR = BigInt(2 * HOUR_MS * 10_000);
 
@@ -1499,7 +1500,10 @@ export class GachaService {
       .replace(/<script[\s\S]*?<\/script>/gi, '')
       .replace(/\son\w+\s*=\s*(['"]).*?\1/gi, '')
       .replace(/javascript:/gi, '');
-    if (!/^\s*<svg[\s>]/i.test(clean) || clean.length > 500_000)
+    if (
+      !/^\s*<svg[\s>]/i.test(clean) ||
+      Buffer.byteLength(clean, 'utf8') > MAX_CARD_BACK_SVG_BYTES
+    )
       throw new BadRequestException('SVG inválido ou pesado demais.');
     return clean;
   }
