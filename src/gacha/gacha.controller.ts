@@ -46,7 +46,11 @@ import { VerifiedGuard } from '@/auth/verified.guard';
 import { RolesGuard } from '@/auth/roles.guard';
 import { Roles } from '@/auth/roles.decorators';
 import { Audit } from '@/auth/decorators/audit.decorator';
-import { DEFAULT_PAGE } from '@/common/constants';
+import {
+  DEFAULT_PAGE,
+  MAX_PAGE_SIZE,
+  parsePageParam,
+} from '@/common/constants';
 import type { AuthenticatedRequest } from '@/common/interfaces/request.interface';
 import type { Request } from 'express';
 import { GACHA_TIERS } from '@/gacha/gacha.constants';
@@ -71,6 +75,8 @@ export class GachaController {
     @Query('userId') userId?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
+    @Query('cardsPage') cardsPage?: string,
+    @Query('setsPage') setsPage?: string,
     @Query('status') status?: 'pending' | 'complete',
     @Query('priority') priority?: 'LOW' | 'NORMAL' | 'HIGH',
     @Query('type') type?: 'cards' | 'sets',
@@ -78,9 +84,12 @@ export class GachaController {
     const ownerId = userId || req.user?.id;
     if (!ownerId)
       throw new BadRequestException('Informe o usuário da wishlist.');
+    const sharedPage = parsePageParam(page, DEFAULT_PAGE, 100_000);
     return this.gachaService.wishlist(ownerId, req.user?.id ?? null, {
-      page: Number(page) || 1,
-      limit: Number(limit) || 24,
+      page: sharedPage,
+      limit: parsePageParam(limit, 24, MAX_PAGE_SIZE),
+      cardsPage: parsePageParam(cardsPage, sharedPage, 100_000),
+      setsPage: parsePageParam(setsPage, sharedPage, 100_000),
       status,
       priority: priority as WishlistPriorityDto | undefined,
       type,
