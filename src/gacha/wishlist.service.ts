@@ -22,8 +22,9 @@ const CONDITION_LEVEL: Record<string, number> = {
 const VALID_FOILS = ['NORMAL', 'HOLO', 'GOLD'];
 
 type WishlistOptions = {
-  page?: number;
   limit?: number;
+  cardsPage?: number;
+  setsPage?: number;
   status?: 'pending' | 'complete';
   priority?: WishlistPriorityDto;
   type?: 'cards' | 'sets';
@@ -68,6 +69,15 @@ export class WishlistService {
     return (value ?? WishlistPriorityDto.NORMAL) as WishlistPriority;
   }
 
+  /**
+   * Cada lista (cartas e conjuntos) tem contagem própria, então a página
+   * precisa ser limitada ao total daquela lista — sem isso, pedir a página 2
+   * das cartas esconderia os conjuntos que caberiam nela.
+   */
+  private clampPage(value: number | undefined, totalPages: number) {
+    return Math.min(value ?? 1, totalPages);
+  }
+
   private validateFoils(foils?: string[]) {
     if (foils?.some((foil) => !VALID_FOILS.includes(foil))) {
       throw new BadRequestException('Foil inválido.');
@@ -95,7 +105,15 @@ export class WishlistService {
         isPublic: false,
         cards: [],
         sets: [],
-        meta: { cards: 0, sets: 0 },
+        meta: {
+          cards: 0,
+          sets: 0,
+          limit: 1,
+          cardsPage: 1,
+          cardsTotalPages: 1,
+          setsPage: 1,
+          setsTotalPages: 1,
+        },
       };
     }
 
@@ -199,22 +217,24 @@ export class WishlistService {
         };
       })
       .filter((entry) => status(entry.complete));
-    const page = Math.max(1, options.page ?? 1);
     const limit = Math.min(100, Math.max(1, options.limit ?? 24));
+    const cardsTotalPages = Math.max(1, Math.ceil(cardData.length / limit));
+    const setsTotalPages = Math.max(1, Math.ceil(setData.length / limit));
+    const cardsPage = this.clampPage(options.cardsPage, cardsTotalPages);
+    const setsPage = this.clampPage(options.setsPage, setsTotalPages);
     return {
       private: false,
       isPublic: owner.gachaWishlistPublic,
-      cards: cardData.slice((page - 1) * limit, page * limit),
-      sets: setData.slice((page - 1) * limit, page * limit),
+      cards: cardData.slice((cardsPage - 1) * limit, cardsPage * limit),
+      sets: setData.slice((setsPage - 1) * limit, setsPage * limit),
       meta: {
         cards: cardData.length,
         sets: setData.length,
-        page,
         limit,
-        totalPages: Math.max(
-          1,
-          Math.ceil(Math.max(cardData.length, setData.length) / limit),
-        ),
+        cardsPage,
+        cardsTotalPages,
+        setsPage,
+        setsTotalPages,
       },
     };
   }

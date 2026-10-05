@@ -45,4 +45,105 @@ describe('WishlistService', () => {
       NotFoundException,
     );
   });
+
+  it('pagina cartas e conjuntos de forma independente', async () => {
+    const prisma = makePrisma();
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'u1',
+      userName: 'ana',
+      name: 'Ana',
+      gachaWishlistPublic: true,
+    });
+    prisma.gachaCardWishlist.findMany.mockResolvedValue(
+      Array.from({ length: 30 }, (_, index) => ({
+        id: `w${index}`,
+        userId: 'u1',
+        cardId: `c${index}`,
+        priority: 'NORMAL',
+        acceptedFoils: [],
+        minCondition: null,
+        maxEdition: null,
+        createdAt: new Date(0),
+        updatedAt: new Date(0),
+        card: {
+          id: `c${index}`,
+          name: `Carta ${index}`,
+          image: null,
+          imageHidden: false,
+          animeId: 'a1',
+          anime: { id: 'a1', slug: 'a1', title: 'A1', malId: 1 },
+        },
+      })),
+    );
+    prisma.gachaSetWishlist.findMany.mockResolvedValue([
+      {
+        id: 's1',
+        userId: 'u1',
+        animeId: 'a1',
+        priority: 'NORMAL',
+        createdAt: new Date(0),
+        updatedAt: new Date(0),
+        anime: { id: 'a1', slug: 'a1', title: 'A1', coverImage: null },
+      },
+    ]);
+    prisma.userCard.findMany.mockResolvedValue([]);
+    prisma.card.findMany.mockResolvedValue([{ id: 'c0', animeId: 'a1' }]);
+    const service = new WishlistService(prisma as never);
+
+    const first = await service.list('u1', 'u1', { limit: 24 });
+    expect(first.cards).toHaveLength(24);
+    expect(first.meta.cards).toBe(30);
+    expect(first.meta.cardsTotalPages).toBe(2);
+    expect(first.sets).toHaveLength(1);
+    expect(first.meta.setsTotalPages).toBe(1);
+
+    // Página 2 das cartas não pode esconder o conjunto, que cabe na página 1.
+    const second = await service.list('u1', 'u1', {
+      limit: 24,
+      cardsPage: 2,
+      setsPage: 1,
+    });
+    expect(second.cards).toHaveLength(6);
+    expect(second.sets).toHaveLength(1);
+    expect(second.meta.cardsPage).toBe(2);
+  });
+
+  it('limita a página ao total real de cada lista', async () => {
+    const prisma = makePrisma();
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'u1',
+      userName: 'ana',
+      name: 'Ana',
+      gachaWishlistPublic: true,
+    });
+    prisma.gachaCardWishlist.findMany.mockResolvedValue([
+      {
+        id: 'w1',
+        userId: 'u1',
+        cardId: 'c1',
+        priority: 'NORMAL',
+        acceptedFoils: [],
+        minCondition: null,
+        maxEdition: null,
+        createdAt: new Date(0),
+        updatedAt: new Date(0),
+        card: {
+          id: 'c1',
+          name: 'Carta 1',
+          image: null,
+          imageHidden: false,
+          animeId: null,
+          anime: null,
+        },
+      },
+    ]);
+    prisma.gachaSetWishlist.findMany.mockResolvedValue([]);
+    prisma.userCard.findMany.mockResolvedValue([]);
+    prisma.card.findMany.mockResolvedValue([]);
+    const service = new WishlistService(prisma as never);
+
+    const result = await service.list('u1', 'u1', { cardsPage: 99 });
+    expect(result.meta.cardsPage).toBe(1);
+    expect(result.cards).toHaveLength(1);
+  });
 });
