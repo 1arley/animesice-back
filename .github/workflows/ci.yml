@@ -67,7 +67,7 @@ jobs:
       # coverageThreshold em jest.config.mjs garante o mínimo (stmts 90, lines 90,
       # functions 90, branches 80) — falha o job se cair abaixo.
       - name: Run unit tests with coverage
-        run: npx dotenv-cli -e .env.test -- npm run test:unit -- --coverage --detectOpenHandles --forceExit
+        run: node node_modules/dotenv-cli/cli.js -e .env.test -- npm run test:unit -- --coverage --detectOpenHandles --forceExit
 
       - name: Upload coverage artifact
         uses: actions/upload-artifact@v7
@@ -113,12 +113,12 @@ jobs:
       # deploy). Inclui 20260812120000_add_fuzzy_search (pg_trgm) — exigida
       # pelo e2e de busca fuzzy; db push não criaria a extensão.
       - name: Apply migrations to test database
-        run: npx dotenv-cli -e .env.test -- npx prisma migrate deploy
+        run: node node_modules/dotenv-cli/cli.js -e .env.test -- npx prisma migrate deploy
 
       - name: Run E2E tests
         env:
           NODE_OPTIONS: --experimental-vm-modules
-        run: npx dotenv-cli -e .env.test -- npx jest --config ./test/jest-e2e.json --runInBand --forceExit
+        run: node node_modules/dotenv-cli/cli.js -e .env.test -- npx jest --config ./test/jest-e2e.json --runInBand --forceExit
 
   # ---------------------------------------------------------------------------
   # Build the NestJS app. Depends on tests passing so we never ship a build
