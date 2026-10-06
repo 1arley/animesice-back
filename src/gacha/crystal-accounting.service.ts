@@ -63,7 +63,7 @@ export class CrystalAccountingService {
     refId: string | null | undefined,
     reason: string,
   ) {
-    this.assertAmount(amount);
+    this.assertAmount(amount, true);
     const changed = await tx.user.updateMany({
       where: { id: userId, crystalBalance: { lte: MAX_CRYSTALS - amount } },
       data: { crystalBalance: { increment: amount } },

@@ -90,9 +90,11 @@ describe('WishlistService', () => {
     prisma.card.findMany.mockResolvedValue([{ id: 'c0', animeId: 'a1' }]);
     const service = new WishlistService(prisma as never);
 
-    const first = await service.list('u1', 'u1', { limit: 24 });
+    const first = await service.list('u1', 'u1', { limit: 24, page: 1 });
     expect(first.cards).toHaveLength(24);
     expect(first.meta.cards).toBe(30);
+    expect(first.meta.page).toBe(1);
+    expect(first.meta.totalPages).toBe(2);
     expect(first.meta.cardsTotalPages).toBe(2);
     expect(first.sets).toHaveLength(1);
     expect(first.meta.setsTotalPages).toBe(1);
@@ -106,6 +108,14 @@ describe('WishlistService', () => {
     expect(second.cards).toHaveLength(6);
     expect(second.sets).toHaveLength(1);
     expect(second.meta.cardsPage).toBe(2);
+    expect(second.meta.page).toBe(2);
+    expect(second.meta.totalPages).toBe(2);
+
+    const legacy = await service.list('u1', 'u1', { limit: 24, page: 2 });
+    expect(legacy.cards).toHaveLength(6);
+    expect(legacy.sets).toHaveLength(1);
+    expect(legacy.meta.page).toBe(2);
+    expect(legacy.meta.totalPages).toBe(2);
   });
 
   it('limita a página ao total real de cada lista', async () => {

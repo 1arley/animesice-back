@@ -86,6 +86,7 @@ export class GachaController {
       throw new BadRequestException('Informe o usuário da wishlist.');
     const sharedPage = parsePageParam(page, DEFAULT_PAGE, 100_000);
     return this.gachaService.wishlist(ownerId, req.user?.id ?? null, {
+      page: page === undefined ? undefined : sharedPage,
       limit: parsePageParam(limit, 24, MAX_PAGE_SIZE),
       cardsPage: parsePageParam(cardsPage, sharedPage, 100_000),
       setsPage: parsePageParam(setsPage, sharedPage, 100_000),

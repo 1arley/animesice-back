@@ -22,6 +22,7 @@ const CONDITION_LEVEL: Record<string, number> = {
 const VALID_FOILS = ['NORMAL', 'HOLO', 'GOLD'];
 
 type WishlistOptions = {
+  page?: number;
   limit?: number;
   cardsPage?: number;
   setsPage?: number;
@@ -109,6 +110,8 @@ export class WishlistService {
           cards: 0,
           sets: 0,
           limit: 1,
+          page: 1,
+          totalPages: 1,
           cardsPage: 1,
           cardsTotalPages: 1,
           setsPage: 1,
@@ -220,8 +223,19 @@ export class WishlistService {
     const limit = Math.min(100, Math.max(1, options.limit ?? 24));
     const cardsTotalPages = Math.max(1, Math.ceil(cardData.length / limit));
     const setsTotalPages = Math.max(1, Math.ceil(setData.length / limit));
-    const cardsPage = this.clampPage(options.cardsPage, cardsTotalPages);
-    const setsPage = this.clampPage(options.setsPage, setsTotalPages);
+    const cardsPage = this.clampPage(
+      options.cardsPage ?? options.page,
+      cardsTotalPages,
+    );
+    const setsPage = this.clampPage(
+      options.setsPage ?? options.page,
+      setsTotalPages,
+    );
+    const totalPages = Math.max(cardsTotalPages, setsTotalPages);
+    const page = this.clampPage(
+      options.page ?? Math.max(cardsPage, setsPage),
+      totalPages,
+    );
     return {
       private: false,
       isPublic: owner.gachaWishlistPublic,
@@ -231,6 +245,8 @@ export class WishlistService {
         cards: cardData.length,
         sets: setData.length,
         limit,
+        page,
+        totalPages,
         cardsPage,
         cardsTotalPages,
         setsPage,
