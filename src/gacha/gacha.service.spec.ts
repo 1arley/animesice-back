@@ -14,6 +14,8 @@ import {
 } from '@/gacha/gacha.service';
 import { PrismaService } from '@/prisma/prisma.service';
 import { GachaConfigService } from '@/gacha/gacha-config.service';
+import { CrystalAccountingService } from '@/gacha/crystal-accounting.service';
+import { createTransactionAwarePrismaMock } from '@test/gacha/transaction-prisma.mock';
 import {
   cardValue,
   conditionLabel,
@@ -251,6 +253,7 @@ describe('GachaService', () => {
     $queryRaw: jest.fn(async () => []),
     $transaction: jest.fn(),
   };
+  const prismaMocks = createTransactionAwarePrismaMock(mockPrisma);
 
   const cardComum = {
     id: 'w1',
@@ -287,7 +290,13 @@ describe('GachaService', () => {
 
   beforeEach(async () => {
     jest.resetAllMocks();
+    prismaMocks.reset();
     mockPrisma.user.updateMany.mockResolvedValue({ count: 1 });
+    mockPrisma.user.update.mockResolvedValue({});
+    mockPrisma.user.findUnique.mockResolvedValue({
+      crystalBalance: 10_000,
+      crystalReserved: 0,
+    });
     mockPrisma.user.findUniqueOrThrow.mockResolvedValue({ crystalBalance: 0 });
     mockPrisma.crystalEvent.findMany.mockResolvedValue([]);
     mockPrisma.crystalEvent.count.mockResolvedValue(0);
@@ -295,10 +304,6 @@ describe('GachaService', () => {
     mockPrisma.siteSetting.findMany.mockResolvedValue([
       { key: 'GACHA_ENGAGEMENT_PILOT_PERCENT', value: '100' },
     ]);
-    mockPrisma.$transaction.mockImplementation(
-      (input: Promise<unknown>[] | ((tx: typeof mockPrisma) => unknown)) =>
-        typeof input === 'function' ? input(mockPrisma) : Promise.all(input),
-    );
     mockPrisma.gachaRollDay.count.mockResolvedValue(0);
     mockPrisma.gachaSpin.count.mockResolvedValue(0);
     mockPrisma.card.count.mockResolvedValue(0);
@@ -313,7 +318,8 @@ describe('GachaService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         GachaService,
-        { provide: PrismaService, useValue: mockPrisma },
+        CrystalAccountingService,
+        { provide: PrismaService, useValue: prismaMocks.root },
         { provide: GachaConfigService, useValue: mockConfig },
       ],
     }).compile();
@@ -1722,8 +1728,10 @@ describe('GachaService', () => {
     });
 
     it('adjustCrystals barra saldo negativo e delta inválido', async () => {
-      mockPrisma.user.findUnique.mockResolvedValue({ crystalBalance: 10 });
-      mockPrisma.user.updateMany.mockResolvedValue({ count: 0 });
+      mockPrisma.user.findUnique.mockResolvedValue({
+        crystalBalance: 10,
+        crystalReserved: 0,
+      });
       await expect(
         service.adjustCrystals('u1', -50, 'punicao'),
       ).rejects.toBeInstanceOf(BadRequestException);
@@ -1750,7 +1758,12 @@ describe('GachaService', () => {
       owned.card.anime = null;
       mockPrisma.userCard.findFirst.mockResolvedValue(owned);
       mockPrisma.gachaTrade.findFirst.mockResolvedValue(null);
-      mockPrisma.user.updateMany.mockResolvedValue({ count: 1 });
+      mockPrisma.gachaListing.findFirst.mockResolvedValue(null);
+      mockPrisma.user.findUnique.mockResolvedValue({
+        crystalBalance: 10_000,
+        crystalReserved: 0,
+      });
+      mockPrisma.user.update.mockResolvedValue({});
       mockPrisma.crystalEvent.create.mockResolvedValue({});
       mockPrisma.userCard.update.mockImplementation(
         (args: {
@@ -1773,9 +1786,9 @@ describe('GachaService', () => {
 
       const pull = await service.reroll('u1', 'p1');
 
-      expect(mockPrisma.user.updateMany).toHaveBeenCalledWith({
-        where: { id: 'u1', crystalBalance: { gte: 75, lte: 2_147_483_647 } },
-        data: { crystalBalance: { increment: -75 } },
+      expect(mockPrisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'u1' },
+        data: { crystalBalance: { decrement: 75 } },
       });
       expect(mockPrisma.crystalEvent.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1800,7 +1813,10 @@ describe('GachaService', () => {
       );
 
       mockPrisma.gachaTrade.findFirst.mockResolvedValue(null);
-      mockPrisma.user.updateMany.mockResolvedValue({ count: 0 });
+      mockPrisma.user.findUnique.mockResolvedValue({
+        crystalBalance: 0,
+        crystalReserved: 0,
+      });
       await expect(service.reroll('u1', 'p1')).rejects.toBeInstanceOf(
         BadRequestException,
       );
@@ -2030,8 +2046,11 @@ describe('GachaService', () => {
         service.buyCosmetic('u1', 'FRAME_AURORA'),
       ).rejects.toBeInstanceOf(BadRequestException);
 
-      mockPrisma.user.findUnique.mockResolvedValue({ gachaCosmetics: [] });
-      mockPrisma.user.updateMany.mockResolvedValue({ count: 0 });
+      mockPrisma.user.findUnique.mockResolvedValue({
+        gachaCosmetics: [],
+        crystalBalance: 0,
+        crystalReserved: 0,
+      });
       await expect(
         service.buyCosmetic('u1', 'FRAME_AURORA'),
       ).rejects.toBeInstanceOf(BadRequestException);
@@ -2054,6 +2073,10 @@ describe('GachaService', () => {
       mockPrisma.userCard.updateMany.mockResolvedValue({ count: 1 });
       mockPrisma.user.updateMany.mockResolvedValue({ count: 1 });
       mockPrisma.user.update.mockResolvedValue({});
+      mockPrisma.user.findUnique.mockResolvedValue({
+        crystalBalance: 10_000,
+        crystalReserved: 0,
+      });
       mockPrisma.crystalEvent.create.mockResolvedValue({});
 
       await expect(service.buyListing('u1', 'l1')).resolves.toEqual({
@@ -2061,10 +2084,10 @@ describe('GachaService', () => {
         price: 100,
       });
 
-      expect(mockPrisma.user.updateMany).toHaveBeenCalledWith(
+      expect(mockPrisma.user.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { id: 'u1', crystalBalance: { gte: 100, lte: 2_147_483_647 } },
-          data: { crystalBalance: { increment: -100 } },
+          where: { id: 'u1' },
+          data: { crystalBalance: { decrement: 100 } },
         }),
       );
       expect(mockPrisma.userCard.updateMany).toHaveBeenCalledWith(

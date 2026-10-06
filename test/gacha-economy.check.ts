@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { ForbiddenException } from '@nestjs/common';
 import { EconomyService } from '@/gacha/economy/economy.service';
 import { PrismaService } from '@/prisma/prisma.service';
+import { CrystalAccountingService } from '@/gacha/crystal-accounting.service';
 
 async function main() {
   const url = new URL(process.env.DATABASE_URL!);
@@ -12,7 +13,7 @@ async function main() {
 
   const prisma = new PrismaService();
   await prisma.$connect();
-  const economy = new EconomyService(prisma);
+  const economy = new EconomyService(prisma, new CrystalAccountingService());
   const suffix = randomUUID();
   const user = await prisma.user.create({
     data: {

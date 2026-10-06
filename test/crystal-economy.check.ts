@@ -11,7 +11,9 @@ import { JwtAuthGuard } from '@/auth/jwt-auth.guard';
 import { AuthenticatedRequest } from '@/common/interfaces/request.interface';
 import { GachaController } from '@/gacha/gacha.controller';
 import { GachaService } from '@/gacha/gacha.service';
+import { EconomyService } from '@/gacha/economy/economy.service';
 import { GachaConfigService } from '@/gacha/gacha-config.service';
+import { CrystalAccountingService } from '@/gacha/crystal-accounting.service';
 import { PrismaService } from '@/prisma/prisma.service';
 
 async function checkMigration() {
@@ -82,13 +84,16 @@ async function main() {
   const prisma = new PrismaService();
   const config = new GachaConfigService(prisma);
   await config.refresh();
-  const service = new GachaService(prisma, config);
+  const accounting = new CrystalAccountingService();
+  const service = new GachaService(prisma, config, accounting);
   const ids: string[] = [];
   const cardIds: string[] = [];
   const module = await Test.createTestingModule({
     controllers: [GachaController],
     providers: [
       GachaService,
+      EconomyService,
+      CrystalAccountingService,
       { provide: PrismaService, useValue: prisma },
       { provide: GachaConfigService, useValue: config },
     ],
@@ -182,6 +187,7 @@ async function main() {
       },
     });
     cardIds.push(card.id);
+
     const owned = await prisma.userCard.create({
       data: {
         userId: seller,
