@@ -1,3 +1,26 @@
+# [1.34.0](https://github.com/1arley/animesice-back/compare/v1.33.1...v1.34.0) (2026-10-07)
+
+
+### Bug Fixes
+
+* **admin:** constrain MAL API request target ([0ab1577](https://github.com/1arley/animesice-back/commit/0ab15778d2f7d658ed688993145a930a2a6edaa0))
+* **admin:** import MAL and AniList external works ([e160835](https://github.com/1arley/animesice-back/commit/e160835dd7f423e8959876b1748033880e262c1a))
+* **admin:** optional-chain MAL media type match group ([273eb68](https://github.com/1arley/animesice-back/commit/273eb688032737dbc2c715256fe7e0ed1a013325))
+* **admin:** resolve external anime import conflict ([e4c0e5b](https://github.com/1arley/animesice-back/commit/e4c0e5b70ed53b1f9aee56a638047abb201b9b86))
+* **ci:** invoke dotenv-cli directly in checks ([8d1e390](https://github.com/1arley/animesice-back/commit/8d1e39007913c20ca02dcf53a43ed9c44b469eb0))
+* **deps:** update vulnerable production packages ([49486b1](https://github.com/1arley/animesice-back/commit/49486b1830939ea53cd50cf8f693611e7e495797))
+* **gacha:** mede o limite do SVG de verso em bytes e sobe o body limit ([b67ad80](https://github.com/1arley/animesice-back/commit/b67ad8056f609d3ac4aa8f6fa4b3f6ab5cee0c47))
+* **gacha:** preserve zero credits and wishlist metadata ([8316c64](https://github.com/1arley/animesice-back/commit/8316c641f9ff134f4f73a9301c12c40691c13ee9))
+* **test:** add notification.create mock for trade notification tests ([bfcea4d](https://github.com/1arley/animesice-back/commit/bfcea4d098d321732737677b5a5552c266d081b1))
+
+
+### Features
+
+* **admin:** allow any HTTPS URL for external anime, keep MAL/AniList auto-fetch ([f178598](https://github.com/1arley/animesice-back/commit/f1785982b63db7c335f2e207bcd7280fc79264e1))
+* endpoint de donos de carta e campo imageHidden nas listagens ([aec0d53](https://github.com/1arley/animesice-back/commit/aec0d532d18cb4f4d72820893500e6de5ff12286))
+* **gacha:** notificações para trocas entre jogadores e propostas de mercado recusadas/canceladas ([ae8a554](https://github.com/1arley/animesice-back/commit/ae8a5543fe9e33dc6b9fd0c6617b02af295ea92b))
+* **gacha:** pagina cartas e conjuntos da wishlist de forma independente ([#110](https://github.com/1arley/animesice-back/issues/110)) ([e544df1](https://github.com/1arley/animesice-back/commit/e544df1f5a72149ff4d17505b3cdb1989e957a9a))
+
 ## [1.33.1](https://github.com/1arley/animesice-back/compare/v1.33.0...v1.33.1) (2026-10-04)
 
 
