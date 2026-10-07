@@ -1,24 +1,41 @@
 #!/usr/bin/env node
 // pr-description.mjs — auto PR description from the PR's commits.
-// No external API by default. Uses `gh` CLI (auth via GITHUB_TOKEN in CI).
+// No external API by default. Uses GitHub REST API directly with GITHUB_TOKEN.
 // ponytail: swap the template for an LLM call (OpenAI/gpt-4o) for prose.
-
-import { execSync } from 'node:child_process';
 
 const pr = process.argv[2];
 if (!pr) { console.error('usage: node pr-description.mjs <pr-number>'); process.exit(2); }
+if (!/^\d+$/.test(pr) || !Number.isSafeInteger(Number(pr))) {
+  console.error('PR number must be a positive integer');
+  process.exit(2);
+}
 const [owner, repo] = (process.env.GITHUB_REPOSITORY || '').split('/');
 if (!owner || !repo) { console.error('GITHUB_REPOSITORY unset'); process.exit(2); }
 
-function gh(path, jq) {
-  const qs = new URLSearchParams({ per_page: 100 }).toString();
-  const cmd = `gh api -X GET "repos/${owner}/${repo}/${path}?${qs}" --jq ${JSON.stringify(jq)} --paginate`;
-  try { return execSync(cmd, { encoding: 'utf8', maxBuffer: 1 << 26 }).split('\n').filter(Boolean); }
-  catch { return []; }
+async function gh(path) {
+  const token = process.env.GITHUB_TOKEN;
+  if (!token) return [];
+  const base = `https://api.github.com/repos/${owner}/${repo}/${path}`;
+  const out = [];
+  let url = `${base}?per_page=100`;
+  while (url) {
+    const resp = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}`, 'User-Agent': 'pr-description', Accept: 'application/vnd.github+json' },
+    });
+    if (!resp.ok) return out;
+    out.push(...(await resp.json()));
+    const next = (resp.headers.get('link') || '').match(/<([^>]+)>;\s*rel="next"/);
+    url = next ? next[1] : null;
+  }
+  return out;
 }
 
-const subjects = gh(`pulls/${pr}/commits`, '.[] | .commit.message | split("\\n")[0]');
-const files = gh(`pulls/${pr}/files`, '.[] | .filename');
+const [commits, filesRaw] = await Promise.all([
+  gh(`pulls/${pr}/commits`),
+  gh(`pulls/${pr}/files`),
+]);
+const subjects = commits.map(c => c?.commit?.message?.split('\n')[0] ?? '');
+const files = filesRaw.map(f => f?.filename ?? '');
 
 const LABELS = {
   feat: '✨ Feature', fix: '🐛 Fix', docs: '📚 Docs', style: '🎨 Style',
