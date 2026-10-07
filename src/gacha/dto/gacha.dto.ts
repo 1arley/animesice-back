@@ -11,11 +11,64 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  IsUrl,
+  IsUUID,
+  MaxLength,
   ValidateIf,
   Max,
   Min,
 } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
+
+export class CreateGachaSkinDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  name!: string;
+
+  @IsUrl({ protocols: ['https'], require_protocol: true })
+  imageUrl!: string;
+
+  @IsOptional()
+  @IsUUID()
+  cardId?: string;
+
+  @IsOptional()
+  @IsUrl({ protocols: ['https'], require_protocol: true })
+  sourceUrl?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  active?: boolean;
+}
+
+export class UpdateGachaSkinDto {
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  name?: string;
+
+  @IsOptional()
+  @IsUrl({ protocols: ['https'], require_protocol: true })
+  imageUrl?: string;
+
+  @IsOptional()
+  @IsUrl({ protocols: ['https'], require_protocol: true })
+  sourceUrl?: string | null;
+
+  @IsOptional()
+  @IsUUID()
+  cardId?: string | null;
+
+  @IsOptional()
+  @IsBoolean()
+  active?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  blocked?: boolean;
+}
 
 export class ClaimGachaDto {
   @ApiProperty({ description: 'ID do preview (GachaSpin) a resgatar.' })
