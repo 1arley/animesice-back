@@ -1,3 +1,10 @@
+# [1.35.0](https://github.com/1arley/animesice-back/compare/v1.34.0...v1.35.0) (2026-10-07)
+
+
+### Features
+
+* **gacha:** lista, apaga e valida skins no admin ([#118](https://github.com/1arley/animesice-back/issues/118)) ([57f8abc](https://github.com/1arley/animesice-back/commit/57f8abc9e61f241ed9e79c4f34b33ec39244a689))
+
 # [1.34.0](https://github.com/1arley/animesice-back/compare/v1.33.1...v1.34.0) (2026-10-07)
 
 
