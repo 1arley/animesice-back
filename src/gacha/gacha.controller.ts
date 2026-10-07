@@ -9,6 +9,7 @@ import {
   HttpCode,
   Param,
   ParseIntPipe,
+  ParseUUIDPipe,
   Patch,
   Post,
   Put,
@@ -646,6 +647,14 @@ export class GachaController {
     return Object.keys(options).length > 0
       ? this.gachaService.encyclopedia(req.user?.id ?? null, options)
       : this.gachaService.encyclopedia(req.user?.id ?? null);
+  }
+
+  @Get('encyclopedia/:cardId/owners')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Usuários que possuem uma carta da enciclopédia' })
+  encyclopediaCardOwners(@Param('cardId', ParseUUIDPipe) cardId: string) {
+    return this.gachaService.encyclopediaCardOwners(cardId);
   }
 
   @Get('encyclopedia/suggestions')

@@ -329,6 +329,7 @@ export class EconomyService {
                       id: true,
                       name: true,
                       image: true,
+                      imageHidden: true,
                       rarity: true,
                       animeTitle: true,
                     },

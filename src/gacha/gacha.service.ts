@@ -2939,6 +2939,40 @@ export class GachaService {
     };
   }
 
+  async encyclopediaCardOwners(cardId: string) {
+    const card = await this.prisma.card.findUnique({
+      where: { id: cardId },
+      select: { id: true },
+    });
+    if (!card) throw new NotFoundException('Carta não encontrada.');
+
+    const owners = await this.prisma.userCard.groupBy({
+      by: ['userId'],
+      where: { cardId, status: 'ACTIVE' },
+      _count: { id: true },
+      orderBy: [{ _count: { id: 'desc' } }, { userId: 'asc' }],
+    });
+    if (owners.length === 0) return [];
+
+    const users = await this.prisma.user.findMany({
+      where: { id: { in: owners.map((owner) => owner.userId) } },
+      select: { id: true, name: true, userName: true },
+    });
+    const usersById = new Map(users.map((user) => [user.id, user]));
+    return owners.flatMap((owner) => {
+      const user = usersById.get(owner.userId);
+      return user
+        ? [
+            {
+              name: user.name,
+              userName: user.userName,
+              copies: owner._count.id ?? 0,
+            },
+          ]
+        : [];
+    });
+  }
+
   async encyclopediaSuggestions(query: string) {
     const term = query.trim();
     if (term.length < 2) return [];
