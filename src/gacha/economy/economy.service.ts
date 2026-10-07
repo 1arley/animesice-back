@@ -329,6 +329,7 @@ export class EconomyService {
                       id: true,
                       name: true,
                       image: true,
+                      imageHidden: true,
                       rarity: true,
                       animeTitle: true,
                     },
@@ -1359,6 +1360,24 @@ export class EconomyService {
         throw new ConflictException('Proposta não está mais ativa.');
       }
       await this.releaseMarketOffer(tx, offer, status);
+      const otherUserId =
+        status === 'DECLINED' ? offer.offeredUserId : offer.requestedUserId;
+      if (otherUserId && otherUserId !== userId) {
+        const declined = status === 'DECLINED';
+        await tx.notification.create({
+          data: {
+            userId: otherUserId,
+            type: 'SYSTEM',
+            title: declined ? 'Proposta recusada' : 'Proposta cancelada',
+            body: declined
+              ? 'Sua proposta no mercado foi recusada.'
+              : 'Uma proposta no mercado foi cancelada.',
+            linkUrl: '/gacha/mercado',
+            actorId: userId,
+            targetId: offer.id,
+          },
+        });
+      }
       return { closed: true };
     });
   }

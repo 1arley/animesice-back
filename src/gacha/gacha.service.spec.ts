@@ -209,6 +209,7 @@ describe('GachaService', () => {
     privacySettings: { findUnique: jest.fn() },
     post: { create: jest.fn() },
     notification: {
+      create: jest.fn(),
       findFirst: jest.fn(),
       updateMany: jest.fn(),
     },
@@ -1242,6 +1243,23 @@ describe('GachaService', () => {
       const a1 = res.sets.find((s) => s.animeId === 'a1');
       expect(a1?.complete).toBe(true);
       expect(res.stats.completeSets).toBe(1);
+    });
+
+    it('lista donos atuais com quantidade de cópias', async () => {
+      mockPrisma.card.findUnique.mockResolvedValue({ id: 'c1' });
+      mockPrisma.userCard.groupBy.mockResolvedValue([
+        { userId: 'u2', _count: { id: 2 } },
+        { userId: 'u1', _count: { id: 1 } },
+      ]);
+      mockPrisma.user.findMany.mockResolvedValue([
+        { id: 'u1', name: 'Ana', userName: 'ana' },
+        { id: 'u2', name: 'Bia', userName: 'bia' },
+      ]);
+
+      await expect(service.encyclopediaCardOwners('c1')).resolves.toEqual([
+        { name: 'Bia', userName: 'bia', copies: 2 },
+        { name: 'Ana', userName: 'ana', copies: 1 },
+      ]);
     });
   });
 

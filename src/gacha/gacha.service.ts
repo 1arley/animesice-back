@@ -2939,6 +2939,40 @@ export class GachaService {
     };
   }
 
+  async encyclopediaCardOwners(cardId: string) {
+    const card = await this.prisma.card.findUnique({
+      where: { id: cardId },
+      select: { id: true },
+    });
+    if (!card) throw new NotFoundException('Carta não encontrada.');
+
+    const owners = await this.prisma.userCard.groupBy({
+      by: ['userId'],
+      where: { cardId, status: 'ACTIVE' },
+      _count: { id: true },
+      orderBy: [{ _count: { id: 'desc' } }, { userId: 'asc' }],
+    });
+    if (owners.length === 0) return [];
+
+    const users = await this.prisma.user.findMany({
+      where: { id: { in: owners.map((owner) => owner.userId) } },
+      select: { id: true, name: true, userName: true },
+    });
+    const usersById = new Map(users.map((user) => [user.id, user]));
+    return owners.flatMap((owner) => {
+      const user = usersById.get(owner.userId);
+      return user
+        ? [
+            {
+              name: user.name,
+              userName: user.userName,
+              copies: owner._count.id ?? 0,
+            },
+          ]
+        : [];
+    });
+  }
+
   async encyclopediaSuggestions(query: string) {
     const term = query.trim();
     if (term.length < 2) return [];
@@ -3631,31 +3665,45 @@ export class GachaService {
         value: c.value,
         card: presentCard(c.card),
       });
-      const trade = await this.prisma.gachaTrade.create({
-        data: {
-          offeredUserId: userId,
-          offeredUserCardId: offeredIds[0]!,
-          requestedUserId: targetUserId,
-          requestedUserCardId: requestedIds[0]!,
-          expiresAt: new Date(Date.now() + this.config.tradeTtlMs),
-          cards: {
-            create: [
-              ...offered.map((c, i) => ({
-                userCardId: c.id,
-                side: 'OFFERED' as const,
-                position: i,
-                snapshot: snapshot(c),
-              })),
-              ...requested.map((c, i) => ({
-                userCardId: c.id,
-                side: 'REQUESTED' as const,
-                position: i,
-                snapshot: snapshot(c),
-              })),
-            ],
+      const trade = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.gachaTrade.create({
+          data: {
+            offeredUserId: userId,
+            offeredUserCardId: offeredIds[0]!,
+            requestedUserId: targetUserId,
+            requestedUserCardId: requestedIds[0]!,
+            expiresAt: new Date(Date.now() + this.config.tradeTtlMs),
+            cards: {
+              create: [
+                ...offered.map((c, i) => ({
+                  userCardId: c.id,
+                  side: 'OFFERED' as const,
+                  position: i,
+                  snapshot: snapshot(c),
+                })),
+                ...requested.map((c, i) => ({
+                  userCardId: c.id,
+                  side: 'REQUESTED' as const,
+                  position: i,
+                  snapshot: snapshot(c),
+                })),
+              ],
+            },
           },
-        },
-        select: TRADE_SELECT,
+          select: TRADE_SELECT,
+        });
+        await tx.notification.create({
+          data: {
+            userId: targetUserId,
+            type: 'SYSTEM',
+            title: 'Nova proposta de troca',
+            body: `Você recebeu uma proposta de troca de ${offered.length} carta${offered.length === 1 ? '' : 's'}.`,
+            linkUrl: '/gacha/mercado',
+            actorId: userId,
+            targetId: created.id,
+          },
+        });
+        return created;
       });
       return fmtTrade(trade);
     }
@@ -3750,15 +3798,29 @@ export class GachaService {
     }
 
     try {
-      const trade = await this.prisma.gachaTrade.create({
-        data: {
-          offeredUserId: userId,
-          offeredUserCardId,
-          requestedUserId: requested.userId,
-          requestedUserCardId,
-          expiresAt: new Date(Date.now() + this.config.tradeTtlMs),
-        },
-        select: TRADE_SELECT,
+      const trade = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.gachaTrade.create({
+          data: {
+            offeredUserId: userId,
+            offeredUserCardId,
+            requestedUserId: requested.userId,
+            requestedUserCardId,
+            expiresAt: new Date(Date.now() + this.config.tradeTtlMs),
+          },
+          select: TRADE_SELECT,
+        });
+        await tx.notification.create({
+          data: {
+            userId: requested.userId,
+            type: 'SYSTEM',
+            title: 'Nova proposta de troca',
+            body: 'Você recebeu uma proposta de troca de cartas.',
+            linkUrl: '/gacha/mercado',
+            actorId: userId,
+            targetId: created.id,
+          },
+        });
+        return created;
       });
       return fmtTrade(trade);
     } catch (e) {
@@ -3903,6 +3965,17 @@ export class GachaService {
         data: { status: 'COMPLETED', completedAt: new Date() },
         select: TRADE_SELECT,
       });
+      await tx.notification.create({
+        data: {
+          userId: trade.offeredUserId,
+          type: 'SYSTEM',
+          title: 'Troca aceita',
+          body: 'Sua proposta de troca foi aceita.',
+          linkUrl: '/gacha/mercado',
+          actorId: userId,
+          targetId: trade.id,
+        },
+      });
       return fmtTrade(done);
     });
   }
@@ -3952,6 +4025,26 @@ export class GachaService {
       });
       if (cancelled.count !== 1) {
         throw new ConflictException('Troca não está mais pendente.');
+      }
+      const otherUserId =
+        actorField === 'offeredUserId'
+          ? trade.requestedUserId
+          : trade.offeredUserId;
+      if (otherUserId && otherUserId !== userId) {
+        await tx.notification.create({
+          data: {
+            userId: otherUserId,
+            type: 'SYSTEM',
+            title: verb === 'cancelar' ? 'Troca cancelada' : 'Troca recusada',
+            body:
+              verb === 'cancelar'
+                ? 'Uma proposta de troca foi cancelada.'
+                : 'Uma proposta de troca foi recusada.',
+            linkUrl: '/gacha/mercado',
+            actorId: userId,
+            targetId: trade.id,
+          },
+        });
       }
       return { id: tradeId, status: 'CANCELLED' };
     });
