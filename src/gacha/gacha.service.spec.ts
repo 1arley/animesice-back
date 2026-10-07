@@ -209,6 +209,7 @@ describe('GachaService', () => {
     privacySettings: { findUnique: jest.fn() },
     post: { create: jest.fn() },
     notification: {
+      create: jest.fn(),
       findFirst: jest.fn(),
       updateMany: jest.fn(),
     },
