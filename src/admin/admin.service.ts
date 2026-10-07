@@ -155,11 +155,11 @@ export class AdminService {
     // accepted as generic external sources.
     const malMatch =
       host === 'myanimelist.net'
-        ? url.pathname.match(/(anime|manga)\/(\d+)/i)
+        ? url.pathname.match(/((?:anime|manga))\/(\d+)/i)
         : null;
     const anilistMatch =
       host === 'anilist.co'
-        ? url.pathname.match(/(anime|manga)\/(\d+)/i)
+        ? url.pathname.match(/((?:anime|manga))\/(\d+)/i)
         : null;
 
     const isMAL = malMatch !== null;
