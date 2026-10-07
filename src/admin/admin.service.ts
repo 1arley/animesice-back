@@ -199,7 +199,7 @@ export class AdminService {
     // Auto-fetch title/cover from source APIs when possible.
     if (isMAL && externalId !== null && !title && process.env.MAL_CLIENT_ID) {
       const mediaType =
-        malMatch[1].toLowerCase() === 'anime' ? 'anime' : 'manga';
+        malMatch[1]?.toLowerCase() === 'anime' ? 'anime' : 'manga';
       const apiUrl = new URL(
         `/v2/${mediaType}/${externalId}`,
         'https://api.myanimelist.net',
