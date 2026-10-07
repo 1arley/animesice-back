@@ -155,19 +155,19 @@ export class AdminService {
     // accepted as generic external sources.
     const malMatch =
       host === 'myanimelist.net'
-        ? url.pathname.match(/(?:anime|manga)\/(\d+)/i)
+        ? url.pathname.match(/(anime|manga)\/(\d+)/i)
         : null;
     const anilistMatch =
       host === 'anilist.co'
-        ? url.pathname.match(/(?:anime|manga)\/(\d+)/i)
+        ? url.pathname.match(/(anime|manga)\/(\d+)/i)
         : null;
 
     const isMAL = malMatch !== null;
     const isAniList = anilistMatch !== null;
     const externalId = isMAL
-      ? Number(malMatch[1])
+      ? Number(malMatch[2])
       : isAniList
-        ? Number(anilistMatch[1])
+        ? Number(anilistMatch[2])
         : null;
 
     // Derive a short source label: MAL, ANILIST, or the bare hostname.
@@ -190,10 +190,10 @@ export class AdminService {
     let title = dto.title?.trim();
     let coverImage = dto.coverImage?.trim();
 
-    // Auto-fetch title/cover from MAL API when possible.
+    // Auto-fetch title/cover from source APIs when possible.
     if (isMAL && externalId !== null && !title && process.env.MAL_CLIENT_ID) {
       const response = await fetch(
-        `https://api.myanimelist.net/v2/manga/${externalId}?fields=title,main_picture`,
+        `https://api.myanimelist.net/v2/${malMatch?.[1]?.toLowerCase() ?? 'manga'}/${externalId}?fields=title,main_picture`,
         { headers: { 'X-MAL-CLIENT-ID': process.env.MAL_CLIENT_ID } },
       );
       if (response.ok) {
@@ -207,6 +207,20 @@ export class AdminService {
           payload.main_picture?.large ||
           payload.main_picture?.medium;
       }
+    }
+
+    if (isAniList && externalId !== null && !title) {
+      const media = await this.anilistService.fetchMedia(externalId);
+      title =
+        media.title.english ||
+        media.title.romaji ||
+        media.title.native ||
+        undefined;
+      coverImage =
+        coverImage ||
+        media.coverImage?.extraLarge ||
+        media.coverImage?.large ||
+        undefined;
     }
 
     // For generic sources, title is mandatory because there is no auto-fetch.

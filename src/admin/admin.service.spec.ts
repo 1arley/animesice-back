@@ -51,6 +51,32 @@ describe('AdminService', () => {
 
   afterEach(() => jest.clearAllMocks());
 
+  describe('createExternalAnime', () => {
+    it('busca título e capa do AniList quando recebe apenas o link', async () => {
+      prisma.anime.findFirst.mockResolvedValue(null);
+      prisma.anime.findUnique.mockResolvedValue(null);
+      anilistService.fetchMedia.mockResolvedValue({
+        id: 123,
+        title: { english: 'Frieren', romaji: 'Sousou no Frieren' },
+        coverImage: { large: 'https://img.test/cover.jpg' },
+      });
+      prisma.anime.create.mockImplementation(({ data }: { data: object }) =>
+        Promise.resolve(data),
+      );
+
+      const result = await service.createExternalAnime({
+        url: 'https://anilist.co/manga/123/frieren/',
+      });
+
+      expect(anilistService.fetchMedia).toHaveBeenCalledWith(123);
+      expect(result).toMatchObject({
+        title: 'Frieren',
+        coverImage: 'https://img.test/cover.jpg',
+        anilistId: 123,
+      });
+    });
+  });
+
   describe('createAnime', () => {
     it('cria anime com sucesso e conecta os gêneros', async () => {
       prisma.anime.findUnique.mockResolvedValue(null);
