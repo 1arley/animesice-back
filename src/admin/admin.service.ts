@@ -164,10 +164,16 @@ export class AdminService {
 
     const isMAL = malMatch !== null;
     const isAniList = anilistMatch !== null;
-    const externalId = isMAL
+    const parsedExternalId = isMAL
       ? Number(malMatch[2])
       : isAniList
         ? Number(anilistMatch[2])
+        : null;
+    const externalId =
+      parsedExternalId !== null &&
+      Number.isSafeInteger(parsedExternalId) &&
+      parsedExternalId > 0
+        ? parsedExternalId
         : null;
 
     // Derive a short source label: MAL, ANILIST, or the bare hostname.
@@ -192,10 +198,16 @@ export class AdminService {
 
     // Auto-fetch title/cover from source APIs when possible.
     if (isMAL && externalId !== null && !title && process.env.MAL_CLIENT_ID) {
-      const response = await fetch(
-        `https://api.myanimelist.net/v2/${malMatch?.[1]?.toLowerCase() ?? 'manga'}/${externalId}?fields=title,main_picture`,
-        { headers: { 'X-MAL-CLIENT-ID': process.env.MAL_CLIENT_ID } },
+      const mediaType =
+        malMatch[1].toLowerCase() === 'anime' ? 'anime' : 'manga';
+      const apiUrl = new URL(
+        `/v2/${mediaType}/${externalId}`,
+        'https://api.myanimelist.net',
       );
+      apiUrl.searchParams.set('fields', 'title,main_picture');
+      const response = await fetch(apiUrl, {
+        headers: { 'X-MAL-CLIENT-ID': process.env.MAL_CLIENT_ID },
+      });
       if (response.ok) {
         const payload = (await response.json()) as {
           title?: string;
