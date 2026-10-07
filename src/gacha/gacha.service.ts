@@ -404,7 +404,6 @@ export class GachaService {
         sharedCards,
         pause: rewardOnlyRate > 0.3 || sharedCards > cohort.length * 0.1,
       },
-      satisfaction: { measured: false },
     };
   }
 
@@ -2579,6 +2578,7 @@ export class GachaService {
     sourceUrl?: string;
     active?: boolean;
   }) {
+    const name = data.name.trim();
     if (data.cardId) {
       return this.prisma.card
         .findUnique({ where: { id: data.cardId }, select: { image: true } })
@@ -2590,7 +2590,7 @@ export class GachaService {
             );
           return this.prisma.gachaSkin.create({
             data: {
-              name: data.name,
+              name,
               imageUrl: data.imageUrl,
               cardId: data.cardId,
               sourceUrl: data.sourceUrl,
@@ -2601,7 +2601,7 @@ export class GachaService {
     }
     return this.prisma.gachaSkin.create({
       data: {
-        name: data.name,
+        name,
         imageUrl: data.imageUrl,
         cardId: data.cardId,
         sourceUrl: data.sourceUrl,
@@ -2610,17 +2610,76 @@ export class GachaService {
     });
   }
 
-  adminUpdateSkin(
+  async adminListSkins(
+    page = 1,
+    limit = 48,
+    search?: string,
+    active?: boolean,
+  ) {
+    const where: Prisma.GachaSkinWhereInput = {
+      ...(active === undefined ? {} : { active }),
+      ...(search
+        ? { name: { contains: search, mode: 'insensitive' as const } }
+        : {}),
+    };
+    const [total, data] = await this.prisma.$transaction([
+      this.prisma.gachaSkin.count({ where }),
+      this.prisma.gachaSkin.findMany({
+        where,
+        include: { card: { select: { id: true, name: true, image: true } } },
+        orderBy: [{ updatedAt: 'desc' }, { name: 'asc' }],
+        skip: (page - 1) * limit,
+        take: limit,
+      }),
+    ]);
+    return {
+      data,
+      meta: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    };
+  }
+
+  async adminUpdateSkin(
     id: string,
     data: {
       name?: string;
       imageUrl?: string;
-      sourceUrl?: string;
+      sourceUrl?: string | null;
+      cardId?: string | null;
       active?: boolean;
       blocked?: boolean;
     },
   ) {
-    return this.prisma.gachaSkin.update({ where: { id }, data });
+    const update = {
+      ...data,
+      ...(data.name === undefined ? {} : { name: data.name.trim() }),
+    };
+    const existing = await this.prisma.gachaSkin.findUniqueOrThrow({
+      where: { id },
+      select: { cardId: true, imageUrl: true },
+    });
+    const cardId =
+      update.cardId !== undefined ? update.cardId : existing.cardId;
+    if (cardId) {
+      const card = await this.prisma.card.findUnique({
+        where: { id: cardId },
+        select: { image: true },
+      });
+      if (!card) throw new NotFoundException('Carta não encontrada.');
+      const imageUrl = update.imageUrl ?? existing.imageUrl;
+      if (card.image && card.image === imageUrl)
+        throw new BadRequestException(
+          'A skin precisa ter uma arte diferente da carta base.',
+        );
+    }
+    return this.prisma.gachaSkin.update({ where: { id }, data: update });
+  }
+
+  adminDeleteSkin(id: string) {
+    // Preserve acquired copies and market history; remove the skin from future catalog drops.
+    return this.prisma.gachaSkin.update({
+      where: { id },
+      data: { active: false },
+    });
   }
 
   async dailyBonus(userId: string) {

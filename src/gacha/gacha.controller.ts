@@ -40,6 +40,8 @@ import {
   UpdateCrystalCodeDto,
   RedeemCrystalCodeDto,
   ToggleCrystalCodeDto,
+  CreateGachaSkinDto,
+  UpdateGachaSkinDto,
 } from '@/gacha/dto/gacha.dto';
 import { JwtAuthGuard } from '@/auth/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from '@/auth/optional-jwt-auth.guard';
@@ -887,44 +889,47 @@ export class GachaController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN', 'SUPERADMIN')
   @Audit('CREATE_GACHA_SKIN', 'GachaSkin')
-  adminCreateSkin(
-    @Body()
-    body: {
-      name: string;
-      imageUrl: string;
-      cardId?: string;
-      sourceUrl?: string;
-      active?: boolean;
-    },
-  ) {
+  adminCreateSkin(@Body() body: CreateGachaSkinDto) {
     if (!body.name?.trim()) throw new BadRequestException('Nome obrigatório.');
-    if (!/^https:\/\//i.test(body.imageUrl ?? ''))
-      throw new BadRequestException('Imagem deve usar HTTPS.');
-    if (body.sourceUrl && !/^https:\/\//i.test(body.sourceUrl))
-      throw new BadRequestException('Fonte deve usar HTTPS.');
     return this.gachaService.adminCreateSkin(body);
+  }
+
+  @Get('admin/skins')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  adminListSkins(
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('search') search?: string,
+    @Query('active') active?: string,
+  ) {
+    if (active !== undefined && active !== 'true' && active !== 'false')
+      throw new BadRequestException('Filtro active deve ser true ou false.');
+    const parsedActive = active === undefined ? undefined : active === 'true';
+    return this.gachaService.adminListSkins(
+      parsePageParam(page, DEFAULT_PAGE),
+      parsePageParam(limit, 48, MAX_PAGE_SIZE),
+      search?.trim(),
+      parsedActive,
+    );
   }
 
   @Patch('admin/skins/:id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN', 'SUPERADMIN')
   @Audit('UPDATE_GACHA_SKIN', 'GachaSkin')
-  adminUpdateSkin(
-    @Param('id') id: string,
-    @Body()
-    body: {
-      name?: string;
-      imageUrl?: string;
-      sourceUrl?: string;
-      active?: boolean;
-      blocked?: boolean;
-    },
-  ) {
-    if (body.imageUrl !== undefined && !/^https:\/\//i.test(body.imageUrl))
-      throw new BadRequestException('Imagem deve usar HTTPS.');
-    if (body.sourceUrl !== undefined && !/^https:\/\//i.test(body.sourceUrl))
-      throw new BadRequestException('Fonte deve usar HTTPS.');
+  adminUpdateSkin(@Param('id') id: string, @Body() body: UpdateGachaSkinDto) {
+    if (body.name !== undefined && !body.name.trim())
+      throw new BadRequestException('Nome obrigatório.');
     return this.gachaService.adminUpdateSkin(id, body);
+  }
+
+  @Delete('admin/skins/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  @Audit('ARCHIVE_GACHA_SKIN', 'GachaSkin')
+  adminDeleteSkin(@Param('id') id: string) {
+    return this.gachaService.adminDeleteSkin(id);
   }
 
   @Get('admin/rarities')
