@@ -1,0 +1,54 @@
+# PR description (auto)
+# Gera a descrição do PR a partir dos commits (squash-merge ready).
+# Só escreve quando o body estiver vazio ou contém o marker de auto-geração,
+# respeitando edições manuais do autor.
+name: PR description (auto)
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+    branches: [main, dev]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  describe:
+    name: Generate PR description
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.draft == false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Generate description
+        id: gen
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/pr-description.mjs "${{ github.event.pull_request.number }}" --llm > /tmp/pr-body.md
+
+      - name: Check if body should be written
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          body="$(gh pr view "${{ github.event.pull_request.number }}" --json body --jq '.body // ""')"
+          if [ -z "$body" ]; then
+            echo "write=true (empty body)" >> "$GITHUB_OUTPUT"
+          elif printf '%s' "$body" | grep -q '<!-- pr-description:auto -->'; then
+            echo "write=true (auto marker present)" >> "$GITHUB_OUTPUT"
+          else
+            echo "write=false (author customized body)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Write description
+        if: steps.check.outputs.write == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh pr edit "${{ github.event.pull_request.number }}" --body-file /tmp/pr-body.md
