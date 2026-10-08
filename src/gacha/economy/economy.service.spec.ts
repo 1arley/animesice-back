@@ -8,6 +8,7 @@ import { ECONOMY_DEFAULTS, economyConfig } from './economy.config';
 import { MarketQueryDto } from './economy.dto';
 import { dayKey } from './economy.rules';
 import { CrystalAccountingService } from '@/gacha/crystal-accounting.service';
+import { GachaConfigService } from '@/gacha/gacha-config.service';
 import { createTransactionAwarePrismaMock } from '@test/gacha/transaction-prisma.mock';
 
 function model() {
@@ -97,6 +98,7 @@ describe('EconomyService safeguards', () => {
     service = new EconomyService(
       prismaMocks.root as never,
       new CrystalAccountingService(),
+      new GachaConfigService(prismaMocks.root as never),
     );
   });
 

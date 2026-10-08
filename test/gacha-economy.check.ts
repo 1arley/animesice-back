@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { ForbiddenException } from '@nestjs/common';
 import { EconomyService } from '@/gacha/economy/economy.service';
+import { GachaConfigService } from '@/gacha/gacha-config.service';
 import { PrismaService } from '@/prisma/prisma.service';
 import { CrystalAccountingService } from '@/gacha/crystal-accounting.service';
 
@@ -13,7 +14,15 @@ async function main() {
 
   const prisma = new PrismaService();
   await prisma.$connect();
-  const economy = new EconomyService(prisma, new CrystalAccountingService());
+  // GachaConfigService só expõe valores depois de refresh(): o cache é populado
+  // no onModuleInit, que o bootstrap do Nest faria sozinho.
+  const gachaConfig = new GachaConfigService(prisma);
+  await gachaConfig.refresh();
+  const economy = new EconomyService(
+    prisma,
+    new CrystalAccountingService(),
+    gachaConfig,
+  );
   const suffix = randomUUID();
   const user = await prisma.user.create({
     data: {

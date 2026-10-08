@@ -25,7 +25,11 @@ async function main() {
       accounting,
       new NotificationService(prisma),
     );
-    const economy = new EconomyService(prisma, accounting);
+    const economy = new EconomyService(
+      prisma,
+      accounting,
+      new GachaConfigService(prisma),
+    );
     const user = await prisma.user.create({
       data: {
         email: `crystal-reservation-${randomUUID()}@example.com`,

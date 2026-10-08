@@ -11,6 +11,7 @@ import { Cron } from '@nestjs/schedule';
 import { releaseTradesForCard } from '@/gacha/trade-escrow';
 import { PrismaService } from '@/prisma/prisma.service';
 import { CrystalAccountingService } from '@/gacha/crystal-accounting.service';
+import { GachaConfigService } from '@/gacha/gacha-config.service';
 import { cardValue } from '@/gacha/gacha.constants';
 import type { GachaFoil, GachaTier } from '@/gacha/gacha.constants';
 import {
@@ -29,7 +30,11 @@ import {
   EconomicEventDto,
   ReviewSaleDto,
 } from './economy.dto';
-import { economyConfig, EconomyConfig } from './economy.config';
+import {
+  economyConfig,
+  EconomyConfig,
+  ECONOMY_DEFAULTS,
+} from './economy.config';
 
 type Tx = Prisma.TransactionClient;
 
@@ -196,6 +201,7 @@ export class EconomyService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly crystalAccounting: CrystalAccountingService,
+    private readonly gachaConfig: GachaConfigService,
   ) {}
 
   private async currentVersion(tx: Tx) {
@@ -270,6 +276,16 @@ export class EconomyService {
       categories: config.box_category_weights,
       qualities: config.box_quality_weights,
       foilWeights: config.foil_weights,
+      // Raridade e pity saem de GachaConfig, a mesma fonte que o sorteio usa
+      // (GachaService -> config.tierWeights/pityWeights/pityDays). Sem isso a
+      // página "Como funciona" fixa 55/25/12/5,5% e 30 dias no texto e mente
+      // quando o admin mexe nas chaves.
+      tierWeights:
+        this.gachaConfig.tierWeights ?? ECONOMY_DEFAULTS.tier_weights,
+      pityWeights: this.gachaConfig.pityWeights ?? null,
+      pityDays: Number.isFinite(this.gachaConfig.pityDays)
+        ? this.gachaConfig.pityDays
+        : null,
       crystalPackages: Object.entries(packages).map(([id, pack]) => ({
         id,
         ...pack,
