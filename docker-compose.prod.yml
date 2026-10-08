@@ -1,0 +1,73 @@
+# Compose de PRODUÇÃO. Espelha o que roda na VPS.
+#
+# Por que existe versionado: o deploy da VPS era um `docker-compose.yml` não
+# versionado + `docker-compose.override.yml` que sobrescrevia `command` e
+# removia `prisma migrate deploy`. Resultado: migration nova no git, colunas
+# ausentes no banco, HTTP 500 em toda rota que tocava a tabela.
+# Agora o `command` é o default da imagem (Dockerfile ENTRYPOINT), que aplica
+# migrations no boot. Não sobrescreva `command` aqui — use SKIP_MIGRATE=1.
+#
+# Deploy: a imagem `latest` é publicada pelo workflow deploy.yml a partir de
+# release em main; o Watchtower da VPS detecta e recria o container. Nenhum
+# passo remoto necessário.
+name: animesice-back
+
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: animesice-back-db-1
+    restart: unless-stopped
+    mem_limit: 512m
+    mem_reservation: 256m
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-animesice_db}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    volumes:
+      - animesice_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-animesice_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    networks:
+      - web
+
+  app:
+    image: arthuriarley/animesice-back:latest
+    container_name: animesice-back-app-1
+    restart: unless-stopped
+    mem_limit: 768m
+    mem_reservation: 384m
+    security_opt:
+      - no-new-privileges:true
+    env_file:
+      - .env
+    environment:
+      - DISPLAY=:99
+      # SKIP_MIGRATE=1 pula o migrate deploy (restore de dump). Default: aplica.
+      # - SKIP_MIGRATE=${SKIP_MIGRATE:-0}
+    depends_on:
+      db:
+        condition: service_healthy
+    # Sem `command`: o ENTRYPOINT da imagem aplica migrations e sobe a API.
+    # Sobrescrever aqui reintroduz o bug de schema drift.
+    networks:
+      - web
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: "web"
+      traefik.http.routers.animesice-back.entrypoints: "websecure"
+      traefik.http.routers.animesice-back.rule: "Host(`api.animesice.app`)"
+      traefik.http.routers.animesice-back.service: "animesice-back"
+      traefik.http.routers.animesice-back.tls.certresolver: "le"
+      traefik.http.services.animesice-back.loadbalancer.server.port: "3000"
+      com.centurylinklabs.watchtower.enable: "true"
+
+volumes:
+  animesice_pgdata:
+    name: animesice-back-animesice_pgdata
+
+networks:
+  web:
+    external: true
