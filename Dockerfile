@@ -30,7 +30,19 @@ COPY tsconfig.json tsconfig.build.json nest-cli.json ./
 COPY src ./src/
 RUN npm run build
 
-# Stage 4: Production
+# Stage 4: Scraper Rust (scraper-rust/)
+# Binário único que atende as três fontes de scrape (envs <FONTE>_RUST_BIN).
+# reqwest com rustls não depende de openssl e o glibc é o mesmo Debian da base,
+# então o binário roda direto na imagem final sem libs extras.
+FROM rust:1-slim AS rustbuild
+
+WORKDIR /rust
+COPY scraper-rust/ ./
+# ponytail: sem layer de dependências, todo build recompila reqwest/serde/url
+# (~3 min). Separar `cargo build` de dummy src se o tempo de CI incomodar.
+RUN cargo build --release --locked
+
+# Stage 5: Production
 FROM base AS production
 
 ENV NODE_ENV=production
@@ -43,6 +55,7 @@ COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=build /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=build /app/prisma.config.ts ./
 COPY package.json ./
+COPY --from=rustbuild /rust/target/release/animefire-scraper /usr/local/bin/animefire-scraper
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 
 # Chromium p/ o fluxo Playwright (scrape de fontes + resolver tokens Blogger
