@@ -770,7 +770,11 @@ export class GachaService {
         }),
         this.prisma.user.findUnique({
           where: { id: userId },
-          select: { crystalBalance: true, gachaCosmetics: true },
+          select: {
+            crystalBalance: true,
+            crystalReserved: true,
+            gachaCosmetics: true,
+          },
         }),
         this.prisma.userCard.aggregate({
           where: { userId, status: 'ACTIVE' },
@@ -804,6 +808,7 @@ export class GachaService {
         : null,
       bypassPriceCents: locked ? this.config.bypassPriceCents : null,
       crystalBalance: wallet?.crystalBalance ?? 0,
+      crystalReserved: wallet?.crystalReserved ?? 0,
       pointsBalance: points._sum.value ?? 0,
       pointsCosmetics: wallet?.gachaCosmetics ?? [],
       pityDaysLeft,
@@ -2323,7 +2328,7 @@ export class GachaService {
       this.prisma.crystalEvent.count({ where: { userId } }),
       this.prisma.user.findUniqueOrThrow({
         where: { id: userId },
-        select: { crystalBalance: true },
+        select: { crystalBalance: true, crystalReserved: true },
       }),
       this.prisma.gachaDailyClaim.findUnique({
         where: { userId_day: { userId, day: dateFromDayKey(dayKey()) } },
@@ -2332,6 +2337,8 @@ export class GachaService {
     ]);
     return {
       balance: wallet.crystalBalance,
+      reserved: wallet.crystalReserved,
+      available: wallet.crystalBalance - wallet.crystalReserved,
       dailyClaimedToday: !!dailyBonus,
       events,
       meta: {
@@ -2390,6 +2397,7 @@ export class GachaService {
         where: { id: userId },
         select: {
           crystalBalance: true,
+          crystalReserved: true,
           equippedGachaSkinId: true,
           nextGachaSkinSpinAt: true,
         },
@@ -2413,6 +2421,7 @@ export class GachaService {
       owned: ownedSkins.map(present),
       equippedSkinId: user.equippedGachaSkinId,
       crystalBalance: user.crystalBalance,
+      crystalReserved: user.crystalReserved,
       canSpin: !nextSpinAt || nextSpinAt.getTime() <= now,
       nextSpinAt: nextSpinAt?.toISOString() ?? null,
       spinPrice: this.config.skinSpinPrice,
