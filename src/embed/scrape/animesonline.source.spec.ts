@@ -1,10 +1,15 @@
 import { AnimesonlineScrapeSource } from './animesonline.source';
 import { fetchSafeRaw } from '@/common/ssrf';
 import { probeMediaUrlDead } from '@/common/media-probe';
+import { runRustScraper } from './rust-scraper';
 import type { Dispatcher } from 'undici';
 
 jest.mock('@/common/ssrf', () => ({
   fetchSafeRaw: jest.fn(),
+}));
+
+jest.mock('./rust-scraper', () => ({
+  runRustScraper: jest.fn(),
 }));
 
 jest.mock('@/common/media-probe', () => ({
@@ -22,6 +27,9 @@ const mockedFetchSafeRaw = fetchSafeRaw as jest.MockedFunction<
 >;
 const mockedProbe = probeMediaUrlDead as jest.MockedFunction<
   typeof probeMediaUrlDead
+>;
+const mockedRunRustScraper = runRustScraper as jest.MockedFunction<
+  typeof runRustScraper
 >;
 
 function mockFetch(body: string, status = 200): Dispatcher {
@@ -59,6 +67,60 @@ describe('AnimesonlineScrapeSource', () => {
     mockedFetchSafeRaw.mockReset();
     mockedProbe.mockReset();
     mockedProbe.mockResolvedValue(false);
+    mockedRunRustScraper.mockReset();
+    delete process.env.ANIMESONLINE_RUST_BIN;
+    delete process.env.ANIMESONLINE_RUST_MODE;
+  });
+
+  it('usa o binário Rust quando ANIMESONLINE_RUST_BIN está setado', async () => {
+    process.env.ANIMESONLINE_RUST_BIN = '/bin/rust';
+    mockedRunRustScraper.mockResolvedValue({
+      videos: ['https://animeflix.blog/Animes/rust/1.mp4'],
+      iframes: [],
+      cloudflare: false,
+      playerTokens: ['https://www.blogger.com/video.g?token=rust'],
+    });
+    const ctx = { episodeUrl: EPISODE_URL, ua: 'UA' };
+    await expect(source.extractHttp(ctx)).resolves.toMatchObject({
+      videos: ['https://animeflix.blog/Animes/rust/1.mp4'],
+      playerTokens: ['https://www.blogger.com/video.g?token=rust'],
+    });
+    expect(mockedRunRustScraper).toHaveBeenCalledWith('/bin/rust', ctx);
+    expect(mockedFetchSafeRaw).not.toHaveBeenCalled();
+  });
+
+  it('trata MODE=shadow: Rust só loga e o Node resolve', async () => {
+    process.env.ANIMESONLINE_RUST_BIN = '/bin/rust';
+    process.env.ANIMESONLINE_RUST_MODE = 'shadow';
+    mockedRunRustScraper.mockResolvedValue({
+      videos: ['https://animeflix.blog/Animes/shadow/rust.mp4'],
+      iframes: [],
+      cloudflare: false,
+      playerTokens: [],
+    });
+    mockFetch('<source src="https://animeflix.blog/Animes/shadow/node.mp4">');
+    await expect(
+      source.extractHttp({ episodeUrl: EPISODE_URL, ua: 'UA' }),
+    ).resolves.toMatchObject({
+      videos: ['https://animeflix.blog/Animes/shadow/node.mp4'],
+    });
+    expect(mockedRunRustScraper).toHaveBeenCalled();
+  });
+
+  it('cai para o Node quando o Rust devolve vazio', async () => {
+    process.env.ANIMESONLINE_RUST_BIN = '/bin/rust';
+    mockedRunRustScraper.mockResolvedValue({
+      videos: [],
+      iframes: [],
+      cloudflare: false,
+      playerTokens: [],
+    });
+    mockFetch('<source src="https://animeflix.blog/Animes/fallback/node.mp4">');
+    await expect(
+      source.extractHttp({ episodeUrl: EPISODE_URL, ua: 'UA' }),
+    ).resolves.toMatchObject({
+      videos: ['https://animeflix.blog/Animes/fallback/node.mp4'],
+    });
   });
 
   it('reconhece URLs do animesonline.cloud e ignora outras', () => {

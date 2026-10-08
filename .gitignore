@@ -48,6 +48,9 @@ src/.coverage/
 # Prisma
 prisma/.env
 
+# Rust (scraper-rust)
+scraper-rust/target/
+
 # Docker
 docker-compose.override.yml
 

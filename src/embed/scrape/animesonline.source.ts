@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import type { Page } from 'playwright';
 import { fetchSafeRaw } from '@/common/ssrf';
 import { probeMediaUrlDead } from '@/common/media-probe';
+import { runRustScraper } from './rust-scraper';
 import type {
   HttpExtractContext,
   ScrapeEpisodeResult,
@@ -55,6 +56,23 @@ export class AnimesonlineScrapeSource implements ScrapeSource {
   }
 
   async extractHttp(ctx: HttpExtractContext): Promise<ScrapeEpisodeResult> {
+    const binary = process.env.ANIMESONLINE_RUST_BIN;
+    if (binary) {
+      const shadow = process.env.ANIMESONLINE_RUST_MODE === 'shadow';
+      try {
+        const result = await runRustScraper(binary, ctx);
+        if (shadow) console.warn('[SCRAPE] Rust animesonline', result);
+        else {
+          if (!result.videos.length && !result.playerTokens.length)
+            throw new Error('Scraper Rust retornou resultado vazio.');
+          return result;
+        }
+      } catch (error) {
+        console.warn(
+          `[SCRAPE] Rust animesonline falhou; usando Node: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
     let html: string;
     try {
       html = await this.get(ctx.episodeUrl, ctx.ua);

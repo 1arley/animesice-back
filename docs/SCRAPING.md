@@ -8,6 +8,29 @@
 | `animesonline.source.ts` | animesonline.cloud | ✅ `extractHttp` | fallback genérico |
 | `animesdigital.source.ts` | animesdigital.org | ✅ `extractHttp` | fallback genérico |
 
+## Scraper Rust (binário único)
+
+`scraper-rust/` atende as três fontes ativas. Um binário só, com fallback por
+`<FONTE>_RUST_BIN`; vazio = fonte segue no Node, sem mudança de comportamento.
+
+| Fonte | Host reconhecido | Env | Modo |
+|-------|------------------|-----|------|
+| meusanimes | `meusanimes.blog`, `*.meusdoramas.club` | `MEUSANIMES_RUST_BIN` | `MEUSANIMES_RUST_MODE` |
+| animesonline | `animesonline.cloud`, subdomínios | `ANIMESONLINE_RUST_BIN` | `ANIMESONLINE_RUST_MODE` |
+| animesdigital | `animesdigital.org`, subdomínios | `ANIMESDIGITAL_RUST_BIN` | `ANIMESDIGITAL_RUST_MODE` |
+
+`MODE=primary` (default) usa o Rust quando ele devolve resultado; vazio, erro ou
+timeout caem para o `extractHttp` em Node com log. `MODE=shadow` só loga o
+resultado do Rust e segue no Node. Host fora da allowlist do binário sai com
+`URL fora dos domínios permitidos`.
+
+Diferenças do Rust contra o Node: sem probe de liveness por candidata
+(`probeMediaUrlDead`) e sem `resolve_server` — o Rust devolve no máximo 4
+candidatas e quem valida é o `streaming.service`, que probe antes de servir.
+`animefire` foi removido (fonte morta): o binário rejeita o host.
+
+Check local do binário: `cd scraper-rust && cargo test`.
+
 Hosts bloqueados para IP de datacenter (medido na VPS em 28/09/2026): `animefire.io`
 e `animesonlinecc.to` → 403 Cloudflare WAF; `animesonline.lat` responde 200 mas não
 tem servidores para os animes do catálogo.

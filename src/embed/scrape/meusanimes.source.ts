@@ -54,8 +54,7 @@ export class MeusanimesScrapeSource implements ScrapeSource {
   }
 
   async extractHttp(ctx: HttpExtractContext): Promise<ScrapeEpisodeResult> {
-    const binary =
-      process.env.MEUSANIMES_RUST_BIN ?? process.env.ANIMEFIRE_RUST_BIN;
+    const binary = process.env.MEUSANIMES_RUST_BIN;
     if (binary) {
       try {
         const result = await runRustScraper(binary, ctx);

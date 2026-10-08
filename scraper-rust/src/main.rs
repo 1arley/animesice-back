@@ -8,6 +8,7 @@ use url::Url;
 
 const MAX_RESPONSE_BYTES: usize = 5 * 1024 * 1024;
 const MAX_VISITED: usize = 32;
+const MAX_CANDIDATES: usize = 4;
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -23,10 +24,19 @@ struct Output {
 }
 
 fn host_allowed(host: &str) -> bool {
-    host == "animefire.io" || host.ends_with(".animefire.io")
-        || host == "meusanimes.blog"
+    host == "meusanimes.blog"
         || host == "meusdoramas.club" || host.ends_with(".meusdoramas.club")
         || host == "video.meusdoramas.club"
+        || host == "animesonline.cloud" || host.ends_with(".animesonline.cloud")
+        || host == "animesdigital.org" || host.ends_with(".animesdigital.org")
+}
+
+fn is_http(value: &str) -> bool {
+    value.starts_with("http://") || value.starts_with("https://")
+}
+
+fn decode_html(value: &str) -> String {
+    value.replace("&amp;", "&")
 }
 
 fn checked_url(value: &str, base: Option<&Url>) -> Result<Url, String> {
@@ -58,27 +68,52 @@ fn get(client: &Client, url: Url, ua: &str, referer: Option<&str>) -> Result<Str
     bounded_text(request.send().map_err(|e| e.to_string())?.error_for_status().map_err(|e| e.to_string())?)
 }
 
-fn extract_animefire(client: &Client, episode: Url, ua: &str) -> Result<Output, String> {
-    let html = get(client, episode.clone(), ua, None)?;
-    let attr = Regex::new(r#"data-video-src=["']([^"']+)["']"#).unwrap();
-    let value = attr.captures(&html).and_then(|m| m.get(1)).ok_or("animefire: data-video-src não encontrado")?.as_str();
-    let video = checked_url(value, Some(&episode))?;
-    let json = get(client, video, ua, Some("https://animefire.io/"))?;
-    let data: serde_json::Value = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+fn parse_animesonline(html: &str) -> Output {
+    let media_attr = Regex::new(r#"<(?:source|video)[^>]*\bsrc=["']([^"']+)["']"#).unwrap();
+    let media_url = Regex::new(r#"(https?://[^\s"'<>\\]+?\.(?:mp4|m3u8)(?:[^\s"'<>\\]*))"#).unwrap();
+    let iframe = Regex::new(r#"<iframe[^>]+src=["']([^"']+)["']"#).unwrap();
+    let blogger = Regex::new(r"(?i)^https?://(?:www\.)?blogger\.com/video\.g\?token=").unwrap();
     let mut out = Output::default();
     let mut seen = HashSet::new();
-    let mp4 = Regex::new(r"(?i)\.mp4($|[?#])").unwrap();
-    let no_video = Regex::new(r"(?i)/no[_-]?video(\.mp4)?($|[?#])").unwrap();
-    if let Some(items) = data.get("data").and_then(|v| v.as_array()) {
-        for item in items {
-            if let Some(src) = item.get("src").and_then(|v| v.as_str()) {
-                let src = src.replace("\\/", "/");
-                if (src.starts_with("http://") || src.starts_with("https://")) && mp4.is_match(&src) && !no_video.is_match(&src) && seen.insert(src.clone()) { out.videos.push(src); }
-            }
+    for pattern in [&media_attr, &media_url] {
+        for m in pattern.captures_iter(html) {
+            let url = decode_html(&m[1]);
+            if is_http(&url) && seen.insert(url.clone()) { out.videos.push(url); }
         }
     }
-    if let Some(index) = out.videos.iter().position(|s| s.to_ascii_lowercase().contains("/hd/")) { let hd = out.videos.remove(index); out.videos.insert(0, hd); }
-    Ok(out)
+    out.videos.truncate(MAX_CANDIDATES);
+    let mut tokens = HashSet::new();
+    for m in iframe.captures_iter(html) {
+        let url = decode_html(&m[1]);
+        if blogger.is_match(&url) && tokens.insert(url.clone()) { out.player_tokens.push(url); }
+    }
+    out
+}
+
+fn extract_animesonline(client: &Client, episode: Url, ua: &str) -> Result<Output, String> {
+    let html = get(client, episode, ua, Some("https://animesonline.cloud/"))?;
+    // ponytail: sem probe de liveness por candidata (o adapter TS probe antes de devolver).
+    // streaming.service probe antes de servir, entao candidata morta cai la. Teto: 4 candidatas
+    // sem filtro. Mover o probe para ca se taxa de URL morta incomodar.
+    Ok(parse_animesonline(&html))
+}
+
+fn parse_animesdigital(html: &str) -> Output {
+    let iframe = Regex::new(r#"<iframe[^>]+src=["']([^"']+)["']"#).unwrap();
+    let media = Regex::new(r"(?i)\.(?:m3u8|mp4)(?:$|[?#])").unwrap();
+    let mut out = Output::default();
+    let mut seen = HashSet::new();
+    for m in iframe.captures_iter(html) {
+        let Ok(src) = Url::parse(&decode_html(&m[1])) else { continue };
+        let Some(hls) = src.query_pairs().find(|(key, _)| key == "d").map(|(_, value)| value.into_owned()) else { continue };
+        if media.is_match(&hls) && seen.insert(hls.clone()) { out.videos.push(hls); }
+    }
+    out
+}
+
+fn extract_animesdigital(client: &Client, episode: Url, ua: &str) -> Result<Output, String> {
+    let html = get(client, episode, ua, None)?;
+    Ok(parse_animesdigital(&html))
 }
 
 fn extract_meusanimes(client: &Client, episode: Url, ua: &str) -> Result<Output, String> {
@@ -115,12 +150,48 @@ fn extract(input: Input) -> Result<Output, String> {
         if attempt.previous().len() >= 5 { return attempt.error("limite de redirecionamentos excedido"); }
         if attempt.url().host_str().is_some_and(host_allowed) && matches!(attempt.url().scheme(), "http" | "https") { attempt.follow() } else { attempt.error("redirecionamento fora dos domínios permitidos") }
     })).build().map_err(|e| e.to_string())?;
-    let host = episode.host_str().unwrap_or_default();
-    if host == "meusanimes.blog" || host.ends_with(".meusdoramas.club") { extract_meusanimes(&client, episode, &input.ua) } else { extract_animefire(&client, episode, &input.ua) }
+    let host = episode.host_str().unwrap_or_default().to_string();
+    if host == "meusanimes.blog" || host.ends_with(".meusdoramas.club") { extract_meusanimes(&client, episode, &input.ua) }
+    else if host == "animesonline.cloud" || host.ends_with(".animesonline.cloud") { extract_animesonline(&client, episode, &input.ua) }
+    else if host == "animesdigital.org" || host.ends_with(".animesdigital.org") { extract_animesdigital(&client, episode, &input.ua) }
+    else { Err(format!("fonte sem extractor Rust: {host}")) }
 }
 
 fn main() {
     let mut input = String::new();
     let result = io::stdin().take(64 * 1024).read_to_string(&mut input).map_err(|e| e.to_string()).and_then(|_| serde_json::from_str::<Input>(&input).map_err(|e| e.to_string())).and_then(extract);
     match result { Ok(output) => println!("{}", serde_json::to_string(&output).unwrap()), Err(error) => { eprintln!("{error}"); std::process::exit(1); } }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn animesonline_ordena_source_antes_inline_e_isola_token_blogger() {
+        let html = r#"<video><source src="https://animeflix.blog/Animes/x/23.mp4"></video>
+            <a href="https://cdn.test/stream.m3u8">player</a>
+            <iframe src="https://www.blogger.com/video.g?token=abc123"></iframe>
+            <iframe src="https://ads.test/frame.html"></iframe>"#;
+        let out = parse_animesonline(html);
+        assert_eq!(out.videos[0], "https://animeflix.blog/Animes/x/23.mp4");
+        assert_eq!(out.videos[1], "https://cdn.test/stream.m3u8");
+        assert_eq!(out.player_tokens, vec!["https://www.blogger.com/video.g?token=abc123"]);
+    }
+
+    #[test]
+    fn animesdigital_extrai_param_d_do_iframe() {
+        let html = r#"<iframe src="https://player.test/e?d=https://cdn.test/hls/master.m3u8&amp;t=1"></iframe>
+            <iframe src="https://player.test/e?d=https://cdn.test/img.jpg"></iframe>
+            <iframe src="/e?d=https://cdn.test/hls/2.m3u8"></iframe>"#;
+        assert_eq!(parse_animesdigital(html).videos, vec!["https://cdn.test/hls/master.m3u8"]);
+    }
+
+    #[test]
+    fn host_allowed_cobre_as_fontes_ativas_e_recusa_animefire() {
+        assert!(host_allowed("animesonline.cloud"));
+        assert!(host_allowed("animesdigital.org"));
+        assert!(host_allowed("serv1.meusdoramas.club"));
+        assert!(!host_allowed("animefire.io"));
+    }
 }
