@@ -1,3 +1,10 @@
+# [1.38.0](https://github.com/1arley/animesice-back/compare/v1.37.0...v1.38.0) (2026-10-08)
+
+
+### Features
+
+* **scrape:** cobre animesonline e animesdigital no scraper Rust ([aa3199a](https://github.com/1arley/animesice-back/commit/aa3199af51afb6d12a70ff80c1200d38626b1109))
+
 # [1.37.0](https://github.com/1arley/animesice-back/compare/v1.36.2...v1.37.0) (2026-10-08)
 
 
