@@ -26,6 +26,7 @@ import {
   BurnGachaCardDto,
   ClaimGachaDto,
   CreateListingDto,
+  CounterTradeDto,
   NewTradeDto,
   RerollGachaCardDto,
   SetFeaturedGachaCardDto,
@@ -717,7 +718,9 @@ export class GachaController {
   @Post('trades')
   @UseGuards(JwtAuthGuard, VerifiedGuard)
   @ApiBearerAuth('JWT-auth')
-  @ApiOperation({ summary: 'Propõe troca de 1 a 3 cartas por lado (48h)' })
+  @ApiOperation({
+    summary: 'Propõe troca de 1 a 5 cartas por lado, com Cristais (48h)',
+  })
   createTrade(@Req() req: AuthenticatedRequest, @Body() dto: NewTradeDto) {
     if (
       (!dto.offeredUserCardIds && !dto.offeredUserCardId) ||
@@ -729,7 +732,23 @@ export class GachaController {
       req.user.id,
       dto.offeredUserCardIds ?? dto.offeredUserCardId!,
       dto.requestedUserCardIds ?? dto.requestedUserCardId!,
+      dto.crystalsOffered ?? 0,
+      dto.crystalsRequested ?? 0,
     );
+  }
+
+  @Post('trades/:id/counter')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Contraproposta: cancela a troca atual e cria a próxima (7 dias)',
+  })
+  counterTrade(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: CounterTradeDto,
+  ) {
+    return this.gachaService.counterTrade(req.user.id, id, dto);
   }
 
   @Get('trades/mine')

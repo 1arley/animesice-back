@@ -253,6 +253,80 @@ export class NewTradeDto {
   @IsOptional()
   @IsString()
   requestedUserCardId?: string;
+
+  @ApiProperty({
+    description: 'Cristais que você oferece (reservados no escrow).',
+    required: false,
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(2_147_483_647)
+  crystalsOffered?: number;
+
+  @ApiProperty({
+    description: 'Cristais que você pede à outra pessoa.',
+    required: false,
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(2_147_483_647)
+  crystalsRequested?: number;
+}
+
+export class CounterTradeDto {
+  @ApiProperty({
+    type: [String],
+    minItems: 1,
+    maxItems: 5,
+    required: false,
+    description:
+      'Cartas que você oferece na contraproposta. Omitir devolve as do pai.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(5)
+  @IsString({ each: true })
+  @IsNotEmpty({ each: true })
+  offeredUserCardIds?: string[];
+
+  @ApiProperty({
+    type: [String],
+    minItems: 1,
+    maxItems: 5,
+    required: false,
+    description:
+      'Cartas que você pede na contraproposta. Omitir devolve as do pai.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(5)
+  @IsString({ each: true })
+  @IsNotEmpty({ each: true })
+  requestedUserCardIds?: string[];
+
+  @ApiProperty({
+    description: 'Cristais que você oferece agora.',
+    required: false,
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(2_147_483_647)
+  crystalsOffered?: number;
+
+  @ApiProperty({
+    description: 'Cristais que você pede agora.',
+    required: false,
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(2_147_483_647)
+  crystalsRequested?: number;
 }
 
 export enum WishlistPriorityDto {

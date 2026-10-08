@@ -148,6 +148,10 @@ export class GachaConfigService implements OnModuleInit {
     return this.num('trade_active_limit');
   }
 
+  get tradeCounterTtlMs(): number {
+    return this.num('trade_counter_ttl_ms');
+  }
+
   // ── skin spin ────────────────────────────────────────────
 
   get skinSpinCooldownMs(): number {

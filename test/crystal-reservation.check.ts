@@ -5,6 +5,7 @@ import { EconomyService } from '@/gacha/economy/economy.service';
 import { GachaConfigService } from '@/gacha/gacha-config.service';
 import { GachaService } from '@/gacha/gacha.service';
 import { PrismaService } from '@/prisma/prisma.service';
+import { NotificationService } from '@/notification/notification.service';
 
 async function main() {
   const url = new URL(process.env.DATABASE_URL!);
@@ -22,6 +23,7 @@ async function main() {
       prisma,
       new GachaConfigService(prisma),
       accounting,
+      new NotificationService(prisma),
     );
     const economy = new EconomyService(prisma, accounting);
     const user = await prisma.user.create({

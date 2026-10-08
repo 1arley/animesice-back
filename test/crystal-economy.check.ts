@@ -15,6 +15,7 @@ import { EconomyService } from '@/gacha/economy/economy.service';
 import { GachaConfigService } from '@/gacha/gacha-config.service';
 import { CrystalAccountingService } from '@/gacha/crystal-accounting.service';
 import { PrismaService } from '@/prisma/prisma.service';
+import { NotificationService } from '@/notification/notification.service';
 
 async function checkMigration() {
   const client = new Client({ connectionString: process.env.DATABASE_URL });
@@ -85,7 +86,12 @@ async function main() {
   const config = new GachaConfigService(prisma);
   await config.refresh();
   const accounting = new CrystalAccountingService();
-  const service = new GachaService(prisma, config, accounting);
+  const service = new GachaService(
+    prisma,
+    config,
+    accounting,
+    new NotificationService(prisma),
+  );
   const ids: string[] = [];
   const cardIds: string[] = [];
   const module = await Test.createTestingModule({
@@ -94,6 +100,7 @@ async function main() {
       GachaService,
       EconomyService,
       CrystalAccountingService,
+      NotificationService,
       { provide: PrismaService, useValue: prisma },
       { provide: GachaConfigService, useValue: config },
     ],
@@ -158,14 +165,18 @@ async function main() {
       daily.map((r) => r.status).sort(),
       [201, 403, 403, 403, 403],
     );
-    assert.equal((await wallet(buyer)).balance, 200);
-    await prisma.gachaDailyBonus.update({
+    // daily_bonus semeado em 350 (GachaConfig), não 200.
+    assert.equal((await wallet(buyer)).balance, 350);
+    // dailyBonus() usa GachaDailyBonus (o HTTP usa GachaDailyClaim): semeia a
+    // linha explicitamente para simular o dia anterior.
+    await prisma.gachaDailyBonus.upsert({
       where: { userId: buyer },
-      data: { lastClaim: new Date(Date.now() - 86_400_000) },
+      create: { userId: buyer, lastClaim: new Date(Date.now() - 86_400_000) },
+      update: { lastClaim: new Date(Date.now() - 86_400_000) },
     });
     assert.deepEqual(await service.dailyBonus(buyer), {
-      balance: 400,
-      claimed: 200,
+      balance: 700,
+      claimed: 350,
     });
     const ledger = await request(server)
       .get('/api/gacha/crystals?limit=1')
@@ -201,26 +212,29 @@ async function main() {
     const listing = await service.createListing(seller, owned.id, 100);
     await assert.rejects(service.reroll(seller, owned.id), /Cancele o anúncio/);
     await service.buyListing(buyer, listing.id);
-    assert.equal((await wallet(buyer)).balance, 300);
+    assert.equal((await wallet(buyer)).balance, 600);
     assert.equal((await wallet(seller)).balance, 90);
     assert.equal((await service.status(buyer)).pointsBalance, 101);
     assert.equal((await service.status(seller)).pointsBalance, 0);
+    // Reroll = round(cardFloors.COMUM 500 * 0.15) = 75.
     const rerolled = await service.reroll(buyer, owned.id);
-    assert.equal((await wallet(buyer)).balance, 290);
+    assert.equal((await wallet(buyer)).balance, 525);
     assert.equal((await service.status(buyer)).pointsBalance, rerolled.value);
     await service.adjustCrystals(buyer, 1500, 'Cosmetic test');
     await service.buyCosmetic(buyer, 'FRAME_AURORA');
-    assert.equal((await wallet(buyer)).balance, 290);
+    assert.equal((await wallet(buyer)).balance, 525);
     assert.equal((await service.status(buyer)).pointsBalance, rerolled.value);
     await assert.rejects(service.buyCosmetic(buyer, 'FRAME_AURORA'));
-    assert.equal((await wallet(buyer)).balance, 290);
+    assert.equal((await wallet(buyer)).balance, 525);
 
+    // Débito concorrente: saldo permite um -300, não dois. Serializado pelo
+    // lock de wallet, o segundo é rejeitado em vez de deixar saldo negativo.
     const debits = await Promise.allSettled([
-      service.adjustCrystals(buyer, -80, 'Concurrent debit'),
-      service.adjustCrystals(buyer, -80, 'Concurrent debit'),
+      service.adjustCrystals(buyer, -300, 'Concurrent debit'),
+      service.adjustCrystals(buyer, -300, 'Concurrent debit'),
     ]);
     assert.equal(debits.filter((r) => r.status === 'fulfilled').length, 1);
-    assert.equal((await wallet(buyer)).balance, 210);
+    assert.equal((await wallet(buyer)).balance, 225);
     const costly = await service.createListing(buyer, owned.id, 1000);
     await assert.rejects(
       service.buyListing(seller, costly.id),
@@ -265,7 +279,13 @@ async function main() {
       beforeMint + Math.floor(minted.value / 2),
     );
     const beforeTrade = await Promise.all(ids.map(wallet));
-    const trade = await service.createTrade(buyer, owned.id, minted.id);
+    const trade = await service.createTrade(
+      buyer,
+      [owned.id],
+      [minted.id],
+      0,
+      0,
+    );
     await service.acceptTrade(seller, trade.id);
     assert.deepEqual(await Promise.all(ids.map(wallet)), beforeTrade);
 
@@ -286,6 +306,13 @@ async function main() {
       'Crystal: migration, HTTP, daily, concurrency, market, rollback, reroll, cosmetics, mint, trades and ledger OK',
     );
   } finally {
+    // GachaTradeCard usa ON DELETE RESTRICT em UserCard, e agora toda troca
+    // (inclusive 1:1) tem linhas de carta: derruba troca antes dos donos.
+    await prisma.gachaTrade.deleteMany({
+      where: {
+        OR: [{ offeredUserId: { in: ids } }, { requestedUserId: { in: ids } }],
+      },
+    });
     await prisma.user.deleteMany({ where: { id: { in: ids } } });
     await prisma.card.deleteMany({ where: { id: { in: cardIds } } });
     await app.close();
