@@ -61,15 +61,20 @@ export function economyConfig(snapshot: Prisma.JsonValue): EconomyConfig {
   // Older versions inherit documented launch defaults for newly added keys.
   const merged = { ...ECONOMY_DEFAULTS, ...snapshot };
   for (const key of ['foil_weights', 'foil_mult'] as const) {
-    const saved = snapshot[key] as Record<string, number> | undefined;
-    merged[key] = { ...ECONOMY_DEFAULTS[key], ...saved };
-    if (key === 'foil_weights' && saved) {
+    const saved = snapshot[key];
+    if (!saved || typeof saved !== 'object' || Array.isArray(saved)) continue;
+    const savedObject = saved as Record<string, number>;
+    merged[key] = { ...ECONOMY_DEFAULTS[key], ...savedObject };
+    if (key === 'foil_weights') {
       const addedWeight =
-        ('INK' in saved ? 0 : ECONOMY_DEFAULTS.foil_weights.INK) +
-        ('NEGATIVE' in saved ? 0 : ECONOMY_DEFAULTS.foil_weights.NEGATIVE);
+        ('INK' in savedObject ? 0 : ECONOMY_DEFAULTS.foil_weights.INK) +
+        ('NEGATIVE' in savedObject
+          ? 0
+          : ECONOMY_DEFAULTS.foil_weights.NEGATIVE);
       merged.foil_weights.NORMAL = Math.max(
         0,
-        (saved.NORMAL ?? ECONOMY_DEFAULTS.foil_weights.NORMAL) - addedWeight,
+        (savedObject.NORMAL ?? ECONOMY_DEFAULTS.foil_weights.NORMAL) -
+          addedWeight,
       );
     }
   }
