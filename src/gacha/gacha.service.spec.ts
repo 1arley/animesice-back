@@ -15,6 +15,7 @@ import {
 import { PrismaService } from '@/prisma/prisma.service';
 import { GachaConfigService } from '@/gacha/gacha-config.service';
 import { CrystalAccountingService } from '@/gacha/crystal-accounting.service';
+import { NotificationService } from '@/notification/notification.service';
 import { createTransactionAwarePrismaMock } from '@test/gacha/transaction-prisma.mock';
 import {
   cardValue,
@@ -151,6 +152,7 @@ describe('GachaService', () => {
       count: jest.fn(),
       findFirst: jest.fn(),
       findUnique: jest.fn(),
+      findUniqueOrThrow: jest.fn(),
       findMany: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
@@ -187,6 +189,10 @@ describe('GachaService', () => {
       findMany: jest.fn(),
       count: jest.fn(),
       findFirst: jest.fn(),
+    },
+    gachaTradeCard: {
+      findMany: jest.fn(),
+      updateMany: jest.fn(),
     },
     gachaListing: {
       count: jest.fn(),
@@ -310,7 +316,10 @@ describe('GachaService', () => {
     mockPrisma.card.count.mockResolvedValue(0);
     mockPrisma.userCard.findMany.mockResolvedValue([]);
     mockPrisma.gachaTrade.count.mockResolvedValue(0);
+    // expirePendingTrades/cron varre PENDING vencidas antes de criar/aceitar.
+    mockPrisma.gachaTrade.findMany.mockResolvedValue([]);
     mockPrisma.gachaTrade.updateMany.mockResolvedValue({ count: 1 });
+    mockPrisma.gachaTradeCard.updateMany.mockResolvedValue({ count: 1 });
     mockPrisma.userCard.updateMany.mockResolvedValue({ count: 1 });
     mockPrisma.gachaClaimLock.findUnique.mockResolvedValue(null);
     mockPrisma.card.update.mockResolvedValue({ editionCounter: 1 });
@@ -322,6 +331,9 @@ describe('GachaService', () => {
         CrystalAccountingService,
         { provide: PrismaService, useValue: prismaMocks.root },
         { provide: GachaConfigService, useValue: mockConfig },
+        // Notificações de troca saem FORA da transação: NotificationService
+        // usa o client root, e o mock rejeita root dentro de tx interativa.
+        { provide: NotificationService, useValue: { create: jest.fn() } },
       ],
     }).compile();
 
@@ -1288,7 +1300,27 @@ describe('GachaService', () => {
         requestedUserCardId: 'rc1',
         offeredUserCard: pullCard('oc1'),
         requestedUserCard: pullCard('rc1'),
+        crystalsOffered: 0,
+        crystalsRequested: 0,
+        round: 1,
+        parentTradeId: null,
+        closedBy: null,
+        closedReason: null,
+        cards: [],
         ...overrides,
+      };
+    }
+
+    function tradeCardRow(id: string, userId: string) {
+      return {
+        id,
+        userId,
+        cardId: 'c1',
+        status: 'ACTIVE',
+        condition: 0.5,
+        foil: 'NORMAL',
+        value: 10,
+        card: cardComum,
       };
     }
 
@@ -1297,14 +1329,20 @@ describe('GachaService', () => {
         (args: { where: { id: string } }) =>
           Promise.resolve(
             args.where.id === 'oc1'
-              ? { id: 'oc1', userId: 'u1' }
-              : { id: 'rc1', userId: 'u2' },
+              ? tradeCardRow('oc1', 'u1')
+              : tradeCardRow('rc1', 'u2'),
           ),
       );
       mockPrisma.userCard.findMany.mockResolvedValue([
-        { id: 'oc1', userId: 'u1' },
-        { id: 'rc1', userId: 'u2' },
+        tradeCardRow('oc1', 'u1'),
+        tradeCardRow('rc1', 'u2'),
       ]);
+      // Escrow e swap movem N cartas de uma vez: count segue o tamanho do lote.
+      mockPrisma.userCard.updateMany.mockImplementation((args: unknown) => {
+        const ids = (args as { where?: { id?: { in?: string[] } } }).where?.id
+          ?.in;
+        return Promise.resolve({ count: ids?.length ?? 1 });
+      });
     }
 
     describe('createTrade', () => {
@@ -1312,13 +1350,13 @@ describe('GachaService', () => {
         await expect(
           service.createTrade('u1', 'oc1', 'oc1'),
         ).rejects.toBeInstanceOf(BadRequestException);
-        expect(mockPrisma.userCard.findUnique).not.toHaveBeenCalled();
+        expect(mockPrisma.userCard.findMany).not.toHaveBeenCalled();
       });
 
       it('404 quando carta oferecida não existe', async () => {
-        mockPrisma.userCard.findUnique
-          .mockResolvedValueOnce(null)
-          .mockResolvedValueOnce({ id: 'rc1', userId: 'u2' });
+        mockPrisma.userCard.findMany.mockResolvedValue([
+          tradeCardRow('rc1', 'u2'),
+        ]);
 
         await expect(
           service.createTrade('u1', 'oc1', 'rc1'),
@@ -1326,9 +1364,9 @@ describe('GachaService', () => {
       });
 
       it('404 quando carta pedida não existe', async () => {
-        mockPrisma.userCard.findUnique
-          .mockResolvedValueOnce({ id: 'oc1', userId: 'u1' })
-          .mockResolvedValueOnce(null);
+        mockPrisma.userCard.findMany.mockResolvedValue([
+          tradeCardRow('oc1', 'u1'),
+        ]);
 
         await expect(
           service.createTrade('u1', 'oc1', 'rc1'),
@@ -1336,9 +1374,10 @@ describe('GachaService', () => {
       });
 
       it('403 quando oferecida não é minha', async () => {
-        mockPrisma.userCard.findUnique
-          .mockResolvedValueOnce({ id: 'oc1', userId: 'u9' })
-          .mockResolvedValueOnce({ id: 'rc1', userId: 'u2' });
+        mockPrisma.userCard.findMany.mockResolvedValue([
+          tradeCardRow('oc1', 'u9'),
+          tradeCardRow('rc1', 'u2'),
+        ]);
 
         await expect(
           service.createTrade('u1', 'oc1', 'rc1'),
@@ -1346,9 +1385,10 @@ describe('GachaService', () => {
       });
 
       it('400 quando carta pedida é minha também', async () => {
-        mockPrisma.userCard.findUnique
-          .mockResolvedValueOnce({ id: 'oc1', userId: 'u1' })
-          .mockResolvedValueOnce({ id: 'rc1', userId: 'u1' });
+        mockPrisma.userCard.findMany.mockResolvedValue([
+          tradeCardRow('oc1', 'u1'),
+          tradeCardRow('rc1', 'u1'),
+        ]);
 
         await expect(
           service.createTrade('u1', 'oc1', 'rc1'),
@@ -1374,13 +1414,17 @@ describe('GachaService', () => {
         const res = await service.createTrade('u1', 'oc1', 'rc1');
 
         expect(mockPrisma.gachaTrade.create).toHaveBeenCalledWith({
-          data: {
+          data: expect.objectContaining({
             offeredUserId: 'u1',
             offeredUserCardId: 'oc1',
             requestedUserId: 'u2',
             requestedUserCardId: 'rc1',
             expiresAt: expect.any(Date),
-          },
+            crystalsOffered: 0,
+            crystalsRequested: 0,
+            round: 1,
+            parentTradeId: null,
+          }),
           select: expect.any(Object),
         });
         expect(res).toMatchObject({
@@ -1391,23 +1435,19 @@ describe('GachaService', () => {
         });
       });
 
-      it('409 quando uma das cartas já está em troca pendente', async () => {
+      it('409 quando uma das cartas está anunciada no mercado', async () => {
         mockTradeOwners();
-        mockPrisma.gachaTrade.count
-          .mockResolvedValueOnce(1)
-          .mockResolvedValue(0);
+        mockPrisma.gachaListing.count.mockResolvedValue(1);
 
         await expect(
           service.createTrade('u1', 'oc1', 'rc1'),
         ).rejects.toBeInstanceOf(ConflictException);
       });
 
-      it('409 quando a carta pedida já tem troca pendente', async () => {
+      it('409 quando a carta não pôde ser posta em escrow', async () => {
         mockTradeOwners();
-        mockPrisma.gachaTrade.count
-          .mockResolvedValueOnce(0)
-          .mockResolvedValueOnce(1)
-          .mockResolvedValue(0);
+        // Escrow parcial: só uma das duas cartas estava ACTIVE.
+        mockPrisma.userCard.updateMany.mockResolvedValue({ count: 1 });
 
         await expect(
           service.createTrade('u1', 'oc1', 'rc1'),
@@ -1417,8 +1457,6 @@ describe('GachaService', () => {
       it('409 ao estourar limite de propostas enviadas', async () => {
         mockTradeOwners();
         mockPrisma.gachaTrade.count
-          .mockResolvedValueOnce(0)
-          .mockResolvedValueOnce(0)
           .mockResolvedValueOnce(3)
           .mockResolvedValue(0);
 
@@ -1431,9 +1469,7 @@ describe('GachaService', () => {
         mockTradeOwners();
         mockPrisma.gachaTrade.count
           .mockResolvedValueOnce(0)
-          .mockResolvedValueOnce(0)
-          .mockResolvedValueOnce(2)
-          .mockResolvedValueOnce(3);
+          .mockResolvedValue(3);
 
         await expect(
           service.createTrade('u1', 'oc1', 'rc1'),
@@ -1509,16 +1545,20 @@ describe('GachaService', () => {
         mockPrisma.gachaTrade.update.mockResolvedValue(
           tradeRow({ status: 'COMPLETED' }),
         );
+        mockPrisma.gachaTrade.findUniqueOrThrow.mockResolvedValue(
+          tradeRow({ status: 'COMPLETED' }),
+        );
 
         const res = await service.acceptTrade('u2', 't1');
 
+        // WHERE exige posse E escrow: prova que a carta estava presa por esta troca.
         expect(mockPrisma.userCard.updateMany).toHaveBeenCalledWith({
-          where: { id: { in: ['oc1'] }, userId: 'u1' },
-          data: { userId: 'u2' },
+          where: { id: { in: ['oc1'] }, userId: 'u1', status: 'ESCROW' },
+          data: { userId: 'u2', status: 'ACTIVE' },
         });
         expect(mockPrisma.userCard.updateMany).toHaveBeenCalledWith({
-          where: { id: { in: ['rc1'] }, userId: 'u2' },
-          data: { userId: 'u1' },
+          where: { id: { in: ['rc1'] }, userId: 'u2', status: 'ESCROW' },
+          data: { userId: 'u1', status: 'ACTIVE' },
         });
         expect(mockPrisma.user.updateMany).toHaveBeenCalledWith(
           expect.objectContaining({
@@ -1527,7 +1567,8 @@ describe('GachaService', () => {
           }),
         );
         expect(res.status).toBe('COMPLETED');
-        expect(mockPrisma.$transaction).toHaveBeenCalledTimes(3);
+        // expireTrade + aceite, cada um na sua transação serializável.
+        expect(mockPrisma.$transaction).toHaveBeenCalledTimes(4);
       });
 
       it('404 quando troca não existe', async () => {
@@ -1571,7 +1612,15 @@ describe('GachaService', () => {
           ConflictException,
         );
         expect(mockPrisma.gachaTrade.updateMany).toHaveBeenCalledWith(
-          expect.objectContaining({ data: { status: 'EXPIRED' } }),
+          expect.objectContaining({
+            // EXPIRED só passa se o TTL venceu: guarda contra encerrar troca viva.
+            where: expect.objectContaining({
+              id: 't1',
+              status: 'PENDING',
+              expiresAt: { lte: expect.any(Date) },
+            }),
+            data: expect.objectContaining({ status: 'EXPIRED' }),
+          }),
         );
       });
 
@@ -1610,7 +1659,11 @@ describe('GachaService', () => {
         });
         expect(mockPrisma.gachaTrade.updateMany).toHaveBeenCalledWith({
           where: { id: 't1', status: 'PENDING' },
-          data: { status: 'CANCELLED' },
+          data: expect.objectContaining({
+            status: 'CANCELLED',
+            closedBy: 'u1',
+            closedReason: 'CANCELLED',
+          }),
         });
       });
 
@@ -1671,8 +1724,12 @@ describe('GachaService', () => {
           ConflictException,
         );
         expect(mockPrisma.gachaTrade.updateMany).toHaveBeenCalledWith({
-          where: expect.objectContaining({ id: 't1' }),
-          data: { status: 'EXPIRED' },
+          where: expect.objectContaining({
+            id: 't1',
+            status: 'PENDING',
+            expiresAt: { lte: expect.any(Date) },
+          }),
+          data: expect.objectContaining({ status: 'EXPIRED' }),
         });
       });
     });

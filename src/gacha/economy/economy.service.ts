@@ -8,6 +8,7 @@ import {
 import { Prisma } from '@prisma/client';
 import { createHash } from 'node:crypto';
 import { Cron } from '@nestjs/schedule';
+import { releaseTradesForCard } from '@/gacha/trade-escrow';
 import { PrismaService } from '@/prisma/prisma.service';
 import { CrystalAccountingService } from '@/gacha/crystal-accounting.service';
 import { cardValue } from '@/gacha/gacha.constants';
@@ -658,17 +659,18 @@ export class EconomyService {
             where: { userCard: { cardId: itemId }, status: 'ACTIVE' },
             data: { status: 'CANCELLED' },
           });
-          await tx.gachaTrade.updateMany({
-            where: {
-              status: 'PENDING',
-              OR: [
-                { offeredUserCard: { cardId: itemId } },
-                { requestedUserCard: { cardId: itemId } },
-                { cards: { some: { userCard: { cardId: itemId } } } },
-              ],
-            },
-            data: { status: 'CANCELLED' },
-          });
+          // releaseTradesForCard, e não um updateMany cru: trocar o status sem
+          // devolver escrow/reserva deixaria as cartas presas em ESCROW para
+          // sempre (o userCard.updateMany abaixo só alcança ESCROW/ACTIVE).
+          for (const copy of copies) {
+            await releaseTradesForCard(
+              tx,
+              this.crystalAccounting,
+              copy.id,
+              'CARD_BLOCKED',
+              adminId,
+            );
+          }
           await tx.user.updateMany({
             where: {
               featuredUserCardId: { in: copies.map((copy) => copy.id) },

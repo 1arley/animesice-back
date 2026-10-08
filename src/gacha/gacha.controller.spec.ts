@@ -32,6 +32,7 @@ function makeMocks() {
       ranking: jest.fn(),
       encyclopedia: jest.fn(),
       createTrade: jest.fn(),
+      counterTrade: jest.fn(),
       myTrades: jest.fn(),
       acceptTrade: jest.fn(),
       cancelTrade: jest.fn(),
@@ -300,13 +301,19 @@ describe('GachaController', () => {
       await controller.acceptTrade(req('u1'), 't1');
       await controller.cancelTrade(req('u1'), 't1');
       await controller.declineTrade(req('u1'), 't1');
+      await controller.counterTrade(req('u1'), 't1', { crystalsOffered: 10 });
 
+      expect(m.gachaService.counterTrade).toHaveBeenCalledWith('u1', 't1', {
+        crystalsOffered: 10,
+      });
       expect(m.gachaService.encyclopedia).toHaveBeenCalledWith('u1');
       expect(m.gachaService.encyclopedia).toHaveBeenCalledWith(null);
       expect(m.gachaService.createTrade).toHaveBeenCalledWith(
         'u1',
         'oc1',
         'rc1',
+        0,
+        0,
       );
       expect(m.gachaService.myTrades).toHaveBeenCalledWith('u1');
       expect(m.gachaService.acceptTrade).toHaveBeenCalledWith('u1', 't1');

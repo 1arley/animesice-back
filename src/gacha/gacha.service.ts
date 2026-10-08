@@ -8,6 +8,7 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import {
   CardSource,
   CardStatus,
@@ -35,6 +36,8 @@ import {
 } from '@/gacha/economy/economy.rules';
 import { createHash, randomInt } from 'node:crypto';
 import { WishlistService } from '@/gacha/wishlist.service';
+import { NotificationService } from '@/notification/notification.service';
+import { releaseTrade } from '@/gacha/trade-escrow';
 import {
   UpsertCardWishlistDto,
   UpsertSetWishlistDto,
@@ -199,13 +202,27 @@ const TRADE_SELECT = {
   requestedUserCardId: true,
   offeredUserCard: { select: PULL_SELECT },
   requestedUserCard: { select: PULL_SELECT },
+  crystalsOffered: true,
+  crystalsRequested: true,
+  round: true,
+  parentTradeId: true,
+  closedBy: true,
+  closedReason: true,
   cards: {
     orderBy: [{ side: 'asc' }, { position: 'asc' }],
-    select: { userCardId: true, side: true, position: true, snapshot: true },
+    select: {
+      userCardId: true,
+      side: true,
+      position: true,
+      snapshot: true,
+      escrowed: true,
+    },
   },
 } satisfies Prisma.GachaTradeSelect;
 
 type TradeRow = Prisma.GachaTradeGetPayload<{ select: typeof TRADE_SELECT }>;
+
+type PreparedTrade = Awaited<ReturnType<GachaService['prepareTrade']>>;
 
 const presentCard = <
   T extends { name: string; image: string | null; imageHidden: boolean },
@@ -249,6 +266,7 @@ export class GachaService {
     private readonly prisma: PrismaService,
     private readonly config: GachaConfigService,
     private readonly crystalAccounting: CrystalAccountingService,
+    private readonly notifications: NotificationService,
     @Optional() private readonly wishlistService?: WishlistService,
   ) {}
 
@@ -3617,229 +3635,113 @@ export class GachaService {
     return { day, spins, lock };
   }
 
-  /** Troca 1:1 — dono derivado do token; carta pedida precisa ser de outra pessoa. */
-  async createTrade(
+  /**
+   * Valida a proposta e monta os snapshots. Roda no client da transação que
+   * vai abrir a troca, para que posse/privação/anúncio sejam lidos no mesmo
+   * isolamento do escrow.
+   */
+  private async prepareTrade(
+    client: PrismaService | Prisma.TransactionClient,
     userId: string,
-    offeredUserCardId: string | string[],
-    requestedUserCardId: string | string[],
+    offeredIds: string[],
+    requestedIds: string[],
   ) {
     if (
-      Array.isArray(offeredUserCardId) ||
-      Array.isArray(requestedUserCardId)
+      offeredIds.length < 1 ||
+      offeredIds.length > 5 ||
+      requestedIds.length < 1 ||
+      requestedIds.length > 5
     ) {
-      const offeredIds = Array.isArray(offeredUserCardId)
-        ? offeredUserCardId
-        : [offeredUserCardId];
-      const requestedIds = Array.isArray(requestedUserCardId)
-        ? requestedUserCardId
-        : [requestedUserCardId];
-      if (
-        offeredIds.length < 1 ||
-        offeredIds.length > 5 ||
-        requestedIds.length < 1 ||
-        requestedIds.length > 5
-      ) {
-        throw new BadRequestException(
-          'Cada lado deve conter entre 1 e 5 cartas.',
-        );
-      }
-      if (
-        new Set([...offeredIds, ...requestedIds]).size !==
-        offeredIds.length + requestedIds.length
-      ) {
-        throw new BadRequestException(
-          'Uma carta não pode aparecer duas vezes na troca.',
-        );
-      }
-      const cards = await this.prisma.userCard.findMany({
-        where: { id: { in: [...offeredIds, ...requestedIds] } },
-        select: {
-          id: true,
-          userId: true,
-          status: true,
-          condition: true,
-          foil: true,
-          value: true,
-          card: {
-            select: {
-              id: true,
-              name: true,
-              image: true,
-              imageHidden: true,
-              rarity: true,
-              favourites: true,
-              animeId: true,
-              animeTitle: true,
-              anime: {
-                select: {
-                  id: true,
-                  slug: true,
-                  title: true,
-                  coverImage: true,
-                  malId: true,
-                },
+      throw new BadRequestException(
+        'Cada lado deve conter entre 1 e 5 cartas.',
+      );
+    }
+    if (
+      new Set([...offeredIds, ...requestedIds]).size !==
+      offeredIds.length + requestedIds.length
+    ) {
+      throw new BadRequestException(
+        'Uma carta não pode aparecer duas vezes na troca.',
+      );
+    }
+    const cards = await client.userCard.findMany({
+      where: { id: { in: [...offeredIds, ...requestedIds] } },
+      select: {
+        id: true,
+        userId: true,
+        status: true,
+        condition: true,
+        foil: true,
+        value: true,
+        card: {
+          select: {
+            id: true,
+            name: true,
+            image: true,
+            imageHidden: true,
+            rarity: true,
+            favourites: true,
+            animeId: true,
+            animeTitle: true,
+            anime: {
+              select: {
+                id: true,
+                slug: true,
+                title: true,
+                coverImage: true,
+                malId: true,
               },
             },
           },
         },
-      });
-      if (cards.length !== offeredIds.length + requestedIds.length)
-        throw new NotFoundException('Carta não encontrada.');
-      const offered = cards.filter((c) => offeredIds.includes(c.id));
-      const requested = cards.filter((c) => requestedIds.includes(c.id));
-      if (offered.some((c) => c.userId !== userId))
-        throw new ForbiddenException('Você não é dono de uma carta oferecida.');
-      if (requested.some((c) => c.userId === userId))
-        throw new BadRequestException(
-          'As cartas pedidas precisam ser de outra pessoa.',
-        );
-      if (cards.some((c) => c.status && c.status !== 'ACTIVE'))
-        throw new BadRequestException('Uma carta não está disponível.');
-      const targetUserId = requested[0]!.userId;
-      if (requested.some((c) => c.userId !== targetUserId))
-        throw new BadRequestException(
-          'As cartas pedidas devem pertencer à mesma pessoa.',
-        );
-      const privacy = await this.prisma.privacySettings.findUnique({
-        where: { userId: targetUserId },
-        select: { showGacha: true },
-      });
-      if (privacy && !privacy.showGacha)
-        throw new ForbiddenException('A coleção dessa pessoa é privada.');
-      const pending = await this.prisma.gachaTradeCard.count({
-        where: {
-          userCardId: { in: cards.map((c) => c.id) },
-          trade: { status: 'PENDING' },
-        },
-      });
-      if (pending)
-        throw new ConflictException(
-          'Uma dessas cartas já está numa troca pendente.',
-        );
-      const snapshot = (c: (typeof cards)[number]) => ({
-        id: c.id,
-        condition: c.condition,
-        conditionLabel: conditionLabel(c.condition),
-        foil: c.foil,
-        value: c.value,
-        card: presentCard(c.card),
-      });
-      const trade = await this.prisma.$transaction(async (tx) => {
-        const created = await tx.gachaTrade.create({
-          data: {
-            offeredUserId: userId,
-            offeredUserCardId: offeredIds[0]!,
-            requestedUserId: targetUserId,
-            requestedUserCardId: requestedIds[0]!,
-            expiresAt: new Date(Date.now() + this.config.tradeTtlMs),
-            cards: {
-              create: [
-                ...offered.map((c, i) => ({
-                  userCardId: c.id,
-                  side: 'OFFERED' as const,
-                  position: i,
-                  snapshot: snapshot(c),
-                })),
-                ...requested.map((c, i) => ({
-                  userCardId: c.id,
-                  side: 'REQUESTED' as const,
-                  position: i,
-                  snapshot: snapshot(c),
-                })),
-              ],
-            },
-          },
-          select: TRADE_SELECT,
-        });
-        await tx.notification.create({
-          data: {
-            userId: targetUserId,
-            type: 'SYSTEM',
-            title: 'Nova proposta de troca',
-            body: `Você recebeu uma proposta de troca de ${offered.length} carta${offered.length === 1 ? '' : 's'}.`,
-            linkUrl: '/gacha/mercado',
-            actorId: userId,
-            targetId: created.id,
-          },
-        });
-        return created;
-      });
-      return fmtTrade(trade);
-    }
-    await this.expirePendingTrades();
-    if (offeredUserCardId === requestedUserCardId) {
-      throw new BadRequestException(
-        'Não dá para trocar uma carta com ela mesma.',
-      );
-    }
-    const [offered, requested] = await this.prisma.$transaction([
-      this.prisma.userCard.findUnique({
-        where: { id: offeredUserCardId },
-        select: { id: true, userId: true, status: true },
-      }),
-      this.prisma.userCard.findUnique({
-        where: { id: requestedUserCardId },
-        select: { id: true, userId: true, status: true },
-      }),
-    ]);
-    if (!offered)
-      throw new NotFoundException('Carta oferecida não encontrada.');
-    if (!requested) throw new NotFoundException('Carta pedida não encontrada.');
-    if (offered.status && offered.status !== 'ACTIVE') {
-      throw new BadRequestException('Carta oferecida não está disponível.');
-    }
-    if (requested.status && requested.status !== 'ACTIVE') {
-      throw new BadRequestException('Carta pedida não está disponível.');
-    }
-    if (offered.userId !== userId) {
-      throw new ForbiddenException('Você não é dono da carta oferecida.');
-    }
-    if (requested.userId === userId) {
-      throw new BadRequestException(
-        'A carta pedida precisa ser de outra pessoa.',
-      );
-    }
-
-    const privacy = await this.prisma.privacySettings.findUnique({
-      where: { userId: requested.userId },
-      select: { showGacha: true },
+      },
     });
-    if (privacy && !privacy.showGacha) {
-      throw new ForbiddenException('A coleção dessa pessoa é privada.');
-    }
-
-    const [
-      offeredActive,
-      requestedActive,
-      sentByMe,
-      pendingForMe,
-      listedCount,
-    ] = await this.prisma.$transaction([
-      this.prisma.gachaTrade.count({
-        where: { offeredUserCardId, status: 'PENDING' },
-      }),
-      this.prisma.gachaTrade.count({
-        where: { requestedUserCardId, status: 'PENDING' },
-      }),
-      this.prisma.gachaTrade.count({
-        where: { offeredUserId: userId, status: 'PENDING' },
-      }),
-      this.prisma.gachaTrade.count({
-        where: { requestedUserId: userId, status: 'PENDING' },
-      }),
-      this.prisma.gachaListing.count({
-        where: {
-          userCardId: { in: [offeredUserCardId, requestedUserCardId] },
-          status: 'ACTIVE',
-          expiresAt: { gt: new Date() },
-        },
-      }),
-    ]);
-    if (offeredActive > 0 || requestedActive > 0) {
+    if (cards.length !== offeredIds.length + requestedIds.length)
+      throw new NotFoundException('Carta não encontrada.');
+    const offered = cards.filter((c) => offeredIds.includes(c.id));
+    const requested = cards.filter((c) => requestedIds.includes(c.id));
+    if (offered.some((c) => c.userId !== userId))
+      throw new ForbiddenException('Você não é dono de uma carta oferecida.');
+    if (requested.some((c) => c.userId === userId))
+      throw new BadRequestException(
+        'As cartas pedidas precisam ser de outra pessoa.',
+      );
+    // ESCROW = carta presa por troca pendente: é conflito (409), não pedido
+    // inválido — o frontend recarrega em vez de tratar como erro de formulário.
+    if (cards.some((c) => c.status === 'ESCROW')) {
       throw new ConflictException(
         'Uma dessas cartas já está numa troca pendente.',
       );
     }
+    if (cards.some((c) => c.status && c.status !== 'ACTIVE'))
+      throw new BadRequestException('Uma carta não está disponível.');
+    const targetUserId = requested[0]!.userId;
+    if (requested.some((c) => c.userId !== targetUserId))
+      throw new BadRequestException(
+        'As cartas pedidas devem pertencer à mesma pessoa.',
+      );
+    const privacy = await client.privacySettings.findUnique({
+      where: { userId: targetUserId },
+      select: { showGacha: true },
+    });
+    if (privacy && !privacy.showGacha)
+      throw new ForbiddenException('A coleção dessa pessoa é privada.');
+    const orderedCardIds = [...offeredIds, ...requestedIds].sort();
+    const [listedCount, sentByMe, pendingForMe] = await Promise.all([
+      client.gachaListing.count({
+        where: {
+          userCardId: { in: orderedCardIds },
+          status: 'ACTIVE',
+          expiresAt: { gt: new Date() },
+        },
+      }),
+      client.gachaTrade.count({
+        where: { offeredUserId: userId, status: 'PENDING' },
+      }),
+      client.gachaTrade.count({
+        where: { requestedUserId: userId, status: 'PENDING' },
+      }),
+    ]);
     if (listedCount > 0) {
       throw new ConflictException(
         'Uma dessas cartas está anunciada no mercado.',
@@ -3855,41 +3757,317 @@ export class GachaService {
         `Limite de ${this.config.tradeActiveLimit} propostas recebidas ativas.`,
       );
     }
+    const snapshot = (c: (typeof cards)[number]) => ({
+      id: c.id,
+      condition: c.condition,
+      conditionLabel: conditionLabel(c.condition),
+      foil: c.foil,
+      value: c.value,
+      card: presentCard(c.card),
+    });
+    return {
+      targetUserId,
+      orderedCardIds,
+      offeredRows: offered.map((c, i) => ({
+        userCardId: c.id,
+        side: 'OFFERED' as const,
+        position: i,
+        snapshot: snapshot(c),
+      })),
+      requestedRows: requested.map((c, i) => ({
+        userCardId: c.id,
+        side: 'REQUESTED' as const,
+        position: i,
+        snapshot: snapshot(c),
+      })),
+    };
+  }
 
+  /**
+   * Corpo da criação dentro de uma transação já aberta: trava carteiras,
+   * põe cartas e Cristais em escrow e cria a linha. `createTrade` e
+   * `counterTrade` compartilham este caminho — divergir reconstrói o bug de
+   * escrow.
+   */
+  private async createTradeTx(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    offeredIds: string[],
+    requestedIds: string[],
+    crystalsOffered: number,
+    crystalsRequested: number,
+    prepared: PreparedTrade,
+    expiresAt: Date,
+    round: number,
+    parentTradeId: string | null,
+  ) {
+    // Ordem de travas fixa: carteiras por id, depois cartas por id. Ordem
+    // diferente entre duas trocas recíprocas volta 40P01 (não tipado P2034).
+    await this.crystalAccounting.lockWallets(tx, [
+      userId,
+      prepared.targetUserId,
+    ]);
+    const listed = await tx.gachaListing.count({
+      where: {
+        userCardId: { in: prepared.orderedCardIds },
+        status: 'ACTIVE',
+        expiresAt: { gt: new Date() },
+      },
+    });
+    if (listed > 0) {
+      throw new ConflictException(
+        'Uma dessas cartas está anunciada no mercado.',
+      );
+    }
+    // O escrow é o estado, não o índice: o UPDATE só alcança cartas ACTIVE,
+    // então count === length prova que TODAS estavam livres agora.
+    const held = await tx.userCard.updateMany({
+      where: { id: { in: prepared.orderedCardIds }, status: 'ACTIVE' },
+      data: { status: 'ESCROW' },
+    });
+    if (held.count !== prepared.orderedCardIds.length) {
+      throw new ConflictException(
+        'Uma dessas cartas não está mais disponível.',
+      );
+    }
+    if (crystalsOffered > 0) {
+      await this.crystalAccounting.reserve(tx, userId, crystalsOffered);
+    }
+    if (crystalsRequested > 0) {
+      await this.crystalAccounting.reserve(
+        tx,
+        prepared.targetUserId,
+        crystalsRequested,
+      );
+    }
+    return tx.gachaTrade.create({
+      data: {
+        offeredUserId: userId,
+        offeredUserCardId: offeredIds[0]!,
+        requestedUserId: prepared.targetUserId,
+        requestedUserCardId: requestedIds[0]!,
+        expiresAt,
+        crystalsOffered,
+        crystalsRequested,
+        round,
+        parentTradeId,
+        cards: {
+          create: [...prepared.offeredRows, ...prepared.requestedRows].map(
+            (row) => ({ ...row, escrowed: true }),
+          ),
+        },
+      },
+      select: TRADE_SELECT,
+    });
+  }
+
+  /**
+   * Cria uma troca: até 5 cartas por lado + Cristais opcionais, com escrow
+   * de cartas e de Cristais enquanto PENDING. Aceitar é o único caminho que
+   * libera tudo (`acceptTrade`); recusar/cancelar/expirar/contra-propor usam
+   * `releaseTrade`.
+   */
+  async createTrade(
+    userId: string,
+    offeredUserCardId: string | string[],
+    requestedUserCardId: string | string[],
+    crystalsOffered = 0,
+    crystalsRequested = 0,
+    overrides?: {
+      expiresAt?: Date;
+      round?: number;
+      parentTradeId?: string | null;
+      /** Suprime a notificação (counterTrade notifica depois da tx). */
+      silent?: boolean;
+    },
+  ) {
+    await this.expirePendingTrades();
+    const offeredIds = Array.isArray(offeredUserCardId)
+      ? offeredUserCardId
+      : [offeredUserCardId];
+    const requestedIds = Array.isArray(requestedUserCardId)
+      ? requestedUserCardId
+      : [requestedUserCardId];
     try {
-      const trade = await this.prisma.$transaction(async (tx) => {
-        const created = await tx.gachaTrade.create({
-          data: {
-            offeredUserId: userId,
-            offeredUserCardId,
-            requestedUserId: requested.userId,
-            requestedUserCardId,
-            expiresAt: new Date(Date.now() + this.config.tradeTtlMs),
-          },
-          select: TRADE_SELECT,
+      const prepared = await this.prepareTrade(
+        this.prisma,
+        userId,
+        offeredIds,
+        requestedIds,
+      );
+      const trade = await this.prisma.$transaction(
+        (tx) =>
+          this.createTradeTx(
+            tx,
+            userId,
+            offeredIds,
+            requestedIds,
+            crystalsOffered,
+            crystalsRequested,
+            prepared,
+            overrides?.expiresAt ??
+              new Date(Date.now() + this.config.tradeTtlMs),
+            overrides?.round ?? 1,
+            overrides?.parentTradeId ?? null,
+          ),
+        { isolationLevel: 'Serializable' },
+      );
+      if (!overrides?.silent) {
+        await this.notifyTradeProposal({
+          recipientId: trade.requestedUserId,
+          actorId: userId,
+          tradeId: trade.id,
+          cardCount: prepared.offeredRows.length,
+          crystals: crystalsOffered,
         });
-        await tx.notification.create({
-          data: {
-            userId: requested.userId,
-            type: 'SYSTEM',
-            title: 'Nova proposta de troca',
-            body: 'Você recebeu uma proposta de troca de cartas.',
-            linkUrl: '/gacha/mercado',
-            actorId: userId,
-            targetId: created.id,
-          },
-        });
-        return created;
-      });
+      }
       return fmtTrade(trade);
     } catch (e) {
-      if (
-        e instanceof Prisma.PrismaClientKnownRequestError &&
-        e.code === 'P2002'
-      ) {
-        throw new ConflictException(
-          'Uma dessas cartas acabou de entrar numa troca pendente.',
-        );
+      if (e instanceof Prisma.PrismaClientKnownRequestError) {
+        // P2002 = índice parcial GachaTradeCard_userCardId_escrowed_key (outra
+        // troca pegou a carta entre a checagem e agora); P2034 = conflito de
+        // serialização. Ambos viram 409 para o frontend recarregar.
+        if (e.code === 'P2002' || e.code === 'P2034') {
+          throw new ConflictException(
+            'Uma dessas cartas acabou de entrar numa troca pendente.',
+          );
+        }
+      }
+      throw e;
+    }
+  }
+
+  /** Notificação de proposta é best-effort: falhar aqui não desfaz a troca. */
+  private async notifyTradeProposal(input: {
+    recipientId: string;
+    actorId: string;
+    tradeId: string;
+    cardCount: number;
+    crystals: number;
+  }) {
+    try {
+      await this.notifications.create({
+        userId: input.recipientId,
+        type: 'SYSTEM',
+        title: 'Nova proposta de troca',
+        body: input.crystals
+          ? `Você recebeu uma proposta com ${input.cardCount} carta${input.cardCount === 1 ? '' : 's'} e ${input.crystals} Crystals.`
+          : `Você recebeu uma proposta de troca de ${input.cardCount} carta${input.cardCount === 1 ? '' : 's'}.`,
+        linkUrl: '/gacha/mercado',
+        actorId: input.actorId,
+        targetId: input.tradeId,
+      });
+    } catch (e) {
+      this.logger.warn(
+        `Falha ao notificar troca ${input.tradeId}: ${String(e)}`,
+      );
+    }
+  }
+
+  /**
+   * Contraproposta: cancela o pai e cria uma linha nova — nunca mutação
+   * in-place, que perderia o escrow por linha e o rastro closedBy/
+   * closedReason. Rodadas ilimitadas; o TTL decide o fim. A cadeia é achatada
+   * na raiz (parentTradeId sempre aponta para a primeira troca).
+   */
+  async counterTrade(
+    userId: string,
+    tradeId: string,
+    dto: {
+      offeredUserCardIds?: string[];
+      requestedUserCardIds?: string[];
+      crystalsOffered?: number;
+      crystalsRequested?: number;
+    },
+  ) {
+    let notify: { recipientId: string; tradeId: string } | null = null;
+    try {
+      const created = await this.prisma.$transaction(
+        async (tx) => {
+          const parent = await tx.gachaTrade.findUnique({
+            where: { id: tradeId },
+            select: TRADE_SELECT,
+          });
+          if (!parent) throw new NotFoundException('Troca não encontrada.');
+          if (parent.requestedUserId !== userId) {
+            throw new ForbiddenException(
+              'Só quem recebeu a proposta pode contra-propor.',
+            );
+          }
+          if (parent.status !== 'PENDING') {
+            throw new ConflictException('Troca não está mais pendente.');
+          }
+          if (Date.now() >= parent.expiresAt.getTime()) {
+            throw new ConflictException('Troca expirada.');
+          }
+          // Espelho lido DENTRO da tx, antes do release: quem recebeu a
+          // proposta oferece o que era pedido e pede o que era oferecido —
+          // os Cristais trocam de lado junto (mesma regra abaixo).
+          const parentOffered = parent.cards.length
+            ? parent.cards
+                .filter((c) => c.side === 'OFFERED')
+                .map((c) => c.userCardId)
+            : [parent.offeredUserCardId];
+          const parentRequested = parent.cards.length
+            ? parent.cards
+                .filter((c) => c.side === 'REQUESTED')
+                .map((c) => c.userCardId)
+            : [parent.requestedUserCardId];
+          const offeredIds = dto.offeredUserCardIds ?? parentRequested;
+          const requestedIds = dto.requestedUserCardIds ?? parentOffered;
+          const released = await releaseTrade(
+            tx,
+            this.crystalAccounting,
+            tradeId,
+            'CANCELLED',
+            'COUNTERED',
+            userId,
+          );
+          if (!released) {
+            throw new ConflictException('Troca não está mais pendente.');
+          }
+          const prepared = await this.prepareTrade(
+            tx,
+            userId,
+            offeredIds,
+            requestedIds,
+          );
+          const row = await this.createTradeTx(
+            tx,
+            userId,
+            offeredIds,
+            requestedIds,
+            dto.crystalsOffered ?? parent.crystalsRequested,
+            dto.crystalsRequested ?? parent.crystalsOffered,
+            prepared,
+            new Date(Date.now() + this.config.tradeCounterTtlMs),
+            parent.round + 1,
+            parent.parentTradeId ?? parent.id,
+          );
+          notify = {
+            recipientId: row.requestedUserId,
+            tradeId: row.id,
+          };
+          return row;
+        },
+        { isolationLevel: 'Serializable' },
+      );
+      // Fora da tx: NotificationService usa o client root, nunca o tx client.
+      await this.notifyTradeProposal({
+        recipientId: notify!.recipientId,
+        actorId: userId,
+        tradeId: notify!.tradeId,
+        cardCount: created.cards.filter((c) => c.side === 'OFFERED').length,
+        crystals: dto.crystalsOffered ?? 0,
+      });
+      return fmtTrade(created);
+    } catch (e) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError) {
+        if (e.code === 'P2002' || e.code === 'P2034') {
+          throw new ConflictException(
+            'Uma dessas cartas acabou de entrar numa troca pendente.',
+          );
+        }
       }
       throw e;
     }
@@ -3915,128 +4093,198 @@ export class GachaService {
       await this.settleFeatured(parties.offeredUserId);
       await this.settleFeatured(parties.requestedUserId);
     }
-    return this.prisma.$transaction(async (tx) => {
-      const trade = await tx.gachaTrade.findUnique({
-        where: { id: tradeId },
-        select: TRADE_SELECT,
-      });
-      if (!trade) throw new NotFoundException('Troca não encontrada.');
-      if (trade.requestedUserId !== userId) {
-        throw new ForbiddenException('Só o receptor pode aceitar a troca.');
-      }
-      if (trade.status === 'EXPIRED') {
-        throw new ConflictException('Troca já expirada.');
-      }
-      if (trade.status !== 'PENDING') {
-        throw new ConflictException('Troca não está mais pendente.');
-      }
-      if (Date.now() >= trade.expiresAt.getTime()) {
-        throw new ConflictException('Troca expirada.');
-      }
+    const trade = await this.prisma.$transaction(
+      async (tx) => {
+        const found = await tx.gachaTrade.findUnique({
+          where: { id: tradeId },
+          select: TRADE_SELECT,
+        });
+        if (!found) throw new NotFoundException('Troca não encontrada.');
+        if (found.requestedUserId !== userId) {
+          throw new ForbiddenException('Só o receptor pode aceitar a troca.');
+        }
+        if (found.status === 'EXPIRED') {
+          throw new ConflictException('Troca já expirada.');
+        }
+        if (found.status !== 'PENDING') {
+          throw new ConflictException('Troca não está mais pendente.');
+        }
+        if (Date.now() >= found.expiresAt.getTime()) {
+          throw new ConflictException('Troca expirada.');
+        }
+        await this.crystalAccounting.lockWallets(tx, [
+          found.offeredUserId,
+          found.requestedUserId,
+        ]);
+        const accepted = await tx.gachaTrade.updateMany({
+          where: { id: tradeId, status: 'PENDING' },
+          data: {
+            status: 'COMPLETED',
+            completedAt: new Date(),
+            closedBy: userId,
+            closedReason: 'ACCEPTED',
+          },
+        });
+        if (accepted.count !== 1) {
+          throw new ConflictException('Troca não está mais pendente.');
+        }
 
-      const accepted = await tx.gachaTrade.updateMany({
-        where: { id: tradeId, status: 'PENDING' },
-        data: { status: 'COMPLETED', completedAt: new Date() },
-      });
-      if (accepted.count !== 1) {
-        throw new ConflictException('Troca não está mais pendente.');
-      }
+        // refId distinto por lado e por direção: o unique parcial de
+        // CrystalEvent (economy-v1:%) torna a reentrada idempotente.
+        // Sem market_tax_pct — é taxa de mercado, não de troca.
+        if (found.crystalsOffered > 0) {
+          await this.crystalAccounting.consumeReserved(
+            tx,
+            found.offeredUserId,
+            found.crystalsOffered,
+            'SPEND',
+            `economy-v1:trade:${tradeId}:offered`,
+            'Troca aceita — Cristais enviados',
+          );
+          await this.crystalAccounting.credit(
+            tx,
+            found.requestedUserId,
+            found.crystalsOffered,
+            'SALE',
+            `economy-v1:trade:${tradeId}:offered`,
+            'Troca aceita — Cristais recebidos',
+          );
+        }
+        if (found.crystalsRequested > 0) {
+          await this.crystalAccounting.consumeReserved(
+            tx,
+            found.requestedUserId,
+            found.crystalsRequested,
+            'SPEND',
+            `economy-v1:trade:${tradeId}:requested`,
+            'Troca aceita — Cristais enviados',
+          );
+          await this.crystalAccounting.credit(
+            tx,
+            found.offeredUserId,
+            found.crystalsRequested,
+            'SALE',
+            `economy-v1:trade:${tradeId}:requested`,
+            'Troca aceita — Cristais recebidos',
+          );
+        }
 
-      const offeredIds = trade.cards?.length
-        ? trade.cards
-            .filter((c) => c.side === 'OFFERED')
-            .map((c) => c.userCardId)
-        : [trade.offeredUserCardId];
-      const requestedIds = trade.cards?.length
-        ? trade.cards
-            .filter((c) => c.side === 'REQUESTED')
-            .map((c) => c.userCardId)
-        : [trade.requestedUserCardId];
-      const owners = await tx.userCard.findMany({
-        where: { id: { in: [...offeredIds, ...requestedIds] } },
-        select: { id: true, userId: true, cardId: true },
-      });
-      if (
-        owners.length !== offeredIds.length + requestedIds.length ||
-        owners.some((c) =>
-          offeredIds.includes(c.id)
-            ? c.userId !== trade.offeredUserId
-            : c.userId !== trade.requestedUserId,
-        )
-      ) {
-        throw new ConflictException(
-          'Uma das cartas mudou de dono — a troca foi invalidada.',
-        );
-      }
+        const offeredIds = found.cards?.length
+          ? found.cards
+              .filter((c) => c.side === 'OFFERED')
+              .map((c) => c.userCardId)
+          : [found.offeredUserCardId];
+        const requestedIds = found.cards?.length
+          ? found.cards
+              .filter((c) => c.side === 'REQUESTED')
+              .map((c) => c.userCardId)
+          : [found.requestedUserCardId];
+        const owners = await tx.userCard.findMany({
+          where: { id: { in: [...offeredIds, ...requestedIds] } },
+          select: { id: true, userId: true, cardId: true },
+        });
+        if (
+          owners.length !== offeredIds.length + requestedIds.length ||
+          owners.some((c) =>
+            offeredIds.includes(c.id)
+              ? c.userId !== found.offeredUserId
+              : c.userId !== found.requestedUserId,
+          )
+        ) {
+          throw new ConflictException(
+            'Uma das cartas mudou de dono — a troca foi invalidada.',
+          );
+        }
 
-      // Carta que era a destaque do antigo dono perde o destaque na troca.
-      await tx.user.updateMany({
-        where: {
-          id: trade.offeredUserId,
-          featuredUserCardId: trade.offeredUserCard.id,
-        },
-        data: {
-          featuredUserCardId: null,
-          featuredSettledAt: null,
-        },
-      });
-      await tx.user.updateMany({
-        where: {
-          id: trade.requestedUserId,
-          featuredUserCardId: trade.requestedUserCard.id,
-        },
-        data: {
-          featuredUserCardId: null,
-          featuredSettledAt: null,
-        },
-      });
+        // Carta que era a destaque do antigo dono perde o destaque na troca.
+        await tx.user.updateMany({
+          where: {
+            id: found.offeredUserId,
+            featuredUserCardId: found.offeredUserCard.id,
+          },
+          data: { featuredUserCardId: null, featuredSettledAt: null },
+        });
+        await tx.user.updateMany({
+          where: {
+            id: found.requestedUserId,
+            featuredUserCardId: found.requestedUserCard.id,
+          },
+          data: { featuredUserCardId: null, featuredSettledAt: null },
+        });
 
-      const offered = await tx.userCard.updateMany({
-        where: { id: { in: offeredIds }, userId: trade.offeredUserId },
-        data: { userId: trade.requestedUserId },
-      });
-      const requested = await tx.userCard.updateMany({
-        where: { id: { in: requestedIds }, userId: trade.requestedUserId },
-        data: { userId: trade.offeredUserId },
-      });
-      if (
-        offered.count !== offeredIds.length ||
-        requested.count !== requestedIds.length
-      ) {
-        throw new ConflictException('Uma das cartas mudou de dono.');
-      }
-      await tx.gachaCardDiscovery.createMany({
-        data: [
-          ...offeredIds.map((id) => ({
-            userId: trade.requestedUserId,
-            cardId: owners.find((card) => card.id === id)!.cardId,
-          })),
-          ...requestedIds.map((id) => ({
-            userId: trade.offeredUserId,
-            cardId: owners.find((card) => card.id === id)!.cardId,
-          })),
-        ],
-        skipDuplicates: true,
-      });
+        // userId E status ESCROW no WHERE: prova posse e impede aceitar sobre
+        // escrow alheio — quem não é dono nunca põe a carta em escrow.
+        const offered = await tx.userCard.updateMany({
+          where: {
+            id: { in: offeredIds },
+            userId: found.offeredUserId,
+            status: 'ESCROW',
+          },
+          data: { userId: found.requestedUserId, status: 'ACTIVE' },
+        });
+        const requested = await tx.userCard.updateMany({
+          where: {
+            id: { in: requestedIds },
+            userId: found.requestedUserId,
+            status: 'ESCROW',
+          },
+          data: { userId: found.offeredUserId, status: 'ACTIVE' },
+        });
+        if (
+          offered.count !== offeredIds.length ||
+          requested.count !== requestedIds.length
+        ) {
+          throw new ConflictException(
+            'Uma das cartas mudou de dono — troca foi invalidada.',
+          );
+        }
+        await tx.gachaTradeCard.updateMany({
+          where: { tradeId, escrowed: true },
+          data: { escrowed: false },
+        });
+        await tx.gachaCardDiscovery.createMany({
+          data: [
+            ...offeredIds.map((id) => ({
+              userId: found.requestedUserId,
+              cardId: owners.find((card) => card.id === id)!.cardId,
+            })),
+            ...requestedIds.map((id) => ({
+              userId: found.offeredUserId,
+              cardId: owners.find((card) => card.id === id)!.cardId,
+            })),
+          ],
+          skipDuplicates: true,
+        });
 
-      const done = await tx.gachaTrade.update({
-        where: { id: tradeId },
-        data: { status: 'COMPLETED', completedAt: new Date() },
-        select: TRADE_SELECT,
+        return tx.gachaTrade.findUniqueOrThrow({
+          where: { id: tradeId },
+          select: TRADE_SELECT,
+        });
+      },
+      { isolationLevel: 'Serializable' },
+    );
+    // Fora da tx: NotificationService usa o client root, nunca o tx client.
+    const counterparty =
+      trade.offeredUserId === userId
+        ? trade.requestedUserId
+        : trade.offeredUserId;
+    try {
+      await this.notifications.create({
+        userId: counterparty,
+        type: 'SYSTEM',
+        title: 'Troca aceita',
+        body:
+          trade.crystalsOffered + trade.crystalsRequested
+            ? 'Sua proposta de troca foi aceita e os Cristais foram transferidos.'
+            : 'Sua proposta de troca foi aceita.',
+        linkUrl: '/gacha/mercado',
+        actorId: userId,
+        targetId: trade.id,
       });
-      await tx.notification.create({
-        data: {
-          userId: trade.offeredUserId,
-          type: 'SYSTEM',
-          title: 'Troca aceita',
-          body: 'Sua proposta de troca foi aceita.',
-          linkUrl: '/gacha/mercado',
-          actorId: userId,
-          targetId: trade.id,
-        },
-      });
-      return fmtTrade(done);
-    });
+    } catch (e) {
+      this.logger.warn(`Falha ao notificar troca ${trade.id}: ${String(e)}`);
+    }
+    return fmtTrade(trade);
   }
 
   async cancelTrade(userId: string, tradeId: string) {
@@ -4054,73 +4302,109 @@ export class GachaService {
     verb: string,
   ) {
     await this.expireTrade(tradeId);
-    return this.prisma.$transaction(async (tx) => {
-      const trade = await tx.gachaTrade.findUnique({
-        where: { id: tradeId },
-        select: {
-          id: true,
-          status: true,
-          expiresAt: true,
-          offeredUserId: true,
-          requestedUserId: true,
-        },
-      });
-      if (!trade) throw new NotFoundException('Troca não encontrada.');
-      if (trade[actorField] !== userId) {
-        throw new ForbiddenException(`Só o ${verb} da troca pode agir aqui.`);
-      }
-      if (trade.status === 'EXPIRED') {
-        throw new ConflictException('Troca já expirada.');
-      }
-      if (trade.status !== 'PENDING') {
-        throw new ConflictException('Troca não está mais pendente.');
-      }
-      if (Date.now() >= trade.expiresAt.getTime()) {
-        throw new ConflictException('Troca expirada.');
-      }
-      const cancelled = await tx.gachaTrade.updateMany({
-        where: { id: tradeId, status: 'PENDING' },
-        data: { status: 'CANCELLED' },
-      });
-      if (cancelled.count !== 1) {
-        throw new ConflictException('Troca não está mais pendente.');
-      }
-      const otherUserId =
-        actorField === 'offeredUserId'
-          ? trade.requestedUserId
-          : trade.offeredUserId;
-      if (otherUserId && otherUserId !== userId) {
-        await tx.notification.create({
-          data: {
-            userId: otherUserId,
-            type: 'SYSTEM',
-            title: verb === 'cancelar' ? 'Troca cancelada' : 'Troca recusada',
-            body:
-              verb === 'cancelar'
-                ? 'Uma proposta de troca foi cancelada.'
-                : 'Uma proposta de troca foi recusada.',
-            linkUrl: '/gacha/mercado',
-            actorId: userId,
-            targetId: trade.id,
+    const closed = await this.prisma.$transaction(
+      async (tx) => {
+        const trade = await tx.gachaTrade.findUnique({
+          where: { id: tradeId },
+          select: {
+            id: true,
+            status: true,
+            expiresAt: true,
+            offeredUserId: true,
+            requestedUserId: true,
           },
         });
+        if (!trade) throw new NotFoundException('Troca não encontrada.');
+        if (trade[actorField] !== userId) {
+          throw new ForbiddenException(`Só o ${verb} da troca pode agir aqui.`);
+        }
+        if (trade.status === 'EXPIRED') {
+          throw new ConflictException('Troca já expirada.');
+        }
+        if (trade.status !== 'PENDING') {
+          throw new ConflictException('Troca não está mais pendente.');
+        }
+        if (Date.now() >= trade.expiresAt.getTime()) {
+          throw new ConflictException('Troca expirada.');
+        }
+        const released = await releaseTrade(
+          tx,
+          this.crystalAccounting,
+          tradeId,
+          'CANCELLED',
+          actorField === 'offeredUserId' ? 'CANCELLED' : 'DECLINED',
+          userId,
+        );
+        if (!released) {
+          throw new ConflictException('Troca não está mais pendente.');
+        }
+        return {
+          id: tradeId,
+          otherUserId:
+            actorField === 'offeredUserId'
+              ? trade.requestedUserId
+              : trade.offeredUserId,
+        };
+      },
+      { isolationLevel: 'Serializable' },
+    );
+    if (closed.otherUserId && closed.otherUserId !== userId) {
+      try {
+        await this.notifications.create({
+          userId: closed.otherUserId,
+          type: 'SYSTEM',
+          title: verb === 'cancelar' ? 'Troca cancelada' : 'Troca recusada',
+          body:
+            verb === 'cancelar'
+              ? 'Uma proposta de troca foi cancelada.'
+              : 'Uma proposta de troca foi recusada.',
+          linkUrl: '/gacha/mercado',
+          actorId: userId,
+          targetId: closed.id,
+        });
+      } catch (e) {
+        this.logger.warn(`Falha ao notificar troca ${closed.id}: ${String(e)}`);
       }
-      return { id: tradeId, status: 'CANCELLED' };
-    });
+    }
+    return { id: closed.id, status: 'CANCELLED' };
   }
 
   private async expireTrade(tradeId: string): Promise<void> {
-    await this.prisma.gachaTrade.updateMany({
-      where: { id: tradeId, status: 'PENDING', expiresAt: { lte: new Date() } },
-      data: { status: 'EXPIRED' },
-    });
+    await this.prisma.$transaction(
+      (tx) =>
+        releaseTrade(
+          tx,
+          this.crystalAccounting,
+          tradeId,
+          'EXPIRED',
+          'EXPIRED',
+          null,
+        ),
+      { isolationLevel: 'Serializable' },
+    );
   }
 
-  private async expirePendingTrades(): Promise<void> {
-    await this.prisma.gachaTrade.updateMany({
+  /**
+   * Cron a cada minuto: devolve escrow e reserva das trocas vencidas. Lote de
+   * 50 em transação curta — segurar lock de wallet por minutos colide com um
+   * accept em andamento. Uma trade corrompida (release estourando) não aborta
+   * o lote: o cron é idempotente e refaz o que faltou no próximo tick.
+   */
+  @Cron('0 * * * * *', { waitForCompletion: true })
+  async expirePendingTrades(): Promise<void> {
+    const stale = await this.prisma.gachaTrade.findMany({
       where: { status: 'PENDING', expiresAt: { lte: new Date() } },
-      data: { status: 'EXPIRED' },
+      orderBy: { expiresAt: 'asc' },
+      take: 50,
+      select: { id: true },
     });
+    for (const { id } of stale) {
+      try {
+        await this.expireTrade(id);
+      } catch (e) {
+        this.logger.warn(`Falha ao expirar troca ${id}: ${String(e)}`);
+      }
+    }
   }
 
   private async publishPullPost(userId: string, pull: Pull) {

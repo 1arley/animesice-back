@@ -151,4 +151,19 @@ export class CrystalAccountingService {
   private async lockWallet(tx: Prisma.TransactionClient, userId: string) {
     await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${userId} FOR UPDATE`;
   }
+
+  /**
+   * Trava várias carteiras numa ordem global (id ordenado). Sem isso, duas
+   * operações que fazem swap recíproco de carteiras travam A/B em ordens
+   * opostas e o Postgres mata uma com 40P01 — que o Prisma NÃO tipa como
+   * P2034. Sempre chame antes de mexer em mais de um wallet na mesma tx.
+   */
+  async lockWallets(
+    tx: Prisma.TransactionClient,
+    userIds: Array<string | null | undefined>,
+  ) {
+    for (const id of [...new Set(userIds.filter(Boolean) as string[])].sort()) {
+      await this.lockWallet(tx, id);
+    }
+  }
 }

@@ -1225,8 +1225,10 @@ model GachaBypass {
   @@index([userId, status])
 }
 
-/// Troca 1:1 entre dois usuários — escrow confirmado, aplicada numa única
-/// transação (swap de UserCard.userId). Vale por 48h após criada.
+/// Troca entre dois usuários (1:1 ou lote até 5 por lado), com Cristais
+/// opcionais. Cartas e Cristais ficam em escrow enquanto PENDING; aceitação é
+/// aplicada numa única transação (swap de UserCard.userId + consume/credit).
+/// Vale por 48h após criada; contraproposta vale 7 dias.
 model GachaTrade {
   id                  String           @id @default(uuid())
   offeredUserId       String
@@ -1237,6 +1239,21 @@ model GachaTrade {
   expiresAt           DateTime         @db.Timestamptz(6)
   createdAt           DateTime         @default(now()) @db.Timestamptz(6)
   completedAt         DateTime?        @db.Timestamptz(6)
+  /// Cristais que o offeredUser reserva enquanto a troca está PENDING.
+  crystalsOffered   Int    @default(0)
+  /// Cristais que o requestedUser reserva enquanto a troca está PENDING.
+  crystalsRequested Int    @default(0)
+  /// Rodada da cadeia de contrapropostas (1 = proposta original).
+  round         Int     @default(1)
+  /// Raiz da cadeia de contrapropostas (achatada — aponta sempre para a
+  /// primeira troca da conversa).
+  parentTradeId String?
+  parentTrade   GachaTrade?  @relation("TradeCounterChain", fields: [parentTradeId], references: [id], onDelete: SetNull)
+  counters      GachaTrade[] @relation("TradeCounterChain")
+  closedBy      String?
+  /// Motivo do fechamento: ACCEPTED, CANCELLED, DECLINED, COUNTERED,
+  /// EXPIRED, CARD_BLOCKED.
+  closedReason String?
 
   cards GachaTradeCard[]
 
@@ -1248,6 +1265,7 @@ model GachaTrade {
   @@unique([requestedUserCardId], where: raw("status = 'PENDING'"))
   @@index([offeredUserId, status])
   @@index([requestedUserId, status])
+  @@index([status, expiresAt])
 }
 
 model GachaTradeCard {
@@ -1257,11 +1275,15 @@ model GachaTradeCard {
   side       GachaTradeCardSide
   position   Int
   snapshot   Json
+  /// true enquanto a carta está em escrow por esta troca. Uma carta só pode
+  /// estar em escrow por UMA troca por vez (índice parcial abaixo).
+  escrowed   Boolean            @default(false)
   trade      GachaTrade         @relation(fields: [tradeId], references: [id], onDelete: Cascade)
   userCard   UserCard           @relation(fields: [userCardId], references: [id], onDelete: Restrict)
 
   @@unique([tradeId, side, position])
   @@unique([tradeId, userCardId])
+  @@unique([userCardId], where: raw("escrowed = true"))
   @@index([userCardId, side])
 }
 

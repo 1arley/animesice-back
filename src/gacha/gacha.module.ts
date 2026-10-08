@@ -6,8 +6,10 @@ import { WishlistService } from '@/gacha/wishlist.service';
 import { EconomyController } from '@/gacha/economy/economy.controller';
 import { EconomyService } from '@/gacha/economy/economy.service';
 import { CrystalAccountingService } from '@/gacha/crystal-accounting.service';
+import { NotificationModule } from '@/notification/notification.module';
 
 @Module({
+  imports: [NotificationModule],
   controllers: [GachaController, EconomyController],
   providers: [
     GachaService,

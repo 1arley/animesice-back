@@ -86,6 +86,7 @@ describe('EconomyService safeguards', () => {
     db.gachaMarketOffer.findMany.mockResolvedValue([]);
     db.gachaListing.findMany.mockResolvedValue([]);
     db.gachaSkinListing.findMany.mockResolvedValue([]);
+    db.gachaTrade.findMany.mockResolvedValue([]);
     db.gachaInventory.updateMany.mockResolvedValue({ count: 1 });
     db.gachaRetention.upsert.mockResolvedValue({ loyaltyRarePlusReady: false });
     db.gachaRetention.update.mockResolvedValue({ loyaltyDays: 1 });
