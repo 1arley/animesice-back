@@ -32,14 +32,14 @@ const TEST_BASE_VALUE = {
   MITICA: 800,
   GALACTICA: 1600,
 };
-const TEST_FOIL_MULT = { NORMAL: 1, HOLO: 3, GOLD: 10 };
+const TEST_FOIL_MULT = { NORMAL: 1, HOLO: 3, GOLD: 10, INK: 10, NEGATIVE: 5 };
 
 describe('GachaService', () => {
   let service: GachaService;
   const mockConfig = {
     baseValue: TEST_BASE_VALUE,
     foilMult: TEST_FOIL_MULT,
-    foilWeights: { NORMAL: 85, HOLO: 12, GOLD: 3 },
+    foilWeights: { NORMAL: 79, HOLO: 12, GOLD: 3, INK: 3, NEGATIVE: 3 },
     tierWeights: {
       COMUM: 55,
       INCOMUM: 25,
@@ -72,6 +72,7 @@ describe('GachaService', () => {
     skinSpinPrice: 0,
     tradeActiveLimit: 3,
     tradeTtlMs: 172_800_000,
+    tradeCounterTtlMs: 604_800_000,
     cardFloors: {
       COMUM: 500,
       INCOMUM: 750,
