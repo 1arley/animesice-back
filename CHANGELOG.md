@@ -1,3 +1,11 @@
+# [1.36.0](https://github.com/1arley/animesice-back/compare/v1.35.0...v1.36.0) (2026-10-08)
+
+
+### Features
+
+* **gacha:** escrow e Cristais nas trocas, com contraproposta ([#119](https://github.com/1arley/animesice-back/issues/119)) ([a3869e8](https://github.com/1arley/animesice-back/commit/a3869e8313c0b13edd089dec45506257f9e21eda))
+* **gacha:** foils INK e NEGATIVE ([#120](https://github.com/1arley/animesice-back/issues/120)) ([ae52517](https://github.com/1arley/animesice-back/commit/ae52517d4b1058f34029eca84bf83a6039a8b605))
+
 # [1.35.0](https://github.com/1arley/animesice-back/compare/v1.34.0...v1.35.0) (2026-10-07)
 
 
