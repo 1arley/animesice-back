@@ -1,3 +1,10 @@
+## [1.36.1](https://github.com/1arley/animesice-back/compare/v1.36.0...v1.36.1) (2026-10-08)
+
+
+### Bug Fixes
+
+* **deploy:** aplica migrations no entrypoint da imagem ([a248e45](https://github.com/1arley/animesice-back/commit/a248e454ded5bde6edc5665335fa15e20da17597))
+
 # [1.36.0](https://github.com/1arley/animesice-back/compare/v1.35.0...v1.36.0) (2026-10-08)
 
 
