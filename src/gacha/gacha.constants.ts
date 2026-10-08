@@ -9,7 +9,13 @@ export const GACHA_TIERS = [
 ] as const;
 export type GachaTier = (typeof GACHA_TIERS)[number];
 
-export const GACHA_FOILS = ['NORMAL', 'HOLO', 'GOLD'] as const;
+export const GACHA_FOILS = [
+  'NORMAL',
+  'HOLO',
+  'GOLD',
+  'INK',
+  'NEGATIVE',
+] as const;
 export type GachaFoil = (typeof GACHA_FOILS)[number];
 
 export function conditionLabel(condition: number): string {

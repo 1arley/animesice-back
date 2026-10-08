@@ -13,7 +13,7 @@ export const ECONOMY_DEFAULTS = {
   box_prices: BOX_PRICE,
   box_category_weights: CATEGORY_WEIGHTS,
   box_quality_weights: QUALITY_WEIGHTS,
-  foil_weights: { NORMAL: 85, HOLO: 12, GOLD: 3 },
+  foil_weights: { NORMAL: 79, HOLO: 12, GOLD: 3, INK: 3, NEGATIVE: 3 },
   base_value: {
     COMUM: 10,
     INCOMUM: 25,
@@ -23,7 +23,10 @@ export const ECONOMY_DEFAULTS = {
     MITICA: 800,
     GALACTICA: 1600,
   } as Record<GachaTier, number>,
-  foil_mult: { NORMAL: 1, HOLO: 3, GOLD: 10 } as Record<GachaFoil, number>,
+  foil_mult: { NORMAL: 1, HOLO: 3, GOLD: 10, INK: 10, NEGATIVE: 5 } as Record<
+    GachaFoil,
+    number
+  >,
   card_floors: CARD_FLOOR,
   skin_floors: {
     COMMON: 2000,
@@ -57,6 +60,24 @@ export function economyConfig(snapshot: Prisma.JsonValue): EconomyConfig {
   }
   // Older versions inherit documented launch defaults for newly added keys.
   const merged = { ...ECONOMY_DEFAULTS, ...snapshot };
+  for (const key of ['foil_weights', 'foil_mult'] as const) {
+    const saved = snapshot[key];
+    if (!saved || typeof saved !== 'object' || Array.isArray(saved)) continue;
+    const savedObject = saved as Record<string, number>;
+    merged[key] = { ...ECONOMY_DEFAULTS[key], ...savedObject };
+    if (key === 'foil_weights') {
+      const addedWeight =
+        ('INK' in savedObject ? 0 : ECONOMY_DEFAULTS.foil_weights.INK) +
+        ('NEGATIVE' in savedObject
+          ? 0
+          : ECONOMY_DEFAULTS.foil_weights.NEGATIVE);
+      merged.foil_weights.NORMAL = Math.max(
+        0,
+        (savedObject.NORMAL ?? ECONOMY_DEFAULTS.foil_weights.NORMAL) -
+          addedWeight,
+      );
+    }
+  }
   const validate = (value: unknown, expected: unknown): boolean => {
     if (typeof expected === 'number')
       return typeof value === 'number' && Number.isFinite(value) && value >= 0;

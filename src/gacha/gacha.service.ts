@@ -2153,7 +2153,9 @@ export class GachaService {
       ...(rarity && (GACHA_TIERS as readonly string[]).includes(rarity)
         ? { card: { rarity } }
         : {}),
-      ...(foil && ['NORMAL', 'HOLO', 'GOLD'].includes(foil) ? { foil } : {}),
+      ...(foil && ['NORMAL', 'HOLO', 'GOLD', 'INK', 'NEGATIVE'].includes(foil)
+        ? { foil }
+        : {}),
     };
     const orderBy: Prisma.UserCardOrderByWithRelationInput =
       sort === 'recent'

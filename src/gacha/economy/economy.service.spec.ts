@@ -155,7 +155,7 @@ describe('EconomyService safeguards', () => {
     expect(() =>
       economyConfig({
         ...ECONOMY_DEFAULTS,
-        foil_weights: { NORMAL: 0, HOLO: 0, GOLD: 0 },
+        foil_weights: { NORMAL: 0, HOLO: 0, GOLD: 0, INK: 0, NEGATIVE: 0 },
       }),
     ).toThrow(ConflictException);
   });

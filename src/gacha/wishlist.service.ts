@@ -19,7 +19,7 @@ const CONDITION_LEVEL: Record<string, number> = {
   NM: 4,
   MINT: 5,
 };
-const VALID_FOILS = ['NORMAL', 'HOLO', 'GOLD'];
+const VALID_FOILS = ['NORMAL', 'HOLO', 'GOLD', 'INK', 'NEGATIVE'];
 
 type WishlistOptions = {
   page?: number;
