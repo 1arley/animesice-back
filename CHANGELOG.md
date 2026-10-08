@@ -1,3 +1,18 @@
+# [1.37.0](https://github.com/1arley/animesice-back/compare/v1.36.2...v1.37.0) (2026-10-08)
+
+
+### Bug Fixes
+
+* **economy:** validate foil snapshot objects ([e3db264](https://github.com/1arley/animesice-back/commit/e3db264892da49c7daa46732ed33bd1831caed60))
+* **gacha:** backfill de escrow e cancela propostas legadas conflitantes ([144c1ad](https://github.com/1arley/animesice-back/commit/144c1ad0d013a788eafec24581f7a09ed4faba99))
+
+
+### Features
+
+* **gacha:** escrow e Cristais nas trocas, com contraproposta ([6c7920a](https://github.com/1arley/animesice-back/commit/6c7920a5f81020d6e0a93d19ca19d5e574421c3c))
+* **gacha:** expõe pesos de raridade e pity em /gacha/economy/odds ([9e046da](https://github.com/1arley/animesice-back/commit/9e046da00fd9cac8a36ab87ee07189a8690b5ee1))
+* **gacha:** foils INK e NEGATIVE ([247043f](https://github.com/1arley/animesice-back/commit/247043ff9b6f98d7e7864fadf5cb819999fa9b76))
+
 ## [1.36.2](https://github.com/1arley/animesice-back/compare/v1.36.1...v1.36.2) (2026-10-08)
 
 
