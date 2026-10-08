@@ -1,3 +1,10 @@
+## [1.36.2](https://github.com/1arley/animesice-back/compare/v1.36.1...v1.36.2) (2026-10-08)
+
+
+### Bug Fixes
+
+* **gacha:** informa crystals reservados em trocas ([936e4d3](https://github.com/1arley/animesice-back/commit/936e4d3737ca6f41df0e3128692efd05bbbbf97b))
+
 ## [1.36.1](https://github.com/1arley/animesice-back/compare/v1.36.0...v1.36.1) (2026-10-08)
 
 
