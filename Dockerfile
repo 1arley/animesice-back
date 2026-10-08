@@ -43,6 +43,7 @@ COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=build /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=build /app/prisma.config.ts ./
 COPY package.json ./
+COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 
 # Chromium p/ o fluxo Playwright (scrape de fontes + resolver tokens Blogger
 # do meusanimes/meusdoramas -> .mp4 googlevideo). Browser fora do home do user
@@ -50,11 +51,15 @@ COPY package.json ./
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN npx playwright install --with-deps chromium
 
-# Prisma CLI (npx) roda como USER node e precisa gravar engines/cache.
+# Prisma CLI roda como USER node e precisa gravar engines/cache.
 # Xvfb precisa de /tmp/.X11-unix com permissões corretas.
+# O entrypoint executa o CLI local (node_modules/.bin/prisma) — nunca `npx -y`,
+# que baixaria o pacote da rede em todo boot e derrubaria o container sem rede.
 RUN chown -R node:node /app/node_modules /ms-playwright && \
     mkdir -p /tmp/.X11-unix && \
-    chmod 1777 /tmp/.X11-unix
+    chmod 1777 /tmp/.X11-unix && \
+    chmod +x /usr/local/bin/entrypoint.sh && \
+    test -x /app/node_modules/.bin/prisma
 
 USER node
 
@@ -63,8 +68,9 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
   CMD node -e "fetch('http://localhost:3000/api').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
-# Entrypoint inicia Xvfb (display virtual) antes do app.
-# O player do Blogger (blogger.com/video.g?token=...) só renderiza <video>
-# e gera googlevideo.com/videoplayback com headless:false — precisa de X.
-ENTRYPOINT ["dumb-init", "--"]
-CMD ["sh", "-c", "/usr/bin/Xvfb :99 -screen 0 1366x768x24 &  export DISPLAY=:99 && sleep 1 && exec node dist/main.js"]
+# Entrypoint aplica migrations pendentes antes de subir o app. Estar na imagem
+# (e não no `command` do compose) é o que garante que nenhuma environment
+# pule `prisma migrate deploy` — compose override é a forma mais comum de
+# divergence entre schema do repo e banco.
+#   SKIP_MIGRATE=1  pula (bootstrap de banco novo, restore de dump)
+ENTRYPOINT ["dumb-init", "--", "/usr/local/bin/entrypoint.sh"]
