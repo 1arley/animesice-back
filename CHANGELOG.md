@@ -1,3 +1,10 @@
+# [1.39.0](https://github.com/1arley/animesice-back/compare/v1.38.0...v1.39.0) (2026-10-09)
+
+
+### Features
+
+* **gacha:** substitui foil NEGATIVE por PRISM ([b3fc05d](https://github.com/1arley/animesice-back/commit/b3fc05d0d0524123b91b327592f6f316b2e8c309))
+
 # [1.38.0](https://github.com/1arley/animesice-back/compare/v1.37.0...v1.38.0) (2026-10-08)
 
 
