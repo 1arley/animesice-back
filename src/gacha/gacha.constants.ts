@@ -9,13 +9,7 @@ export const GACHA_TIERS = [
 ] as const;
 export type GachaTier = (typeof GACHA_TIERS)[number];
 
-export const GACHA_FOILS = [
-  'NORMAL',
-  'HOLO',
-  'GOLD',
-  'INK',
-  'NEGATIVE',
-] as const;
+export const GACHA_FOILS = ['NORMAL', 'HOLO', 'GOLD', 'INK', 'PRISM'] as const;
 export type GachaFoil = (typeof GACHA_FOILS)[number];
 
 export function conditionLabel(condition: number): string {
@@ -42,7 +36,13 @@ export function cardValue(
   baseValues: Record<GachaTier, number>,
   foilMult: Record<GachaFoil, number>,
 ): number {
-  const base = baseValues[tier] * conditionMult(condition) * foilMult[foil];
+  // `foil` vem de coluna String no banco, entao o tipo GachaFoil e uma promessa
+  // que o dado persistido pode quebrar (foil de um rollout antigo, por ex). Sem o
+  // guard, foil desconhecido -> undefined -> NaN -> escrita Int no Prisma estoura
+  // 500 no adminUpdateCard/adminUpdateUserCard. Mult 1 degrada o valor pro base em
+  // vez de derrubar a request.
+  const base =
+    baseValues[tier] * conditionMult(condition) * (foilMult[foil] ?? 1);
   const lowEditionBonus = edition <= 10 ? (base * (11 - edition)) / 10 : 0;
   return Math.round(base + lowEditionBonus);
 }

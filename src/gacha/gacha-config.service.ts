@@ -5,7 +5,7 @@ import { PrismaService } from '@/prisma/prisma.service';
 export type GachaTier =
   'COMUM' | 'INCOMUM' | 'RARA' | 'EPICA' | 'LENDARIA' | 'MITICA' | 'GALACTICA';
 
-export type GachaFoil = 'NORMAL' | 'HOLO' | 'GOLD' | 'INK' | 'NEGATIVE';
+export type GachaFoil = 'NORMAL' | 'HOLO' | 'GOLD' | 'INK' | 'PRISM';
 
 export const GACHA_TIERS: readonly GachaTier[] = [
   'COMUM',
@@ -22,7 +22,7 @@ export const GACHA_FOILS: readonly GachaFoil[] = [
   'HOLO',
   'GOLD',
   'INK',
-  'NEGATIVE',
+  'PRISM',
 ];
 
 @Injectable()

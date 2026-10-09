@@ -2158,7 +2158,7 @@ export class GachaService {
       ...(rarity && (GACHA_TIERS as readonly string[]).includes(rarity)
         ? { card: { rarity } }
         : {}),
-      ...(foil && ['NORMAL', 'HOLO', 'GOLD', 'INK', 'NEGATIVE'].includes(foil)
+      ...(foil && (GACHA_FOILS as readonly string[]).includes(foil)
         ? { foil }
         : {}),
     };

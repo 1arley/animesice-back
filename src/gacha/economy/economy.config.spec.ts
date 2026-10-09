@@ -12,9 +12,9 @@ describe('economyConfig', () => {
       HOLO: 12,
       GOLD: 3,
       INK: 3,
-      NEGATIVE: 3,
+      PRISM: 3,
     });
     expect(config.foil_mult.INK).toBe(config.foil_mult.GOLD);
-    expect(config.foil_mult.NEGATIVE).toBe(5);
+    expect(config.foil_mult.PRISM).toBe(5);
   });
 });

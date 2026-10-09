@@ -6,6 +6,7 @@ import {
   QUALITY_WEIGHTS,
   CARD_FLOOR,
 } from './economy.rules';
+import { GACHA_FOILS } from '@/gacha/gacha.constants';
 import type { GachaFoil, GachaTier } from '@/gacha/gacha.constants';
 
 export const ECONOMY_DEFAULTS = {
@@ -13,7 +14,7 @@ export const ECONOMY_DEFAULTS = {
   box_prices: BOX_PRICE,
   box_category_weights: CATEGORY_WEIGHTS,
   box_quality_weights: QUALITY_WEIGHTS,
-  foil_weights: { NORMAL: 79, HOLO: 12, GOLD: 3, INK: 3, NEGATIVE: 3 },
+  foil_weights: { NORMAL: 79, HOLO: 12, GOLD: 3, INK: 3, PRISM: 3 },
   base_value: {
     COMUM: 10,
     INCOMUM: 25,
@@ -23,7 +24,7 @@ export const ECONOMY_DEFAULTS = {
     MITICA: 800,
     GALACTICA: 1600,
   } as Record<GachaTier, number>,
-  foil_mult: { NORMAL: 1, HOLO: 3, GOLD: 10, INK: 10, NEGATIVE: 5 } as Record<
+  foil_mult: { NORMAL: 1, HOLO: 3, GOLD: 10, INK: 10, PRISM: 5 } as Record<
     GachaFoil,
     number
   >,
@@ -63,14 +64,21 @@ export function economyConfig(snapshot: Prisma.JsonValue): EconomyConfig {
   for (const key of ['foil_weights', 'foil_mult'] as const) {
     const saved = snapshot[key];
     if (!saved || typeof saved !== 'object' || Array.isArray(saved)) continue;
-    const savedObject = saved as Record<string, number>;
+    // Snapshot e imutavel: foil que saiu do enum (NEGATIVE) continua la para
+    // sempre. Sem o filtro ele ainda entra em pickWeighted e cunha carta que a
+    // UI nao conhece. Renomear em migration nao cobre versao antiga do snapshot.
+    const savedObject = Object.fromEntries(
+      Object.entries(saved as Record<string, number>).filter(([foil]) =>
+        (GACHA_FOILS as readonly string[]).includes(foil),
+      ),
+    );
     merged[key] = { ...ECONOMY_DEFAULTS[key], ...savedObject };
     if (key === 'foil_weights') {
-      const addedWeight =
-        ('INK' in savedObject ? 0 : ECONOMY_DEFAULTS.foil_weights.INK) +
-        ('NEGATIVE' in savedObject
-          ? 0
-          : ECONOMY_DEFAULTS.foil_weights.NEGATIVE);
+      // Snapshot legado nao tem os foils novos: cada peso ausente sai do
+      // NORMAL, senao os novos nunca saem sorteados.
+      const addedWeight = GACHA_FOILS.filter(
+        (foil) => !(foil in savedObject),
+      ).reduce((sum, foil) => sum + ECONOMY_DEFAULTS.foil_weights[foil], 0);
       merged.foil_weights.NORMAL = Math.max(
         0,
         (savedObject.NORMAL ?? ECONOMY_DEFAULTS.foil_weights.NORMAL) -

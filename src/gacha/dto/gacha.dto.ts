@@ -342,14 +342,14 @@ export class UpsertCardWishlistDto {
   priority?: WishlistPriorityDto;
 
   @ApiProperty({
-    enum: ['NORMAL', 'HOLO', 'GOLD', 'INK', 'NEGATIVE'],
+    enum: ['NORMAL', 'HOLO', 'GOLD', 'INK', 'PRISM'],
     isArray: true,
     required: false,
   })
   @IsOptional()
   @IsArray()
   @ArrayUnique()
-  @IsIn(['NORMAL', 'HOLO', 'GOLD', 'INK', 'NEGATIVE'], { each: true })
+  @IsIn(['NORMAL', 'HOLO', 'GOLD', 'INK', 'PRISM'], { each: true })
   acceptedFoils?: string[];
 
   @ApiProperty({

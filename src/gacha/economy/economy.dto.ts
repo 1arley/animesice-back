@@ -39,8 +39,8 @@ export class CreateBuyOrderDto {
   price!: number;
 
   @IsOptional()
-  @IsEnum(['NORMAL', 'HOLO', 'GOLD', 'INK', 'NEGATIVE'])
-  foil?: 'NORMAL' | 'HOLO' | 'GOLD' | 'INK' | 'NEGATIVE';
+  @IsEnum(['NORMAL', 'HOLO', 'GOLD', 'INK', 'PRISM'])
+  foil?: 'NORMAL' | 'HOLO' | 'GOLD' | 'INK' | 'PRISM';
 
   @IsOptional()
   @IsEnum(['MINT', 'NM', 'EX', 'PLAYED', 'POOR'])
@@ -84,7 +84,7 @@ export class MarketHistoryDto {
   itemId!: string;
 
   @IsOptional()
-  @IsEnum(['NORMAL', 'HOLO', 'GOLD', 'INK', 'NEGATIVE'])
+  @IsEnum(['NORMAL', 'HOLO', 'GOLD', 'INK', 'PRISM'])
   foil?: string;
 
   @IsOptional()

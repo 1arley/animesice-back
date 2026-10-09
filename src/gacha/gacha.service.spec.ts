@@ -22,6 +22,7 @@ import {
   conditionLabel,
   isEpicTier,
   pickWeighted,
+  type GachaFoil,
 } from '@/gacha/gacha.constants';
 
 const TEST_BASE_VALUE = {
@@ -33,14 +34,14 @@ const TEST_BASE_VALUE = {
   MITICA: 800,
   GALACTICA: 1600,
 };
-const TEST_FOIL_MULT = { NORMAL: 1, HOLO: 3, GOLD: 10, INK: 10, NEGATIVE: 5 };
+const TEST_FOIL_MULT = { NORMAL: 1, HOLO: 3, GOLD: 10, INK: 10, PRISM: 5 };
 
 describe('GachaService', () => {
   let service: GachaService;
   const mockConfig = {
     baseValue: TEST_BASE_VALUE,
     foilMult: TEST_FOIL_MULT,
-    foilWeights: { NORMAL: 79, HOLO: 12, GOLD: 3, INK: 3, NEGATIVE: 3 },
+    foilWeights: { NORMAL: 79, HOLO: 12, GOLD: 3, INK: 3, PRISM: 3 },
     tierWeights: {
       COMUM: 55,
       INCOMUM: 25,
@@ -2382,6 +2383,21 @@ describe('gacha constants', () => {
     expect(
       cardValue('RARA', 0.9, 'HOLO', 11, TEST_BASE_VALUE, TEST_FOIL_MULT),
     ).toBe(180);
+  });
+
+  it('precifica carta com foil fora do enum sem virar NaN', () => {
+    // `foil` e coluna String no banco: foil de rollout antigo sobrevive a rename
+    // e estouraria 500 na escrita do admin.
+    expect(
+      cardValue(
+        'COMUM',
+        0.05,
+        'NEGATIVE' as GachaFoil,
+        500,
+        TEST_BASE_VALUE,
+        TEST_FOIL_MULT,
+      ),
+    ).toBe(30);
   });
 
   it('rotula condition nas fronteiras', () => {
