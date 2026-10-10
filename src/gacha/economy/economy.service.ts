@@ -2013,7 +2013,18 @@ export class EconomyService {
       orderBy: { slot: 'asc' },
       include: { card: true, skin: true },
     });
-    const nightOfferIds = offers
+    const ownedCardIds = new Set(
+      (
+        await this.prisma.userCard.findMany({
+          where: { userId, status: 'ACTIVE' },
+          select: { cardId: true },
+        })
+      ).map((item) => item.cardId),
+    );
+    const visibleOffers = offers.filter(
+      (offer) => !offer.skin || ownedCardIds.has(offer.skin.cardId),
+    );
+    const nightOfferIds = visibleOffers
       .filter((offer) => offer.slot >= 7)
       .map((offer) => offer.id);
     const reveals = nightOfferIds.length
@@ -2023,7 +2034,7 @@ export class EconomyService {
         })
       : [];
     const revealedIds = new Set(reveals.map((reveal) => reveal.offerId));
-    return offers.map((offer) => ({
+    return visibleOffers.map((offer) => ({
       ...offer,
       revealed: revealedIds.has(offer.id),
     }));
@@ -2074,6 +2085,20 @@ export class EconomyService {
           (offer.skin && offer.skin.blocked)
         )
           throw new ConflictException('Item bloqueado.');
+        if (offer.skin) {
+          const ownsCard = await tx.userCard.findFirst({
+            where: {
+              userId,
+              cardId: offer.skin.cardId,
+              status: 'ACTIVE',
+            },
+            select: { id: true },
+          });
+          if (!ownsCard)
+            throw new ConflictException(
+              'A carta correspondente à skin não está na coleção.',
+            );
+        }
         await this.spend(
           tx,
           userId,
@@ -2620,6 +2645,11 @@ export class EconomyService {
 
   private async generateNightOffers(userId: string, day: Date) {
     const { config } = await this.currentVersion(this.prisma);
+    const ownedCards = await this.prisma.userCard.findMany({
+      where: { userId, status: 'ACTIVE' },
+      select: { cardId: true },
+    });
+    const ownedCardIds = [...new Set(ownedCards.map((item) => item.cardId))];
     const [cards, skins] = await Promise.all([
       this.prisma.card.findMany({
         where: {
@@ -2631,6 +2661,7 @@ export class EconomyService {
         where: {
           active: true,
           blocked: false,
+          cardId: { in: ownedCardIds },
           id: { notIn: await this.inactiveEventItems(this.prisma, 'skinIds') },
         },
       }),
