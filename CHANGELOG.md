@@ -1,3 +1,10 @@
+# [1.43.0](https://github.com/1arley/animesice-back/compare/v1.42.0...v1.43.0) (2026-10-11)
+
+
+### Features
+
+* **gacha:economy:** add night market status endpoint ([826f6d7](https://github.com/1arley/animesice-back/commit/826f6d7ec4ce89f32da7c48479f3e2f7660fc429))
+
 # [1.42.0](https://github.com/1arley/animesice-back/compare/v1.41.0...v1.42.0) (2026-10-11)
 
 
