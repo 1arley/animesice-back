@@ -125,6 +125,7 @@ model User {
   role                      Role                       @default(USER)
   isVerified                Boolean                    @default(false)
   avatar                    String?
+  profileCover              String?
   bio                       String?
   myAnimeList               String?
   suspendedUntil            DateTime?
@@ -165,6 +166,7 @@ model User {
   favoriteCollectionId      String?
   favoriteCollection        GachaCollection?           @relation("FavoriteGachaCollection", fields: [favoriteCollectionId], references: [id], onDelete: SetNull)
   pinnedCollectionIds       String[]                   @default([])
+  favoriteGachaCardIds      String[]                   @default([])
   gachaDiscoveries          GachaCardDiscovery[]
   gachaCollectionProgress   GachaCollectionProgress[]
   gachaRollDays             GachaRollDay[]

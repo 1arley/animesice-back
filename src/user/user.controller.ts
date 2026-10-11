@@ -41,6 +41,7 @@ import {
   ALLOWED_IMAGE_MIMETYPES,
   AvatarService,
   MAX_AVATAR_BYTES,
+  MAX_PROFILE_COVER_BYTES,
 } from '@/upload/avatar.service';
 import { backendOrigin } from '@/common/backend-origin';
 import type { AuthenticatedRequest } from '@/common/interfaces/request.interface';
@@ -202,5 +203,62 @@ export class UserController {
   @ApiOperation({ summary: 'Remover avatar do usuário (volta ao fallback)' })
   async deleteAvatar(@Req() req: AuthenticatedRequest) {
     return this.userService.clearAvatar(req.user.id);
+  }
+
+  @Post('me/profile-cover')
+  @HttpCode(HttpStatus.OK)
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: { file: { type: 'string', format: 'binary' } },
+      required: ['file'],
+    },
+  })
+  @ApiOperation({ summary: 'Upload da capa do perfil (JPG/PNG, máx. 1MB)' })
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: MAX_PROFILE_COVER_BYTES },
+      fileFilter: (_req, file, cb) => {
+        if (
+          !ALLOWED_IMAGE_MIMETYPES.includes(file.mimetype?.toLowerCase() ?? '')
+        ) {
+          cb(
+            new BadRequestException(
+              'Tipo de arquivo inválido. Aceitos: JPG, PNG.',
+            ),
+            false,
+          );
+          return;
+        }
+        cb(null, true);
+      },
+    }),
+  )
+  async uploadProfileCover(
+    @Req() req: AuthenticatedRequest,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file) throw new BadRequestException('Arquivo de imagem não enviado.');
+    await this.avatars.saveProfileCover(
+      req.user.id,
+      file.buffer,
+      file.mimetype,
+    );
+    const prefix = (this.config.get<string>('API_PREFIX') ?? 'api').replace(
+      /^\/|\/$/g,
+      '',
+    );
+    const path = `/profile-covers/${req.user.id}?v=${Date.now()}`;
+    const profileCover = `${backendOrigin(req, this.trustProxy, this.config)}/${prefix}${path}`;
+    return this.userService.setProfileCover(req.user.id, profileCover);
+  }
+
+  @Delete('me/profile-cover')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Remover a capa personalizada do perfil' })
+  async deleteProfileCover(@Req() req: AuthenticatedRequest) {
+    await this.avatars.deleteProfileCover(req.user.id);
+    return this.userService.setProfileCover(req.user.id, null);
   }
 }

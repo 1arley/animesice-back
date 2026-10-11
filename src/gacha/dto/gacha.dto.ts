@@ -109,6 +109,15 @@ export class GachaCollectionPreferencesDto {
   pinnedCollectionIds?: string[];
 }
 
+export class SetFavoriteGachaCardsDto {
+  @ApiProperty({ type: [String], maxItems: 5 })
+  @IsArray()
+  @ArrayMaxSize(5)
+  @ArrayUnique()
+  @IsUUID(undefined, { each: true })
+  userCardIds!: string[];
+}
+
 export class GachaEngagementPilotDto {
   @ApiProperty({ minimum: 0, maximum: 100 })
   @IsInt()

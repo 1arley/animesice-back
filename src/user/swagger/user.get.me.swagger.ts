@@ -21,6 +21,7 @@ export function ApiGetUserMe() {
           id: { type: 'string' },
           email: { type: 'string' },
           role: { type: 'string' },
+          profileCover: { type: 'string', nullable: true },
         },
       },
     }),

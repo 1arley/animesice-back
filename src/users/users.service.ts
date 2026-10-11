@@ -54,6 +54,7 @@ export class UsersService {
         name: true,
         userName: true,
         avatar: true,
+        profileCover: true,
         bio: true,
         myAnimeList: true,
         createdAt: true,

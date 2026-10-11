@@ -30,6 +30,7 @@ import {
   NewTradeDto,
   RerollGachaCardDto,
   SetFeaturedGachaCardDto,
+  SetFavoriteGachaCardsDto,
   UpsertCardWishlistDto,
   UpsertSetWishlistDto,
   WishlistPrivacyDto,
@@ -618,6 +619,31 @@ export class GachaController {
   @Get('featured/:userId')
   publicFeatured(@Param('userId') userId: string) {
     return this.gachaService.publicFeatured(userId);
+  }
+
+  @Get('profile-showcase/:userId')
+  profileShowcase(@Param('userId') userId: string) {
+    return this.gachaService.profileShowcase(userId);
+  }
+
+  @Get('profile/favorites')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  favoriteProfileCards(@Req() req: AuthenticatedRequest) {
+    return this.gachaService.favoriteProfileCards(req.user.id);
+  }
+
+  @Patch('profile/favorites')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  setFavoriteProfileCards(
+    @Req() req: AuthenticatedRequest,
+    @Body() dto: SetFavoriteGachaCardsDto,
+  ) {
+    return this.gachaService.setFavoriteProfileCards(
+      req.user.id,
+      dto.userCardIds,
+    );
   }
 
   @Get('encyclopedia')

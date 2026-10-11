@@ -2822,6 +2822,115 @@ export class GachaService {
     };
   }
 
+  async favoriteProfileCards(userId: string) {
+    const user = await this.prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      select: { favoriteGachaCardIds: true },
+    });
+    const owned = await this.prisma.userCard.findMany({
+      where: {
+        id: { in: user.favoriteGachaCardIds },
+        userId,
+        status: 'ACTIVE',
+      },
+      select: { id: true },
+    });
+    const ownedIds = new Set(owned.map(({ id }) => id));
+    return user.favoriteGachaCardIds.filter((id) => ownedIds.has(id));
+  }
+
+  async setFavoriteProfileCards(userId: string, userCardIds: string[]) {
+    if (
+      userCardIds.length > 5 ||
+      new Set(userCardIds).size !== userCardIds.length
+    ) {
+      throw new BadRequestException('Escolha até cinco cartas diferentes.');
+    }
+    const owned = userCardIds.length
+      ? await this.prisma.userCard.count({
+          where: { id: { in: userCardIds }, userId, status: 'ACTIVE' },
+        })
+      : 0;
+    if (owned !== userCardIds.length) {
+      throw new BadRequestException(
+        'Todas as cartas precisam estar na sua coleção.',
+      );
+    }
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { favoriteGachaCardIds: userCardIds },
+    });
+    return userCardIds;
+  }
+
+  async profileShowcase(userId: string) {
+    const [privacy, user] = await Promise.all([
+      this.prisma.privacySettings.findUnique({
+        where: { userId },
+        select: { profilePublic: true, showGacha: true },
+      }),
+      this.prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+          favoriteGachaCardIds: true,
+          pinnedCollectionIds: true,
+          favoriteCollection: { select: { id: true, name: true, slug: true } },
+        },
+      }),
+    ]);
+    if (!user) throw new NotFoundException('Usuário não encontrado.');
+    if (privacy && (!privacy.profilePublic || !privacy.showGacha)) return null;
+
+    const [cards, completedCollections] = await Promise.all([
+      user.favoriteGachaCardIds.length
+        ? this.prisma.userCard.findMany({
+            where: {
+              id: { in: user.favoriteGachaCardIds },
+              userId,
+              status: 'ACTIVE',
+            },
+            select: PULL_SELECT,
+          })
+        : [],
+      user.pinnedCollectionIds.length
+        ? this.prisma.gachaCollectionProgress.findMany({
+            where: {
+              userId,
+              collectionId: { in: user.pinnedCollectionIds },
+              reward100At: { not: null },
+            },
+            select: {
+              collectionId: true,
+              version: true,
+              collection: { select: { name: true } },
+            },
+          })
+        : [],
+    ]);
+    const cardsById = new Map(cards.map((card) => [card.id, card]));
+    const medals = completedCollections
+      .filter((row) => user.pinnedCollectionIds.includes(row.collectionId))
+      .sort(
+        (a, b) =>
+          user.pinnedCollectionIds.indexOf(a.collectionId) -
+          user.pinnedCollectionIds.indexOf(b.collectionId),
+      )
+      .slice(0, 3)
+      .map((row) => ({
+        id: row.collectionId,
+        name: row.collection.name,
+        version: row.version,
+      }));
+    return {
+      cards: user.favoriteGachaCardIds.flatMap((id) => {
+        const card = cardsById.get(id);
+        return card ? [presentPull(card)] : [];
+      }),
+      collection: user.favoriteCollection,
+      medals,
+    };
+  }
+
   /**
    * Catálogo completo (pool por anime) com flag de posse do usuário — usado
    * pela enciclopédia "quais faltam" da coleção. Sem usuário, tudo owned=false.

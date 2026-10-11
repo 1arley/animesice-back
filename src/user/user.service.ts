@@ -200,6 +200,7 @@ export class UserService {
         userName: true,
         role: true,
         avatar: true,
+        profileCover: true,
         bio: true,
         myAnimeList: true,
         createdAt: true,
@@ -222,6 +223,7 @@ export class UserService {
           userName: true,
           role: true,
           avatar: true,
+          profileCover: true,
           bio: true,
           myAnimeList: true,
           createdAt: true,
@@ -234,5 +236,25 @@ export class UserService {
     ]);
 
     return user;
+  }
+
+  async setProfileCover(userId: string, profileCover: string | null) {
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: { profileCover },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        userName: true,
+        role: true,
+        avatar: true,
+        profileCover: true,
+        bio: true,
+        myAnimeList: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
   }
 }
