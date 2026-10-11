@@ -8,6 +8,9 @@ export const PRIZE_CATEGORIES = [
   'SKIN',
   'KEY',
   'CARD_BACK',
+  'RARE_BOX',
+  'KEY_RARE_BOX',
+  'KEY_PREMIUM_BOX',
 ] as const;
 export type PrizeCategory = (typeof PRIZE_CATEGORIES)[number];
 
@@ -15,9 +18,9 @@ export const PRIZE_QUALITIES = ['BASIC', 'RARE', 'EPIC', 'LEGENDARY'] as const;
 export type PrizeQuality = (typeof PRIZE_QUALITIES)[number];
 
 export const BOX_PRICE: Record<BoxTier, number> = {
-  COMMON: 2_500,
-  RARE: 5_500,
-  PREMIUM: 8_500,
+  COMMON: 500,
+  RARE: 1_500,
+  PREMIUM: 5_000,
 };
 
 export const KEY_PRICE = 1_500;
@@ -33,28 +36,37 @@ export const CATEGORY_WEIGHTS: Record<
   Record<PrizeCategory, number>
 > = {
   COMMON: {
-    CRYSTAL: 50,
-    SPIN_RESET: 30,
+    CRYSTAL: 35,
+    SPIN_RESET: 15,
     CARD: 8,
-    SKIN: 5,
-    KEY: 5,
+    SKIN: 25,
+    KEY: 0,
     CARD_BACK: 2,
+    RARE_BOX: 10,
+    KEY_RARE_BOX: 4,
+    KEY_PREMIUM_BOX: 1,
   },
   RARE: {
-    CRYSTAL: 40,
-    SPIN_RESET: 25,
-    CARD: 14,
-    SKIN: 9,
-    KEY: 7,
-    CARD_BACK: 5,
+    CRYSTAL: 9,
+    SPIN_RESET: 20,
+    CARD: 25,
+    SKIN: 30,
+    KEY: 0,
+    CARD_BACK: 12,
+    RARE_BOX: 0,
+    KEY_RARE_BOX: 0,
+    KEY_PREMIUM_BOX: 4,
   },
   PREMIUM: {
-    CRYSTAL: 30,
-    SPIN_RESET: 20,
-    CARD: 22,
-    SKIN: 14,
-    KEY: 8,
-    CARD_BACK: 6,
+    CRYSTAL: 5,
+    SPIN_RESET: 25,
+    CARD: 35,
+    SKIN: 25,
+    KEY: 0,
+    CARD_BACK: 10,
+    RARE_BOX: 0,
+    KEY_RARE_BOX: 0,
+    KEY_PREMIUM_BOX: 0,
   },
 };
 
@@ -63,6 +75,24 @@ export const QUALITY_WEIGHTS: Record<BoxTier, Record<PrizeQuality, number>> = {
   RARE: { BASIC: 40, RARE: 35, EPIC: 20, LEGENDARY: 5 },
   PREMIUM: { BASIC: 20, RARE: 35, EPIC: 30, LEGENDARY: 15 },
 };
+
+export function prizeQuality(
+  tier: BoxTier,
+  category: PrizeCategory,
+  weights: Record<BoxTier, Record<PrizeQuality, number>>,
+  random = Math.random(),
+): PrizeQuality {
+  const selectedWeights =
+    tier === 'PREMIUM' && category === 'CARD'
+      ? {
+          BASIC: 0,
+          RARE: 0,
+          EPIC: weights[tier].EPIC,
+          LEGENDARY: weights[tier].LEGENDARY,
+        }
+      : weights[tier];
+  return weightedPick(selectedWeights, random);
+}
 
 export const CARD_FLOOR: Record<string, number> = {
   COMUM: 500,
@@ -150,15 +180,19 @@ export function prizeAmount(
   category: PrizeCategory,
   tier: BoxTier,
   quality: PrizeQuality,
+  random = Math.random(),
 ): number {
+  if (category === 'CRYSTAL') return crystalPrizeAmount(tier, random);
   const qualityIndex = PRIZE_QUALITIES.indexOf(quality);
-  if (category === 'CRYSTAL') {
-    return Math.round(
-      BOX_TOTAL_COST[tier] * [0.2, 0.3, 0.4, 0.5][qualityIndex]!,
-    );
-  }
   if (category === 'KEY') return [1, 1, 2, 3][qualityIndex]!;
   return 1;
+}
+
+export function crystalPrizeAmount(tier: BoxTier, random = Math.random()) {
+  const bounded = Math.min(Math.max(random, 0), 0.999999999999);
+  if (tier === 'COMMON') return 200 + Math.floor(bounded * 14) * 100;
+  const [min, max] = tier === 'RARE' ? [800, 2_500] : [2_500, 10_000];
+  return min + Math.floor(bounded * (max - min + 1));
 }
 
 export function officialPrice(floor: number, median: number | null): number {

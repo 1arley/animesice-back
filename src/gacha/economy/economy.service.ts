@@ -21,6 +21,7 @@ import {
   PrizeCategory,
   PrizeQuality,
   prizeAmount,
+  prizeQuality,
   weightedPick,
 } from './economy.rules';
 import {
@@ -924,9 +925,10 @@ export class EconomyService {
         const category = loyaltyGuaranteed
           ? 'CARD'
           : weightedPick(config.box_category_weights[tier]);
-        const quality = loyaltyGuaranteed
-          ? weightedPick({ RARE: 55, EPIC: 35, LEGENDARY: 10 })
-          : weightedPick(config.box_quality_weights[tier]);
+        const quality =
+          loyaltyGuaranteed && tier !== 'PREMIUM'
+            ? weightedPick({ RARE: 55, EPIC: 35, LEGENDARY: 10 })
+            : prizeQuality(tier, category, config.box_quality_weights);
         const reward = await this.grantPrize(
           tx,
           userId,
@@ -2133,13 +2135,7 @@ export class EconomyService {
     quality: PrizeQuality,
     config: EconomyConfig,
   ): Promise<{ amount: number; data: Prisma.InputJsonValue }> {
-    const amount =
-      category === 'CRYSTAL'
-        ? Math.round(
-            (config.box_prices[tier] + config.key_price) *
-              { BASIC: 0.2, RARE: 0.3, EPIC: 0.4, LEGENDARY: 0.5 }[quality],
-          )
-        : prizeAmount(category, tier, quality);
+    const amount = prizeAmount(category, tier, quality);
     if (category === 'CRYSTAL') {
       await this.credit(
         tx,
@@ -2160,13 +2156,38 @@ export class EconomyService {
       });
       return { amount, data: { category, amount } };
     }
+    if (category === 'RARE_BOX') {
+      await tx.gachaInventory.upsert({
+        where: { userId },
+        create: { userId, rareBoxes: 1 },
+        update: { rareBoxes: { increment: 1 } },
+      });
+      return { amount: 1, data: { category, tier: 'RARE', amount: 1 } };
+    }
+    if (category === 'KEY_RARE_BOX' || category === 'KEY_PREMIUM_BOX') {
+      const boxField =
+        category === 'KEY_RARE_BOX' ? 'rareBoxes' : 'premiumBoxes';
+      await tx.gachaInventory.upsert({
+        where: { userId },
+        create: { userId, keys: 1, [boxField]: 1 },
+        update: { keys: { increment: 1 }, [boxField]: { increment: 1 } },
+      });
+      return { amount: 1, data: { category, keys: 1, [boxField]: 1 } };
+    }
     if (category === 'CARD') {
       const card = await this.mintCard(tx, userId, quality, config);
       return { amount: 1, data: { category, ...card } };
     }
     if (category === 'SKIN') {
-      const skin = await this.mintSkin(tx, userId, quality);
-      return { amount: 1, data: { category, ...skin } };
+      const skins = [];
+      const count = tier === 'PREMIUM' ? 2 : 1;
+      for (let index = 0; index < count; index++) {
+        skins.push(await this.mintSkin(tx, userId, quality, index));
+      }
+      return {
+        amount: count,
+        data: count === 1 ? { category, ...skins[0] } : { category, skins },
+      };
     }
     const cardBack = await this.grantCardBack(tx, userId, quality);
     return { amount: 1, data: { category, ...cardBack } };
@@ -2231,7 +2252,12 @@ export class EconomyService {
     };
   }
 
-  private async mintSkin(tx: Tx, userId: string, quality: PrizeQuality) {
+  private async mintSkin(
+    tx: Tx,
+    userId: string,
+    quality: PrizeQuality,
+    index: number,
+  ) {
     const skins = await tx.gachaSkin.findMany({
       where: {
         active: true,
@@ -2240,7 +2266,9 @@ export class EconomyService {
         id: { notIn: await this.inactiveEventItems(tx, 'skinIds') },
       },
     });
-    const skinSeed = this.seededRandom(`mint-skin:${userId}:${Date.now()}`);
+    const skinSeed = this.seededRandom(
+      `mint-skin:${userId}:${Date.now()}:${index}`,
+    );
     const skin = skins[Math.floor(skinSeed * skins.length)];
     if (!skin) throw new ConflictException('Pool de skins vazio.');
     const copy = await tx.userGachaSkin.create({

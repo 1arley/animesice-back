@@ -119,12 +119,12 @@ describe('EconomyService safeguards', () => {
     expect(result.opening).toMatchObject({
       economyVersionId: 'version-9',
       category: 'CRYSTAL',
-      amount: 1000,
+      amount: 200,
     });
     expect(db.gachaOpening.create).toHaveBeenCalledTimes(1);
     expect(db.crystalEvent.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        data: expect.objectContaining({ delta: 1000 }),
+        data: expect.objectContaining({ delta: 200 }),
       }),
     );
     expect(db.gachaInventory.updateMany).toHaveBeenCalledWith(
@@ -135,7 +135,7 @@ describe('EconomyService safeguards', () => {
   });
 
   it('credits a spin reset reward to the inventory', async () => {
-    jest.spyOn(Math, 'random').mockReturnValue(0.51);
+    jest.spyOn(Math, 'random').mockReturnValue(0.4);
 
     const result = await service.openBox('u1', 'COMMON');
 
@@ -145,6 +145,40 @@ describe('EconomyService safeguards', () => {
       create: { userId: 'u1', spinResets: 1 },
       update: { spinResets: { increment: 1 } },
     });
+  });
+
+  it('grants a key and rare box together from a common box', async () => {
+    jest.spyOn(Math, 'random').mockReturnValue(0.97);
+
+    const result = await service.openBox('u1', 'COMMON');
+
+    expect(result.reward).toMatchObject({
+      category: 'KEY_RARE_BOX',
+      keys: 1,
+      rareBoxes: 1,
+    });
+    expect(db.gachaInventory.upsert).toHaveBeenCalledWith({
+      where: { userId: 'u1' },
+      create: { userId: 'u1', keys: 1, rareBoxes: 1 },
+      update: { keys: { increment: 1 }, rareBoxes: { increment: 1 } },
+    });
+  });
+
+  it('grants two skins from a premium box', async () => {
+    jest.spyOn(Math, 'random').mockReturnValue(0.7);
+    db.gachaSkin.findMany.mockResolvedValue([
+      { id: 'skin-1', name: 'Skin', imageUrl: '/skin.png', rarity: 'EPIC' },
+    ]);
+    db.userGachaSkin.create.mockImplementation(
+      ({ data }: { data: Record<string, unknown> }) =>
+        Promise.resolve({ id: `copy-${String(data.skinId)}` }),
+    );
+
+    const result = await service.openBox('u1', 'PREMIUM');
+
+    expect(result.reward).toMatchObject({ category: 'SKIN', skins: [{}, {}] });
+    expect(result.opening).toMatchObject({ category: 'SKIN', amount: 2 });
+    expect(db.userGachaSkin.create).toHaveBeenCalledTimes(2);
   });
 
   it('rejects invalid economic snapshots rather than producing invalid rewards', () => {

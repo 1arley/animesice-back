@@ -167,5 +167,11 @@ export function economyConfig(snapshot: Prisma.JsonValue): EconomyConfig {
     )
   )
     throw new ConflictException('Pesos econômicos vazios.');
+  if (
+    merged.box_quality_weights.PREMIUM.EPIC +
+      merged.box_quality_weights.PREMIUM.LEGENDARY <=
+    0
+  )
+    throw new ConflictException('Cartas Premium precisam de qualidade épica+.');
   return merged;
 }

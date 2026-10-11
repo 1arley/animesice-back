@@ -1637,6 +1637,9 @@ enum GachaPrizeCategory {
   SKIN
   KEY
   CARD_BACK
+  RARE_BOX
+  KEY_RARE_BOX
+  KEY_PREMIUM_BOX
 }
 
 enum GachaPrizeQuality {
