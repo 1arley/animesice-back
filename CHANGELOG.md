@@ -1,3 +1,11 @@
+# [1.42.0](https://github.com/1arley/animesice-back/compare/v1.41.0...v1.42.0) (2026-10-11)
+
+
+### Features
+
+* **perfil:** capa de perfil e vitrine de cartas no perfil público ([55754b6](https://github.com/1arley/animesice-back/commit/55754b6544bd6092b3f507562d654cd7aa01493e))
+* **perfil:** recorte, seções ordenadas e fundo no showcase do perfil ([9dcfe15](https://github.com/1arley/animesice-back/commit/9dcfe152643d0bffbcb12aa4e0a7def3a6a68ace))
+
 # [1.41.0](https://github.com/1arley/animesice-back/compare/v1.40.1...v1.41.0) (2026-10-11)
 
 
