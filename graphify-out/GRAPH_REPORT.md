@@ -6,18 +6,18 @@
 - Unclassified: 20 file(s) not represented in the graph (top: (none) 15, .toml 2, .example 1)
 
 ## Summary
-- 4113 nodes · 9895 edges · 241 communities (173 shown, 68 thin omitted)
+- 4141 nodes · 9889 edges · 265 communities (172 shown, 93 thin omitted)
 - Extraction: 95% EXTRACTED · 5% INFERRED · 0% AMBIGUOUS · INFERRED: 533 edges (avg confidence: 0.85)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `e2d35e0a`
+- Built from commit: `0090157e`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
 ## Community Hubs (Navigation)
 - GachaService
-- .media
+- embed.controller.ts
 - RoomGateway
 - gacha.controller.ts
 - admin.controller.ts
@@ -26,49 +26,49 @@
 - @nestjs/common
 - gacha.service.ts
 - "User"
-- ModerationService
+- Roles
 - scripts
-- AdminController
+- Audit
 - 🔒 Implementação de Auditoria - Relatório Completo
-- CommentController
-- scrape.service.ts
+- extract.ts
 - HealthMonitor
 - e2e.setup.ts
 - "Anime"
-- AuthenticatedRequest
+- "Post"
 - UserService
 - ScrapeService
 - UsersService
-- watchtower.types.ts
-- streaming.service.ts
+- watchtower.module.ts
+- scrape.service.ts
 - GachaConfigService
 - MeService
 - devDependencies
 - event-waits.ts
-- BlogService
+- blog.controller.ts
 - EmbedService
+- ref_express
 - economy.controller.ts
 - main.ts
 - WatchtowerScheduler
-- AnimeService
-- community.controller.ts
+- anime.service.ts
+- CommunityService
 - CHANGELOG.md
-- user-anime-list.service.ts
+- UpdateUserAnimeListDto
 - user.controller.ts
 - ModerateUserDto
 - dependencies
 - EconomyService
 - compilerOptions
-- GachaController
-- .generateNightOffers
+- AuthenticatedRequest
+- WishlistService
 - 🔒 Resumo de Segurança - Proteção de Dados de Usuários
 - rating.controller.ts
-- RecommendationService
-- AuthController
+- recommendation.service.ts
+- FavoriteService
 - GenreService
 - SocialService
 - jwt-refresh.strategy.ts
-- extract.ts
+- BlogController
 - SettingsController
 - WatchtowerController
 - main.rs
@@ -76,7 +76,7 @@
 - CrystalAccountingService
 - anilist.service.ts
 - README.md
-- .create
+- CrystalPurchaseService
 - 📊 Fluxo de Auditoria - Visualização
 - 20260806190605_community_features/migration.sql
 - @nestjs/swagger
@@ -89,14 +89,14 @@
 - WorkerService
 - CreateAnimeDto
 - [1.8.0](https://github.com/1arley/animesice-back/compare/v1.7.6...v1.8.0) (2026-08-12)
-- PrismaService
+- JobsService
 - backfill-enrich-anilist.ts
-- blog.controller.ts
+- AuditService
 - 20260806214902_community_feedback_requests/migration.sql
 - "GachaMarketOffer"
 - seed-animefire.ts
 - sync-status-mal.ts
-- NotificationController
+- MarketQueryDto
 - BrowserPool
 - [1.1.0](https://github.com/1arley/animesice-back/compare/v1.0.5...v1.1.0) (2026-08-08)
 - CatalogScanner
@@ -106,25 +106,24 @@
 - seed-gacha.ts
 - Guia do Administrador
 - AGENTS.md
-- main
 - pr-description.mjs
 - 20260812200909_add_social_posts_and_follow/migration.sql
-- season-discovery.service.ts
+- AniListClient
 - request.interface.ts
-- worker.service.ts
+- schedule-sync.service.ts
 - [1.2.0](https://github.com/1arley/animesice-back/compare/v1.1.5...v1.2.0) (2026-08-09)
 - "GachaTrade"
 - "GachaCollection"
 - ExtractionJobService
 - AppService
 - AuditController
-- MetricsService
+- MetricsController
 - [1.25.0](https://github.com/1arley/animesice-back/compare/v1.24.4...v1.25.0) (2026-08-26)
 - Docker
 - 20260806213653_social_moderation_pipeline/migration.sql
 - watch-history.controller.ts
 - pg
-- dayKey
+- http-exception.filter.ts
 - StreamingService
 - 20260806220000_add_room/migration.sql
 - 20260907120000_gacha_waifu_v1/migration.sql
@@ -133,8 +132,8 @@
 - allowScripts
 - 20260806210804_watchlist_and_notification_prefs/migration.sql
 - 20260809120000_anime_watchtower/migration.sql
-- gacha.service.spec.ts
-- anime.service.ts
+- backfill-anilist-id.ts
+- constants.ts
 - LoadHistoryDto
 - overrides
 - 20260917140000_source_specific_mappings/migration.sql
@@ -145,18 +144,18 @@
 - semantic-release-npm/package.json
 - Environment Variables
 - 🔁 CI/CD
-- presentPull
+- backfill-skin-images.ts
 - [1.21.0](https://github.com/1arley/animesice-back/compare/v1.20.3...v1.21.0) (2026-08-20)
-- users.controller.ts
-- publisher.service.ts
+- JwtRefreshAuthGuard
+- extractor.service.ts
 - "AdminAuditLog"
 - 20260821210000_add_blog_posts/migration.sql
 - 20260910005000_stream_extraction_jobs/migration.sql
 - 20260917120000_add_gacha_card_admin_controls/migration.sql
 - 20260917130000_gacha_rarities/migration.sql
 - index.js
-- moderation.service.spec.ts
-- social.service.ts
+- ModerationService
+- VerifyEmailDto
 - "EmailChangeToken"
 - "PasswordResetToken"
 - "EmailVerificationCode"
@@ -171,18 +170,17 @@
 - 20260920130000_gacha_config/migration.sql
 - [1.28.0](https://github.com/1arley/animesice-back/compare/v1.27.2...v1.28.0) (2026-09-09)
 - animefire-scraper
-- room.gateway.spec.ts
+- RoomService
 - Database
 - Deploy
 - Husky & Semantic Release
-- main
 - API Documentation (Swagger)
 - Code Conventions
 - Language
 - Gerenciando a versão do Node.js com NVM
 - Prisma ORM
-- .spin
-- @prisma/client
+- ChangeEmailDto
+- PrismaService
 - [1.13.0](https://github.com/1arley/animesice-back/compare/v1.12.1...v1.13.0) (2026-08-12)
 - [1.31.0](https://github.com/1arley/animesice-back/compare/v1.30.1...v1.31.0) (2026-10-03)
 - [1.33.0](https://github.com/1arley/animesice-back/compare/v1.32.1...v1.33.0) (2026-10-03)
@@ -194,18 +192,17 @@
 - PULL_REQUEST_TEMPLATE.md
 - SendMessageDto
 - [1.17.0](https://github.com/1arley/animesice-back/compare/v1.16.1...v1.17.0) (2026-08-14)
-- eslint.config.mjs
+- ChangePasswordDto
 - [1.24.0](https://github.com/1arley/animesice-back/compare/v1.23.1...v1.24.0) (2026-08-22)
 - [1.26.0](https://github.com/1arley/animesice-back/compare/v1.25.1...v1.26.0) (2026-09-08)
-- .updateSiteSettings
+- ResetPasswordDto
 - [1.29.0](https://github.com/1arley/animesice-back/compare/v1.28.0...v1.29.0) (2026-09-19)
-- setup-test.js
-- CreateEpisodeDto
+- UpdateProfileDto
+- wishlist.service.ts
 - backfill-meusanimes-sources.ts
-- gacha-config.service.spec.ts
+- UpdateProfileMetaDto
 - [1.29.0](https://github.com/1arley/animesice-back/compare/v1.28.0...v1.29.0) (2026-09-21)
 - [1.29.0](https://github.com/1arley/animesice-back/compare/v1.28.0...v1.29.0) (2026-09-22)
-- prisma.service.spec.ts
 - [1.29.0](https://github.com/1arley/animesice-back/compare/v1.28.0...v1.29.0) (2026-09-25)
 - [1.29.0](https://github.com/1arley/animesice-back/compare/v1.28.0...v1.29.0) (2026-09-27)
 - [1.29.0](https://github.com/1arley/animesice-back/compare/v1.28.0...v1.29.0) (2026-09-28)
@@ -213,7 +210,6 @@
 - [1.4.0](https://github.com/1arley/animesice-back/compare/v1.3.1...v1.4.0) (2026-08-10)
 - [1.6.0](https://github.com/1arley/animesice-back/compare/v1.5.1...v1.6.0) (2026-08-10)
 - [1.29.0](https://github.com/1arley/animesice-back/compare/v1.28.0...v1.29.0) (2026-09-20)
-- bugs
 - prisma
 - [1.20.0](https://github.com/1arley/animesice-back/compare/v1.19.0...v1.20.0) (2026-08-17)
 - [1.27.0](https://github.com/1arley/animesice-back/compare/v1.26.0...v1.27.0) (2026-09-08)
@@ -221,7 +217,6 @@
 - [1.29.0](https://github.com/1arley/animesice-back/compare/v1.28.0...v1.29.0) (2026-09-20)
 - [1.29.0](https://github.com/1arley/animesice-back/compare/v1.28.0...v1.29.0) (2026-09-22)
 - [1.34.0](https://github.com/1arley/animesice-back/compare/v1.33.1...v1.34.0) (2026-10-07)
-- "GachaPointEvent"
 - index.ts
 - [1.15.0](https://github.com/1arley/animesice-back/compare/v1.14.0...v1.15.0) (2026-08-13)
 - [1.7.0](https://github.com/1arley/animesice-back/compare/v1.6.0...v1.7.0) (2026-08-10)
@@ -234,65 +229,69 @@
 2. `AuthenticatedRequest` - 195 edges
 3. `PrismaService` - 123 edges
 4. `GachaService` - 122 edges
-5. `"Post"` - 121 edges
-6. `GachaController` - 99 edges
+5. `GachaController` - 99 edges
+6. `"Post"` - 90 edges
 7. `EconomyService` - 83 edges
 8. `@prisma/client` - 82 edges
-9. `Roles()` - 75 edges
-10. `@nestjs/swagger` - 68 edges
+9. `@nestjs/swagger` - 68 edges
+10. `"User"` - 64 edges
 
 ## Surprising Connections (you probably didn't know these)
-- `Scraper Rust (binário único)` --references--> `probeMediaUrlDead()`  [INFERRED]
-  docs/SCRAPING.md → src/common/media-probe.ts
 - `animesonline` --references--> `ScrapeService`  [INFERRED]
   docs/SCRAPING.md → src/embed/scrape/scrape.service.ts
 - `Prisma` --references--> `PrismaService`  [INFERRED]
   AGENTS.md → src/prisma/prisma.service.ts
-- `Architecture` --references--> `AuditInterceptor`  [INFERRED]
-  AGENTS.md → src/common/interceptors/audit.interceptor.ts
+- `Scraper Rust (binário único)` --references--> `probeMediaUrlDead()`  [INFERRED]
+  docs/SCRAPING.md → src/common/media-probe.ts
+- `Provider Orchestration Layer (scraping/embed)` --references--> `Extractor`  [INFERRED]
+  docs/ARCHITECTURE.md → src/watchtower/extractor.service.ts
 - `Architecture` --references--> `PrismaModule`  [INFERRED]
   AGENTS.md → src/prisma/prisma.module.ts
 
 ## Import Cycles
 - None detected.
 
-## Communities (241 total, 68 thin omitted)
+## Communities (265 total, 93 thin omitted)
 
 ### Community 0 - "GachaService"
 Cohesion: 0.05
-Nodes (3): gachaPilotBucket(), GachaService, normalizeLoadout()
+Nodes (8): fmtTrade(), gachaPilotBucket(), GachaService, normalizeLoadout(), presentPull(), checkMigration(), main(), main()
+
+### Community 1 - "embed.controller.ts"
+Cohesion: 0.12
+Nodes (5): EmbedProxyDto, SCRAPE_SOURCES, ScrapeSourceId, EmbedController, FORBIDDEN_RESPONSE_HEADERS
 
 ### Community 2 - "RoomGateway"
-Cohesion: 0.05
-Nodes (6): CreateRoomDto, RoomController, RoomGateway, RoomScheduler, RoomService, generateRoomSlug()
+Cohesion: 0.07
+Nodes (4): CreateRoomDto, RoomController, RoomGateway, generateRoomSlug()
 
 ### Community 3 - "gacha.controller.ts"
-Cohesion: 0.06
-Nodes (31): ApplyGachaSkinDto, ApplyRankingDto, BurnGachaCardDto, BuyCosmeticDto, ClaimGachaDto, CounterTradeDto, CreateCrystalCodeDto, CreateGachaSkinDto (+23 more)
+Cohesion: 0.13
+Nodes (27): ApplyGachaSkinDto, ApplyRankingDto, BurnGachaCardDto, BuyCosmeticDto, ClaimGachaDto, CounterTradeDto, CreateCrystalCodeDto, CreateGachaSkinDto (+19 more)
 
 ### Community 4 - "admin.controller.ts"
-Cohesion: 0.22
-Nodes (4): CreateExternalAnimeDto, CreateGenreDto, UpdateAnimeDto, UpdateEpisodeDto
+Cohesion: 0.11
+Nodes (6): CreateExternalAnimeDto, CreateGenreDto, ImportAnimeDto, UpdateAnimeDto, CreateEpisodeDto, UpdateEpisodeDto
 
 ### Community 5 - "AuthService"
-Cohesion: 0.07
-Nodes (7): resend, AuthService, RegisterDto, escapeHtml(), MailPayload, MailService, mockSend
+Cohesion: 0.06
+Nodes (6): AuthController, emailSendAllowed(), AuthService, LoginDto, RegisterDto, escapeHtml()
 
 ### Community 6 - "package.json"
-Cohesion: 0.04
-Nodes (50): author, description, homepage, keywords, license, main, name, private (+42 more)
+Cohesion: 0.03
+Nodes (60): author, bugs, url, description, homepage, keywords, license, main (+52 more)
 
 ### Community 7 - "@nestjs/common"
-Cohesion: 0.07
-Nodes (22): @nestjs/common, AdminModule, AnimeModule, AuthModule, JwtStrategy, BlogModule, CommentModule, EmbedModule (+14 more)
+Cohesion: 0.06
+Nodes (27): @nestjs/common, @nestjs/schedule, @nestjs/throttler, AdminModule, AnimeModule, AuthModule, BillingModule, CommentModule (+19 more)
 
 ### Community 8 - "gacha.service.ts"
-Cohesion: 0.10
-Nodes (22): main(), parseArgs(), prisma, inactiveEventIds(), cardValue(), conditionMult(), GACHA_FOILS, GACHA_TIERS (+14 more)
+Cohesion: 0.08
+Nodes (31): main(), parseArgs(), prisma, inactiveEventIds(), cardValue(), conditionLabel(), conditionMult(), GACHA_FOILS (+23 more)
 
 ### Community 9 - ""User""
 Cohesion: 0.06
-Nodes (49): "User", User_email_key, User_userName_key, "PrivacySettings", "SiteSetting", "GachaRollDay", User_featuredUserCardId_key, "CrystalEvent" (+41 more)
+Nodes (51): "User", User_email_key, User_userName_key, "PrivacySettings", "SiteSetting", "GachaRollDay", User_featuredUserCardId_key, "GachaPointEvent" (+43 more)
 
 ### Community 11 - "scripts"
 Cohesion: 0.04
@@ -302,41 +301,45 @@ Nodes (54): scripts, backfill:anilist, backfill:anilist:dry, backfill:gacha-valu
 Cohesion: 0.09
 Nodes (22): 1. Preparar o banco de dados, 1. **Tabela de Auditoria (AdminAuditLog)**, 1. Via cURL, 2. Adicionar auditoria a novos endpoints, 2. Via Swagger, 3. **Audit Decorator** (`src/auth/decorators/audit.decorator.ts`), 3. Ver logs de auditoria, 4. **Audit Interceptor** (`src/common/interceptors/audit.interceptor.ts`) (+14 more)
 
-### Community 15 - "scrape.service.ts"
+### Community 15 - "extract.ts"
 Cohesion: 0.07
-Nodes (27): playwright, undici, playwrightProxy(), setupOutboundProxy(), mockedSetGlobalDispatcher, fetchSafeRaw(), AnimesdigitalScrapeSource, AnimesonlineScrapeSource (+19 more)
+Nodes (37): playwright, bindBodyTimeout(), blockedNetworks, createSSRFDispatcher(), fetchSafeRaw(), SafeUrlResolution, AnimesdigitalScrapeSource, mockedFetchSafeRaw (+29 more)
 
 ### Community 16 - "HealthMonitor"
-Cohesion: 0.07
-Nodes (13): Extractor, ExtractResult, HealthMonitor, SourceFailure, SourceScore, ProbeStatus, SourceCandidate, SourceDiscovery (+5 more)
+Cohesion: 0.10
+Nodes (9): HealthMonitor, SourceFailure, SourceScore, ProbeStatus, SourceCandidate, SourceDiscovery, OPTIONAL_SOURCE_IDS, SOURCE_IDS (+1 more)
 
 ### Community 17 - "e2e.setup.ts"
-Cohesion: 0.21
-Nodes (10): supertest, ErrorResponse, LoginResponse, RegisterResponse, UserResponse, createTestUser(), getApp(), getHttpServer() (+2 more)
+Cohesion: 0.18
+Nodes (11): supertest, AppModule, ErrorResponse, LoginResponse, RegisterResponse, UserResponse, createTestUser(), getApp() (+3 more)
 
 ### Community 18 - ""Anime""
 Cohesion: 0.08
 Nodes (39): "Anime", Anime_slug_idx, Anime_slug_key, "_AnimeToGenre", _AnimeToGenre_AB_unique, _AnimeToGenre_B_index, "Comment", Comment_animeId_idx (+31 more)
 
-### Community 19 - "AuthenticatedRequest"
-Cohesion: 0.13
-Nodes (4): "Post", Public(), AuthenticatedRequest, EconomyController
+### Community 20 - "UserService"
+Cohesion: 0.06
+Nodes (3): CreateUserDto, UserController, UserService
 
 ### Community 21 - "ScrapeService"
-Cohesion: 0.11
-Nodes (6): Provider Orchestration Layer (scraping/embed), dbg(), sanitizeLog(), ScrapeService, ScrapeSource, SourceFailureKind
+Cohesion: 0.08
+Nodes (8): Provider Orchestration Layer (scraping/embed), Re-extração 403, dbg(), sanitizeLog(), ScrapeService, ScrapeSource, MetricsService, SourceFailureKind
 
 ### Community 22 - "UsersService"
 Cohesion: 0.11
 Nodes (5): ReportUserDto, UsersController, build(), makePrisma(), UsersService
 
-### Community 23 - "watchtower.types.ts"
+### Community 23 - "watchtower.module.ts"
 Cohesion: 0.10
-Nodes (19): CatalogEntry, CatalogScan, EMPTY_SCAN, FakeEntry, configuredConcurrency, CONTROL_JOB_TYPES, CONTROL_TIMEOUT_MS, JOB_TIMEOUT_MS (+11 more)
+Nodes (29): CatalogEntry, CatalogScan, EMPTY_SCAN, EnqueueInput, SYNC_PAGE_DELAY_MS, SyncSchedulesPayload, Season, SeasonDiscovery (+21 more)
 
-### Community 24 - "streaming.service.ts"
-Cohesion: 0.13
-Nodes (18): clearLivenessCache(), livenessCache, LivenessCacheEntry, livenessInflight, outboundFetch(), performMediaUrlProbe(), probeMediaUrlDead(), purgeExpiredLivenessCache() (+10 more)
+### Community 24 - "scrape.service.ts"
+Cohesion: 0.15
+Nodes (21): clearLivenessCache(), livenessCache, LivenessCacheEntry, livenessInflight, outboundFetch(), performMediaUrlProbe(), probeMediaUrlDead(), purgeExpiredLivenessCache() (+13 more)
+
+### Community 25 - "GachaConfigService"
+Cohesion: 0.08
+Nodes (3): GachaConfigService, Row, rows
 
 ### Community 26 - "MeService"
 Cohesion: 0.09
@@ -347,47 +350,47 @@ Cohesion: 0.05
 Nodes (42): devDependencies, @commitlint/cli, @commitlint/config-conventional, dotenv, dotenv-cli, eslint, eslint-config-prettier, @eslint/eslintrc (+34 more)
 
 ### Community 28 - "event-waits.ts"
-Cohesion: 0.21
-Nodes (12): CheckDocument, CheckNodeList, checkVideoReady(), clickPlayButtons(), extractPlayerVideoEventDriven(), hasVideoMediaUrls(), isPlayableMediaUrl(), resolvePlayerToken() (+4 more)
+Cohesion: 0.20
+Nodes (13): CheckDocument, CheckNodeList, checkVideoReady(), clickPlayButtons(), extractPlayerVideoEventDriven(), hasVideoMediaUrls(), isPlayableMediaUrl(), resolvePlayerToken() (+5 more)
 
-### Community 29 - "BlogService"
-Cohesion: 0.08
-Nodes (5): BlogController, BLOG_HTML_OPTIONS, BlogService, CreateBlogPostDto, UpdateBlogPostDto
+### Community 29 - "blog.controller.ts"
+Cohesion: 0.11
+Nodes (6): OptionalAuthRequest, BlogModule, BLOG_HTML_OPTIONS, BlogService, CreateBlogPostDto, UpdateBlogPostDto
 
 ### Community 30 - "EmbedService"
 Cohesion: 0.06
-Nodes (25): sanitize-html, assertHostResolvesSafely(), bindBodyTimeout(), blockedNetworks, createSSRFDispatcher(), isBlockedHostname(), isBlockedIp(), pinnedDispatcher() (+17 more)
+Nodes (21): sanitize-html, assertHostResolvesSafely(), isBlockedHostname(), isBlockedIp(), resolveSafeUrl(), mockedLookup, mockedUndiciFetch, ALLOWED_NON_DEFAULT_PORTS (+13 more)
+
+### Community 31 - "ref_express"
+Cohesion: 0.10
+Nodes (11): @nestjs/config, CreateMessageResponse, LivePixCheckout, LivePixService, PaymentRecord, TokenResponse, backendOrigin(), ExtractionFn (+3 more)
 
 ### Community 32 - "economy.controller.ts"
 Cohesion: 0.20
 Nodes (12): BuyBoxDto, CreateBuyOrderDto, CreateCardListingDto, CreateCrystalCheckoutDto, CreateMarketOfferDto, CreateSkinListingDto, EconomicEventDto, EconomyAdminReasonDto (+4 more)
 
 ### Community 33 - "main.ts"
-Cohesion: 0.08
-Nodes (15): cookie-parser, @nestjs/platform-socket.io, rxjs, AppModule, bodyParserType(), HttpExceptionFilter, mapBodyParserError(), mapPrismaError() (+7 more)
+Cohesion: 0.12
+Nodes (9): cookie-parser, @nestjs/platform-socket.io, rxjs, BigIntSerializationInterceptor, LoggingInterceptor, MaintenanceInterceptor, assertSecrets(), bootstrap() (+1 more)
 
-### Community 35 - "AnimeService"
-Cohesion: 0.15
-Nodes (3): AnimeController, AnimeFilterDto, AnimeService
+### Community 35 - "anime.service.ts"
+Cohesion: 0.07
+Nodes (14): AnimeController, AnimeFilterDto, AnimeService, buildOrderBy(), buildWhere(), CARD_SELECT, FUZZY_THRESHOLD, LIST_SELECT (+6 more)
 
-### Community 36 - "community.controller.ts"
-Cohesion: 0.09
-Nodes (7): CommunityController, CommunityModule, CommunityService, build(), makePrisma(), CreateAnimeRequestDto, CreateSiteFeedbackDto
+### Community 36 - "CommunityService"
+Cohesion: 0.10
+Nodes (6): CommunityController, CommunityService, build(), makePrisma(), CreateAnimeRequestDto, CreateSiteFeedbackDto
 
 ### Community 37 - "CHANGELOG.md"
 Cohesion: 0.05
 Nodes (39): [1.10.0](https://github.com/1arley/animesice-back/compare/v1.9.0...v1.10.0) (2026-08-12), [1.11.0](https://github.com/1arley/animesice-back/compare/v1.10.0...v1.11.0) (2026-08-12), [1.12.0](https://github.com/1arley/animesice-back/compare/v1.11.0...v1.12.0) (2026-08-12), [1.14.0](https://github.com/1arley/animesice-back/compare/v1.13.0...v1.14.0) (2026-08-13), [1.16.0](https://github.com/1arley/animesice-back/compare/v1.15.0...v1.16.0) (2026-08-13), [1.18.0](https://github.com/1arley/animesice-back/compare/v1.17.0...v1.18.0) (2026-08-16), [1.19.0](https://github.com/1arley/animesice-back/compare/v1.18.0...v1.19.0) (2026-08-17), [1.22.0](https://github.com/1arley/animesice-back/compare/v1.21.0...v1.22.0) (2026-08-20) (+31 more)
 
-### Community 38 - "user-anime-list.service.ts"
-Cohesion: 0.09
-Nodes (5): UpdateUserAnimeListDto, UserAnimeListController, build(), makePrisma(), UserAnimeListService
-
 ### Community 39 - "user.controller.ts"
-Cohesion: 0.09
-Nodes (11): AvatarController, build(), ALLOWED_IMAGE_MIMETYPES, AvatarService, MAX_AVATAR_BYTES, build(), UploadModule, ApiFindAllUsers() (+3 more)
+Cohesion: 0.14
+Nodes (8): AvatarController, build(), ALLOWED_IMAGE_MIMETYPES, AvatarService, MAX_AVATAR_BYTES, build(), ApiFindAllUsers(), ApiGetUserMe()
 
 ### Community 40 - "ModerateUserDto"
-Cohesion: 0.20
+Cohesion: 0.23
 Nodes (3): CreateReportDto, ModerateUserDto, ResolveReportDto
 
 ### Community 41 - "dependencies"
@@ -395,20 +398,12 @@ Cohesion: 0.06
 Nodes (33): dependencies, bcrypt, class-transformer, class-validator, cookie-parser, @libsql/client, ms, multer (+25 more)
 
 ### Community 42 - "EconomyService"
-Cohesion: 0.13
-Nodes (3): EconomyService, expectDayKey(), main()
+Cohesion: 0.10
+Nodes (5): dateFromDayKey(), dayKey(), PrizeQuality, weightedPick(), EconomyService
 
 ### Community 43 - "compilerOptions"
 Cohesion: 0.06
 Nodes (32): compilerOptions, allowSyntheticDefaultImports, baseUrl, declaration, declarationMap, emitDecoratorMetadata, esModuleInterop, experimentalDecorators (+24 more)
-
-### Community 44 - "GachaController"
-Cohesion: 0.09
-Nodes (3): Audit(), Roles(), GachaController
-
-### Community 45 - ".generateNightOffers"
-Cohesion: 0.30
-Nodes (3): BoxTier, PrizeQuality, weightedPick()
 
 ### Community 46 - "🔒 Resumo de Segurança - Proteção de Dados de Usuários"
 Cohesion: 0.08
@@ -418,25 +413,29 @@ Nodes (23): 1. Sistema de Auditoria Completo, 2. SELECT() Explícito (Segurança
 Cohesion: 0.10
 Nodes (6): RateAnimeDto, RatingController, RatingModule, RatingService, build(), makePrisma()
 
-### Community 48 - "RecommendationService"
-Cohesion: 0.14
-Nodes (5): RecommendationController, RecommendationService, build(), makePrisma(), vitrineFilter()
+### Community 48 - "recommendation.service.ts"
+Cohesion: 0.22
+Nodes (5): RecommendationController, RecommendationModule, RecommendationService, build(), makePrisma()
+
+### Community 49 - "FavoriteService"
+Cohesion: 0.15
+Nodes (4): FavoriteController, FavoriteService, build(), makePrisma()
 
 ### Community 50 - "GenreService"
 Cohesion: 0.14
 Nodes (4): GenreController, GenreService, build(), makePrisma()
 
-### Community 52 - "jwt-refresh.strategy.ts"
-Cohesion: 0.18
-Nodes (6): passport-jwt, JwtPayload, JwtRefreshStrategy, refreshCookieExtractor(), cookieExtractor(), hasActiveRestriction()
+### Community 51 - "SocialService"
+Cohesion: 0.09
+Nodes (4): CreatePostCommentDto, CreatePostDto, SocialController, SocialService
 
-### Community 53 - "extract.ts"
+### Community 52 - "jwt-refresh.strategy.ts"
 Cohesion: 0.16
-Nodes (16): captureMediaRequests(), extractAllIframes(), ExtractDocument, extractEpisodeMedia(), extractVideoElements(), isExpiringMediaUrl(), isNoVideoUrl(), keepVideoUrls() (+8 more)
+Nodes (7): passport-jwt, JwtPayload, JwtRefreshStrategy, refreshCookieExtractor(), cookieExtractor(), JwtStrategy, hasActiveRestriction()
 
 ### Community 54 - "SettingsController"
-Cohesion: 0.10
-Nodes (3): SettingsController, SettingsService, makeMocks()
+Cohesion: 0.05
+Nodes (8): NotificationController, ConfirmEmailChangeDto, UpdateNotificationPrefDto, UpdatePrivacyDto, UpdateSiteSettingsDto, SettingsController, SettingsService, makeMocks()
 
 ### Community 56 - "main.rs"
 Cohesion: 0.13
@@ -447,12 +446,16 @@ Cohesion: 0.13
 Nodes (19): Anime_malId_key, "Card", Card_animeId_idx, Card_malCharacterId_key, Card_rarity_idx, "UserCard", UserCard_cardId_edition_idx, UserCard_userId_obtainedAt_idx (+11 more)
 
 ### Community 58 - "CrystalAccountingService"
-Cohesion: 0.24
-Nodes (4): CrystalAccountingService, releaseTrade(), releaseTradesForCard(), main()
+Cohesion: 0.15
+Nodes (6): CrystalAccountingService, releaseTrade(), releaseTradesForCard(), main(), expectDayKey(), main()
 
 ### Community 59 - "anilist.service.ts"
-Cohesion: 0.15
+Cohesion: 0.16
 Nodes (6): AniListCoverImage, AniListMedia, AniListService, AniListTitle, GraphQLResponse, prisma()
+
+### Community 61 - "CrystalPurchaseService"
+Cohesion: 0.08
+Nodes (3): CrystalPurchaseController, CrystalPurchaseService, GachaBypassController
 
 ### Community 62 - "📊 Fluxo de Auditoria - Visualização"
 Cohesion: 0.11
@@ -463,24 +466,20 @@ Cohesion: 0.13
 Nodes (19): "ChatMessage", ChatMessage_animeSlug_episodeNumber_createdAt_idx, ChatMessage_userId_idx, "CommentLike", CommentLike_commentId_idx, "Favorite", Favorite_animeId_idx, Favorite_userId_createdAt_idx (+11 more)
 
 ### Community 64 - "@nestjs/swagger"
-Cohesion: 0.04
-Nodes (19): class-validator, @nestjs/swagger, AUTH_THROTTLE_LIMIT, EMAIL_SEND_LIMIT, emailSendLog, ChangeEmailDto, ChangePasswordDto, ForgotPasswordDto (+11 more)
+Cohesion: 0.10
+Nodes (11): class-validator, @nestjs/swagger, AUTH_THROTTLE_LIMIT, EMAIL_SEND_LIMIT, emailSendLog, ForgotPasswordDto, ApiLoginUser(), ApiRefreshTokens() (+3 more)
 
 ### Community 65 - "economy.service.ts"
-Cohesion: 0.10
-Nodes (24): ECONOMY_DEFAULTS, economyConfig, BOX_PRICE, BOX_TIERS, BOX_TOTAL_COST, BURN_PAYOUT, CARD_FLOOR, CATEGORY_WEIGHTS (+16 more)
+Cohesion: 0.09
+Nodes (27): ECONOMY_DEFAULTS, economyConfig, BOX_PRICE, BOX_TIERS, BOX_TOTAL_COST, BURN_PAYOUT, CARD_FLOOR, CATEGORY_WEIGHTS (+19 more)
 
 ### Community 66 - "dotenv"
-Cohesion: 0.27
-Nodes (5): dotenv, displaySocket(), ensureXvfb(), isDisplayAlive(), waitForXvfb()
-
-### Community 67 - "AdminService"
-Cohesion: 0.16
-Nodes (3): build(), AdminService, ImportAnimeDto
+Cohesion: 0.18
+Nodes (7): dotenv, displaySocket(), ensureXvfb(), isDisplayAlive(), waitForXvfb(), { execSync }, { existsSync }
 
 ### Community 68 - "auth.service.ts"
-Cohesion: 0.12
-Nodes (8): bcrypt, ms, @nestjs/jwt, TurnstileService, BCRYPT_ROUNDS, CreateUserDto, bcrypt, { PrismaClient }
+Cohesion: 0.13
+Nodes (9): bcrypt, @nestjs/jwt, TurnstileService, MailModule, MailPayload, MailService, mockSend, bcrypt (+1 more)
 
 ### Community 69 - "catalog-cache.interceptor.ts"
 Cohesion: 0.12
@@ -491,24 +490,20 @@ Cohesion: 0.16
 Nodes (4): AdultCatalogSyncService, mockSourceDisconnect, mockSourceFindMany, syncEnabled()
 
 ### Community 71 - "WorkerService"
-Cohesion: 0.16
+Cohesion: 0.17
 Nodes (3): WatchtowerJobRow, m, WorkerService
 
 ### Community 73 - "[1.8.0](https://github.com/1arley/animesice-back/compare/v1.7.6...v1.8.0) (2026-08-12)"
 Cohesion: 0.12
 Nodes (16): [1.7.1](https://github.com/1arley/animesice-back/compare/v1.7.0...v1.7.1) (2026-08-10), [1.7.2](https://github.com/1arley/animesice-back/compare/v1.7.1...v1.7.2) (2026-08-11), [1.7.3](https://github.com/1arley/animesice-back/compare/v1.7.2...v1.7.3) (2026-08-11), [1.7.4](https://github.com/1arley/animesice-back/compare/v1.7.3...v1.7.4) (2026-08-11), [1.7.5](https://github.com/1arley/animesice-back/compare/v1.7.4...v1.7.5) (2026-08-11), [1.7.6](https://github.com/1arley/animesice-back/compare/v1.7.5...v1.7.6) (2026-08-11), [1.8.0](https://github.com/1arley/animesice-back/compare/v1.7.6...v1.8.0) (2026-08-12), Bug Fixes (+8 more)
 
-### Community 74 - "PrismaService"
-Cohesion: 0.10
-Nodes (10): PrismaService, EnqueueInput, JobsService, ReleaseMonitor, AiringEntry, RepairWorker, ScheduleSync, SeasonDiscovery (+2 more)
-
 ### Community 75 - "backfill-enrich-anilist.ts"
 Cohesion: 0.28
 Nodes (15): AniListMedia, cleanHtml(), enrichAnime(), fetchAniList(), isPlaceholderSynopsis(), main(), parseArgs(), prisma (+7 more)
 
-### Community 76 - "blog.controller.ts"
-Cohesion: 0.09
-Nodes (9): 2. **AuditService** (`src/common/services/audit.service.ts`), AUDIT_KEY, AuditMetadata, ROLES_KEY, RolesGuard, OptionalAuthRequest, AuditInterceptor, AuditLogInput (+1 more)
+### Community 76 - "AuditService"
+Cohesion: 0.13
+Nodes (6): 2. **AuditService** (`src/common/services/audit.service.ts`), AUDIT_KEY, AuditMetadata, AuditInterceptor, AuditLogInput, AuditService
 
 ### Community 77 - "20260806214902_community_feedback_requests/migration.sql"
 Cohesion: 0.22
@@ -527,8 +522,8 @@ Cohesion: 0.21
 Nodes (13): fetchJikan(), fetchMalOfficial(), JikanAnime, main(), malHeaders(), MalOfficialAnime, mapMalOfficialStatus(), mapStatus() (+5 more)
 
 ### Community 82 - "BrowserPool"
-Cohesion: 0.19
-Nodes (5): BrowserPool, build(), makeBrowser(), makeContext(), mockedLaunch
+Cohesion: 0.09
+Nodes (11): undici, playwrightProxy(), setupOutboundProxy(), mockedSetGlobalDispatcher, AnimesonlineScrapeSource, BrowserPool, ManagedContext, build() (+3 more)
 
 ### Community 83 - "[1.1.0](https://github.com/1arley/animesice-back/compare/v1.0.5...v1.1.0) (2026-08-08)"
 Cohesion: 0.15
@@ -555,8 +550,8 @@ Cohesion: 0.15
 Nodes (12): Acessar o painel, Admin CRUD, Como o vídeo funciona (streaming), Criar anime, Criar episódio, Deletar anime, Deletar episódio, Editar episódio (URL do vídeo) (+4 more)
 
 ### Community 90 - "AGENTS.md"
-Cohesion: 0.09
-Nodes (19): Architecture, Commits, Docker, Don'ts, ESLint rules (production code is strict), Key env vars, Path aliases, Prisma (+11 more)
+Cohesion: 0.10
+Nodes (17): Architecture, Commits, Docker, Don'ts, ESLint rules (production code is strict), Key env vars, Path aliases, Prisma (+9 more)
 
 ### Community 92 - "pr-description.mjs"
 Cohesion: 0.14
@@ -566,17 +561,17 @@ Nodes (11): breaking, dirs, fileLines, files, groups, isBack, LABELS, out (+3 mo
 Cohesion: 0.24
 Nodes (11): "Follow", Follow_followeeId_idx, Follow_followerId_idx, Post_status_createdAt_idx, Post_userId_createdAt_idx, "PostComment", PostComment_postId_createdAt_idx, PostComment_userId_idx (+3 more)
 
-### Community 94 - "season-discovery.service.ts"
-Cohesion: 0.12
-Nodes (13): AiringEpisode, AniListCharacterSummary, AniListClient, AniListMediaSummary, GraphQLResponse, MediaScheduleSummary, sleep(), currentSeason() (+5 more)
+### Community 94 - "AniListClient"
+Cohesion: 0.08
+Nodes (12): AiringEpisode, AniListCharacterSummary, AniListClient, AniListMediaSummary, GraphQLResponse, MediaScheduleSummary, sleep(), ReleaseMonitor (+4 more)
 
 ### Community 95 - "request.interface.ts"
 Cohesion: 0.06
-Nodes (21): @nestjs/config, IS_PUBLIC_KEY, JwtAuthGuard, VerifiedGuard, BillingModule, CrystalPurchaseController, LivePixCrystalWebhook, CrystalPurchaseService (+13 more)
+Nodes (15): @nestjs/core, @nestjs/passport, @nestjs/testing, IS_PUBLIC_KEY, JwtAuthGuard, OptionalJwtAuthGuard, ROLES_KEY, RolesGuard (+7 more)
 
-### Community 96 - "worker.service.ts"
-Cohesion: 0.12
-Nodes (15): BACKFILL_BATCH, deriveFixedSlot(), fuzzyDate(), mapStatus(), SCHEDULE_ACTIVE_STATUSES, similarity(), SYNC_PAGE_DELAY_MS, SYNC_PAGE_SIZE (+7 more)
+### Community 96 - "schedule-sync.service.ts"
+Cohesion: 0.14
+Nodes (11): BACKFILL_BATCH, deriveFixedSlot(), fuzzyDate(), mapStatus(), SCHEDULE_ACTIVE_STATUSES, ScheduleSync, similarity(), SYNC_PAGE_SIZE (+3 more)
 
 ### Community 97 - "[1.2.0](https://github.com/1arley/animesice-back/compare/v1.1.5...v1.2.0) (2026-08-09)"
 Cohesion: 0.17
@@ -589,10 +584,6 @@ Nodes (11): "GachaTrade", GachaTrade_offeredUserCardId_key, GachaTrade_offeredUs
 ### Community 99 - ""GachaCollection""
 Cohesion: 0.29
 Nodes (9): "GachaCollection", GachaCollection_published_updatedAt_idx, GachaCollection_slug_key, "GachaCollectionMember", GachaCollectionMember_cardId_idx, "GachaCardDiscovery", GachaCardDiscovery_cardId_idx, "GachaCollectionProgress" (+1 more)
-
-### Community 103 - "MetricsService"
-Cohesion: 0.11
-Nodes (4): @nestjs/schedule, MetricsController, MetricsService, MetricsSnapshot
 
 ### Community 104 - "[1.25.0](https://github.com/1arley/animesice-back/compare/v1.24.4...v1.25.0) (2026-08-26)"
 Cohesion: 0.18
@@ -607,16 +598,20 @@ Cohesion: 0.31
 Nodes (9): ChatMessage_status_idx, Comment_status_idx, "ModerationAction", ModerationAction_actionType_idx, ModerationAction_userId_createdAt_idx, "Report", Report_reporterId_idx, Report_status_createdAt_idx (+1 more)
 
 ### Community 107 - "watch-history.controller.ts"
-Cohesion: 0.05
-Nodes (12): DEFAULT_PAGE, FavoriteController, FavoriteModule, FavoriteService, build(), makePrisma(), UpdateProgressDto, WatchHistoryController (+4 more)
+Cohesion: 0.10
+Nodes (5): UpdateProgressDto, WatchHistoryController, build(), makePrisma(), WatchHistoryService
 
 ### Community 108 - "pg"
-Cohesion: 0.09
-Nodes (24): pg, @prisma/adapter-pg, AniListMedia, main(), parseArgs(), prisma, searchAniList(), similarity() (+16 more)
+Cohesion: 0.17
+Nodes (10): pg, @prisma/adapter-pg, main(), prisma, probeHost(), createPrismaClient(), main(), pool (+2 more)
+
+### Community 109 - "http-exception.filter.ts"
+Cohesion: 0.27
+Nodes (5): bodyParserType(), HttpExceptionFilter, mapBodyParserError(), mapPrismaError(), prismaCode()
 
 ### Community 110 - "StreamingService"
-Cohesion: 0.09
-Nodes (7): Re-extração 403, backendOrigin(), ExtractionJob, clientIpFromRequest(), StreamingController, dbg(), StreamingService
+Cohesion: 0.12
+Nodes (4): clientIpFromRequest(), StreamingController, dbg(), StreamingService
 
 ### Community 111 - "20260806220000_add_room/migration.sql"
 Cohesion: 0.42
@@ -632,7 +627,7 @@ Nodes (8): "GachaCardWishlist", GachaCardWishlist_cardId_priority_idx, GachaCard
 
 ### Community 114 - "CommentService"
 Cohesion: 0.09
-Nodes (7): CommentService, sanitizeContent(), build(), makeNotificationService(), makePrisma(), CreateCommentDto, EditCommentDto
+Nodes (8): CommentController, CommentService, sanitizeContent(), build(), makeNotificationService(), makePrisma(), CreateCommentDto, EditCommentDto
 
 ### Community 115 - "allowScripts"
 Cohesion: 0.25
@@ -646,13 +641,13 @@ Nodes (7): "NotificationPreference", NotificationPreference_userId_idx, Notifica
 Cohesion: 0.39
 Nodes (7): Anime_anilistId_key, "WatchtowerJob", WatchtowerJob_status_nextRunAt_priority_idx, WatchtowerJob_type_dedupeKey_key, WatchtowerJob_type_status_idx, "WatchtowerSourceHealth", WatchtowerSourceHealth_disabled_idx
 
-### Community 118 - "gacha.service.spec.ts"
-Cohesion: 0.18
-Nodes (9): mockClaimCreate(), mockPullCreate(), mockTradeOwners(), TEST_BASE_VALUE, TEST_FOIL_MULT, tradeCardRow(), createTransactionAwarePrismaMock(), MockClient (+1 more)
+### Community 118 - "backfill-anilist-id.ts"
+Cohesion: 0.33
+Nodes (7): AniListMedia, main(), parseArgs(), prisma, searchAniList(), similarity(), sleep()
 
-### Community 119 - "anime.service.ts"
-Cohesion: 0.14
-Nodes (16): buildOrderBy(), buildWhere(), CARD_SELECT, FUZZY_THRESHOLD, LIST_SELECT, SortMode, build(), makePrisma() (+8 more)
+### Community 119 - "constants.ts"
+Cohesion: 0.18
+Nodes (8): ADULT_AGE_RATING, ADULT_GENRE_SLUG, BCRYPT_ROUNDS, DEFAULT_PAGE, MAX_PAGE_SIZE, parsePageParam(), FavoriteModule, SyncCursor
 
 ### Community 121 - "overrides"
 Cohesion: 0.29
@@ -690,13 +685,17 @@ Nodes (9): Arquivos, Busca (Fuzzy / pg_trgm), ConfigModule, Environment Variable
 Cohesion: 0.20
 Nodes (10): 🧊 AnimesIce Backend, 🔁 CI/CD, Configuração manual no GitHub (uma vez), 📚 Documentação Adicional, Fluxo de implantação, Image registry, 🎯 Objetivo, Rodar os mesmos checks localmente (+2 more)
 
+### Community 130 - "backfill-skin-images.ts"
+Cohesion: 0.39
+Nodes (7): createPrismaClient(), main(), malAgent, MALCharacterPictures, malHeaders(), sameImage(), sleep()
+
 ### Community 131 - "[1.21.0](https://github.com/1arley/animesice-back/compare/v1.20.3...v1.21.0) (2026-08-20)"
 Cohesion: 0.25
 Nodes (8): [1.20.1](https://github.com/1arley/animesice-back/compare/v1.20.0...v1.20.1) (2026-08-18), [1.20.2](https://github.com/1arley/animesice-back/compare/v1.20.1...v1.20.2) (2026-08-18), [1.20.3](https://github.com/1arley/animesice-back/compare/v1.20.2...v1.20.3) (2026-08-18), [1.21.0](https://github.com/1arley/animesice-back/compare/v1.20.3...v1.21.0) (2026-08-20), Bug Fixes, Bug Fixes, Bug Fixes, Features
 
-### Community 132 - "users.controller.ts"
-Cohesion: 0.12
-Nodes (4): @nestjs/passport, JwtRefreshAuthGuard, OptionalJwtAuthGuard, OptionalAuthRequest
+### Community 133 - "extractor.service.ts"
+Cohesion: 0.13
+Nodes (5): Extractor, ExtractResult, Publisher, EpisodeCandidate, Validator
 
 ### Community 134 - ""AdminAuditLog""
 Cohesion: 0.70
@@ -718,13 +717,9 @@ Nodes (4): "GachaAdminChange", GachaAdminChange_adminId_createdAt_idx, GachaAdmi
 Cohesion: 0.70
 Nodes (4): "GachaRarity", GachaRarity_active_dropWeight_idx, GachaRarity_name_key, GachaRarity_slug_key
 
-### Community 140 - "moderation.service.spec.ts"
-Cohesion: 0.83
-Nodes (3): build(), makeNotificationService(), makePrisma()
-
-### Community 141 - "social.service.ts"
-Cohesion: 0.16
-Nodes (7): PROFILE_PUBLIC_OR_EMPTY, CreatePostCommentDto, CreatePostDto, ActivityFlag, POST_COMMENT_SELECT, POST_SELECT, PUBLIC_USER_SELECT
+### Community 140 - "ModerationService"
+Cohesion: 0.21
+Nodes (4): ModerationService, build(), makeNotificationService(), makePrisma()
 
 ### Community 142 - ""EmailChangeToken""
 Cohesion: 0.83
@@ -770,9 +765,9 @@ Nodes (11): build(), ensureXvfbMock, FakeSource, launchMock, makeHealth(), makeM
 Cohesion: 0.29
 Nodes (7): [1.27.1](https://github.com/1arley/animesice-back/compare/v1.27.0...v1.27.1) (2026-09-08), [1.27.2](https://github.com/1arley/animesice-back/compare/v1.27.1...v1.27.2) (2026-09-08), [1.28.0](https://github.com/1arley/animesice-back/compare/v1.27.2...v1.28.0) (2026-09-09), Bug Fixes, Bug Fixes, Bug Fixes, Features
 
-### Community 159 - "room.gateway.spec.ts"
-Cohesion: 0.20
-Nodes (6): @nestjs/websockets, socket.io, PlayerSyncState, RoomParticipant, authedSocket(), makeSocket()
+### Community 159 - "RoomService"
+Cohesion: 0.11
+Nodes (6): PlayerSyncState, RoomParticipant, authedSocket(), makeSocket(), RoomScheduler, RoomService
 
 ### Community 179 - "Database"
 Cohesion: 0.29
@@ -806,9 +801,9 @@ Nodes (5): Gerenciando a versão do Node.js com NVM, Instalando o NVM, Instalar 
 Cohesion: 0.33
 Nodes (5): Comandos, Modelos, Prisma ORM, Schema, Variáveis de Ambiente
 
-### Community 189 - "@prisma/client"
-Cohesion: 0.13
-Nodes (11): @nestjs/testing, @prisma/client, ROLE_HIERARCHY, GACHA_FOILS, GACHA_TIERS, GachaFoil, GachaTier, NotificationService (+3 more)
+### Community 189 - "PrismaService"
+Cohesion: 0.07
+Nodes (21): @prisma/client, DEFAULT_PAGE_SIZE, ROLE_HIERARCHY, PROFILE_PUBLIC_OR_EMPTY, GACHA_FOILS, GACHA_TIERS, GachaFoil, GachaTier (+13 more)
 
 ### Community 190 - "[1.13.0](https://github.com/1arley/animesice-back/compare/v1.12.1...v1.13.0) (2026-08-12)"
 Cohesion: 0.40
@@ -850,10 +845,6 @@ Nodes (4): Change type, Checklist, Notes for reviewer / deployment, Summary
 Cohesion: 0.50
 Nodes (4): [1.16.1](https://github.com/1arley/animesice-back/compare/v1.16.0...v1.16.1) (2026-08-13), [1.17.0](https://github.com/1arley/animesice-back/compare/v1.16.1...v1.17.0) (2026-08-14), Bug Fixes, Features
 
-### Community 201 - "eslint.config.mjs"
-Cohesion: 0.40
-Nodes (4): @eslint/js, eslint-plugin-prettier, globals, typescript-eslint
-
 ### Community 202 - "[1.24.0](https://github.com/1arley/animesice-back/compare/v1.23.1...v1.24.0) (2026-08-22)"
 Cohesion: 0.50
 Nodes (4): [1.23.1](https://github.com/1arley/animesice-back/compare/v1.23.0...v1.23.1) (2026-08-22), [1.24.0](https://github.com/1arley/animesice-back/compare/v1.23.1...v1.24.0) (2026-08-22), Bug Fixes, Features
@@ -862,13 +853,13 @@ Nodes (4): [1.23.1](https://github.com/1arley/animesice-back/compare/v1.23.0...v
 Cohesion: 0.50
 Nodes (4): [1.25.1](https://github.com/1arley/animesice-back/compare/v1.25.0...v1.25.1) (2026-09-08), [1.26.0](https://github.com/1arley/animesice-back/compare/v1.25.1...v1.26.0) (2026-09-08), Bug Fixes, Features
 
-### Community 204 - ".updateSiteSettings"
-Cohesion: 0.30
-Nodes (4): ConfirmEmailChangeDto, UpdateNotificationPrefDto, UpdatePrivacyDto, UpdateSiteSettingsDto
-
 ### Community 205 - "[1.29.0](https://github.com/1arley/animesice-back/compare/v1.28.0...v1.29.0) (2026-09-19)"
 Cohesion: 0.50
 Nodes (4): [1.29.0](https://github.com/1arley/animesice-back/compare/v1.28.0...v1.29.0) (2026-09-19), Bug Fixes, Features, Performance Improvements
+
+### Community 207 - "wishlist.service.ts"
+Cohesion: 0.33
+Nodes (3): CONDITION_LEVEL, VALID_FOILS, WishlistOptions
 
 ### Community 211 - "[1.29.0](https://github.com/1arley/animesice-back/compare/v1.28.0...v1.29.0) (2026-09-21)"
 Cohesion: 0.50
@@ -951,24 +942,24 @@ Cohesion: 0.14
 Nodes (4): EpisodeController, EpisodeService, build(), makePrisma()
 
 ## Knowledge Gaps
-- **719 isolated node(s):** `entrypoint.sh script`, `DISPLAY`, `$schema`, `collection`, `sourceRoot` (+714 more)
-  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 1331 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
-- **68 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **719 isolated node(s):** `LOW`, `NORMAL`, `HIGH`, `GachaTier`, `GachaFoil` (+714 more)
+  These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 1358 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
+- **93 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `@nestjs/common` connect `@nestjs/common` to `.media`, `RoomGateway`, `gacha.controller.ts`, `admin.controller.ts`, `users.controller.ts`, `package.json`, `AuthService`, `gacha.service.ts`, `publisher.service.ts`, `moderation.service.spec.ts`, `social.service.ts`, `scrape.service.ts`, `HealthMonitor`, `e2e.setup.ts`, `verified.decorator.ts`, `UsersService`, `watchtower.types.ts`, `scrape.service.spec.ts`, `streaming.service.ts`, `MeService`, `BlogService`, `EmbedService`, `economy.controller.ts`, `main.ts`, `AnimeService`, `community.controller.ts`, `user-anime-list.service.ts`, `user.controller.ts`, `rating.controller.ts`, `RecommendationService`, `GenreService`, `jwt-refresh.strategy.ts`, `SettingsController`, `anilist.service.ts`, `@prisma/client`, `@nestjs/swagger`, `economy.service.ts`, `auth.service.ts`, `catalog-cache.interceptor.ts`, `PrismaService`, `blog.controller.ts`, `gacha-bypass.controller.spec.ts`, `AGENTS.md`, `season-discovery.service.ts`, `request.interface.ts`, `worker.service.ts`, `AppService`, `MetricsService`, `watch-history.controller.ts`, `StreamingService`, `CommentService`, `EpisodeService`, `gacha.service.spec.ts`, `anime.service.ts`?**
-  _High betweenness centrality (0.219) - this node is a cross-community bridge._
-- **What connects `entrypoint.sh script`, `DISPLAY`, `$schema` to the rest of the system?**
+- **Why does `@nestjs/common` connect `@nestjs/common` to `embed.controller.ts`, `gacha.controller.ts`, `admin.controller.ts`, `extractor.service.ts`, `package.json`, `gacha.service.ts`, `ModerationService`, `extract.ts`, `HealthMonitor`, `e2e.setup.ts`, `verified.decorator.ts`, `UsersService`, `watchtower.module.ts`, `scrape.service.ts`, `scrape.service.spec.ts`, `MeService`, `blog.controller.ts`, `EmbedService`, `ref_express`, `economy.controller.ts`, `main.ts`, `RoomService`, `anime.service.ts`, `CommunityService`, `user.controller.ts`, `rating.controller.ts`, `recommendation.service.ts`, `FavoriteService`, `GenreService`, `jwt-refresh.strategy.ts`, `anilist.service.ts`, `PrismaService`, `CrystalPurchaseService`, `@nestjs/swagger`, `economy.service.ts`, `auth.service.ts`, `catalog-cache.interceptor.ts`, `AuditService`, `wishlist.service.ts`, `BrowserPool`, `AniListClient`, `request.interface.ts`, `schedule-sync.service.ts`, `AppService`, `watch-history.controller.ts`, `http-exception.filter.ts`, `CommentService`, `EpisodeService`, `constants.ts`?**
+  _High betweenness centrality (0.212) - this node is a cross-community bridge._
+- **What connects `LOW`, `NORMAL`, `HIGH` to the rest of the system?**
   _719 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `GachaService` be split into smaller, more focused modules?**
-  _Cohesion score 0.05272108843537415 - nodes in this community are weakly interconnected._
-- **Why does `"Post"` connect `AuthenticatedRequest` to `RoomGateway`, `"User"`, `ModerationService`, `AdminController`, `CommentController`, `"Anime"`, `UserService`, `UsersService`, `ApiOperation`, `community.controller.ts`, `user-anime-list.service.ts`, `GachaController`, `rating.controller.ts`, `AuthController`, `SocialService`, `WatchtowerController`, `.create`, `CreateAnimeDto`, `20260806214902_community_feedback_requests/migration.sql`, `CreateEpisodeDto`, `20260812200909_add_social_posts_and_follow/migration.sql`, `watch-history.controller.ts`, `EpisodeService`?**
-  _High betweenness centrality (0.152) - this node is a cross-community bridge._
-- **Should `.media` be split into smaller, more focused modules?**
-  _Cohesion score 0.1471861471861472 - nodes in this community are weakly interconnected._
-- **Why does `AuthenticatedRequest` connect `AuthenticatedRequest` to `RoomGateway`, `gacha.controller.ts`, `users.controller.ts`, `ModerationService`, `CommentController`, `UserService`, `UsersService`, `MeService`, `ApiOperation`, `economy.controller.ts`, `community.controller.ts`, `user-anime-list.service.ts`, `user.controller.ts`, `GachaController`, `rating.controller.ts`, `RecommendationService`, `AuthController`, `SocialService`, `SettingsController`, `@prisma/client`, `.create`, `@nestjs/swagger`, `blog.controller.ts`, `NotificationController`, `request.interface.ts`, `watch-history.controller.ts`?**
-  _High betweenness centrality (0.144) - this node is a cross-community bridge._
+  _Cohesion score 0.04677871148459384 - nodes in this community are weakly interconnected._
+- **Why does `AuthenticatedRequest` connect `AuthenticatedRequest` to `RoomGateway`, `gacha.controller.ts`, `AuthService`, `Roles`, `"Post"`, `UserService`, `UsersService`, `MeService`, `economy.controller.ts`, `anime.service.ts`, `CommunityService`, `UpdateUserAnimeListDto`, `user.controller.ts`, `rating.controller.ts`, `recommendation.service.ts`, `FavoriteService`, `SocialService`, `Param`, `SettingsController`, `PrismaService`, `CrystalPurchaseService`, `@nestjs/swagger`, `AuditService`, `MarketQueryDto`, `request.interface.ts`, `watch-history.controller.ts`, `CommentService`, `constants.ts`?**
+  _High betweenness centrality (0.134) - this node is a cross-community bridge._
+- **Should `embed.controller.ts` be split into smaller, more focused modules?**
+  _Cohesion score 0.11965811965811966 - nodes in this community are weakly interconnected._
+- **Why does `"Post"` connect `"Post"` to `RoomGateway`, `AuthService`, `"User"`, `Roles`, `Audit`, `"Anime"`, `UserService`, `UsersService`, `CommunityService`, `UpdateUserAnimeListDto`, `rating.controller.ts`, `FavoriteService`, `SocialService`, `BlogController`, `SettingsController`, `WatchtowerController`, `CrystalPurchaseService`, `CreateAnimeDto`, `20260806214902_community_feedback_requests/migration.sql`, `20260812200909_add_social_posts_and_follow/migration.sql`, `schedule-sync.service.ts`, `watch-history.controller.ts`, `CommentService`, `EpisodeService`?**
+  _High betweenness centrality (0.126) - this node is a cross-community bridge._
 - **Should `RoomGateway` be split into smaller, more focused modules?**
-  _Cohesion score 0.051929824561403506 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.06610169491525424 - nodes in this community are weakly interconnected._
