@@ -1,6 +1,10 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '@/prisma/prisma.service';
+import {
+  ECONOMY_DEFAULTS,
+  economyConfig,
+} from '@/gacha/economy/economy.config';
 
 export type GachaTier =
   'COMUM' | 'INCOMUM' | 'RARA' | 'EPICA' | 'LENDARIA' | 'MITICA' | 'GALACTICA';
@@ -63,6 +67,12 @@ export class GachaConfigService implements OnModuleInit {
     authorId: string,
     reason: string,
   ) {
+    if (key === 'box_category_weights') {
+      economyConfig({
+        ...ECONOMY_DEFAULTS,
+        box_category_weights: value,
+      } as Prisma.JsonValue);
+    }
     const updated = await this.prisma.$transaction(async (tx) => {
       const row = await tx.gachaConfig.update({
         where: { key },

@@ -55,12 +55,55 @@ export const ECONOMY_DEFAULTS = {
 
 export type EconomyConfig = typeof ECONOMY_DEFAULTS;
 
+function mergeWeightRows<T extends Record<string, Record<string, number>>>(
+  defaults: T,
+  saved: unknown,
+): T {
+  if (saved === undefined) return defaults;
+  if (!saved || typeof saved !== 'object' || Array.isArray(saved))
+    return saved as T;
+  const savedRows = saved as Record<string, unknown>;
+  return Object.fromEntries(
+    Object.entries(defaults).map(([tier, defaultValues]) => {
+      const savedTier = savedRows[tier];
+      if (
+        tier in savedRows &&
+        (!savedTier ||
+          typeof savedTier !== 'object' ||
+          Array.isArray(savedTier))
+      )
+        return [tier, savedTier];
+      const values =
+        savedTier && typeof savedTier === 'object' && !Array.isArray(savedTier)
+          ? (savedTier as Record<string, unknown>)
+          : {};
+      return [
+        tier,
+        Object.fromEntries(
+          Object.entries(defaultValues).map(([name, value]) => [
+            name,
+            name in values ? values[name] : value,
+          ]),
+        ),
+      ];
+    }),
+  ) as T;
+}
+
 export function economyConfig(snapshot: Prisma.JsonValue): EconomyConfig {
   if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) {
     throw new ConflictException('Versão econômica inválida.');
   }
   // Older versions inherit documented launch defaults for newly added keys.
   const merged = { ...ECONOMY_DEFAULTS, ...snapshot };
+  merged.box_category_weights = mergeWeightRows(
+    ECONOMY_DEFAULTS.box_category_weights,
+    snapshot.box_category_weights,
+  );
+  merged.box_quality_weights = mergeWeightRows(
+    ECONOMY_DEFAULTS.box_quality_weights,
+    snapshot.box_quality_weights,
+  );
   for (const key of ['foil_weights', 'foil_mult'] as const) {
     const saved = snapshot[key];
     if (!saved || typeof saved !== 'object' || Array.isArray(saved)) continue;

@@ -1,3 +1,4 @@
+import { ConflictException } from '@nestjs/common';
 import { GachaConfigService } from './gacha-config.service';
 
 type Row = {
@@ -105,5 +106,17 @@ describe('GachaConfigService', () => {
     db.gachaEconomyVersion.create.mockResolvedValue({ id: 'v1', version: 1 });
     await service.update('daily_bonus', 999, 'admin', 'set');
     expect(service.dailyBonus).toBe(999);
+  });
+
+  it('rejects invalid box category weights before persisting a snapshot', async () => {
+    await expect(
+      service.update(
+        'box_category_weights',
+        { COMMON: { CRYSTAL: -1 } },
+        'admin',
+        'invalid weights',
+      ),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(db.gachaConfig.update).not.toHaveBeenCalled();
   });
 });

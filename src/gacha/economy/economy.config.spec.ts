@@ -1,4 +1,4 @@
-import { economyConfig } from './economy.config';
+import { ECONOMY_DEFAULTS, economyConfig } from './economy.config';
 
 describe('economyConfig', () => {
   it('adds new foils to legacy snapshots at their configured odds and values', () => {
@@ -16,5 +16,22 @@ describe('economyConfig', () => {
     });
     expect(config.foil_mult.INK).toBe(config.foil_mult.GOLD);
     expect(config.foil_mult.PRISM).toBe(5);
+  });
+
+  it('fills weights added after an older economy snapshot was created', () => {
+    const config = economyConfig({
+      box_category_weights: {
+        COMMON: { CRYSTAL: 10 },
+      },
+    });
+
+    expect(config.box_category_weights.COMMON).toEqual({
+      ...ECONOMY_DEFAULTS.box_category_weights.COMMON,
+      CRYSTAL: 10,
+    });
+  });
+
+  it('rejects a malformed category weights value', () => {
+    expect(() => economyConfig({ box_category_weights: [] })).toThrow();
   });
 });
