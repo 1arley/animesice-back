@@ -1,0 +1,12 @@
+# main triggers the stable release + production deploy, so nothing red may
+# reach it. Replays the Actions pipeline locally before the push goes out.
+# --skip-docker: the image build belongs to deploy.yml, not the CI gate.
+# Bypass for a one-off: HUSKY=0 git push origin main
+should_run=0
+while read -r local_ref _ remote_ref _; do
+  [ "$remote_ref" = "refs/heads/main" ] && should_run=1
+done
+[ "$should_run" = 1 ] || exit 0
+
+echo "pre-push: refs/heads/main -> rodando ci:local (--skip-docker)"
+npm run ci:local -- --skip-docker
