@@ -255,6 +255,12 @@ export class EconomyController {
     return this.economy.claimMarketMission(req.user.id);
   }
 
+  @Public()
+  @Get('night-market/status')
+  nightMarketStatus() {
+    return this.economy.nightMarketStatus();
+  }
+
   @Get('shop')
   shop(@Req() req: AuthenticatedRequest) {
     return this.economy.officialShop(req.user.id);

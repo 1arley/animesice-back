@@ -3030,6 +3030,14 @@ export class EconomyService {
       : null;
   }
 
+  async nightMarketStatus() {
+    const periodStart = await this.nightMarketDay();
+    return {
+      open: periodStart !== null,
+      periodStart: periodStart ? dayKey(periodStart) : null,
+    };
+  }
+
   private async assertMarketEligible(tx: Tx, userId: string) {
     await this.assertEconomyEnabled(tx, userId);
     const user = await tx.user.findUniqueOrThrow({
