@@ -21,6 +21,7 @@
     "test:watch": "NODE_OPTIONS=--experimental-vm-modules jest --config jest.config.mjs --watch",
     "test:cov": "NODE_OPTIONS=--experimental-vm-modules jest --config jest.config.mjs --coverage",
     "test:debug": "NODE_OPTIONS=--experimental-vm-modules node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --config jest.config.mjs --runInBand",
+    "ci:local": "bash scripts/ci-local.sh",
     "prepare": "husky",
     "commitlint": "commitlint --edit",
     "release": "semantic-release",

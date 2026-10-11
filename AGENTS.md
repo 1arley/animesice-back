@@ -10,6 +10,11 @@ NestJS 11 · TypeScript 5.9 · Prisma 7 · PostgreSQL 15 · Node 22 · Docker mu
 # Setup
 npm install && npx prisma generate
 
+# Full CI locally (identical to GitHub Actions, one command)
+npm run ci:local                        # quality + unit + e2e + audit + build + docker image
+npm run ci:local -- --skip-docker       # fast loop: skip the slow image build
+npm run ci:local -- --fresh             # npm ci + prisma generate first (validates lockfile)
+
 # Quality (matches CI exactly)
 npm run lint
 npx prettier --check "src/**/*.ts" "test/**/*.ts"
@@ -37,6 +42,10 @@ npm run dev
 6. `npm run build`
 
 Always run quality checks before tests. Lint or typecheck failures will fail CI regardless of test results.
+
+`npm run ci:local` (`scripts/ci-local.sh`) runs that whole order plus the npm
+audit and Docker image steps, starting/stopping the Postgres test container
+itself. Run it before pushing — green here means green Actions.
 
 ## Path aliases
 
