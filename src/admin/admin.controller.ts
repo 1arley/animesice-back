@@ -30,6 +30,10 @@ import {
 import { CreateGenreDto } from '@/admin/dto/create-genre.dto';
 import { ImportAnimeDto } from '@/admin/dto/import-anime.dto';
 import { CreateExternalAnimeDto } from '@/admin/dto/create-external-anime.dto';
+import {
+  CreateProfileBackgroundDto,
+  UpdateProfileBackgroundDto,
+} from '@/admin/dto/profile-background.dto';
 
 @ApiTags('admin')
 @ApiBearerAuth('JWT-auth')
@@ -177,5 +181,39 @@ export class AdminController {
   @ApiOperation({ summary: 'Criar gênero' })
   createGenre(@Body() dto: CreateGenreDto) {
     return this.adminService.createGenre(dto);
+  }
+
+  // --- Profile backgrounds ------------------------------------------------
+
+  @Get('profile-backgrounds')
+  @ApiOperation({ summary: 'Listar fundos de perfil (inclui desabilitados)' })
+  adminListProfileBackgrounds() {
+    return this.adminService.adminListProfileBackgrounds();
+  }
+
+  @Post('profile-backgrounds')
+  @Audit('CREATE', 'ProfileBackground')
+  @ApiOperation({ summary: 'Criar fundo de perfil' })
+  adminCreateProfileBackground(@Body() dto: CreateProfileBackgroundDto) {
+    return this.adminService.adminCreateProfileBackground(dto);
+  }
+
+  @Patch('profile-backgrounds/:id')
+  @Audit('UPDATE', 'ProfileBackground')
+  @ApiOperation({ summary: 'Atualizar fundo de perfil' })
+  adminUpdateProfileBackground(
+    @Param('id') id: string,
+    @Body() dto: UpdateProfileBackgroundDto,
+  ) {
+    return this.adminService.adminUpdateProfileBackground(id, dto);
+  }
+
+  @Delete('profile-backgrounds/:id')
+  @Audit('DELETE', 'ProfileBackground')
+  @ApiOperation({
+    summary: 'Excluir fundo de perfil (desabilita se estiver em uso)',
+  })
+  adminDeleteProfileBackground(@Param('id') id: string) {
+    return this.adminService.adminDeleteProfileBackground(id);
   }
 }

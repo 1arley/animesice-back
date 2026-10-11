@@ -3,7 +3,7 @@ import { UserService } from '@/user/user.service';
 import { PrismaService } from '@/prisma/prisma.service';
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
-import { Role } from '@prisma/client';
+import { Prisma, Role } from '@prisma/client';
 
 describe('UserService', () => {
   let service: UserService;
@@ -313,8 +313,28 @@ describe('UserService', () => {
       await service.updateProfileMeta('1', {
         avatar: 'new.jpg',
       });
+      // Trocar a imagem zera o recorte anterior: as coordenadas do crop
+      // antigo são relativas à imagem que saiu.
       expect(prisma.user.update).toHaveBeenCalledWith(
-        expect.objectContaining({ data: { avatar: 'new.jpg' } }),
+        expect.objectContaining({
+          data: {
+            avatar: 'new.jpg',
+            avatarCrop: Prisma.JsonNull,
+          },
+        }),
+      );
+    });
+
+    it('should reset the cover crop when the cover changes', async () => {
+      mockPrismaService.user.update.mockResolvedValue({ id: '1' });
+      await service.setProfileCover('1', 'cover.jpg');
+      expect(prisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: {
+            profileCover: 'cover.jpg',
+            profileCoverCrop: Prisma.JsonNull,
+          },
+        }),
       );
     });
 

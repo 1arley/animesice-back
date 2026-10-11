@@ -5,8 +5,10 @@ function makePrisma() {
   const user = {
     findFirst: jest.fn(async () => null) as jest.Mock,
     findUnique: jest.fn(async () => null) as jest.Mock,
+    findUniqueOrThrow: jest.fn(async () => ({})) as jest.Mock,
     findMany: jest.fn(async () => []) as jest.Mock,
     count: jest.fn(async () => 0) as jest.Mock,
+    update: jest.fn(async () => ({})) as jest.Mock,
   };
   const privacySettings = {
     findUnique: jest.fn(async () => null) as jest.Mock,
@@ -37,6 +39,13 @@ function makePrisma() {
   const report = {
     create: jest.fn(async () => ({})) as jest.Mock,
   };
+  const userCard = {
+    findMany: jest.fn(async () => []) as jest.Mock,
+  };
+  const profileBackground = {
+    findMany: jest.fn(async () => []) as jest.Mock,
+    findFirst: jest.fn(async () => null) as jest.Mock,
+  };
   const prisma = {
     user,
     privacySettings,
@@ -47,6 +56,8 @@ function makePrisma() {
     watchHistory,
     follow,
     report,
+    userCard,
+    profileBackground,
     $transaction: jest.fn(async (ops: Promise<unknown>[]) => Promise.all(ops)),
     $queryRaw: jest.fn(async () => []) as jest.Mock,
   };
@@ -404,6 +415,314 @@ describe('UsersService', () => {
       const { svc } = build();
       await expect(svc.reportUser(userId, 'x', 'SPAM')).rejects.toThrow(
         NotFoundException,
+      );
+    });
+  });
+
+  describe('showcase de perfil', () => {
+    const ownedCard = (id: string) => ({
+      id,
+      card: {
+        id: `c-${id}`,
+        name: `Card ${id}`,
+        image: null,
+        imageHidden: false,
+        rarity: 'EPICA',
+        animeId: null,
+        animeTitle: null,
+        anime: null,
+      },
+    });
+
+    function showcaseRow(overrides: Record<string, unknown> = {}) {
+      return {
+        showcaseSections: ['FEATURED', 'FAVORITES', 'COLLECTION', 'MEDALS'],
+        favoriteGachaCardIds: [] as string[],
+        pinnedCollectionIds: [] as string[],
+        featuredUserCard: null,
+        favoriteCollection: null,
+        gachaCollectionProgress: [] as unknown[],
+        ...overrides,
+      };
+    }
+
+    it('preserva a ordem das seções e devolve o payload de cada uma', async () => {
+      const { svc, prisma } = build();
+      prisma.user.findFirst.mockResolvedValue({ id: userId });
+      prisma.user.findUniqueOrThrow.mockResolvedValue(
+        showcaseRow({ showcaseSections: ['MEDALS', 'FEATURED'] }),
+      );
+
+      const result = await svc.getShowcase('john');
+
+      expect(result.sections).toEqual(['MEDALS', 'FEATURED']);
+      expect(result.data).toHaveProperty('FEATURED');
+      expect(result.data).toHaveProperty('MEDALS');
+    });
+
+    it('resolve apelido e uuid com a mesma consulta', async () => {
+      const { svc, prisma } = build();
+      prisma.user.findFirst.mockResolvedValue({ id: userId });
+      prisma.user.findUniqueOrThrow.mockResolvedValue(showcaseRow());
+
+      await svc.getShowcase('john');
+
+      expect(prisma.user.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            OR: [{ id: 'john' }, { userName: 'john' }],
+          },
+        }),
+      );
+    });
+
+    it('descarta chaves desconhecidas e duplicadas nas seções', async () => {
+      const { svc, prisma } = build();
+      prisma.user.findFirst.mockResolvedValue({ id: userId });
+      prisma.user.findUniqueOrThrow.mockResolvedValue(
+        showcaseRow({
+          showcaseSections: ['MEDALS', 'NAO_EXISTE', 'MEDALS', 'FAVORITES'],
+        }),
+      );
+
+      const result = await svc.getShowcase(userId);
+
+      expect(result.sections).toEqual(['MEDALS', 'FAVORITES']);
+    });
+
+    it('calcula o progresso da coleção favorita só com leitura', async () => {
+      const { svc, prisma } = build();
+      prisma.user.findFirst.mockResolvedValue({ id: userId });
+      prisma.user.findUniqueOrThrow.mockResolvedValue(
+        showcaseRow({
+          favoriteCollection: {
+            id: 'col-1',
+            name: 'Set A',
+            slug: 'set-a',
+            version: 1,
+            members: [{ cardId: 'c1' }, { cardId: 'c2' }, { cardId: 'c3' }],
+          },
+        }),
+      );
+      // Sem cartas favoritas a consulta delas nem dispara: a única chamada
+      // de userCard.findMany é a de posse.
+      prisma.userCard.findMany.mockResolvedValueOnce([
+        { cardId: 'c1' },
+        { cardId: 'c3' },
+      ]);
+
+      const result = await svc.getShowcase(userId);
+
+      expect(result.data.COLLECTION).toEqual(
+        expect.objectContaining({ total: 3, discovered: 2, percent: 66 }),
+      );
+      // Nenhum write: o GET público não pode creditar crystals de marco
+      // nem gravar linhas de progresso como collectionProgress() faz.
+      expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('mantém a ordem de pinnedCollectionIds nas medalhas e corta em 3', async () => {
+      const { svc, prisma } = build();
+      prisma.user.findFirst.mockResolvedValue({ id: userId });
+      prisma.user.findUniqueOrThrow.mockResolvedValue(
+        showcaseRow({
+          pinnedCollectionIds: ['c3', 'c1', 'c2', 'c4'],
+          gachaCollectionProgress: [
+            { collectionId: 'c1', version: 1, collection: { name: 'Um' } },
+            { collectionId: 'c2', version: 1, collection: { name: 'Dois' } },
+            { collectionId: 'c3', version: 2, collection: { name: 'Tres' } },
+            { collectionId: 'c4', version: 1, collection: { name: 'Quatro' } },
+          ],
+        }),
+      );
+
+      const result = await svc.getShowcase(userId);
+
+      expect(result.data.MEDALS).toEqual([
+        { id: 'c3', name: 'Tres', version: 2 },
+        { id: 'c1', name: 'Um', version: 1 },
+        { id: 'c2', name: 'Dois', version: 1 },
+      ]);
+    });
+
+    it('esconde nome e arte de carta oculta', async () => {
+      const { svc, prisma } = build();
+      prisma.user.findFirst.mockResolvedValue({ id: userId });
+      prisma.user.findUniqueOrThrow.mockResolvedValue(
+        showcaseRow({
+          featuredUserCard: {
+            id: 'uc-1',
+            card: {
+              id: 'c9',
+              name: 'Secreto',
+              image: 'https://cdn/x.png',
+              imageHidden: true,
+              rarity: 'LENDARIA',
+            },
+          },
+        }),
+      );
+
+      const result = await svc.getShowcase(userId);
+
+      expect(result.data.FEATURED).toEqual(
+        expect.objectContaining({
+          card: expect.objectContaining({ name: '???', image: null }),
+        }),
+      );
+    });
+
+    it('omite cartas favoritas que saíram da coleção', async () => {
+      const { svc, prisma } = build();
+      prisma.user.findFirst.mockResolvedValue({ id: userId });
+      prisma.user.findUniqueOrThrow.mockResolvedValue(
+        showcaseRow({ favoriteGachaCardIds: ['uc-1', 'uc-queimada'] }),
+      );
+      prisma.userCard.findMany.mockResolvedValueOnce([ownedCard('uc-1')]);
+
+      const result = await svc.getShowcase(userId);
+
+      expect(result.data.FAVORITES).toHaveLength(1);
+    });
+
+    it('404 quando showGacha está desligado', async () => {
+      const { svc, prisma } = build();
+      prisma.user.findFirst.mockResolvedValue({ id: userId });
+      prisma.privacySettings.findUnique.mockResolvedValue({
+        profilePublic: true,
+        showGacha: false,
+      });
+
+      await expect(svc.getShowcase(userId)).rejects.toThrow(NotFoundException);
+    });
+
+    it('404 quando o perfil é privado', async () => {
+      const { svc, prisma } = build();
+      prisma.user.findFirst.mockResolvedValue({ id: userId });
+      prisma.privacySettings.findUnique.mockResolvedValue({
+        profilePublic: false,
+        showGacha: true,
+      });
+
+      await expect(svc.getShowcase(userId)).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('recortes, seções e fundo', () => {
+    it('salva o recorte enviado', async () => {
+      const { svc, prisma } = build();
+      prisma.user.update.mockResolvedValue({
+        avatarCrop: { x: 10, y: 20, scale: 1.5 },
+        profileCoverCrop: null,
+      });
+
+      const result = await svc.updateCrops(userId, {
+        avatarCrop: { x: 10, y: 20, scale: 1.5 },
+      });
+
+      expect(prisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { avatarCrop: { x: 10, y: 20, scale: 1.5 } },
+        }),
+      );
+      expect(result.avatarCrop).toEqual({ x: 10, y: 20, scale: 1.5 });
+      expect(result.profileCoverCrop).toBeNull();
+    });
+
+    it('grava JsonNull quando o recorte volta ao padrão', async () => {
+      const { svc, prisma } = build();
+      prisma.user.update.mockResolvedValue({
+        avatarCrop: null,
+        profileCoverCrop: null,
+      });
+
+      await svc.updateCrops(userId, { avatarCrop: null });
+
+      expect(prisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { avatarCrop: expect.anything() },
+        }),
+      );
+    });
+
+    it('rejeita atualização vazia', async () => {
+      const { svc } = build();
+      await expect(svc.updateCrops(userId, {})).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it('grava as seções na ordem enviada', async () => {
+      const { svc, prisma } = build();
+      prisma.user.update.mockResolvedValue({});
+
+      const result = await svc.updateShowcaseSections(userId, [
+        'MEDALS',
+        'FAVORITES',
+      ]);
+
+      expect(prisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { showcaseSections: ['MEDALS', 'FAVORITES'] },
+        }),
+      );
+      expect(result.sections).toEqual(['MEDALS', 'FAVORITES']);
+    });
+
+    it('troca o fundo por um preset habilitado', async () => {
+      const { svc, prisma } = build();
+      prisma.profileBackground.findFirst.mockResolvedValue({
+        id: 'pb-1',
+        key: 'aurora',
+        name: 'Aurora',
+        imageUrl: 'https://cdn/a.jpg',
+      });
+      prisma.user.update.mockResolvedValue({
+        profileBackground: {
+          key: 'aurora',
+          name: 'Aurora',
+          imageUrl: 'https://cdn/a.jpg',
+        },
+      });
+
+      const result = await svc.setProfileBackground(userId, 'aurora');
+
+      expect(result.profileBackground).toEqual(
+        expect.objectContaining({ key: 'aurora' }),
+      );
+    });
+
+    it('rejeita preset inexistente ou desabilitado', async () => {
+      const { svc, prisma } = build();
+      prisma.profileBackground.findFirst.mockResolvedValue(null);
+
+      await expect(
+        svc.setProfileBackground(userId, 'nao-existe'),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('limpa o fundo com key nulo sem tocar no preset', async () => {
+      const { svc, prisma } = build();
+      prisma.user.update.mockResolvedValue({ profileBackground: null });
+
+      const result = await svc.setProfileBackground(userId, null);
+
+      expect(prisma.profileBackground.findFirst).not.toHaveBeenCalled();
+      expect(prisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { profileBackgroundId: null } }),
+      );
+      expect(result.profileBackground).toBeNull();
+    });
+
+    it('lista só os presets habilitados', async () => {
+      const { svc, prisma } = build();
+      prisma.profileBackground.findMany.mockResolvedValue([]);
+
+      await svc.listProfileBackgrounds();
+
+      expect(prisma.profileBackground.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { enabled: true } }),
       );
     });
   });

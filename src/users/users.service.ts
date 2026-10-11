@@ -6,6 +6,50 @@ import {
 import { PrismaService } from '@/prisma/prisma.service';
 import { Prisma, ReportReason } from '@prisma/client';
 import { PROFILE_PUBLIC_OR_EMPTY } from '@/common/prisma-filters';
+import {
+  SHOWCASE_SECTIONS,
+  ShowcaseSection,
+  UpdateCropsDto,
+} from './dto/profile-showcase.dto';
+
+/** Recorte de imagem persistido no User (avatarCrop / profileCoverCrop). */
+export type ImageCrop = { x: number; y: number; scale: number };
+
+const MAX_PINS = 3;
+
+/** Carta de gacha no showcase — sem o bloco `user` do PULL_SELECT do gacha. */
+const SHOWCASE_CARD_SELECT = {
+  id: true,
+  condition: true,
+  foil: true,
+  edition: true,
+  value: true,
+  skin: { select: { imageUrl: true } },
+  card: {
+    select: {
+      id: true,
+      name: true,
+      image: true,
+      imageHidden: true,
+      rarity: true,
+      animeId: true,
+      animeTitle: true,
+      anime: { select: { slug: true, title: true } },
+    },
+  },
+} satisfies Prisma.UserCardSelect;
+
+/**
+ * Uma carta de showcase nunca revela nome nem arte de card oculta — mesmo o
+ * dono vê o "???" no perfil público, senão basta abrir o perfil de quem
+ * comprou a carta pra quebrar o mistério do sorteio.
+ */
+const presentShowcaseCard = <T extends { card: { imageHidden: boolean } }>(
+  pull: T,
+) =>
+  pull.card.imageHidden
+    ? { ...pull, card: { ...pull.card, name: '???', image: null } }
+    : pull;
 
 @Injectable()
 export class UsersService {
@@ -37,7 +81,20 @@ export class UsersService {
       showActivity: p?.showActivity ?? true,
       showFavorites: p?.showFavorites ?? true,
       showRatings: p?.showRatings ?? true,
+      showGacha: p?.showGacha ?? true,
     };
+  }
+
+  /** Normaliza a ordem das seções: dedup e descarta chaves desconhecidas. */
+  private normalizeSections(
+    raw: string[] | null | undefined,
+  ): ShowcaseSection[] {
+    const known = new Set<string>(SHOWCASE_SECTIONS);
+    const seen = new Set<ShowcaseSection>();
+    for (const key of raw ?? []) {
+      if (known.has(key)) seen.add(key as ShowcaseSection);
+    }
+    return [...seen];
   }
 
   async getPublicProfile(identifier: string) {
@@ -55,6 +112,11 @@ export class UsersService {
         userName: true,
         avatar: true,
         profileCover: true,
+        avatarCrop: true,
+        profileCoverCrop: true,
+        profileBackground: {
+          select: { key: true, name: true, imageUrl: true },
+        },
         bio: true,
         myAnimeList: true,
         createdAt: true,
@@ -79,6 +141,271 @@ export class UsersService {
     }
 
     return user;
+  }
+
+  /**
+   * Showcase do perfil: a vitrine Steam/Twitter — carta em destaque, até 5
+   * cartas favoritas, coleção favorita e medalhas de coleção concluída.
+   *
+   * As seções voltam na ordem escolhida pelo usuário, já normalizadas: o front
+   * itera a lista e não reordena. Seção sem conteúdo é omitida do payload,
+   * mas continua na lista `sections` para o front não saltar buracos.
+   *
+   * `progress` da coleção favorita é calculado só com leitura. Não chama
+   * GachaService.collectionProgress: aquele método grava as linhas de
+   * progresso e credita crystals de marco, e um GET público não pode
+   * disparar efeito financeiro.
+   */
+  async getShowcase(identifier: string) {
+    const userId = await this.resolveUser(identifier);
+    const privacy = await this.getPrivacy(userId);
+    if (!privacy.profilePublic || !privacy.showGacha) {
+      throw new NotFoundException('Usuário não encontrado.');
+    }
+
+    const user = await this.prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      select: {
+        showcaseSections: true,
+        favoriteGachaCardIds: true,
+        pinnedCollectionIds: true,
+        featuredUserCard: { select: SHOWCASE_CARD_SELECT },
+        favoriteCollection: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            version: true,
+            members: { select: { cardId: true } },
+          },
+        },
+        gachaCollectionProgress: {
+          where: { reward100At: { not: null } },
+          select: {
+            collectionId: true,
+            version: true,
+            collection: { select: { name: true } },
+          },
+        },
+      },
+    });
+
+    const [favorites, owned] = await Promise.all([
+      user.favoriteGachaCardIds.length
+        ? this.prisma.userCard.findMany({
+            where: {
+              id: { in: user.favoriteGachaCardIds },
+              userId,
+              status: 'ACTIVE',
+            },
+            select: SHOWCASE_CARD_SELECT,
+          })
+        : [],
+      this.prisma.userCard.findMany({
+        where: { userId, status: 'ACTIVE' },
+        distinct: ['cardId'],
+        select: { cardId: true },
+      }),
+    ]);
+
+    const favoritesById = new Map(favorites.map((card) => [card.id, card]));
+    const ownedIds = new Set(owned.map(({ cardId }) => cardId));
+
+    const collection = user.favoriteCollection;
+    const total = collection?.members.length ?? 0;
+    const discovered =
+      collection?.members.reduce(
+        (count, member) => count + Number(ownedIds.has(member.cardId)),
+        0,
+      ) ?? 0;
+    const favoriteCollection = collection
+      ? {
+          id: collection.id,
+          name: collection.name,
+          slug: collection.slug,
+          version: collection.version,
+          total,
+          discovered,
+          percent: total === 0 ? 0 : Math.floor((discovered * 100) / total),
+        }
+      : null;
+
+    const medals = user.gachaCollectionProgress
+      .filter((row) => user.pinnedCollectionIds.includes(row.collectionId))
+      .sort(
+        (a, b) =>
+          user.pinnedCollectionIds.indexOf(a.collectionId) -
+          user.pinnedCollectionIds.indexOf(b.collectionId),
+      )
+      .slice(0, MAX_PINS)
+      .map((row) => ({
+        id: row.collectionId,
+        name: row.collection.name,
+        version: row.version,
+      }));
+
+    const payload: Record<ShowcaseSection, unknown> = {
+      FEATURED: user.featuredUserCard
+        ? presentShowcaseCard(user.featuredUserCard)
+        : null,
+      FAVORITES: user.favoriteGachaCardIds.flatMap((id) => {
+        const card = favoritesById.get(id);
+        return card ? [presentShowcaseCard(card)] : [];
+      }),
+      COLLECTION: favoriteCollection,
+      MEDALS: medals,
+    };
+
+    return {
+      sections: this.normalizeSections(user.showcaseSections),
+      data: payload,
+    };
+  }
+
+  /**
+   * Mini-cardápio para hover (Steam): o suficiente para a janela flutuante sem
+   * puxar a vitrine inteira. Sem status online de propósito — exigiria
+   * lastSeenAt atualizado a cada request autenticado.
+   */
+  async getHoverCard(identifier: string) {
+    const userId = await this.resolveUser(identifier);
+    const privacy = await this.getPrivacy(userId);
+    if (!privacy.profilePublic) {
+      throw new NotFoundException('Usuário não encontrado.');
+    }
+
+    const user = await this.prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      select: {
+        id: true,
+        name: true,
+        userName: true,
+        avatar: true,
+        bio: true,
+        profileCover: true,
+        createdAt: true,
+        featuredUserCard: {
+          select: {
+            id: true,
+            card: {
+              select: {
+                name: true,
+                image: true,
+                imageHidden: true,
+                rarity: true,
+              },
+            },
+          },
+        },
+        gachaCollectionProgress: {
+          where: { reward100At: { not: null } },
+          select: { collectionId: true },
+        },
+        _count: {
+          select: {
+            comments: privacy.showActivity,
+            ratings: privacy.showRatings,
+            favorites: privacy.showFavorites,
+            followers: { where: { follower: PROFILE_PUBLIC_OR_EMPTY } },
+          },
+        },
+      },
+    });
+
+    const featured = user.featuredUserCard;
+    return {
+      id: user.id,
+      name: user.name,
+      userName: user.userName,
+      avatar: user.avatar,
+      profileCover: user.profileCover,
+      bio: user.bio,
+      createdAt: user.createdAt,
+      featured: featured
+        ? {
+            id: featured.id,
+            name: featured.card.imageHidden ? '???' : featured.card.name,
+            image: featured.card.imageHidden ? null : featured.card.image,
+            rarity: featured.card.rarity,
+          }
+        : null,
+      medals: user.gachaCollectionProgress.length,
+      counts: {
+        comments: user._count.comments,
+        ratings: user._count.ratings,
+        favorites: user._count.favorites,
+        followers: user._count.followers,
+      },
+    };
+  }
+
+  /** Recortes do avatar/capa. `null` volta ao enquadramento padrão. */
+  async updateCrops(userId: string, dto: UpdateCropsDto) {
+    const data: Record<string, unknown> = {};
+    if (dto.avatarCrop !== undefined) {
+      data.avatarCrop = dto.avatarCrop ?? Prisma.JsonNull;
+    }
+    if (dto.profileCoverCrop !== undefined) {
+      data.profileCoverCrop = dto.profileCoverCrop ?? Prisma.JsonNull;
+    }
+    if (Object.keys(data).length === 0) {
+      throw new BadRequestException('Nada para atualizar.');
+    }
+
+    const user = await this.prisma.user.update({
+      where: { id: userId },
+      data,
+      select: { avatarCrop: true, profileCoverCrop: true },
+    });
+    return {
+      avatarCrop: (user.avatarCrop as ImageCrop | null) ?? null,
+      profileCoverCrop: (user.profileCoverCrop as ImageCrop | null) ?? null,
+    };
+  }
+
+  /** Reordena/oculta as seções do showcase. Ordem enviada é preservada. */
+  async updateShowcaseSections(userId: string, sections: string[]) {
+    const normalized = this.normalizeSections(sections);
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { showcaseSections: normalized },
+    });
+    return { sections: normalized };
+  }
+
+  /** Presets ativos da galeria de fundos, na ordem do painel. */
+  listProfileBackgrounds() {
+    return this.prisma.profileBackground.findMany({
+      where: { enabled: true },
+      orderBy: [{ sort: 'asc' }, { name: 'asc' }],
+      select: { key: true, name: true, imageUrl: true },
+    });
+  }
+
+  /** Troca o fundo do perfil. `key` nulo volta ao fundo sem imagem. */
+  async setProfileBackground(userId: string, key: string | null) {
+    let profileBackgroundId: string | null = null;
+    if (key !== null) {
+      const background = await this.prisma.profileBackground.findFirst({
+        where: { key, enabled: true },
+        select: { id: true, key: true, name: true, imageUrl: true },
+      });
+      if (!background) {
+        throw new BadRequestException('Fundo de perfil indisponível.');
+      }
+      profileBackgroundId = background.id;
+    }
+
+    const user = await this.prisma.user.update({
+      where: { id: userId },
+      data: { profileBackgroundId },
+      select: {
+        profileBackground: {
+          select: { key: true, name: true, imageUrl: true },
+        },
+      },
+    });
+    return { profileBackground: user.profileBackground };
   }
 
   /**

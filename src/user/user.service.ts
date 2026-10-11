@@ -9,6 +9,7 @@ import { CreateUserDto } from '@/dto/create-user.dto';
 import * as bcrypt from 'bcrypt';
 import { BCRYPT_ROUNDS, DEFAULT_PAGE_SIZE } from '@/common/constants';
 import { Role } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 
 @Injectable()
 export class UserService {
@@ -158,8 +159,12 @@ export class UserService {
       myAnimeList?: string;
     },
   ) {
-    const data: Record<string, string | null> = {};
-    if (dto.avatar !== undefined) data.avatar = dto.avatar;
+    const data: Prisma.UserUpdateInput = {};
+    if (dto.avatar !== undefined) {
+      data.avatar = dto.avatar;
+      // Nova imagem = recorte antigo sem sentido, volta ao padrão.
+      data.avatarCrop = Prisma.JsonNull;
+    }
     if (dto.bio !== undefined) data.bio = dto.bio;
 
     if (dto.userName !== undefined && dto.userName !== null) {
@@ -215,7 +220,7 @@ export class UserService {
     const [user] = await this.prisma.$transaction([
       this.prisma.user.update({
         where: { id: userId },
-        data: { avatar: null },
+        data: { avatar: null, avatarCrop: Prisma.JsonNull },
         select: {
           id: true,
           email: true,
@@ -241,7 +246,9 @@ export class UserService {
   async setProfileCover(userId: string, profileCover: string | null) {
     return this.prisma.user.update({
       where: { id: userId },
-      data: { profileCover },
+      // Trocar a imagem invalida o recorte anterior: as coordenadas são
+      // relativas à imagem antiga, então voltam ao enquadramento padrão.
+      data: { profileCover, profileCoverCrop: Prisma.JsonNull },
       select: {
         id: true,
         email: true,

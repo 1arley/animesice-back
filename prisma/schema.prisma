@@ -126,6 +126,18 @@ model User {
   isVerified                Boolean                    @default(false)
   avatar                    String?
   profileCover              String?
+  /// Recorte do avatar e da capa, em coordenadas da imagem original.
+  /// {x, y} = 0..100 (% do tamanho exibido), {scale} = 1..3 (zoom do crop).
+  /// null = usa o enquadramento padrão do CSS. Guardado em % para que a
+  /// mesma configuração sirva a qualquer resolução de exibição.
+  avatarCrop                Json?
+  profileCoverCrop          Json?
+  /// Preset de fundo de perfil (galeria administrada no painel).
+  profileBackgroundId       String?
+  profileBackground         ProfileBackground?         @relation("ProfileBackground", fields: [profileBackgroundId], references: [id], onDelete: SetNull)
+  /// Seções do showcase do perfil, na ordem em que devem aparecer.
+  /// Valores permitidos: FEATURED, FAVORITES, COLLECTION, MEDALS.
+  showcaseSections          String[]                   @default(["FEATURED", "FAVORITES", "COLLECTION", "MEDALS"])
   bio                       String?
   myAnimeList               String?
   suspendedUntil            DateTime?
@@ -217,6 +229,22 @@ model User {
   postShares                PostShare[]
   following                 Follow[]                   @relation("Follower")
   followers                 Follow[]                   @relation("Followee")
+}
+
+/// Preset da galeria de fundos de perfil — controlado pelo painel admin.
+/// A imagem fica em `imageUrl` (mesmo padrão de GachaSkin), sem upload:
+/// o admin aponta a URL e o front consome direto.
+model ProfileBackground {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  name      String
+  imageUrl  String
+  enabled   Boolean  @default(true)
+  sort      Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users User[] @relation("ProfileBackground")
 }
 
 /// Configuração global do site (chave-valor) — persistida no DB, com

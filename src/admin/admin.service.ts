@@ -17,6 +17,10 @@ import { ImportAnimeDto } from '@/admin/dto/import-anime.dto';
 import { AnimeFormat, AnimeSeason, AudioType } from '@prisma/client';
 import { audioTypeFromTitle } from '@/common/anime-audio';
 import { CreateExternalAnimeDto } from '@/admin/dto/create-external-anime.dto';
+import {
+  CreateProfileBackgroundDto,
+  UpdateProfileBackgroundDto,
+} from '@/admin/dto/profile-background.dto';
 
 /** Candidatos lidos antes do ranking por relevância na busca de animes. */
 const ANIME_SEARCH_WINDOW = 200;
@@ -409,6 +413,58 @@ export class AdminService {
       throw new ConflictException('Gênero já existe.');
     }
     return this.prisma.genre.create({ data: dto });
+  }
+
+  // --- Profile backgrounds ------------------------------------------------
+
+  adminListProfileBackgrounds() {
+    return this.prisma.profileBackground.findMany({
+      orderBy: [{ sort: 'asc' }, { name: 'asc' }],
+    });
+  }
+
+  async adminCreateProfileBackground(dto: CreateProfileBackgroundDto) {
+    const existing = await this.prisma.profileBackground.findUnique({
+      where: { key: dto.key },
+    });
+    if (existing) {
+      throw new ConflictException('Já existe um fundo com esta key.');
+    }
+    return this.prisma.profileBackground.create({
+      data: { ...dto, sort: dto.sort ?? 0 },
+    });
+  }
+
+  async adminUpdateProfileBackground(
+    id: string,
+    dto: UpdateProfileBackgroundDto,
+  ) {
+    await this.prisma.profileBackground.findUniqueOrThrow({ where: { id } });
+    return this.prisma.profileBackground.update({ where: { id }, data: dto });
+  }
+
+  /**
+   * Desabilitar esconde o fundo da galeria sem quebrar os perfis que já o
+   * escolheram — o User.profileBackgroundId continua válido e o front segue
+   * renderizando. Por isso o admin desativa em vez de apagar.
+   */
+  async adminDeleteProfileBackground(id: string) {
+    const background = await this.prisma.profileBackground.findUniqueOrThrow({
+      where: { id },
+      select: { _count: { select: { users: true } } },
+    });
+    if (background._count.users > 0) {
+      await this.prisma.profileBackground.update({
+        where: { id },
+        data: { enabled: false },
+      });
+      return {
+        disabled: true,
+        message: 'Fundo em uso por perfis: desabilitado em vez de excluído.',
+      };
+    }
+    await this.prisma.profileBackground.delete({ where: { id } });
+    return { deleted: true };
   }
 
   // --- Import AniList -----------------------------------------------------
