@@ -43,6 +43,7 @@ jobs:
   deploy:
     name: Build & push Docker image
     runs-on: ubuntu-latest
+    environment: production
 
     # Safety gates:
     # - never from a PR
