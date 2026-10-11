@@ -1,3 +1,16 @@
+# [1.40.0](https://github.com/1arley/animesice-back/compare/v1.39.0...v1.40.0) (2026-10-11)
+
+
+### Bug Fixes
+
+* **gacha/economy:** exige carta vinculada para ocultar e resgatar skins ([7d4d882](https://github.com/1arley/animesice-back/commit/7d4d882766dee1edc7740990e6e86a7e3ac35471))
+
+
+### Features
+
+* **gacha/economy:** restrict skin offers to owned cards ([f02d51c](https://github.com/1arley/animesice-back/commit/f02d51c1a7802aa576e18f5fc97a282c725b08f9))
+* **gacha:** exclusão real de skins e config de animação do giro ([0090157](https://github.com/1arley/animesice-back/commit/0090157e44a18bb219dcfcd21f244cef749ec415))
+
 # [1.39.0](https://github.com/1arley/animesice-back/compare/v1.38.0...v1.39.0) (2026-10-09)
 
 
