@@ -946,7 +946,7 @@ export class GachaController {
   @Delete('admin/skins/:id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles('ADMIN', 'SUPERADMIN')
-  @Audit('ARCHIVE_GACHA_SKIN', 'GachaSkin')
+  @Audit('DELETE_GACHA_SKIN', 'GachaSkin')
   adminDeleteSkin(@Param('id') id: string) {
     return this.gachaService.adminDeleteSkin(id);
   }
@@ -1130,6 +1130,12 @@ export class GachaController {
   }
 
   // ── GachaConfig admin ────────────────────────────────────
+
+  @Get('anim-config')
+  @ApiOperation({ summary: 'Configuração pública da animação do gacha' })
+  rollAnimationConfig() {
+    return this.gachaConfig.rollAnimation();
+  }
 
   @Get('admin/config')
   @UseGuards(JwtAuthGuard, RolesGuard)

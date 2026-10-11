@@ -1,0 +1,4 @@
+-- Seed: animation config
+INSERT INTO "GachaConfig" ("key", "value", "label", "group", "updatedAt") VALUES
+('anim_roll', '{"enterDuration":0.15,"crystalSpinAt":0.2,"crystalSpinDuration":1.2,"glowAt":0.3,"glowDuration":1.3,"skipAt":0.6,"revealAt":1.8,"crystalOutDuration":0.25,"ringSlots":3,"ringDuration":0.55,"ringStagger":0.12,"particleSlots":24,"particleDuration":0.65,"particleReach":{"x":180,"y":230},"particleGalaxy":["#a78bfa","#f472b6","#38bdf8"],"effectsGap":0.12,"flipDuration":0.48,"sweepDuration":0.6,"badgeDuration":0.3}',
+  'Configuração da animação do giro (RollStage)', 'animacao', NOW());

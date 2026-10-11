@@ -245,11 +245,14 @@ describe('GachaService', () => {
       update: jest.fn(),
     },
     gachaSkin: {
+      findUnique: jest.fn(),
       findMany: jest.fn(),
       count: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
+      deleteMany: jest.fn(),
     },
+    gachaOfficialOffer: { deleteMany: jest.fn() },
     userGachaSkin: {
       findUnique: jest.fn(),
       findFirst: jest.fn(),
@@ -340,6 +343,35 @@ describe('GachaService', () => {
     }).compile();
 
     service = module.get<GachaService>(GachaService);
+  });
+
+  describe('adminDeleteSkin', () => {
+    it('removes pending offers and the unused skin in one serializable transaction', async () => {
+      const operations: string[] = [];
+      mockPrisma.gachaSkin.findUnique.mockResolvedValue({
+        active: false,
+        _count: { owners: 0, buyOrders: 0 },
+      });
+      mockPrisma.gachaOfficialOffer.deleteMany.mockImplementation(async () => {
+        operations.push('offers');
+        return { count: 1 };
+      });
+      mockPrisma.gachaSkin.deleteMany.mockImplementation(async () => {
+        operations.push('skin');
+        return { count: 1 };
+      });
+
+      await service.adminDeleteSkin('skin-1');
+
+      expect(operations).toEqual(['offers', 'skin']);
+      expect(mockPrisma.gachaOfficialOffer.deleteMany).toHaveBeenCalledWith({
+        where: { skinId: 'skin-1', purchasedAt: null },
+      });
+      expect(prismaMocks.root.$transaction).toHaveBeenCalledWith(
+        expect.any(Function),
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      );
+    });
   });
 
   describe('featured cards', () => {

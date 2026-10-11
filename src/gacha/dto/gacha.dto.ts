@@ -65,6 +65,10 @@ export class UpdateGachaSkinDto {
   @IsBoolean()
   active?: boolean;
 
+  @ValidateIf((_, value) => value !== undefined)
+  @IsIn(['COMMON', 'RARE', 'EPIC', 'LEGENDARY'])
+  rarity?: 'COMMON' | 'RARE' | 'EPIC' | 'LEGENDARY';
+
   @IsOptional()
   @IsBoolean()
   blocked?: boolean;

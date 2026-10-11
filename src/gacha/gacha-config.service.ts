@@ -49,6 +49,14 @@ export class GachaConfigService implements OnModuleInit {
     return this.prisma.gachaConfig.findMany({ orderBy: { group: 'asc' } });
   }
 
+  async rollAnimation() {
+    const config = await this.prisma.gachaConfig.findUnique({
+      where: { key: 'anim_roll' },
+      select: { value: true },
+    });
+    return config?.value ?? {};
+  }
+
   async update(
     key: string,
     value: Prisma.InputJsonValue,

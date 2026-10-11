@@ -2655,7 +2655,10 @@ export class GachaService {
       this.prisma.gachaSkin.count({ where }),
       this.prisma.gachaSkin.findMany({
         where,
-        include: { card: { select: { id: true, name: true, image: true } } },
+        include: {
+          card: { select: { id: true, name: true, image: true } },
+          _count: { select: { owners: true, buyOrders: true } },
+        },
         orderBy: [{ updatedAt: 'desc' }, { name: 'asc' }],
         skip: (page - 1) * limit,
         take: limit,
@@ -2674,6 +2677,7 @@ export class GachaService {
       imageUrl?: string;
       sourceUrl?: string | null;
       cardId?: string | null;
+      rarity?: 'COMMON' | 'RARE' | 'EPIC' | 'LEGENDARY';
       active?: boolean;
       blocked?: boolean;
     },
@@ -2703,12 +2707,46 @@ export class GachaService {
     return this.prisma.gachaSkin.update({ where: { id }, data: update });
   }
 
-  adminDeleteSkin(id: string) {
-    // Preserve acquired copies and market history; remove the skin from future catalog drops.
-    return this.prisma.gachaSkin.update({
-      where: { id },
-      data: { active: false },
-    });
+  async adminDeleteSkin(id: string) {
+    return this.prisma.$transaction(
+      async (tx) => {
+        const skin = await tx.gachaSkin.findUnique({
+          where: { id },
+          select: {
+            active: true,
+            _count: { select: { owners: true, buyOrders: true } },
+          },
+        });
+        if (!skin) throw new NotFoundException('Skin não encontrada.');
+        if (skin.active)
+          throw new ConflictException('Desative a skin antes de excluí-la.');
+        if (skin._count.owners > 0)
+          throw new ConflictException(
+            'Esta skin tem cópias em coleções e não pode ser excluída.',
+          );
+        if (skin._count.buyOrders > 0)
+          throw new ConflictException(
+            'Esta skin tem pedidos de compra associados e não pode ser excluída.',
+          );
+
+        await tx.gachaOfficialOffer.deleteMany({
+          where: { skinId: id, purchasedAt: null },
+        });
+        const deleted = await tx.gachaSkin.deleteMany({
+          where: {
+            id,
+            active: false,
+            owners: { none: {} },
+            buyOrders: { none: {} },
+          },
+        });
+        if (deleted.count !== 1)
+          throw new ConflictException(
+            'A skin mudou ou recebeu cópias durante a exclusão. Atualize a página.',
+          );
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
   }
 
   async dailyBonus(userId: string) {
