@@ -1,3 +1,10 @@
+## [1.40.1](https://github.com/1arley/animesice-back/compare/v1.40.0...v1.40.1) (2026-10-11)
+
+
+### Bug Fixes
+
+* **gacha/economy:** mescla pesos por camada e valida box_category_weights ([055cfb9](https://github.com/1arley/animesice-back/commit/055cfb9b87ffacad0912f2eeb7413bf05c0aa323))
+
 # [1.40.0](https://github.com/1arley/animesice-back/compare/v1.39.0...v1.40.0) (2026-10-11)
 
 
