@@ -2022,7 +2022,9 @@ export class EconomyService {
       ).map((item) => item.cardId),
     );
     const visibleOffers = offers.filter(
-      (offer) => !offer.skin || ownedCardIds.has(offer.skin.cardId),
+      (offer) =>
+        !offer.skin ||
+        (!!offer.skin.cardId && ownedCardIds.has(offer.skin.cardId)),
     );
     const nightOfferIds = visibleOffers
       .filter((offer) => offer.slot >= 7)
@@ -2086,6 +2088,10 @@ export class EconomyService {
         )
           throw new ConflictException('Item bloqueado.');
         if (offer.skin) {
+          if (!offer.skin.cardId)
+            throw new ConflictException(
+              'A skin não está vinculada a uma carta.',
+            );
           const ownsCard = await tx.userCard.findFirst({
             where: {
               userId,
