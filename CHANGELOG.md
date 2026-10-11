@@ -1,3 +1,10 @@
+# [1.41.0](https://github.com/1arley/animesice-back/compare/v1.40.1...v1.41.0) (2026-10-11)
+
+
+### Features
+
+* **gacha/economy:** reequilibra lootboxes com novas categorias de prêmio ([c826c97](https://github.com/1arley/animesice-back/commit/c826c97b76b64864a45ce97b4f8967509824adc5))
+
 ## [1.40.1](https://github.com/1arley/animesice-back/compare/v1.40.0...v1.40.1) (2026-10-11)
 
 
