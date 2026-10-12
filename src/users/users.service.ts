@@ -111,6 +111,7 @@ export class UsersService {
         name: true,
         userName: true,
         avatar: true,
+        equippedGachaSkin: { select: { imageUrl: true } },
         profileCover: true,
         avatarCrop: true,
         profileCoverCrop: true,
