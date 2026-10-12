@@ -39,18 +39,55 @@ export class CatalogScanner implements OnModuleInit {
 
   /**
    * Escaneia um anime em todas as fontes conhecidas, na ordem de prioridade, e
-   * devolve a PRIMEIRA que tiver episódios + qual fonte foi a vencedora.
+   * devolve os episódios encontrados, priorizando Meus Animes quando ambas
+   * as fontes publicam o mesmo número. O AnimesDigital complementa catálogos
+   * já mapeados com episódios exclusivos.
    *
-   * Ordem: meusanimes (base) -> animesdigital (fallback). Fontes sem URL
-   * derivável por slug (animesdigital usa post-ID do WordPress) só entram pelo
-   * caminho de descoberta de catálogo, nunca por template.
+   * Ordem: meusanimes (base) -> animesdigital (fallback/complemento). Fontes
+   * sem URL derivável por slug (animesdigital usa post-ID do WordPress) só
+   * entram pelo caminho de descoberta de catálogo, nunca por template.
    */
   async scanAnimeResolved(
     animeSlug: string,
     animeId?: string,
   ): Promise<CatalogScan> {
     const meusanimes = await this.scanMeusanimes(animeSlug, animeId);
-    if (meusanimes.entries.length > 0) return meusanimes;
+    if (meusanimes.entries.length > 0) {
+      if (animeId && process.env.ANIMESDIGITAL_ENABLED === 'true') {
+        const mapping = await Promise.resolve(
+          this.prisma.animeSource?.findUnique({
+            where: {
+              animeId_sourceId: { animeId, sourceId: 'animesdigital' },
+            },
+            select: { externalKey: true },
+          }),
+        ).catch(() => null);
+        if (mapping?.externalKey) {
+          const animesdigital = await this.scanAnimesdigital(
+            animeSlug,
+            animeId,
+          );
+          const seen = new Set(
+            meusanimes.entries.map(
+              (entry) => `${entry.season}:${entry.episode}`,
+            ),
+          );
+          const additional = animesdigital.entries.filter((entry) => {
+            const key = `${entry.season}:${entry.episode}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          });
+          return {
+            ...meusanimes,
+            entries: [...meusanimes.entries, ...additional].sort(
+              (a, b) => a.season - b.season || a.episode - b.episode,
+            ),
+          };
+        }
+      }
+      return meusanimes;
+    }
     return this.scanAnimesdigital(animeSlug, animeId);
   }
 
@@ -325,8 +362,9 @@ export class CatalogScanner implements OnModuleInit {
   /**
    * Escaneia todos os animes FINALIZADO/EM_LANCAMENTO.
    * Enfileira SCAN_CATALOG para cada anime (dedupeKey previne duplicação).
-   * Pós-split: não usa episodeCount como critério de skip — o count pode estar
-   * desatualizado (426 animes com overcount). dedupeKey garante idempotência.
+   * Catálogos mapeados no AnimesDigital são rechecados mesmo completos para
+   * descobrir novos posts sem URL derivável. Nos demais, episodeCount evita
+   * revarrer catálogos completos e a dedupeKey mantém os enqueues idempotentes.
    */
   async scanAll(force = false): Promise<{ scanned: number; enqueued: number }> {
     const animes = await this.prisma.anime.findMany({
@@ -341,6 +379,10 @@ export class CatalogScanner implements OnModuleInit {
         _count: {
           select: { episodes: true },
         },
+        sourceMappings: {
+          where: { sourceId: 'animesdigital' },
+          select: { sourceId: true },
+        },
       },
     });
 
@@ -350,14 +392,27 @@ export class CatalogScanner implements OnModuleInit {
     for (const anime of animes) {
       const dbEpisodeCount = anime._count.episodes;
       const expected = anime.episodeCount ?? 0;
+      const hasAnimesdigitalCatalog =
+        process.env.ANIMESDIGITAL_ENABLED === 'true' &&
+        (anime.sourceMappings?.length ?? 0) > 0;
 
       // Sem force: pula apenas se tem episódios e parece completo (count real >= expected)
       // MAS se expected é 0 (episodeCount null), sempre escaneia
-      if (!force && expected > 0 && dbEpisodeCount >= expected) {
+      if (
+        !force &&
+        !hasAnimesdigitalCatalog &&
+        expected > 0 &&
+        dbEpisodeCount >= expected
+      ) {
         continue;
       }
       // Sem force e sem episodeCount: pula se tem pelo menos 1 episódio
-      if (!force && expected === 0 && dbEpisodeCount > 0) {
+      if (
+        !force &&
+        !hasAnimesdigitalCatalog &&
+        expected === 0 &&
+        dbEpisodeCount > 0
+      ) {
         continue;
       }
 
