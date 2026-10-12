@@ -244,6 +244,16 @@ export class GachaController {
     return this.gachaService.skinCatalog(req.user.id, page, limit, search);
   }
 
+  @Get('skins/recent')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Últimos giros públicos de skins de outros jogadores',
+  })
+  recentSkinSpins(@Req() req: AuthenticatedRequest) {
+    return this.gachaService.recentSkinSpins(req.user.id);
+  }
+
   @Post('skins/spin')
   @UseGuards(JwtAuthGuard, VerifiedGuard)
   @ApiBearerAuth('JWT-auth')

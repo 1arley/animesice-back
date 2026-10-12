@@ -672,15 +672,20 @@ export class SocialService {
     const postWhere: Prisma.PostWhereInput = {
       userId: { in: userIds },
       status: ContentStatus.VISIBLE,
-      OR: [
-        { kind: { not: 'GACHA_PULL' } },
+      AND: [
+        { kind: { not: 'GACHA_SKIN_PULL' } },
         {
-          user: {
-            OR: [
-              { privacySettings: null },
-              { privacySettings: { is: { showGacha: true } } },
-            ],
-          },
+          OR: [
+            { kind: { not: 'GACHA_PULL' } },
+            {
+              user: {
+                OR: [
+                  { privacySettings: null },
+                  { privacySettings: { is: { showGacha: true } } },
+                ],
+              },
+            },
+          ],
         },
       ],
     };

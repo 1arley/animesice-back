@@ -2435,12 +2435,89 @@ export class GachaService {
     };
   }
 
+  async recentSkinSpins(currentUserId: string) {
+    const events = await this.prisma.post.findMany({
+      where: {
+        kind: 'GACHA_SKIN_PULL',
+        status: 'VISIBLE',
+        userId: { not: currentUserId },
+        user: {
+          OR: [
+            { privacySettings: null },
+            {
+              privacySettings: {
+                is: { profilePublic: true, showGacha: true },
+              },
+            },
+          ],
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+      select: {
+        id: true,
+        createdAt: true,
+        meta: true,
+        user: { select: { name: true, userName: true, avatar: true } },
+      },
+    });
+    const snapshots = events.flatMap((event) => {
+      const meta = event.meta;
+      if (meta === null || typeof meta !== 'object' || Array.isArray(meta)) {
+        return [];
+      }
+      const { skinId, name, imageUrl } = meta;
+      if (
+        typeof skinId !== 'string' ||
+        typeof name !== 'string' ||
+        typeof imageUrl !== 'string'
+      ) {
+        return [];
+      }
+      return [
+        {
+          id: event.id,
+          createdAt: event.createdAt,
+          skinId,
+          name,
+          imageUrl,
+          user: event.user,
+        },
+      ];
+    });
+    if (snapshots.length === 0) return [];
+    const visibleSkinIds = new Set(
+      (
+        await this.prisma.gachaSkin.findMany({
+          where: {
+            id: { in: [...new Set(snapshots.map((event) => event.skinId))] },
+            blocked: false,
+          },
+          select: { id: true },
+        })
+      ).map((skin) => skin.id),
+    );
+    return snapshots
+      .filter((event) => visibleSkinIds.has(event.skinId))
+      .slice(0, 6)
+      .map(({ skinId, name, imageUrl, ...event }) => ({
+        ...event,
+        skin: { id: skinId, name, imageUrl },
+      }));
+  }
+
   async spinSkin(userId: string) {
     const result = await this.prisma.$transaction(
       async (tx) => {
         const user = await tx.user.findUnique({
           where: { id: userId },
-          select: { crystalBalance: true, nextGachaSkinSpinAt: true },
+          select: {
+            crystalBalance: true,
+            nextGachaSkinSpinAt: true,
+            privacySettings: {
+              select: { profilePublic: true, showGacha: true },
+            },
+          },
         });
         if (!user) throw new NotFoundException('Usuário não encontrado.');
         const skins = await tx.gachaSkin.findMany({
@@ -2492,6 +2569,24 @@ export class GachaService {
             rarity: picked.rarity,
           },
         });
+        if (
+          !user.privacySettings ||
+          (user.privacySettings.profilePublic && user.privacySettings.showGacha)
+        ) {
+          await tx.post.create({
+            data: {
+              userId,
+              kind: 'GACHA_SKIN_PULL',
+              content: `Girou a skin ${picked.name}.`,
+              meta: {
+                skinId: picked.id,
+                name: picked.name,
+                imageUrl: picked.imageUrl,
+              },
+            },
+            select: { id: true },
+          });
+        }
         const nextSpinAt = new Date(
           now.getTime() + this.config.skinSpinCooldownMs,
         );

@@ -129,6 +129,7 @@ export class UserService {
         name: true,
         userName: true,
         avatar: true,
+        equippedGachaSkin: { select: { imageUrl: true } },
         bio: true,
         myAnimeList: true,
         createdAt: true,
