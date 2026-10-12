@@ -1,3 +1,10 @@
+# [1.44.0](https://github.com/1arley/animesice-back/compare/v1.43.0...v1.44.0) (2026-10-12)
+
+
+### Features
+
+* **gacha:** posta skin pulls e expõe giros recentes de skins ([c81ced0](https://github.com/1arley/animesice-back/commit/c81ced021e3c3c04bd60edd39c5d4d6756720729))
+
 # [1.43.0](https://github.com/1arley/animesice-back/compare/v1.42.0...v1.43.0) (2026-10-11)
 
 
