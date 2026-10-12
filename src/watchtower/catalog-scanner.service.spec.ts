@@ -141,6 +141,47 @@ describe('CatalogScanner', () => {
       expect(result.scanned).toBe(0);
       expect(result.enqueued).toBe(0);
     });
+
+    it('reescaneia catálogos AnimesDigital mapeados mesmo completos ou sem episodeCount', async () => {
+      const previous = process.env.ANIMESDIGITAL_ENABLED;
+      process.env.ANIMESDIGITAL_ENABLED = 'true';
+      m.prisma.anime.findMany.mockResolvedValue([
+        {
+          id: 'complete',
+          slug: 'complete',
+          episodeCount: 10,
+          _count: { episodes: 10 },
+          sourceMappings: [{ sourceId: 'animesdigital' }],
+        },
+        {
+          id: 'unknown',
+          slug: 'unknown',
+          episodeCount: null,
+          _count: { episodes: 2 },
+          sourceMappings: [{ sourceId: 'animesdigital' }],
+        },
+      ]);
+
+      try {
+        const result = await scanner.scanAll(false);
+        expect(result).toEqual({ scanned: 2, enqueued: 2 });
+        expect(m.jobs.enqueue).toHaveBeenNthCalledWith(
+          1,
+          expect.objectContaining({
+            payload: { animeId: 'complete', slug: 'complete' },
+          }),
+        );
+        expect(m.jobs.enqueue).toHaveBeenNthCalledWith(
+          2,
+          expect.objectContaining({
+            payload: { animeId: 'unknown', slug: 'unknown' },
+          }),
+        );
+      } finally {
+        if (previous === undefined) delete process.env.ANIMESDIGITAL_ENABLED;
+        else process.env.ANIMESDIGITAL_ENABLED = previous;
+      }
+    });
   });
 
   describe('scanAnime', () => {
@@ -296,19 +337,26 @@ describe('CatalogScanner', () => {
       expect(m.jobs.enqueue).toHaveBeenCalledTimes(1);
     });
 
-    it('meusanimes: externalKey segue derivado da URL do episódio (regressão)', async () => {
+    it('meusanimes: externalKey vem da URL meusa mesmo se um episódio AnimesDigital vier primeiro', async () => {
       // O catálogo do meusanimes inclui infixo de temporada na URL do episódio
       // ("<slug>-1-episodio-N"), então a chave persistida é "<slug>-1" — não o
-      // slug da página /a/. Este comportamento não pode mudar.
-      jest.spyOn(scanner, 'scanAnimeResolved' as any).mockResolvedValue(
-        meusaScan([
+      // slug da página /a/. Um episódio mesclado de outra fonte não pode mudá-la.
+      jest.spyOn(scanner, 'scanAnimeResolved' as any).mockResolvedValue({
+        sourceId: 'meusanimes',
+        sourceSlug: 'yamada-kun',
+        entries: [
           {
             season: 1,
             episode: 1,
+            url: 'https://animesdigital.org/video/a/139003',
+          },
+          {
+            season: 1,
+            episode: 6,
             url: 'https://meusanimes.blog/e/yamada-kun-1-episodio-6/',
           },
-        ]),
-      );
+        ],
+      });
       m.prisma.anime.findUnique.mockResolvedValue({
         id: 'a1',
         slug: 'yamada-kun',
@@ -338,6 +386,14 @@ describe('CatalogScanner', () => {
           update: expect.objectContaining({
             externalUrl: 'https://meusanimes.blog/a/yamada-kun-1/',
             externalKey: 'yamada-kun-1',
+          }),
+        }),
+      );
+      expect(m.jobs.enqueue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          payload: expect.objectContaining({
+            episodeNumber: 1,
+            episodeUrl: 'https://animesdigital.org/video/a/139003',
           }),
         }),
       );
@@ -557,6 +613,59 @@ describe('CatalogScanner', () => {
       const scan = await scanner.scanAnimeResolved('test');
       expect(scan.sourceId).toBe('meusanimes');
       expect(scan.entries[0]!.url).toContain('meusanimes.blog');
+    });
+
+    it('mescla episódios exclusivos do catálogo mapeado e mantém Meus Animes nas duplicatas', async () => {
+      m.prisma.animeSource.findUnique.mockImplementation(({ where }: any) =>
+        Promise.resolve(
+          where.animeId_sourceId.sourceId === 'animesdigital'
+            ? { externalKey: 'test-animesdigital' }
+            : null,
+        ),
+      );
+      global.fetch = jest.fn().mockImplementation((url: string) => {
+        if (String(url).includes('meusanimes.blog')) {
+          return Promise.resolve({
+            ok: true,
+            text: () =>
+              Promise.resolve(`
+                <div class="numerando">1 - 1</div>
+                <div class="episodiotitle"><a href="https://meusanimes.blog/e/test-episodio-1/">Ep 1</a></div>
+                <div class="numerando">1 - 2</div>
+                <div class="episodiotitle"><a href="https://meusanimes.blog/e/test-episodio-2/">Ep 2</a></div>
+              `),
+          });
+        }
+        return Promise.resolve({
+          ok: true,
+          text: () =>
+            Promise.resolve(
+              card('139004', 'Steel Ball Run Episódio 02') +
+                card('139005', 'Steel Ball Run Episódio 03'),
+            ),
+        });
+      });
+
+      const scan = await scanner.scanAnimeResolved('test', 'a1');
+
+      expect(scan.sourceId).toBe('meusanimes');
+      expect(scan.entries).toEqual([
+        {
+          season: 1,
+          episode: 1,
+          url: 'https://meusanimes.blog/e/test-episodio-1/',
+        },
+        {
+          season: 1,
+          episode: 2,
+          url: 'https://meusanimes.blog/e/test-episodio-2/',
+        },
+        {
+          season: 1,
+          episode: 3,
+          url: 'https://animesdigital.org/video/a/139005',
+        },
+      ]);
     });
 
     it('ignora animesdigital quando a fonte está desligada', async () => {

@@ -490,8 +490,9 @@ export class CatalogScanner implements OnModuleInit {
     // animesdigital: é série única, então o slug da própria página é a chave.
     const sourceId = scan.sourceId || 'meusanimes';
     const seriesSlug =
-      entries[0]?.url
-        .match(/https:\/\/meusanimes\.blog\/e\/([^/]+)\//i)?.[1]
+      entries
+        .find((entry) => entry.url.includes('meusanimes.blog'))
+        ?.url.match(/https:\/\/meusanimes\.blog\/e\/([^/]+)\//i)?.[1]
         ?.replace(/-episodio-\d+.*$/i, '') ?? slug;
     const externalKey =
       sourceId === 'animesdigital' ? scan.sourceSlug : seriesSlug;
