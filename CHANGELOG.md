@@ -1,3 +1,22 @@
+# [1.45.0](https://github.com/1arley/animesice-back/compare/v1.44.0...v1.45.0) (2026-10-12)
+
+
+### Bug Fixes
+
+* **watchtower:** deriva externalKey do Meus Animes pela URL do catálogo certo ([40a825b](https://github.com/1arley/animesice-back/commit/40a825beaa112e4d2c0d59bfb343ffdb246c23e0))
+* **watchtower:** recheck mapped AnimesDigital catalogs ([26312d4](https://github.com/1arley/animesice-back/commit/26312d44656db74ed90f13f458dd665dc2d32ca5))
+
+
+### Features
+
+* **gacha:** expoe id do dono no card da enciclopedia ([3da6b40](https://github.com/1arley/animesice-back/commit/3da6b40d8038e273f159878f56da102dfbb500f6))
+* **users:** inclui skin de gacha equipada no select ([6fe19d1](https://github.com/1arley/animesice-back/commit/6fe19d1266e30650b5cf78ca4a4b5f74dafe1d09))
+
+
+### Performance Improvements
+
+* **gacha:** encurta animacao padrao do giro do gacha ([d8a754c](https://github.com/1arley/animesice-back/commit/d8a754c5631177bbe4e487d40d9d29bfe4cc8baf))
+
 # [1.44.0](https://github.com/1arley/animesice-back/compare/v1.43.0...v1.44.0) (2026-10-12)
 
 
