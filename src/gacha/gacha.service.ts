@@ -3294,6 +3294,7 @@ export class GachaService {
       return user
         ? [
             {
+              id: user.id,
               name: user.name,
               userName: user.userName,
               copies: owner._count.id ?? 0,

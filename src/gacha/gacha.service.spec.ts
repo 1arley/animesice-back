@@ -1303,8 +1303,8 @@ describe('GachaService', () => {
       ]);
 
       await expect(service.encyclopediaCardOwners('c1')).resolves.toEqual([
-        { name: 'Bia', userName: 'bia', copies: 2 },
-        { name: 'Ana', userName: 'ana', copies: 1 },
+        { id: 'u2', name: 'Bia', userName: 'bia', copies: 2 },
+        { id: 'u1', name: 'Ana', userName: 'ana', copies: 1 },
       ]);
     });
   });
