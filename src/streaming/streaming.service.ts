@@ -50,7 +50,7 @@ export interface StreamSourceResponse {
   src: string;
   /** origem CRU do vídeo (.mp4 da CDN) — p/ diagnóstico apenas. */
   rawVideoUrl: string | null;
-  /** URL da página do episódio na fonte (ex: animefire.io/animes/<slug>/<ep>). */
+  /** URL da página da fonte de onde o vídeo foi extraído. */
   embedUrl: string | null;
   /** se houve re-extração nesta chamada (útil p/ auditoria). */
   reextracted: boolean;
@@ -279,6 +279,7 @@ export class StreamingService {
       }
     }
     const lastKnownVideoUrl = rawVideoUrl;
+    let lastKnownDead = false;
 
     // Em recuperação solicitada pelo player, confirma a falha com um GET de
     // 1 byte antes de gastar um slot de scraper. O probe normal pode decidir
@@ -295,6 +296,7 @@ export class StreamingService {
           reextracted: false,
         };
       }
+      lastKnownDead = true;
       rawVideoUrl = null;
     }
 
@@ -313,6 +315,7 @@ export class StreamingService {
       const dead = await probeMediaUrlDead(rawVideoUrl);
       dbg(`[STREAM] probe videoUrl=${rawVideoUrl.slice(0, 80)} dead=${dead}`);
       if (dead) {
+        lastKnownDead = true;
         dbg(
           `[STREAM] videoUrl morta — re-extraindo antes de responder p/ ${animeSlug}/${episodeNumber}`,
         );
@@ -356,7 +359,12 @@ export class StreamingService {
     }
 
     const result = await inflight;
-    if (!result.videoUrl && !result.playerEmbed && lastKnownVideoUrl) {
+    if (
+      !result.videoUrl &&
+      !result.playerEmbed &&
+      lastKnownVideoUrl &&
+      !lastKnownDead
+    ) {
       return {
         videoUrl: lastKnownVideoUrl,
         playerEmbed: null,
@@ -425,6 +433,14 @@ export class StreamingService {
     );
 
     for (const source of sourceUrls) {
+      if (
+        await this.scrapeService.isSourceDisabled(
+          source.sourceId,
+          source.pageUrl,
+        )
+      ) {
+        continue;
+      }
       dbg(
         `[STREAM] tentando URL persistida source=${source.sourceId ?? 'legacy'} url=${source.pageUrl.slice(0, 80)}`,
       );
@@ -458,21 +474,14 @@ export class StreamingService {
       }
     }
 
-    // Fallback cross-source. A fonte persistida é a primeira tentativa; quando
-    // ela morre (o meusanimes.blog passou a devolver Cloudflare challenge 403),
-    // as demais fontes resolvem o episódio pelo catálogo local — o
-    // animesonlinecc recebe o slug resolvido, os demais usam o slug local.
+    // Fallback para as fontes ativas. AnimeFire não possui adapter e acabava
+    // sendo enviado incorretamente ao scraper padrão de MeusAnimes.
     if (!rawVideoUrl) {
       for (const [label, run] of [
         [
           'animesonline',
           () =>
             this.scrapeService.scrapeFromAnimesonline(animeSlug, episodeNumber),
-        ],
-        [
-          'animefire',
-          () =>
-            this.scrapeService.scrapeFromAnimefire(animeSlug, episodeNumber),
         ],
         [
           'meusanimes',
@@ -910,14 +919,6 @@ export class StreamingService {
               animeSlug,
               episodeNumber,
               season,
-            );
-            if (fresh && (await probeMediaUrlDead(fresh, true))) fresh = null;
-          }
-          // Fallback animefire.io.
-          if (!fresh) {
-            fresh = await this.scrapeService.scrapeFromAnimefire(
-              animeSlug,
-              episodeNumber,
             );
             if (fresh && (await probeMediaUrlDead(fresh, true))) fresh = null;
           }

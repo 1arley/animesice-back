@@ -218,16 +218,13 @@ describe('ScrapeService (orquestração + cache SWR)', () => {
     expect(af.extractHttp).toHaveBeenCalledTimes(1);
   });
 
-  it('não quebra quando rankedSources está vazio (ordem estática de fallback)', async () => {
+  it('não volta a usar fonte desativada quando rankedSources está vazio', async () => {
     const { svc, af, health } = build();
     health.rankedSources.mockResolvedValue([]);
-    const res = await svc.scrapeEpisodeVideo(
-      'https://meusanimes.io/a/1',
-      undefined,
-      false,
-    );
-    expect(res.videos[0]).toContain('cdn.meusanimes');
-    expect(af.extractHttp).toHaveBeenCalledTimes(1);
+    await expect(
+      svc.scrapeEpisodeVideo('https://meusanimes.io/a/1', undefined, false),
+    ).rejects.toThrow(ServiceUnavailableException);
+    expect(af.extractHttp).not.toHaveBeenCalled();
   });
 
   it('honra sourceId explícito mesmo fora da ordem de saúde', async () => {

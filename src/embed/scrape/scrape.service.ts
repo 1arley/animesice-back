@@ -175,8 +175,7 @@ export class ScrapeService {
    *
    * @param episodeUrl URL absoluta do episodio.
    * @param sourceId opcional força um adapter (meusanimes/animesonline/animesdigital);
-   *                 sem source, escolhe dinamicamente o provider mais saudável
-   *                 que suporta a URL (pula disabled do HealthMonitor).
+   *                 sem source, escolhe um provider ativo que suporta a URL.
    * @param wrap se true (default), URLs externas sao embrulhadas no proxy de
    *             midia interno (/api/embed/media?url=...). Use false p/ obter
    *             RAW (re-extração de streaming precisa do RAW).
@@ -238,6 +237,16 @@ export class ScrapeService {
       }
       throw err;
     }
+  }
+
+  async isSourceDisabled(
+    sourceId: string | undefined,
+    pageUrl: string,
+  ): Promise<boolean> {
+    const source = sourceId
+      ? this.sources.find((candidate) => candidate.id === sourceId)
+      : this.sources.find((candidate) => candidate.supports(pageUrl));
+    return source ? this.sourceDisabled(source.id) : false;
   }
 
   /**
@@ -570,9 +579,8 @@ export class ScrapeService {
 
   /**
    * Resolve o adapter: explícito por id (honra sempre), senão auto-detecta
-   * pelo host usando a ordem de saúde do HealthMonitor (disabled ficam de fora
-   * do rankedSources; fontes fora de SOURCE_IDS entram no fim). Se nenhuma
-   * fonte suporta a URL, usa o adapter genérico default (animefire-like).
+   * pelo host usando a ordem de saúde do HealthMonitor. Não envia a URL de uma
+   * fonte conhecida e desativada para outro adapter como fallback.
    */
   private async resolveSource(
     url: string,
@@ -580,13 +588,23 @@ export class ScrapeService {
   ): Promise<ScrapeSource> {
     if (sourceId) {
       const found = this.sources.find((s) => s.id === sourceId);
-      if (found) return found;
+      if (found && !(await this.sourceDisabled(found.id))) return found;
       // sourceId desconhecido: cai p/ auto-detect (nao falha).
     }
     const ordered = await this.healthOrderedSources();
     const hit = ordered.find((s) => s.supports(url));
     if (hit) return hit;
-    return this.sources[0]!;
+    if (this.sources.some((s) => s.supports(url))) {
+      throw new ServiceUnavailableException(
+        'A fonte deste episódio está desativada.',
+      );
+    }
+    if (/^https?:\/\/(?:[^/?#]+\.)?animefire\.io(?:[/?#]|$)/i.test(url)) {
+      throw new ServiceUnavailableException('AnimeFire não tem scraper ativo.');
+    }
+    const fallback = ordered[0];
+    if (fallback) return fallback;
+    throw new ServiceUnavailableException('Nenhum scraper está ativo.');
   }
 
   /**
@@ -602,22 +620,19 @@ export class ScrapeService {
     );
   }
 
-  /** Fontes ordenadas por saúde (rankedSources) com fontes não-rastreadas no fim. */
+  /** Fontes ativas ordenadas pela saúde; fontes desativadas ficam fora. */
   private async healthOrderedSources(): Promise<ScrapeSource[]> {
-    let order: string[] = [];
     try {
-      order = await this.health.rankedSources();
+      const order = await this.health.rankedSources();
+      return order
+        .map((id) => this.sources.find((s) => s.id === id))
+        .filter((s): s is ScrapeSource => Boolean(s));
     } catch (err) {
       dbg(
         `[SCRAPE] rankedSources falhou, usando ordem base: ${err instanceof Error ? err.message : String(err)}`,
       );
+      return this.sources;
     }
-    return [
-      ...order
-        .map((id) => this.sources.find((s) => s.id === id))
-        .filter((s): s is ScrapeSource => Boolean(s)),
-      ...this.sources.filter((s) => !order.includes(s.id)),
-    ];
   }
 
   /**
@@ -856,6 +871,7 @@ export class ScrapeService {
     animeSlug: string,
     episodeNumber: number,
   ): Promise<string | null> {
+    if (await this.sourceDisabled('animesonline')) return null;
     const direct = await this.tryAnimesonlineUrl(
       this.animesonlineEpisodeUrl(animeSlug, episodeNumber),
       animeSlug,

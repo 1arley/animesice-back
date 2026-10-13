@@ -82,6 +82,7 @@ export class HealthMonitor {
           "lastError" = ${error},
           "lastFailureKind" = ${failure.kind},
           "disabled" = CASE
+            WHEN ${/retornou 403\b/i.test(error ?? '')} THEN true
             WHEN "consecutiveFailures" + 1 >= ${DISABLE_THRESHOLD} THEN true
             ELSE "disabled"
           END
@@ -157,7 +158,14 @@ export class HealthMonitor {
   /** Canário: reabilita 1 fonte disabled p/ testar recuperação. */
   async reviveOne(): Promise<string | null> {
     const candidate = await this.prisma.watchtowerSourceHealth.findFirst({
-      where: { disabled: true, disabledByAdmin: false },
+      where: {
+        disabled: true,
+        disabledByAdmin: false,
+        OR: [
+          { lastError: null },
+          { lastError: { not: { contains: 'retornou 403' } } },
+        ],
+      },
       orderBy: { lastFailureAt: 'desc' },
     });
     if (!candidate) return null;

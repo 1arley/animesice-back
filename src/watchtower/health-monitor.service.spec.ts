@@ -76,7 +76,8 @@ function makeMockPrisma() {
         existing.failureCount += 1;
         existing.consecutiveFailures += 1;
         existing.lastFailureAt = new Date();
-        if (existing.consecutiveFailures >= 5) existing.disabled = true;
+        if (values.includes(true) || existing.consecutiveFailures >= 5)
+          existing.disabled = true;
       }
       store.set(sourceId, existing);
       return 1;
@@ -112,11 +113,15 @@ describe('HealthMonitor', () => {
   });
 
   it('recordFailure incrementa failureCount', async () => {
-    await health.recordFailure('animefire');
-    const row = mock.store.get('animefire');
+    await health.recordFailure('meusanimes', {
+      kind: 'AVAILABILITY',
+      error: 'https://meusanimes.blog/e/bleach-1/ retornou 403',
+    });
+    const row = mock.store.get('meusanimes');
     expect(row.failureCount).toBe(1);
     expect(row.consecutiveFailures).toBe(1);
     expect(row.lastFailureAt).toBeInstanceOf(Date);
+    expect(row.disabled).toBe(true);
   });
 
   it('recordFailure desabilita após 5 falhas consecutivas', async () => {
