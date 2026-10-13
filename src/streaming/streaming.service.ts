@@ -458,10 +458,22 @@ export class StreamingService {
       }
     }
 
-    // Unit-test compatibility for legacy fallback contract. Production uses
-    // only persisted source URLs to avoid cross-site slug fabrication.
-    if (!rawVideoUrl && process.env.NODE_ENV === 'test') {
+    // Fallback cross-source. A fonte persistida é a primeira tentativa; quando
+    // ela morre (o meusanimes.blog passou a devolver Cloudflare challenge 403),
+    // as demais fontes resolvem o episódio pelo catálogo local — o
+    // animesonlinecc recebe o slug resolvido, os demais usam o slug local.
+    if (!rawVideoUrl) {
       for (const [label, run] of [
+        [
+          'animesonline',
+          () =>
+            this.scrapeService.scrapeFromAnimesonline(animeSlug, episodeNumber),
+        ],
+        [
+          'animefire',
+          () =>
+            this.scrapeService.scrapeFromAnimefire(animeSlug, episodeNumber),
+        ],
         [
           'meusanimes',
           () =>
@@ -470,16 +482,6 @@ export class StreamingService {
               episodeNumber,
               season,
             ),
-        ],
-        [
-          'animefire',
-          () =>
-            this.scrapeService.scrapeFromAnimefire(animeSlug, episodeNumber),
-        ],
-        [
-          'animesonline',
-          () =>
-            this.scrapeService.scrapeFromAnimesonline(animeSlug, episodeNumber),
         ],
       ] as const) {
         try {

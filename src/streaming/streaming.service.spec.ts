@@ -1690,6 +1690,29 @@ describe('StreamingService (cobertura de recuperação)', () => {
     expect(out.rawVideoUrl).toBe('https://cdn.test/live4.mp4');
   });
 
+  // Regressão: o fallback cross-source era gateado por NODE_ENV === 'test',
+  // então em produção a fonte persistida morta (meusanimes no Cloudflare
+  // challenge) deixava o player sem vídeo nenhum.
+  it('em produção usa o fallback cross-source quando a fonte persistida morre', async () => {
+    const origEnv = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      const { prisma, scrapeService, svc } = makeMocks();
+      mockEpisode(prisma);
+      scrapeService.scrapeEpisodeVideo.mockResolvedValue({
+        videos: [],
+        playerTokens: [],
+      });
+      scrapeService.scrapeFromAnimesonline.mockResolvedValue(
+        'https://cdn.test/prod.mp4',
+      );
+      const out = await svc.getSource('anime', 1, 'https://api.test', 1, false);
+      expect(out.rawVideoUrl).toBe('https://cdn.test/prod.mp4');
+    } finally {
+      process.env.NODE_ENV = origEnv;
+    }
+  });
+
   it('usa prefixo api padrão no embed de player sem API_PREFIX', async () => {
     delete process.env.API_PREFIX;
     const { prisma, scrapeService, svc } = makeMocks();
