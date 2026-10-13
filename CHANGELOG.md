@@ -1,3 +1,10 @@
+# [1.48.0](https://github.com/1arley/animesice-back/compare/v1.47.0...v1.48.0) (2026-10-13)
+
+
+### Features
+
+* **embed:** confia em host de mídia que o próprio scraper validou ([5553ccf](https://github.com/1arley/animesice-back/commit/5553ccfc78781c642e2bc2959d239d356f2dc2b6))
+
 # [1.47.0](https://github.com/1arley/animesice-back/compare/v1.46.1...v1.47.0) (2026-10-13)
 
 
