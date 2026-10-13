@@ -1,3 +1,15 @@
+# [1.46.0](https://github.com/1arley/animesice-back/compare/v1.45.3...v1.46.0) (2026-10-13)
+
+
+### Bug Fixes
+
+* **sweep:** detecção local de expiração + filtro slug + Dockerfile sem chown duplicado ([2fd0f29](https://github.com/1arley/animesice-back/commit/2fd0f299c03f8b91c9b042717503b67142939f93))
+
+
+### Features
+
+* **scheduler:** sweep roda a cada 15 min no cron existente ([71861ab](https://github.com/1arley/animesice-back/commit/71861abafbcf873b0a38f9b14fd6fe28e37af956))
+
 ## [1.45.3](https://github.com/1arley/animesice-back/compare/v1.45.2...v1.45.3) (2026-10-13)
 
 
