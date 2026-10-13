@@ -1,3 +1,10 @@
+## [1.45.2](https://github.com/1arley/animesice-back/compare/v1.45.1...v1.45.2) (2026-10-13)
+
+
+### Bug Fixes
+
+* **stream:** ativa fallback cross-source em produção ([347389d](https://github.com/1arley/animesice-back/commit/347389d72c4d080fd4bdb46cad2d4e65a6abf5e9))
+
 ## [1.45.1](https://github.com/1arley/animesice-back/compare/v1.45.0...v1.45.1) (2026-10-13)
 
 
