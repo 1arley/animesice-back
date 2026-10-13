@@ -1,3 +1,10 @@
+## [1.45.1](https://github.com/1arley/animesice-back/compare/v1.45.0...v1.45.1) (2026-10-13)
+
+
+### Bug Fixes
+
+* **scrape:** fallback animesonlinecc com slug resolvido ([47b854a](https://github.com/1arley/animesice-back/commit/47b854aaab9e2a16d158ee330ef86ec822cd7ed3))
+
 # [1.45.0](https://github.com/1arley/animesice-back/compare/v1.44.0...v1.45.0) (2026-10-12)
 
 
