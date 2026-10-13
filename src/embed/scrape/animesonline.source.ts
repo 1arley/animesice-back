@@ -68,28 +68,82 @@ export class AnimesonlineScrapeSource implements ScrapeSource {
     episodeNumber: number,
     ua: string,
   ): Promise<string | null> {
-    const variants = [
-      animeSlug,
-      animeSlug.replace(/-(?:dublado|legendado)$/i, ''),
-    ].filter((slug, i, all) => slug && all.indexOf(slug) === i);
+    for (const slug of this.slugVariants(animeSlug)) {
+      const hit = await this.episodeLinkFromAnimePage(slug, episodeNumber, ua);
+      if (hit) return hit;
+    }
 
-    for (const slug of variants) {
-      const pageUrl = `https://animesonlinecc.to/anime/${slug}/`;
+    // Slug adivinhado falhou: a fonte usa outro nome (`kaguya-sama-love-is-war`
+    // -> `kaguya-sama-wa-kokurasetai-...`). A busca por prefixo do slug acha o
+    // anime, e a página do candidato confirma se o episódio existe.
+    for (const term of this.searchTerms(animeSlug)) {
       let html: string;
       try {
-        html = await this.get(pageUrl, ua);
+        html = await this.get(
+          `https://animesonlinecc.to/?post_type=eps&s=${encodeURIComponent(term)}`,
+          ua,
+        );
       } catch {
         continue;
       }
-      const links = [
-        ...html.matchAll(
-          /https:\/\/animesonlinecc\.to\/episodio\/[^"]*?-episodio-(\d+)\/?/gi,
-        ),
-      ];
-      const hit = links.find((m) => Number(m[1]) === episodeNumber);
-      if (hit) return hit[0];
+      for (const [, candidate] of html.matchAll(
+        /https:\/\/animesonlinecc\.to\/anime\/([^/"?]+)/g,
+      )) {
+        if (!candidate || candidate === 'anime') continue;
+        const hit = await this.episodeLinkFromAnimePage(
+          candidate,
+          episodeNumber,
+          ua,
+        );
+        if (hit) return hit;
+      }
     }
     return null;
+  }
+
+  /** Slug local em ordem de tentativa: como está, sem sufixo dublado/legendado. */
+  private slugVariants(animeSlug: string): string[] {
+    return [
+      animeSlug,
+      animeSlug.replace(/-(?:dublado|legendado)$/i, ''),
+    ].filter((slug, i, all) => slug && all.indexOf(slug) === i);
+  }
+
+  /**
+   * Termos de busca derivados do slug. Só prefixos: a fonte indexa o nome
+   * original (`Kaguya-sama wa Kokurasetai`), então o slug inteiro não casa e
+   * palavra solta demais (`witch`) traz animes errados — 2 palavras já
+   * desambiguam e a página do candidato é quem confirma.
+   */
+  private searchTerms(animeSlug: string): string[] {
+    const words = animeSlug
+      .replace(/-(?:dublado|legendado)$/i, '')
+      .split('-')
+      .filter(Boolean);
+    const terms = new Set<string>();
+    for (const size of [2, 3, words.length]) {
+      if (words.length > size) terms.add(words.slice(0, size).join(' '));
+    }
+    return [...terms];
+  }
+
+  private async episodeLinkFromAnimePage(
+    slug: string,
+    episodeNumber: number,
+    ua: string,
+  ): Promise<string | null> {
+    let html: string;
+    try {
+      html = await this.get(`https://animesonlinecc.to/anime/${slug}/`, ua);
+    } catch {
+      return null;
+    }
+    const hit = [
+      ...html.matchAll(
+        /https:\/\/animesonlinecc\.to\/episodio\/[^"]*?-episodio-(\d+)\/?/gi,
+      ),
+    ].find((m) => Number(m[1]) === episodeNumber);
+    return hit?.[0] ?? null;
   }
 
   async extractHttp(ctx: HttpExtractContext): Promise<ScrapeEpisodeResult> {

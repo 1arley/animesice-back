@@ -273,5 +273,70 @@ describe('AnimesonlineScrapeSource', () => {
         source.resolveEpisodeUrl('witch-watch', 99, UA),
       ).resolves.toBeNull();
     });
+
+    it('acha por busca quando o slug da fonte é outro (kaguya)', async () => {
+      const searchHtml = [
+        '<a href="https://animesonlinecc.to/anime/kaguya-sama-wa-kokurasetai-tensai-tachi-no-renai-zunousen">kaguya</a>',
+        '<a href="https://animesonlinecc.to/anime/shining-hearts-shiawase-no-pan">brilho</a>',
+      ].join('');
+      const kaguyaPage =
+        '<a href="https://animesonlinecc.to/episodio/kaguya-sama-wa-kokurasetai-tensai-tachi-no-renai-zunousen-episodio-1/">ep1</a>';
+      const okPage = (html: string) => ({
+        response: { ok: true, status: 200, text: async () => html },
+        dispatcher: { close: jest.fn() },
+      });
+      const notFound = {
+        response: { ok: false, status: 404, text: async () => '' },
+        dispatcher: { close: jest.fn() },
+      };
+
+      mockedFetchSafeRaw
+        // as duas variantes de slug do catálogo não existem na fonte
+        .mockResolvedValueOnce(notFound as never)
+        .mockResolvedValueOnce(notFound as never)
+        // busca por "kaguya sama"
+        .mockResolvedValueOnce(okPage(searchHtml) as never)
+        // página do primeiro candidato tem o episódio 1
+        .mockResolvedValueOnce(okPage(kaguyaPage) as never);
+
+      await expect(
+        source.resolveEpisodeUrl('kaguya-sama-love-is-war', 1, UA),
+      ).resolves.toBe(
+        'https://animesonlinecc.to/episodio/kaguya-sama-wa-kokurasetai-tensai-tachi-no-renai-zunousen-episodio-1/',
+      );
+      expect(mockedFetchSafeRaw).toHaveBeenCalledWith(
+        'https://animesonlinecc.to/?post_type=eps&s=kaguya%20sama',
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+
+    it('pula candidato da busca que não tem o episódio', async () => {
+      const searchHtml =
+        '<a href="https://animesonlinecc.to/anime/shining-hearts-shiawase-no-pan">x</a>';
+      const okPage = (html: string) => ({
+        response: { ok: true, status: 200, text: async () => html },
+        dispatcher: { close: jest.fn() },
+      });
+
+      mockedFetchSafeRaw
+        .mockResolvedValueOnce({
+          response: { ok: false, status: 404, text: async () => '' },
+          dispatcher: { close: jest.fn() },
+        } as never)
+        .mockResolvedValueOnce({
+          response: { ok: false, status: 404, text: async () => '' },
+          dispatcher: { close: jest.fn() },
+        } as never)
+        .mockResolvedValueOnce(okPage(searchHtml) as never)
+        // primeiro candidato sem o episódio 3
+        .mockResolvedValueOnce(
+          okPage('<a href="/episodio/x-episodio-1/">1</a>') as never,
+        );
+
+      await expect(
+        source.resolveEpisodeUrl('witch-watch-dublado', 3, UA),
+      ).resolves.toBeNull();
+    });
   });
 });
