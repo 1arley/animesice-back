@@ -1,3 +1,10 @@
+## [1.45.3](https://github.com/1arley/animesice-back/compare/v1.45.2...v1.45.3) (2026-10-13)
+
+
+### Bug Fixes
+
+* **scrape:** busca animesonlinecc quando o slug da fonte difere ([80a92b4](https://github.com/1arley/animesice-back/commit/80a92b4b0530e7305ed0e73ae215e1240611b946))
+
 ## [1.45.2](https://github.com/1arley/animesice-back/compare/v1.45.1...v1.45.2) (2026-10-13)
 
 
