@@ -479,6 +479,20 @@ export class StreamingService {
     if (!rawVideoUrl) {
       for (const [label, run] of [
         [
+          'topanimes',
+          () =>
+            this.scrapeService.scrapeFromTopanimes(animeSlug, episodeNumber),
+        ],
+        [
+          'animesorion',
+          () =>
+            this.scrapeService.scrapeFromAnimesorion(
+              animeSlug,
+              episodeNumber,
+              season,
+            ),
+        ],
+        [
           'animesonline',
           () =>
             this.scrapeService.scrapeFromAnimesonline(animeSlug, episodeNumber),

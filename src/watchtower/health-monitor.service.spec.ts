@@ -1,5 +1,13 @@
 import { HealthMonitor } from '@/watchtower/health-monitor.service';
-import { SOURCE_IDS } from '@/watchtower/watchtower.types';
+import { OPTIONAL_SOURCE_IDS, SOURCE_IDS } from '@/watchtower/watchtower.types';
+
+/** Mesma regra do rankedSources: opcionais entram conforme o env. */
+function enabledOptionalSources(): readonly string[] {
+  return OPTIONAL_SOURCE_IDS.filter(
+    (id) =>
+      id !== 'animesdigital' || process.env.ANIMESDIGITAL_ENABLED === 'true',
+  );
+}
 
 function makeMockPrisma() {
   const store = new Map<string, any>();
@@ -143,7 +151,7 @@ describe('HealthMonitor', () => {
 
   it('rankedSources retorna todas as fontes ativas', async () => {
     const result = await health.rankedSources();
-    expect(result).toHaveLength(SOURCE_IDS.length);
+    expect(result).toEqual([...SOURCE_IDS, ...enabledOptionalSources()]);
     expect(result).toContain('meusanimes');
     expect(result).toContain('animesonline');
   });
@@ -159,7 +167,10 @@ describe('HealthMonitor', () => {
     });
     const result = await health.rankedSources();
     expect(result).not.toContain('animesonline');
-    expect(result).toHaveLength(SOURCE_IDS.length - 1);
+    // Uma fonte a menos que o total habilitado (base + opcionais).
+    expect(result).toHaveLength(
+      [...SOURCE_IDS, ...enabledOptionalSources()].length - 1,
+    );
   });
 
   it('rankedSources prioriza meusanimes quando scores similares', async () => {

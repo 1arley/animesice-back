@@ -13,6 +13,8 @@ import type { Page, BrowserContext, Browser } from 'playwright';
 import { ScrapeSource, ScrapeEpisodeResult } from './scrape-source.interface';
 import { MeusanimesScrapeSource } from './meusanimes.source';
 import { AnimesonlineScrapeSource } from './animesonline.source';
+import { TopanimesScrapeSource } from './topanimes.source';
+import { AnimesorionScrapeSource } from './animesorion.source';
 import { AnimesdigitalScrapeSource } from './animesdigital.source';
 import { youtubeEmbedUrl } from './extract';
 import {
@@ -138,11 +140,15 @@ export class ScrapeService {
     private readonly metrics: MetricsService,
     private readonly browserPool: BrowserPool,
     @Optional() private readonly animesdigital?: AnimesdigitalScrapeSource,
+    @Optional() private readonly topanimes?: TopanimesScrapeSource,
+    @Optional() private readonly animesorion?: AnimesorionScrapeSource,
   ) {
     this.sources = [
       meusanimes,
       animesonline,
       ...(animesdigital ? [animesdigital] : []),
+      ...(topanimes ? [topanimes] : []),
+      ...(animesorion ? [animesorion] : []),
     ];
     const ttl = Number(process.env.SCRAPE_CACHE_TTL_MS ?? 10 * 60_000);
     const stale = Number(process.env.SCRAPE_CACHE_STALE_MS ?? 60 * 60_000);
@@ -916,6 +922,97 @@ export class ScrapeService {
       dbg(
         `[ANIMESONLINE] failed ${episodeUrl}: ${err instanceof Error ? err.message : String(err)}`,
       );
+    }
+    return null;
+  }
+
+  /**
+   * Tenta extrair de topanimes.net (HTTP puro, sem browser). Usado como
+   * fallback quando meusanimes/animesonline falham — em 13/10/2026 ambos caíram
+   * em challenge Cloudflare para o IP da VPS e o topanimes continuou em 200.
+   */
+  async scrapeFromTopanimes(
+    animeSlug: string,
+    episodeNumber: number,
+  ): Promise<string | null> {
+    if (!this.topanimes) return null;
+    if (await this.sourceDisabled('topanimes')) return null;
+    const episodeUrl = await this.topanimes.resolveEpisodeUrl(
+      animeSlug,
+      episodeNumber,
+    );
+    if (!episodeUrl) {
+      dbg(`[TOPANIMES] sem página p/ ${animeSlug}/${episodeNumber}`);
+      return null;
+    }
+    dbg(`[TOPANIMES] try ${animeSlug}/${episodeNumber} -> ${episodeUrl}`);
+    try {
+      const result = await this.scrapeEpisodeVideo(
+        episodeUrl,
+        undefined,
+        false,
+      );
+      const video = result.videos[0] ?? null;
+      if (video) {
+        dbg(
+          `[TOPANIMES] OK ${animeSlug}/${episodeNumber}: ${video.slice(0, 80)}...`,
+        );
+      } else {
+        dbg(`[TOPANIMES] no video returned ${animeSlug}/${episodeNumber}`);
+      }
+      return video;
+    } catch (err) {
+      dbg(
+        `[TOPANIMES] failed ${episodeUrl}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Tenta extrair de animesorion.cc / animexhd.xyz (mesma rede, mesmo player).
+   * A cadeia termina em tokens Blogger, resolvidos em .mp4 via Playwright.
+   */
+  async scrapeFromAnimesorion(
+    animeSlug: string,
+    episodeNumber: number,
+    season: number = 1,
+  ): Promise<string | null> {
+    if (!this.animesorion) return null;
+    if (await this.sourceDisabled('animesorion')) return null;
+    for (const host of ['https://animesorion.cc', 'https://animexhd.xyz']) {
+      const episodeUrl = await this.animesorion.resolveEpisodeUrl(
+        animeSlug,
+        episodeNumber,
+        season,
+        host,
+      );
+      if (!episodeUrl) {
+        dbg(
+          `[ANIMESORION] sem página ${host} p/ ${animeSlug}/${episodeNumber}`,
+        );
+        continue;
+      }
+      dbg(`[ANIMESORION] try ${animeSlug}/${episodeNumber} -> ${episodeUrl}`);
+      try {
+        const result = await this.scrapeEpisodeVideo(
+          episodeUrl,
+          undefined,
+          false,
+        );
+        const video = result.videos[0] ?? null;
+        if (video) {
+          dbg(
+            `[ANIMESORION] OK ${animeSlug}/${episodeNumber}: ${video.slice(0, 80)}...`,
+          );
+          return video;
+        }
+        dbg(`[ANIMESORION] no video returned ${animeSlug}/${episodeNumber}`);
+      } catch (err) {
+        dbg(
+          `[ANIMESORION] failed ${episodeUrl}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     }
     return null;
   }
