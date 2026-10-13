@@ -1,3 +1,10 @@
+# [1.47.0](https://github.com/1arley/animesice-back/compare/v1.46.1...v1.47.0) (2026-10-13)
+
+
+### Features
+
+* **streaming:** adiciona topanimes e animesorion como fontes e adapta slugs por fonte ([2a62e3d](https://github.com/1arley/animesice-back/commit/2a62e3d29e167b3e9fad009891fdc576b28f7a96))
+
 ## [1.46.1](https://github.com/1arley/animesice-back/compare/v1.46.0...v1.46.1) (2026-10-13)
 
 
