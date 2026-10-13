@@ -11,14 +11,13 @@
  */
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '@/prisma/prisma.service';
-import { probeMediaUrlDead } from '@/common/media-probe';
+import { probeMediaUrlDead, signedExpiryDead } from '@/common/media-probe';
 import { JobsService } from './jobs.service';
 import { JOB_TYPE, PRIORITY } from './watchtower.types';
 
 // 500 episódios/dia deixa o catálogo aquecido sem abrir centenas de Chromium
 // ao mesmo tempo; a fila continua serializada pelo batch do Watchtower.
 const DEFAULT_DAILY_CAP = 500;
-const SAMPLE_SIZE = 200;
 
 @Injectable()
 export class RepairWorker {
@@ -27,14 +26,17 @@ export class RepairWorker {
     private readonly jobs: JobsService,
   ) {}
 
-  async sweep(): Promise<number> {
+  async sweep(slugFilter?: string): Promise<number> {
     const cap = Number(process.env.WT_REPAIR_DAILY_CAP ?? DEFAULT_DAILY_CAP);
+    const anime = slugFilter
+      ? { published: true, slug: slugFilter }
+      : { published: true };
 
     // Sem filtro embedUrl — eps sem embed também precisam de repair
     const broken = await this.prisma.episode.findMany({
       where: {
         OR: [{ videoUrl: null }, { videoBroken: true }],
-        anime: { published: true },
+        anime,
       },
       take: cap,
       select: { id: true, animeId: true, number: true, season: true },
@@ -72,10 +74,14 @@ export class RepairWorker {
       where: {
         videoUrl: { not: null },
         videoBroken: false,
-        anime: { published: true },
+        anime,
       },
-      take: SAMPLE_SIZE,
-      orderBy: { videoCheckedAt: 'asc' },
+      // Espaço de busca = orçamento do sweep: signedExpiryDead decide sem
+      // rede, então varrer `cap` linhas custa o mesmo que sondar 200.
+      take: cap,
+      // Mais antigos primeiro: com TTL de ~8h, os últimos extraídos são os
+      // que mais provavelmente venceram.
+      orderBy: { updatedAt: 'asc' },
       select: {
         id: true,
         animeId: true,
@@ -89,7 +95,12 @@ export class RepairWorker {
     for (const ep of sample) {
       if (enqueued >= cap) break;
       if (!ep.videoUrl) continue;
-      const dead = await probeMediaUrlDead(ep.videoUrl);
+      // Tokens googlevideo/Blogger expiram em ~8h. signedExpiryDead decide
+      // isso localmente (parse do `expire`), sem gastar request de rede;
+      // só URLs sem expiração determinística caem no probe HTTP.
+      const signed = signedExpiryDead(ep.videoUrl);
+      const dead =
+        signed === null ? await probeMediaUrlDead(ep.videoUrl) : signed;
       if (dead) {
         deadIds.push(ep.id);
         enqueueInputs.push({

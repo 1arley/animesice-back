@@ -111,6 +111,53 @@ describe('RepairWorker', () => {
     delete process.env.WT_REPAIR_DAILY_CAP;
   });
 
+  it('detecta URL expirada por assinatura sem tocar a rede', async () => {
+    process.env.WT_REPAIR_DAILY_CAP = '10';
+    // expire no passado = token vencido; probe de rede não deve rodar.
+    global.fetch = jest.fn(() => {
+      throw new Error('rede não deveria ser chamada');
+    });
+    m.sampleEps.push({
+      id: 'ep1',
+      animeId: 'a1',
+      number: 1,
+      season: 1,
+      videoUrl:
+        'https://rr1---sn-x.googlevideo.com/videoplayback?expire=1000000000&ip=1.2.3.4',
+    });
+    const worker = new RepairWorker(
+      m.prisma as any,
+      { enqueue: m.enqueue, enqueueMany: m.enqueueMany } as any,
+    );
+    const enqueued = await worker.sweep();
+    expect(enqueued).toBe(1);
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(m.enqueueMany).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'REPAIR_EPISODE' }),
+      ]),
+    );
+    delete process.env.WT_REPAIR_DAILY_CAP;
+  });
+
+  it('filtra o sweep por slug do anime', async () => {
+    process.env.WT_REPAIR_DAILY_CAP = '10';
+    m.brokenEps.push({ id: 'ep1', animeId: 'a1', number: 1, season: 1 });
+    const worker = new RepairWorker(
+      m.prisma as any,
+      { enqueue: m.enqueue, enqueueMany: m.enqueueMany } as any,
+    );
+    await worker.sweep('bleach');
+    expect(m.prisma.episode.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          anime: { published: true, slug: 'bleach' },
+        }),
+      }),
+    );
+    delete process.env.WT_REPAIR_DAILY_CAP;
+  });
+
   it('não repara episódios vivos no probe', async () => {
     process.env.WT_REPAIR_DAILY_CAP = '5';
     m.sampleEps.push({

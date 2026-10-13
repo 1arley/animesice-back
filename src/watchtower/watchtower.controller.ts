@@ -107,9 +107,9 @@ export class WatchtowerController {
 
   @Post('repair')
   @ApiOperation({ summary: 'Força varredura de reparo' })
-  async repairSweep() {
-    const enqueued = await this.repair.sweep();
-    return { enqueued };
+  async repairSweep(@Body() body?: { slug?: string }) {
+    const enqueued = await this.repair.sweep(body?.slug);
+    return { enqueued, slug: body?.slug ?? null };
   }
 
   @Post('scan-all')

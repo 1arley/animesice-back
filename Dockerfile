@@ -48,13 +48,13 @@ FROM base AS production
 ENV NODE_ENV=production
 
 COPY --from=base /usr/bin/dumb-init /usr/bin/dumb-init
-COPY --from=deps /app/node_modules ./node_modules
-COPY --from=build /app/dist ./dist
-COPY --from=build /app/prisma ./prisma
-COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
-COPY --from=build /app/node_modules/@prisma ./node_modules/@prisma
-COPY --from=build /app/prisma.config.ts ./
-COPY package.json ./
+COPY --chown=node:node --from=deps /app/node_modules ./node_modules
+COPY --chown=node:node --from=build /app/dist ./dist
+COPY --chown=node:node --from=build /app/prisma ./prisma
+COPY --chown=node:node --from=build /app/node_modules/.prisma ./node_modules/.prisma
+COPY --chown=node:node --from=build /app/node_modules/@prisma ./node_modules/@prisma
+COPY --chown=node:node --from=build /app/prisma.config.ts ./
+COPY --chown=node:node package.json ./
 COPY --from=rustbuild /rust/target/release/animefire-scraper /usr/local/bin/animefire-scraper
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 
@@ -68,7 +68,10 @@ RUN npx playwright install --with-deps chromium
 # Xvfb precisa de /tmp/.X11-unix com permissões corretas.
 # O entrypoint executa o CLI local (node_modules/.bin/prisma) — nunca `npx -y`,
 # que baixaria o pacote da rede em todo boot e derrubaria o container sem rede.
-RUN chown -R node:node /app/node_modules /ms-playwright && \
+# chown só do que sobrou (playwright): os COPY acima já usam --chown, e um
+# `chown -R /app/node_modules` aqui criaria layer de ~1.2GB duplicando
+# node_modules + chromium.
+RUN chown -R node:node /ms-playwright && \
     mkdir -p /tmp/.X11-unix && \
     chmod 1777 /tmp/.X11-unix && \
     chmod +x /usr/local/bin/entrypoint.sh && \
