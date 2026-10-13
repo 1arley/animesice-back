@@ -28,6 +28,8 @@ interface FakeSource {
   supports: (url: string) => boolean;
   extract: jest.Mock;
   extractHttp: jest.Mock;
+  /** Só o adapter animesonline resolve slug no animesonlinecc.to. */
+  resolveEpisodeUrl?: jest.Mock;
 }
 
 interface MakeSourceOpts {
@@ -58,6 +60,7 @@ function makeSource(
     supports: (url: string) => hosts.some((h) => url.includes(h)),
     extract,
     extractHttp,
+    resolveEpisodeUrl: jest.fn(async (): Promise<string | null> => null),
   };
 }
 

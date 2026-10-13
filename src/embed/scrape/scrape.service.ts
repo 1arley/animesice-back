@@ -131,7 +131,7 @@ export class ScrapeService {
 
   constructor(
     meusanimes: MeusanimesScrapeSource,
-    animesonline: AnimesonlineScrapeSource,
+    private readonly animesonline: AnimesonlineScrapeSource,
     private readonly prisma: PrismaService,
     @Inject(forwardRef(() => HealthMonitor))
     private readonly health: HealthMonitor,
@@ -856,7 +856,31 @@ export class ScrapeService {
     animeSlug: string,
     episodeNumber: number,
   ): Promise<string | null> {
-    const episodeUrl = this.animesonlineEpisodeUrl(animeSlug, episodeNumber);
+    const direct = await this.tryAnimesonlineUrl(
+      this.animesonlineEpisodeUrl(animeSlug, episodeNumber),
+      animeSlug,
+      episodeNumber,
+    );
+    if (direct) return direct;
+
+    // O slug do catálogo vem do meusanimes e não bate com o do animesonlinecc
+    // (`witch-watch-dublado` vs `witch-watch`) — resolve pela página do anime
+    // antes de devolver null (meusanimes caiu no Cloudflare challenge).
+    const resolved = await this.animesonline
+      .resolveEpisodeUrl(animeSlug, episodeNumber, UA_DESKTOP)
+      .catch(() => null);
+    if (!resolved) return null;
+    dbg(
+      `[ANIMESONLINE] slug resolvido ${animeSlug} -> ${resolved.slice(0, 120)}`,
+    );
+    return this.tryAnimesonlineUrl(resolved, animeSlug, episodeNumber);
+  }
+
+  private async tryAnimesonlineUrl(
+    episodeUrl: string,
+    animeSlug: string,
+    episodeNumber: number,
+  ): Promise<string | null> {
     dbg(`[ANIMESONLINE] try ${animeSlug}/${episodeNumber} -> ${episodeUrl}`);
     try {
       const result = await this.scrapeEpisodeVideo(

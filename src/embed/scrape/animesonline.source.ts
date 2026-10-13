@@ -50,9 +50,46 @@ export class AnimesonlineScrapeSource implements ScrapeSource {
   readonly id = 'animesonline';
 
   supports(url: string): boolean {
-    return /^https?:\/\/(?:[^/?#]+\.)?animesonline\.cloud(?:[/?#]|$)/i.test(
+    return /^https?:\/\/(?:[^/?#]+\.)?(?:animesonline\.cloud|animesonlinecc\.to)(?:[/?#]|$)/i.test(
       url,
     );
+  }
+
+  /**
+   * Resolve a URL do episódio no animesonlinecc.to a partir do slug local.
+   *
+   * POR QUE: o catálogo foi populado do meusanimes.blog (slug `witch-watch-dublado`)
+   * e o animesonlinecc usa outro slug (`witch-watch`); a URL montada direto
+   * (-episodio-<n>) dá 404. A página /anime/<slug>/ traz os links de episódio
+   * em HTML estático, então resolver por ela evita depender de slug adivinhado.
+   */
+  async resolveEpisodeUrl(
+    animeSlug: string,
+    episodeNumber: number,
+    ua: string,
+  ): Promise<string | null> {
+    const variants = [
+      animeSlug,
+      animeSlug.replace(/-(?:dublado|legendado)$/i, ''),
+    ].filter((slug, i, all) => slug && all.indexOf(slug) === i);
+
+    for (const slug of variants) {
+      const pageUrl = `https://animesonlinecc.to/anime/${slug}/`;
+      let html: string;
+      try {
+        html = await this.get(pageUrl, ua);
+      } catch {
+        continue;
+      }
+      const links = [
+        ...html.matchAll(
+          /https:\/\/animesonlinecc\.to\/episodio\/[^"]*?-episodio-(\d+)\/?/gi,
+        ),
+      ];
+      const hit = links.find((m) => Number(m[1]) === episodeNumber);
+      if (hit) return hit[0];
+    }
+    return null;
   }
 
   async extractHttp(ctx: HttpExtractContext): Promise<ScrapeEpisodeResult> {
