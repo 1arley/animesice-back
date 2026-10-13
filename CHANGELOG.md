@@ -1,3 +1,10 @@
+## [1.46.1](https://github.com/1arley/animesice-back/compare/v1.46.0...v1.46.1) (2026-10-13)
+
+
+### Bug Fixes
+
+* **scrape:** stop retrying providers that return 403 ([3b3edbf](https://github.com/1arley/animesice-back/commit/3b3edbfee3f4ec5d40b2890cc246f8330e5c8404))
+
 # [1.46.0](https://github.com/1arley/animesice-back/compare/v1.45.3...v1.46.0) (2026-10-13)
 
 
