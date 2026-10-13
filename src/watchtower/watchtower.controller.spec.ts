@@ -104,7 +104,14 @@ describe('WatchtowerController', () => {
     it('chama repair.sweep e retorna count', async () => {
       m.repair.sweep.mockResolvedValue(3);
       const result = await controller.repairSweep();
-      expect(result).toEqual({ enqueued: 3 });
+      expect(result).toEqual({ enqueued: 3, slug: null });
+    });
+
+    it('passa slugFilter para repair.sweep quando body.slug informado', async () => {
+      m.repair.sweep.mockResolvedValue(2);
+      const result = await controller.repairSweep({ slug: 'bleach' });
+      expect(m.repair.sweep).toHaveBeenCalledWith('bleach');
+      expect(result).toEqual({ enqueued: 2, slug: 'bleach' });
     });
   });
 
