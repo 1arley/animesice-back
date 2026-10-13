@@ -3,6 +3,7 @@ import { probeMediaUrlDead } from '@/common/media-probe';
 import {
   Inject,
   Injectable,
+  OnModuleInit,
   Optional,
   ServiceUnavailableException,
   forwardRef,
@@ -33,6 +34,10 @@ import { OPTIONAL_SOURCE_IDS, SOURCE_IDS } from '@/watchtower/watchtower.types';
 const TRACKED_SOURCE_IDS = [...SOURCE_IDS, ...OPTIONAL_SOURCE_IDS] as const;
 import { ensureXvfb } from './xvfb.helper';
 import { refererForMediaUrlWithFallback } from '@/common/url-utils';
+import {
+  replaceTrustedMediaHosts,
+  trustMediaHosts,
+} from '@/common/trusted-media-hosts';
 import { playwrightProxy } from '@/common/outbound-proxy';
 /** Remove quebras de linha/separadores Unicode de dados externos antes de logar. */
 function sanitizeLog(v: string): string {
@@ -112,7 +117,7 @@ interface ScrapeCacheEntry {
  * ESTUDO/AMBIENTE ISOLADO: nao redistribui o conteudo extraido.
  */
 @Injectable()
-export class ScrapeService {
+export class ScrapeService implements OnModuleInit {
   private readonly sources: ScrapeSource[];
   private activeScrapes = 0;
   private readonly MAX_CONCURRENT_SCRAPES: number;
@@ -161,6 +166,41 @@ export class ScrapeService {
     const queueTimeout = Number(process.env.SCRAPE_QUEUE_TIMEOUT_MS ?? 30_000);
     this.SCRAPE_QUEUE_TIMEOUT_MS =
       Number.isFinite(queueTimeout) && queueTimeout > 0 ? queueTimeout : 30_000;
+  }
+
+  /**
+   * Hosts dos CDNs já persistidos em Episode.videoUrl entram como confiáveis.
+   *
+   * Sem isso a confiança se perderia a cada restart (o conjunto é em memória) e
+   * todo episódio extraído antes do boot voltaria a "Host de destino não
+   * permitido". A query extrai o host direto no Postgres e devolve poucas
+   * linhas — cada CDN vira uma linha só.
+   */
+  @Cron(CronExpression.EVERY_HOUR)
+  async refreshTrustedMediaHosts(): Promise<void> {
+    try {
+      const rows = await this.prisma.$queryRaw<{ host: string | null }[]>`
+        SELECT DISTINCT substring("videoUrl" from '^https?://([^/]+)') AS host
+        FROM "Episode"
+        WHERE "videoUrl" IS NOT NULL
+      `;
+      const count = replaceTrustedMediaHosts(rows.map((r) => r.host ?? ''));
+      if (count > 0) {
+        dbg(`[SCRAPE] hosts de mídia confiáveis (do banco): ${count}`);
+      }
+    } catch (err) {
+      dbg(
+        `[SCRAPE] falha ao carregar hosts confiáveis: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  /**
+   * Aquece os hosts confiáveis no boot, sem travar a subida: o primeiro
+   * request de mídia pode chegar antes do primeiro refresh do cron.
+   */
+  onModuleInit(): void {
+    void this.refreshTrustedMediaHosts();
   }
 
   /** Remove entradas depois da janela SWR, mesmo quando não são acessadas. */
@@ -1124,6 +1164,11 @@ export class ScrapeService {
     episodeUrl: string,
     wrap: boolean,
   ): ScrapeEpisodeResult {
+    // Todo retorno de extração passa por aqui (cache hit, stale e miss), então
+    // é o ponto único onde o host do CDN passa a ser confiável para o proxy
+    // de mídia. A URL já foi probeada antes de chegar aqui.
+    trustMediaHosts(result.videos);
+
     return {
       videos: wrap
         ? result.videos.map((v) => wrapMediaUrl(v, episodeUrl))

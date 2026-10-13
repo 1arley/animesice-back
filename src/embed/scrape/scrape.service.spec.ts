@@ -3,6 +3,10 @@ jest.mock('@/common/media-probe', () => ({
   probeMediaUrlDead: jest.fn(() => Promise.resolve(false)),
 }));
 import { ScrapeService } from '@/embed/scrape/scrape.service';
+import {
+  clearTrustedMediaHosts,
+  isTrustedMediaHost,
+} from '@/common/trusted-media-hosts';
 import type { ScrapeEpisodeResult } from '@/embed/scrape/scrape-source.interface';
 import { ServiceUnavailableException } from '@nestjs/common';
 import { chromium } from 'playwright';
@@ -86,6 +90,7 @@ function makeMetrics() {
 
 function makePrisma() {
   return {
+    $queryRaw: jest.fn(async (): Promise<{ host: string }[]> => []),
     anime: {
       findUnique: jest.fn(async () => ({ id: 'a1' })),
     },
@@ -1805,6 +1810,95 @@ describe('ScrapeService (cobertura de recuperação)', () => {
       const { svc } = build();
       await expect(svc.scrapeFromTopanimes('foo', 1)).resolves.toBeNull();
       await expect(svc.scrapeFromAnimesorion('foo', 1)).resolves.toBeNull();
+    });
+  });
+
+  describe('hosts de mídia confiáveis', () => {
+    beforeEach(() => clearTrustedMediaHosts());
+    afterAll(() => clearTrustedMediaHosts());
+
+    it('refreshTrustedMediaHosts carrega os hosts do Episode.videoUrl', async () => {
+      const prisma = makePrisma();
+      prisma.$queryRaw = jest.fn(async () => [
+        { host: 'media-limit-xr8a2.peliculaplay.com' },
+        { host: 'data-limit-c.solo-latino.com' },
+      ]);
+      const svc = new ScrapeService(
+        makeSource('meusanimes', ['meusanimes.io']) as any,
+        makeSource('animesonline', ['animesonline.cloud']) as any,
+        prisma as any,
+        makeHealth() as any,
+        makeMetrics() as any,
+        { acquireContext: jest.fn() } as any,
+      );
+
+      await svc.refreshTrustedMediaHosts();
+
+      expect(isTrustedMediaHost('media-limit-xr8a2.peliculaplay.com')).toBe(
+        true,
+      );
+      expect(isTrustedMediaHost('data-limit-c.solo-latino.com')).toBe(true);
+    });
+
+    it('refreshTrustedMediaHosts engole falha do banco', async () => {
+      const prisma = makePrisma();
+      prisma.$queryRaw = jest.fn(async () => {
+        throw new Error('db fora');
+      });
+      const svc = new ScrapeService(
+        makeSource('meusanimes', ['meusanimes.io']) as any,
+        makeSource('animesonline', ['animesonline.cloud']) as any,
+        prisma as any,
+        makeHealth() as any,
+        makeMetrics() as any,
+        { acquireContext: jest.fn() } as any,
+      );
+
+      await expect(svc.refreshTrustedMediaHosts()).resolves.toBeUndefined();
+    });
+
+    it('onModuleInit aquece sem bloquear', () => {
+      const prisma = makePrisma();
+      prisma.$queryRaw = jest.fn(async () => [{ host: 'a.com' }]);
+      const svc = new ScrapeService(
+        makeSource('meusanimes', ['meusanimes.io']) as any,
+        makeSource('animesonline', ['animesonline.cloud']) as any,
+        prisma as any,
+        makeHealth() as any,
+        makeMetrics() as any,
+        { acquireContext: jest.fn() } as any,
+      );
+
+      expect(() => svc.onModuleInit()).not.toThrow();
+    });
+
+    it('extração registra o host do CDN como confiável', async () => {
+      const svc = new ScrapeService(
+        makeSource('meusanimes', ['meusanimes.io']) as any,
+        makeSource('animesonline', ['animesonline.cloud']) as any,
+        makePrisma() as any,
+        makeHealth() as any,
+        makeMetrics() as any,
+        {
+          acquireContext: jest.fn(async () => ({
+            context: {
+              newPage: jest.fn(async () => makePageMock()),
+              close: jest.fn(async () => undefined),
+            },
+            release: jest.fn(async () => undefined),
+          })),
+        } as any,
+      );
+
+      await svc.scrapeEpisodeVideo(
+        'https://meusanimes.io/a/cdn-trust',
+        undefined,
+        false,
+      );
+
+      // makeSource devolve https://cdn.meusanimes.test/v.mp4: o host tem de ficar
+      // confiável sem nunca ter passado pela allowlist.
+      expect(isTrustedMediaHost('cdn.meusanimes.test')).toBe(true);
     });
   });
 

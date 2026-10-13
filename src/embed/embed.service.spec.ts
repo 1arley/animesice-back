@@ -7,6 +7,10 @@ import { ConfigService } from '@nestjs/config';
 import { lookup } from 'dns/promises';
 import { Readable } from 'stream';
 import { EmbedService } from './embed.service';
+import {
+  clearTrustedMediaHosts,
+  trustMediaHost,
+} from '@/common/trusted-media-hosts';
 
 // Mock do DNS: o serviço resolve o host contra a blocklist de IPs internos
 // (anti-SSRF). Por padrão toda resolução devolve um IP público; cada teste
@@ -103,6 +107,45 @@ describe('EmbedService (proxy HTML/mídia + anti-SSRF)', () => {
         'https://rr1---sn-ab5l6nrl.googlevideo.com/videoplayback',
       ),
     ).toBe('https://rr1---sn-ab5l6nrl.googlevideo.com/videoplayback');
+  });
+
+  describe('hosts confiáveis por procedência (CDN rotativo)', () => {
+    beforeEach(() => clearTrustedMediaHosts());
+    afterAll(() => clearTrustedMediaHosts());
+
+    it('libera host que o scraper validou, mesmo fora da allowlist', () => {
+      trustMediaHost('https://media-limit-xr8a2.peliculaplay.com/a/b.m3u8');
+
+      expect(
+        service.normalizeUrl(
+          'https://media-limit-xr8a2.peliculaplay.com/a/b.m3u8',
+        ),
+      ).toBe('https://media-limit-xr8a2.peliculaplay.com/a/b.m3u8');
+    });
+
+    it('continua bloqueando host que ninguém validou', () => {
+      expect(() =>
+        service.normalizeUrl('https://nao-validado.com/x.m3u8'),
+      ).toThrow('Host de destino não permitido');
+    });
+
+    it('confiança NÃO contorna o bloqueio de rede interna', () => {
+      // Host interno "validado" continua barrado: a checagem de hostname
+      // bloqueado roda antes da allowlist/confiança.
+      trustMediaHost('169.254.169.254');
+
+      expect(() =>
+        service.normalizeUrl('http://169.254.169.254/latest/meta-data'),
+      ).toThrow(BadRequestException);
+    });
+
+    it('confiança é por host exato: subdomínio vizinho continua barrado', () => {
+      trustMediaHost('cdn.confiavel.com');
+
+      expect(() =>
+        service.normalizeUrl('https://outro.cdn.confiavel.com/x'),
+      ).toThrow('Host de destino não permitido');
+    });
   });
 
   it('lê a allowlist ao instanciar, depois que a configuração foi carregada', () => {
