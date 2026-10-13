@@ -123,7 +123,13 @@ run_step e2e-tests ci bash -c '
 
 # security.yml runs on its own schedule/PR trigger; informational here, it
 # never blocks build the way `needs:` does in ci.yml.
-run_step npm-audit ci bash -c 'npm audit --audit-level=high --omit=dev'
+#
+# `env -u npm_config_allow_scripts`: o `npm run` pai converte o campo
+# allowScripts do package.json em variável de ambiente, e o npm aninhado lê
+# isso como a flag --allow-scripts e aborta com EALLOWSCRIPTS. Só afeta o
+# runner aninhado; o audit da CI roda direto e não vê a variável.
+run_step npm-audit ci env -u npm_config_allow_scripts \
+  bash -c 'npm audit --audit-level=high --omit=dev'
 
 GATES_FAILED=$FAILED
 

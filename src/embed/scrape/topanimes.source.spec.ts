@@ -1,6 +1,7 @@
 import { TopanimesScrapeSource } from './topanimes.source';
 import { fetchSafeRaw } from '@/common/ssrf';
 import { probeMediaUrlDead } from '@/common/media-probe';
+import { extractAllIframes, extractVideoElements } from './extract';
 import type { Dispatcher } from 'undici';
 
 jest.mock('@/common/ssrf', () => ({
@@ -22,6 +23,12 @@ const mockedFetchSafeRaw = fetchSafeRaw as jest.MockedFunction<
 >;
 const mockedProbe = probeMediaUrlDead as jest.MockedFunction<
   typeof probeMediaUrlDead
+>;
+const mockedExtractVideoElements = extractVideoElements as jest.MockedFunction<
+  typeof extractVideoElements
+>;
+const mockedExtractAllIframes = extractAllIframes as jest.MockedFunction<
+  typeof extractAllIframes
 >;
 
 const UA = 'ua';
@@ -184,5 +191,106 @@ describe('TopanimesScrapeSource', () => {
     await expect(
       source.extractHttp({ episodeUrl: EPISODE_URL, ua: UA }),
     ).rejects.toThrow(/indisponivel/);
+  });
+
+  it('resolveEpisodeUrl devolve null quando nenhuma variante existe', async () => {
+    queueFetch({ body: '', status: 404 });
+
+    expect(await source.resolveEpisodeUrl('nao-existe-dublado', 1)).toBeNull();
+  });
+
+  it('extractHttp propaga erro de rede da página do episódio', async () => {
+    mockedFetchSafeRaw.mockRejectedValueOnce(new Error('ECONNRESET'));
+
+    await expect(
+      source.extractHttp({ episodeUrl: EPISODE_URL, ua: UA }),
+    ).rejects.toThrow(/ECONNRESET/);
+  });
+
+  it('extractHttp propaga erro de rede do player, incluindo a causa', async () => {
+    queueFetch({ body: HLS_HTML });
+    mockedFetchSafeRaw.mockRejectedValueOnce(
+      Object.assign(new Error('socket hang up'), { cause: new Error('dns') }),
+    );
+
+    await expect(
+      source.extractHttp({ episodeUrl: EPISODE_URL, ua: UA }),
+    ).rejects.toThrow(/dns/);
+  });
+
+  it('extractHttp propaga 404 do player', async () => {
+    queueFetch({ body: HLS_HTML }, { body: '', status: 404 });
+
+    await expect(
+      source.extractHttp({ episodeUrl: EPISODE_URL, ua: UA }),
+    ).rejects.toThrow(/retornou 404/);
+  });
+
+  it('extractHttp lança quando o player devolve HTML em vez de JSON', async () => {
+    queueFetch({ body: HLS_HTML }, { body: '<html>shell</html>' });
+
+    await expect(
+      source.extractHttp({ episodeUrl: EPISODE_URL, ua: UA }),
+    ).rejects.toThrow(/JSON invalida/);
+  });
+
+  it('extractHttp aceita qualidade desconhecida e descarta url inválida', async () => {
+    queueFetch(
+      { body: HLS_HTML },
+      {
+        body: JSON.stringify({
+          status: 'success',
+          midias: [
+            { url: 'https://cdn.exemplo/sem-qualidade.m3u8' },
+            { qualidade: 'LD', url: 'https://cdn.exemplo/ld.m3u8' },
+            { url: 'nao-e-url.m3u8' },
+          ],
+        }),
+      },
+    );
+
+    const result = await source.extractHttp({
+      episodeUrl: EPISODE_URL,
+      ua: UA,
+    });
+
+    expect(result.videos).toEqual([
+      'https://cdn.exemplo/ld.m3u8',
+      'https://cdn.exemplo/sem-qualidade.m3u8',
+    ]);
+  });
+
+  it('extract(page) é o fallback Playwright e devolve vídeos do DOM', async () => {
+    const page = {} as never;
+    mockedExtractVideoElements.mockResolvedValue([
+      'https://cdn.exemplo/x.m3u8',
+      'https://nao-e-midias/y',
+    ] as never);
+    mockedExtractAllIframes.mockResolvedValue(['https://a/1'] as never);
+
+    const result = await source.extract(page);
+
+    expect(result.videos).toEqual([
+      'https://cdn.exemplo/x.m3u8',
+      'https://nao-e-midias/y',
+    ]);
+    expect(result.iframes).toEqual(['https://a/1']);
+    expect(result.cloudflare).toBe(false);
+  });
+
+  it('extractHttp aceita player sem status nem message no erro', async () => {
+    queueFetch({ body: HLS_HTML }, { body: JSON.stringify({}) });
+
+    await expect(
+      source.extractHttp({ episodeUrl: EPISODE_URL, ua: UA }),
+    ).rejects.toThrow(/desconhecido/);
+  });
+
+  it('extractHttp lida com erro que não é instância de Error', async () => {
+    mockedFetchSafeRaw.mockRejectedValueOnce('falha crua em string');
+
+    await expect(
+      source.extractHttp({ episodeUrl: EPISODE_URL, ua: UA }),
+    ).rejects.toThrow(/falha crua em string/);
   });
 });
