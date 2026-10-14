@@ -27,7 +27,7 @@ describe('AvatarController', () => {
 
     expect(res.set).toHaveBeenCalledWith({
       'Content-Type': 'image/png',
-      'Cache-Control': 'public, max-age=86400',
+      'Cache-Control': 'no-store',
     });
     expect(res.send).toHaveBeenCalledWith(data);
   });

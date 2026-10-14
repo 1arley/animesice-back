@@ -193,7 +193,7 @@ export class UserController {
       /^\/|\/$/g,
       '',
     );
-    const avatar = `${backendOrigin(req, this.trustProxy, this.config)}/${prefix}${path}`;
+    const avatar = `${backendOrigin(req, this.trustProxy, this.config)}/${prefix}${path}?v=${Date.now()}`;
 
     return this.userService.updateProfileMeta(req.user.id, { avatar });
   }

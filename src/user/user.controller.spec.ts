@@ -126,7 +126,9 @@ describe('UserController', () => {
       mockAvatarService.save.mockResolvedValue('/avatars/u1');
       mockUserService.updateProfileMeta.mockResolvedValue({
         id: 'u1',
-        avatar: 'https://api.example.com/api/avatars/u1',
+        avatar: expect.stringMatching(
+          /^https:\/\/api\.example\.com\/api\/avatars\/u1\?v=\d+$/,
+        ),
       });
 
       await controller.uploadAvatar(req, file);
@@ -137,7 +139,9 @@ describe('UserController', () => {
         file.mimetype,
       );
       expect(mockUserService.updateProfileMeta).toHaveBeenCalledWith('u1', {
-        avatar: 'https://api.example.com/api/avatars/u1',
+        avatar: expect.stringMatching(
+          /^https:\/\/api\.example\.com\/api\/avatars\/u1\?v=\d+$/,
+        ),
       });
     });
   });
