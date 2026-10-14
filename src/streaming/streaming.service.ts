@@ -15,6 +15,7 @@ import { isNoVideoUrl, youtubeEmbedUrl } from '@/embed/scrape/extract';
 import {
   probeMediaUrlDead,
   purgeExpiredLivenessCache,
+  signedExpiryDead,
   shouldReextractMedia,
 } from '@/common/media-probe';
 import { refererForMediaUrl } from '@/common/url-utils';
@@ -412,6 +413,7 @@ export class StreamingService {
     animeSlug: string,
     episodeNumber: number,
     season: number,
+    persist = true,
   ): Promise<{ videoUrl: string | null; playerEmbed: string | null }> {
     let rawVideoUrl: string | null = null;
     let playerEmbed: string | null = null;
@@ -508,7 +510,7 @@ export class StreamingService {
     }
 
     // Persiste RAW (sem wrap) p/ próximas chamadas.
-    if (rawVideoUrl) {
+    if (rawVideoUrl && persist) {
       await this.prisma.episode
         .update({
           where: { id: episode.id },
@@ -628,6 +630,7 @@ export class StreamingService {
     animeSlug: string,
     episodeNumber: number,
     season: number = 1,
+    forceRefresh = false,
   ): Promise<{ jobId: string } | null> {
     const anime = await this.prisma.anime.findUnique({
       where: { slug: animeSlug },
@@ -653,7 +656,7 @@ export class StreamingService {
     });
     if (!episode) throw new NotFoundException('Episódio não encontrado.');
 
-    // Se já tem videoUrl válido, não precisa de extração assíncrona
+    // Links assinados vencidos precisam ser renovados antes de chegar ao player.
     let rawVideoUrl = episode.videoUrl;
     if (rawVideoUrl && isNoVideoUrl(rawVideoUrl)) rawVideoUrl = null;
     if (rawVideoUrl && /\/embed\/media\?url=/i.test(rawVideoUrl)) {
@@ -668,7 +671,14 @@ export class StreamingService {
     // Não bloqueie a primeira visita com uma requisição à CDN. A URL
     // persistida é servida imediatamente; falhas reais são tratadas pelo
     // player, que chama o caminho de refresh forçado.
-    if (rawVideoUrl && /^https?:\/\//i.test(rawVideoUrl)) return null;
+    if (
+      !forceRefresh &&
+      rawVideoUrl &&
+      /^https?:\/\//i.test(rawVideoUrl) &&
+      signedExpiryDead(rawVideoUrl) !== true
+    ) {
+      return null;
+    }
 
     // Cria ou reclama o job persistido. O claim é atômico: em múltiplas
     // réplicas só uma executa; após queda, um lease vencido pode ser retomado.
@@ -682,6 +692,7 @@ export class StreamingService {
           animeSlug,
           episodeNumber,
           season,
+          false,
         );
         return result;
       },
@@ -710,6 +721,41 @@ export class StreamingService {
     if (!job) return null;
 
     if (
+      job.status === 'pending' ||
+      (job.status === 'processing' &&
+        job.lockedUntil != null &&
+        job.lockedUntil <= Date.now())
+    ) {
+      const anime = await this.prisma.anime.findUnique({
+        where: { slug: job.animeSlug },
+        select: { id: true },
+      });
+      const episode = anime
+        ? await this.prisma.episode.findUnique({
+            where: {
+              animeId_season_number: {
+                animeId: anime.id,
+                season: job.season,
+                number: job.episodeNumber,
+              },
+            },
+            select: { id: true, embedUrl: true },
+          })
+        : null;
+      if (episode) {
+        this.extractionJobs.resume(job, () =>
+          this.doSingleScrape(
+            episode,
+            job.animeSlug,
+            job.episodeNumber,
+            job.season,
+            false,
+          ),
+        );
+      }
+    }
+
+    if (
       job.status === 'completed' &&
       (job.result?.videoUrl || job.result?.playerEmbed)
     ) {
@@ -720,15 +766,32 @@ export class StreamingService {
           apiOriginBackend,
         );
         return { status: 'completed', result, error: null };
-      } catch {
-        // Se falhar ao construir, retorna completed sem source
-        // (o client faz fallback para getSource síncrono)
-        return { status: 'completed', result: null, error: null };
+      } catch (error) {
+        dbg(
+          `[STREAM] falha ao construir resultado do job ${job.id}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+        return {
+          status: 'failed',
+          result: null,
+          error: 'Não foi possível preparar a fonte do episódio.',
+        };
       }
     }
 
+    if (job.status === 'completed') {
+      return {
+        status: 'failed',
+        result: null,
+        error: 'A extração terminou sem encontrar uma fonte de vídeo.',
+      };
+    }
+
     if (job.status === 'failed') {
-      return { status: 'failed', result: null, error: job.error };
+      return {
+        status: 'failed',
+        result: null,
+        error: 'Não foi possível extrair o vídeo. Tente novamente.',
+      };
     }
 
     return { status: job.status, result: null, error: null };

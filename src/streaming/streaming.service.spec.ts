@@ -30,6 +30,7 @@ function makeMocks() {
     findByEpisode: jest.fn(),
     getJob: jest.fn(),
     onComplete: jest.fn(),
+    resume: jest.fn(),
   };
   const svc = new StreamingService(
     prisma as any,
@@ -1266,6 +1267,52 @@ describe('StreamingService.getSourceAsync', () => {
     probeSpy.mockRestore();
   });
 
+  it('submete extração quando a URL assinada já venceu', async () => {
+    const { prisma, extractionJobs, svc } = makeMocks();
+    prisma.anime.findUnique.mockResolvedValue({ id: 'a1', slug: 'anime' });
+    prisma.episode.findUnique.mockResolvedValue({
+      id: 'ep-1',
+      number: 1,
+      videoUrl: `https://cdn.example.com/v.mp4?expire=${Math.floor(Date.now() / 1000) - 60}`,
+      embedUrl: null,
+      thumbnailUrl: null,
+    });
+    extractionJobs.submit.mockResolvedValue({ id: 'job-expired' });
+
+    await expect(svc.getSourceAsync('anime', 1)).resolves.toEqual({
+      jobId: 'job-expired',
+    });
+    expect(extractionJobs.submit).toHaveBeenCalledWith(
+      'anime',
+      1,
+      1,
+      expect.any(Function),
+    );
+  });
+
+  it('renova por job quando o player pede refresh explícito', async () => {
+    const { prisma, extractionJobs, svc } = makeMocks();
+    prisma.anime.findUnique.mockResolvedValue({ id: 'a1', slug: 'anime' });
+    prisma.episode.findUnique.mockResolvedValue({
+      id: 'ep-1',
+      number: 1,
+      videoUrl: 'https://cdn.example.com/v.mp4',
+      embedUrl: null,
+      thumbnailUrl: null,
+    });
+    extractionJobs.submit.mockResolvedValue({ id: 'job-refresh' });
+
+    await expect(svc.getSourceAsync('anime', 1, 1, true)).resolves.toEqual({
+      jobId: 'job-refresh',
+    });
+    expect(extractionJobs.submit).toHaveBeenCalledWith(
+      'anime',
+      1,
+      1,
+      expect.any(Function),
+    );
+  });
+
   it('delega o job existente ao claim persistido', async () => {
     const { prisma, extractionJobs, svc } = makeMocks();
     prisma.anime.findUnique.mockResolvedValue({ id: 'a1', slug: 'anime' });
@@ -1434,7 +1481,7 @@ describe('StreamingService.getJobStatus', () => {
     expect(out?.result?.rawVideoUrl).toBe('https://cdn.example.com/v.mp4');
   });
 
-  it('retorna completed sem result quando construção falha', async () => {
+  it('retorna failed com erro quando construção da fonte falha', async () => {
     const { prisma, extractionJobs, svc } = makeMocks();
     extractionJobs.getJob.mockReturnValue({
       id: 'j2',
@@ -1447,10 +1494,14 @@ describe('StreamingService.getJobStatus', () => {
     });
     prisma.anime.findUnique.mockResolvedValue(null);
     const out = await svc.getJobStatus('j2', 'https://api.animesice.app');
-    expect(out).toEqual({ status: 'completed', result: null, error: null });
+    expect(out).toEqual({
+      status: 'failed',
+      result: null,
+      error: 'Não foi possível preparar a fonte do episódio.',
+    });
   });
 
-  it('retorna completed sem result quando job não tem video nem embed', async () => {
+  it('retorna failed quando job termina sem video nem embed', async () => {
     const { extractionJobs, svc } = makeMocks();
     extractionJobs.getJob.mockReturnValue({
       id: 'j0',
@@ -1462,10 +1513,14 @@ describe('StreamingService.getJobStatus', () => {
       error: null,
     });
     const out = await svc.getJobStatus('j0', 'https://api.x');
-    expect(out).toEqual({ status: 'completed', result: null, error: null });
+    expect(out).toEqual({
+      status: 'failed',
+      result: null,
+      error: 'A extração terminou sem encontrar uma fonte de vídeo.',
+    });
   });
 
-  it('retorna completed sem result quando job tem result null', async () => {
+  it('retorna failed quando job concluído não tem resultado', async () => {
     const { extractionJobs, svc } = makeMocks();
     extractionJobs.getJob.mockReturnValue({
       id: 'jn',
@@ -1474,7 +1529,11 @@ describe('StreamingService.getJobStatus', () => {
       error: null,
     });
     const out = await svc.getJobStatus('jn', 'https://api.x');
-    expect(out).toEqual({ status: 'completed', result: null, error: null });
+    expect(out).toEqual({
+      status: 'failed',
+      result: null,
+      error: 'A extração terminou sem encontrar uma fonte de vídeo.',
+    });
   });
 
   it('retorna failed com erro do job', async () => {
@@ -1486,7 +1545,11 @@ describe('StreamingService.getJobStatus', () => {
       error: 'boom',
     });
     const out = await svc.getJobStatus('j3', 'https://api.x');
-    expect(out).toEqual({ status: 'failed', result: null, error: 'boom' });
+    expect(out).toEqual({
+      status: 'failed',
+      result: null,
+      error: 'Não foi possível extrair o vídeo. Tente novamente.',
+    });
   });
 
   it('retorna status pendente para jobs em andamento', async () => {
@@ -1499,6 +1562,29 @@ describe('StreamingService.getJobStatus', () => {
     });
     const out = await svc.getJobStatus('j4', 'https://api.x');
     expect(out).toEqual({ status: 'processing', result: null, error: null });
+  });
+
+  it('retoma um job com lease vencido ao consultar o status', async () => {
+    const { prisma, extractionJobs, svc } = makeMocks();
+    extractionJobs.getJob.mockReturnValue({
+      id: 'expired-job',
+      animeSlug: 'anime',
+      episodeNumber: 1,
+      season: 1,
+      status: 'processing',
+      result: null,
+      error: null,
+      lockedUntil: Date.now() - 1,
+    });
+    prisma.anime.findUnique.mockResolvedValue({ id: 'a1' });
+    prisma.episode.findUnique.mockResolvedValue({ id: 'ep-1', embedUrl: null });
+
+    await svc.getJobStatus('expired-job', 'https://api.test');
+
+    expect(extractionJobs.resume).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'expired-job' }),
+      expect.any(Function),
+    );
   });
 
   it('onJobComplete delega para extractionJobs', () => {
@@ -1815,7 +1901,7 @@ describe('StreamingService (cobertura de recuperação)', () => {
     expect(extractionJobs.submit).not.toHaveBeenCalled();
   });
 
-  it('getJobStatus sem result quando episódio sumiu', async () => {
+  it('getJobStatus falha claramente quando episódio sumiu', async () => {
     const { prisma, extractionJobs, svc } = makeMocks();
     extractionJobs.getJob.mockReturnValue({
       id: 'jg',
@@ -1829,9 +1915,9 @@ describe('StreamingService (cobertura de recuperação)', () => {
     prisma.anime.findUnique.mockResolvedValue({ id: 'a1', slug: 'anime' });
     prisma.episode.findUnique.mockResolvedValue(null);
     await expect(svc.getJobStatus('jg', 'https://api.test')).resolves.toEqual({
-      status: 'completed',
+      status: 'failed',
       result: null,
-      error: null,
+      error: 'Não foi possível preparar a fonte do episódio.',
     });
   });
 

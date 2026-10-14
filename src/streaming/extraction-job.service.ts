@@ -1,4 +1,4 @@
-import { Injectable, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '@/prisma/prisma.service';
 
@@ -14,6 +14,7 @@ export interface ExtractionJob {
   error: string | null;
   createdAt: number;
   completedAt: number | null;
+  lockedUntil?: number | null;
 }
 type ExtractionFn = () => Promise<{
   videoUrl: string | null;
@@ -24,7 +25,7 @@ const TTL_MS = 5 * 60_000;
 
 @Injectable()
 export class ExtractionJobService implements OnModuleDestroy {
-  private readonly workerId = crypto.randomUUID();
+  private readonly logger = new Logger(ExtractionJobService.name);
   private readonly listeners = new Map<string, Set<Listener>>();
   private pollTimer?: ReturnType<typeof setTimeout>;
 
@@ -146,10 +147,34 @@ export class ExtractionJobService implements OnModuleDestroy {
         if (!job) throw error;
       }
     }
-    void this.start(job, fn).catch(() => undefined);
+    void this.start(job, fn).catch((error: unknown) => {
+      this.logger.error(
+        `Falha ao iniciar job de extração ${job.id}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    });
     return job;
   }
+  resume(job: ExtractionJob, fn: ExtractionFn): void {
+    if (
+      job.status !== 'pending' &&
+      !(
+        job.status === 'processing' &&
+        job.lockedUntil != null &&
+        job.lockedUntil <= Date.now()
+      )
+    ) {
+      return;
+    }
+    void this.start(job, fn).catch((error: unknown) => {
+      this.logger.error(
+        `Falha ao retomar job de extração ${job.id}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    });
+  }
   private async start(job: ExtractionJob, fn: ExtractionFn): Promise<void> {
+    const lockId = crypto.randomUUID();
     const claim = await this.prisma.streamExtractionJob.updateMany({
       where: {
         id: job.id,
@@ -160,16 +185,17 @@ export class ExtractionJobService implements OnModuleDestroy {
       },
       data: {
         status: 'processing',
-        lockedBy: this.workerId,
+        lockedBy: lockId,
         lockedUntil: new Date(Date.now() + TTL_MS),
       },
     });
     if (!claim.count) return;
     try {
-      await this.finish(job.id, 'completed', await fn(), null);
+      await this.finish(job.id, lockId, 'completed', await fn(), null);
     } catch (error) {
       await this.finish(
         job.id,
+        lockId,
         'failed',
         null,
         error instanceof Error ? error.message : String(error),
@@ -178,26 +204,60 @@ export class ExtractionJobService implements OnModuleDestroy {
   }
   private async finish(
     id: string,
+    lockId: string,
     status: 'completed' | 'failed',
     result: ExtractionJob['result'],
     error: string | null,
   ): Promise<void> {
-    const updated = await this.prisma.streamExtractionJob.updateMany({
-      where: { id, status: 'processing', lockedBy: this.workerId },
-      data: {
-        activeKey: null,
-        status,
-        videoUrl: result?.videoUrl ?? null,
-        playerEmbed: result?.playerEmbed ?? null,
-        error,
-        lockedBy: null,
-        lockedUntil: null,
-        completedAt: new Date(),
-      },
+    const row = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.streamExtractionJob.updateMany({
+        where: { id, status: 'processing', lockedBy: lockId },
+        data: {
+          activeKey: null,
+          status,
+          videoUrl: result?.videoUrl ?? null,
+          playerEmbed: result?.playerEmbed ?? null,
+          error,
+          lockedBy: null,
+          lockedUntil: null,
+          completedAt: new Date(),
+        },
+      });
+      if (!updated.count) return null;
+
+      const finished = await tx.streamExtractionJob.findUnique({
+        where: { id },
+      });
+      if (!finished) return null;
+
+      if (status === 'completed' && result?.videoUrl) {
+        const anime = await tx.anime.findUnique({
+          where: { slug: finished.animeSlug },
+          select: { id: true },
+        });
+        const episode = anime
+          ? await tx.episode.findUnique({
+              where: {
+                animeId_season_number: {
+                  animeId: anime.id,
+                  season: finished.season,
+                  number: finished.episodeNumber,
+                },
+              },
+              select: { id: true },
+            })
+          : null;
+        if (episode) {
+          await tx.episode.update({
+            where: { id: episode.id },
+            data: { videoUrl: result.videoUrl },
+          });
+        }
+      }
+
+      return finished;
     });
-    if (!updated.count) return;
-    const job = await this.getJob(id);
-    if (job) this.notify(job);
+    if (row) this.notify(this.toJob(row));
   }
   private toJob(job: {
     id: string;
@@ -210,6 +270,7 @@ export class ExtractionJobService implements OnModuleDestroy {
     error: string | null;
     createdAt: Date;
     completedAt: Date | null;
+    lockedUntil: Date | null;
   }): ExtractionJob {
     return {
       id: job.id,
@@ -224,6 +285,7 @@ export class ExtractionJobService implements OnModuleDestroy {
       error: job.error,
       createdAt: job.createdAt.getTime(),
       completedAt: job.completedAt?.getTime() ?? null,
+      lockedUntil: job.lockedUntil?.getTime() ?? null,
     };
   }
 }

@@ -133,19 +133,20 @@ export class StreamingController {
         return;
       }
       if (status.status === 'completed') {
-        const source = await this.streamingService.getSource(
-          animeSlug,
-          episodeNumber,
-          backendOrigin(req, this.trustProxy, this.configService),
-        );
-        res.json(source);
+        res.json({
+          jobId,
+          status: 'failed',
+          error: 'A extração terminou sem encontrar uma fonte de vídeo.',
+        });
         return;
       }
       if (status.status === 'failed') {
-        res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({
+        res.json({
           jobId,
           status: 'failed',
-          error: status.error ?? 'Extração falhou.',
+          error:
+            status.error ??
+            'Não foi possível extrair o vídeo. Tente novamente.',
         });
         return;
       }
@@ -160,6 +161,8 @@ export class StreamingController {
       const asyncResult = await this.streamingService.getSourceAsync(
         animeSlug,
         episodeNumber,
+        1,
+        refresh === '1' || refresh === 'true',
       );
       if (asyncResult) {
         res.status(HttpStatus.ACCEPTED).json({
@@ -170,9 +173,8 @@ export class StreamingController {
         return;
       }
 
-      // A fonte persistida já é o caminho rápido. Não faça probe de rede
-      // antes de responder: a validade será confirmada pelo player e uma
-      // falha seguirá pelo refresh forçado.
+      // Evita probe de rede no caminho rápido; assinaturas vencidas já foram
+      // encaminhadas para extração assíncrona acima.
       const source = await this.streamingService.getSource(
         animeSlug,
         episodeNumber,
@@ -235,6 +237,7 @@ export class StreamingController {
   async getSourceAsync(
     @Query('anime') animeSlug: string,
     @Query('episode') episodeSlug: string,
+    @Query('refresh') refresh: string | undefined,
     @Req() req: express.Request,
     @Res() res: express.Response,
   ) {
@@ -249,6 +252,8 @@ export class StreamingController {
     const pending = await this.streamingService.getSourceAsync(
       animeSlug,
       episodeNumber,
+      1,
+      refresh === '1' || refresh === 'true',
     );
     if (pending) {
       res.status(HttpStatus.ACCEPTED).json(pending);
@@ -363,7 +368,7 @@ export class StreamingController {
             res.write(`event: source\ndata: ${JSON.stringify(source)}\n\n`);
           } else {
             res.write(
-              `event: failed\ndata: ${JSON.stringify({ error: job.error ?? 'Extração falhou' })}\n\n`,
+              `event: failed\ndata: ${JSON.stringify({ error: 'Não foi possível extrair o vídeo. Tente novamente.' })}\n\n`,
             );
           }
         } catch {

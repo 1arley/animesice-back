@@ -484,7 +484,7 @@ describe('StreamingController', () => {
       expect(res.json).toHaveBeenCalledWith(result);
     });
 
-    it('faz fallback síncrono quando job completou sem result', async () => {
+    it('retorna erro recuperável quando job completou sem fonte', async () => {
       mockStreamingService.getJobStatus.mockResolvedValue({
         status: 'completed',
         result: null,
@@ -506,11 +506,13 @@ describe('StreamingController', () => {
         req,
         res,
       );
-      expect(mockStreamingService.getSource).toHaveBeenCalled();
-      expect(res.json).toHaveBeenCalledWith({ src: 'fallback' });
+      expect(mockStreamingService.getSource).not.toHaveBeenCalled();
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({ jobId: 'j2', status: 'failed' }),
+      );
     });
 
-    it('retorna 500 quando job falhou', async () => {
+    it('retorna o erro no status do job quando a extração falhou', async () => {
       mockStreamingService.getJobStatus.mockResolvedValue({
         status: 'failed',
         result: null,
@@ -531,7 +533,7 @@ describe('StreamingController', () => {
         req,
         res,
       );
-      expect(res.status).toHaveBeenCalledWith(500);
+      expect(res.status).not.toHaveBeenCalled();
       expect(res.json).toHaveBeenCalledWith(
         expect.objectContaining({ jobId: 'j3', status: 'failed' }),
       );
@@ -585,10 +587,12 @@ describe('StreamingController', () => {
         message: 'Extração em andamento.',
       });
       const res = makeAsyncRes();
-      await controller.getSourceAsync('solo', '1', makeAsyncReq(), res);
+      await controller.getSourceAsync('solo', '1', '1', makeAsyncReq(), res);
       expect(mockStreamingService.getSourceAsync).toHaveBeenCalledWith(
         'solo',
         1,
+        1,
+        true,
       );
       expect(res.status).toHaveBeenCalledWith(202);
       expect(res.json).toHaveBeenCalledWith(
@@ -604,7 +608,19 @@ describe('StreamingController', () => {
         src: 'https://api.animesice.com/api/embed/media?url=...',
       });
       const res = makeAsyncRes();
-      await controller.getSourceAsync('solo', '1', makeAsyncReq(), res);
+      await controller.getSourceAsync(
+        'solo',
+        '1',
+        undefined,
+        makeAsyncReq(),
+        res,
+      );
+      expect(mockStreamingService.getSourceAsync).toHaveBeenCalledWith(
+        'solo',
+        1,
+        1,
+        false,
+      );
       expect(mockStreamingService.getSource).toHaveBeenCalledWith(
         'solo',
         1,

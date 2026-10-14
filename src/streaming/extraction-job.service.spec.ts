@@ -15,7 +15,7 @@ function prisma() {
       return row[key] === value;
     });
   };
-  return {
+  const db = {
     streamExtractionJob: {
       create: jest.fn(async ({ data }: any) => {
         if (
@@ -59,12 +59,60 @@ function prisma() {
         return { count: found.length };
       }),
     },
+    anime: {
+      findUnique: jest.fn(async () => ({ id: 'anime-id' })),
+    },
+    episode: {
+      findUnique: jest.fn(async () => ({ id: 'episode-id' })),
+      update: jest.fn(async () => ({})),
+    },
+  };
+  return {
+    ...db,
+    $transaction: jest.fn(async (work: (tx: typeof db) => unknown) => work(db)),
   };
 }
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 10));
 
 describe('ExtractionJobService', () => {
+  it('fences the previous worker after another worker reclaims an expired lease', async () => {
+    const db = prisma();
+    const service = new ExtractionJobService(db as any);
+    let releaseFirst!: () => void;
+    const firstResult = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+
+    const job = await service.submit('naruto', 1, 1, async () => {
+      await firstResult;
+      return { videoUrl: 'old-source', playerEmbed: null };
+    });
+    await flush();
+    await db.streamExtractionJob.updateMany({
+      where: { id: job.id },
+      data: { lockedUntil: new Date(Date.now() - 1) },
+    });
+    const expired = await service.getJob(job.id);
+    service.resume(expired!, async () => ({
+      videoUrl: 'new-source',
+      playerEmbed: null,
+    }));
+    await flush();
+    releaseFirst();
+    await flush();
+
+    const completed = await service.getJob(job.id);
+    expect(completed?.status).toBe('completed');
+    expect(completed?.result?.videoUrl).toBe('new-source');
+    expect(db.episode.update).toHaveBeenCalledTimes(1);
+    expect(db.episode.update).toHaveBeenCalledWith({
+      where: { id: 'episode-id' },
+      data: { videoUrl: 'new-source' },
+    });
+    service.onModuleDestroy();
+  });
+
   it.each(['completed', 'failed'])(
     'notifies listeners on another replica: %s',
     async (status) => {
