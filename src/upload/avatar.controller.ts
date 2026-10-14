@@ -14,7 +14,7 @@ export class AvatarController {
     }
     res.set({
       'Content-Type': avatar.contentType,
-      'Cache-Control': 'public, max-age=86400',
+      'Cache-Control': 'no-store',
     });
     res.send(avatar.data);
   }
