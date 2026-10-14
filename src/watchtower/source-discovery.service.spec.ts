@@ -80,9 +80,19 @@ describe('SourceDiscovery', () => {
 
   it('allCandidates retorna todas as fontes sem probe', () => {
     const result = discovery.allCandidates('anime-slug', 5);
-    expect(result).toHaveLength(SOURCE_IDS.length);
+    // Uma URL por fonte por variante de slug.
+    expect(result.length).toBeGreaterThanOrEqual(SOURCE_IDS.length);
     expect(result.map((c) => c.sourceId)).toContain('meusanimes');
     expect(result.map((c) => c.sourceId)).toContain('animesonline');
+  });
+
+  it('allCandidates inclui a variante de slug sem sufixo dublado', () => {
+    const result = discovery.allCandidates('bleach-dublado-2', 7);
+    const urls = result.map((c) => c.url);
+    expect(urls).toContain(
+      'https://meusanimes.blog/e/bleach-dublado-2-episodio-7/',
+    );
+    expect(urls).toContain('https://meusanimes.blog/e/bleach-episodio-7/');
   });
 
   it('URL meusanimes segue template <slug>-episodio-<n>/ (sem season no slug)', () => {

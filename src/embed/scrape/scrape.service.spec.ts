@@ -3,6 +3,10 @@ jest.mock('@/common/media-probe', () => ({
   probeMediaUrlDead: jest.fn(() => Promise.resolve(false)),
 }));
 import { ScrapeService } from '@/embed/scrape/scrape.service';
+import {
+  clearTrustedMediaHosts,
+  isTrustedMediaHost,
+} from '@/common/trusted-media-hosts';
 import type { ScrapeEpisodeResult } from '@/embed/scrape/scrape-source.interface';
 import { ServiceUnavailableException } from '@nestjs/common';
 import { chromium } from 'playwright';
@@ -86,6 +90,7 @@ function makeMetrics() {
 
 function makePrisma() {
   return {
+    $queryRaw: jest.fn(async (): Promise<{ host: string }[]> => []),
     anime: {
       findUnique: jest.fn(async () => ({ id: 'a1' })),
     },
@@ -1653,6 +1658,248 @@ describe('ScrapeService (cobertura de recuperação)', () => {
     expect(svc.animesonlineEpisodeUrl('foo', 2)).toBe(
       'https://animesonline.cloud/episodio/foo-episodio-2',
     );
+  });
+
+  describe('fontes novas (topanimes / animesorion)', () => {
+    /** Monta o serviço com as fontes opcionais injetadas. */
+    function buildWithNewSources() {
+      process.env.SCRAPE_CACHE_TTL_MS = '600000';
+      process.env.SCRAPE_CACHE_STALE_MS = '600000';
+      const af = makeSource('meusanimes', ['meusanimes.io', 'player.test']);
+      const ta = makeSource('animesonline', ['animesonline.cloud']);
+      const top = {
+        resolveEpisodeUrl: jest.fn(async () => 'https://topanimes.net/x/'),
+      };
+      const orion = {
+        resolveEpisodeUrl: jest
+          .fn()
+          .mockResolvedValueOnce('https://animesorion.cc/x/')
+          .mockResolvedValueOnce('https://animexhd.xyz/y/'),
+      };
+      const health = makeHealth();
+      const svc = new ScrapeService(
+        af as any,
+        ta as any,
+        makePrisma() as any,
+        health as any,
+        makeMetrics() as any,
+        {
+          acquireContext: jest.fn(async () => ({
+            context: {
+              newPage: jest.fn(async () => makePageMock()),
+              close: jest.fn(async () => undefined),
+            },
+            release: jest.fn(async () => undefined),
+          })),
+        } as any,
+        undefined,
+        top as any,
+        orion as any,
+      );
+      return { svc, top, orion, health };
+    }
+
+    it('scrapeFromTopanimes devolve o vídeo quando resolve', async () => {
+      const { svc, top } = buildWithNewSources();
+      jest.spyOn(svc, 'scrapeEpisodeVideo').mockResolvedValue({
+        videos: ['https://cdn.test/top.m3u8'],
+        iframes: [],
+        cloudflare: false,
+      });
+
+      await expect(svc.scrapeFromTopanimes('foo', 1)).resolves.toBe(
+        'https://cdn.test/top.m3u8',
+      );
+      expect(top.resolveEpisodeUrl).toHaveBeenCalledWith('foo', 1);
+    });
+
+    it('scrapeFromTopanimes devolve null sem página para o slug', async () => {
+      const { svc, top } = buildWithNewSources();
+      top.resolveEpisodeUrl.mockResolvedValueOnce(null as unknown as string);
+      const spy = jest.spyOn(svc, 'scrapeEpisodeVideo');
+
+      await expect(svc.scrapeFromTopanimes('foo', 1)).resolves.toBeNull();
+      expect(spy).not.toHaveBeenCalled();
+    });
+
+    it('scrapeFromTopanimes devolve null quando a extração não acha mídia', async () => {
+      const { svc } = buildWithNewSources();
+      jest.spyOn(svc, 'scrapeEpisodeVideo').mockResolvedValue({
+        videos: [],
+        iframes: [],
+        cloudflare: false,
+      });
+      await expect(svc.scrapeFromTopanimes('foo', 1)).resolves.toBeNull();
+    });
+
+    it('scrapeFromTopanimes engole erro da extração (inclusive não-Error)', async () => {
+      const { svc } = buildWithNewSources();
+      const spy = jest.spyOn(svc, 'scrapeEpisodeVideo');
+      spy.mockRejectedValueOnce(new Error('top down'));
+      await expect(svc.scrapeFromTopanimes('foo', 1)).resolves.toBeNull();
+      spy.mockRejectedValueOnce('top down string');
+      await expect(svc.scrapeFromTopanimes('foo', 1)).resolves.toBeNull();
+    });
+
+    it('scrapeFromTopanimes pula quando a fonte está disabled', async () => {
+      const { svc, health } = buildWithNewSources();
+      health.isDisabled.mockImplementation(
+        async (id: string) => id === 'topanimes',
+      );
+      const spy = jest.spyOn(svc, 'scrapeEpisodeVideo');
+
+      await expect(svc.scrapeFromTopanimes('foo', 1)).resolves.toBeNull();
+      expect(spy).not.toHaveBeenCalled();
+    });
+
+    it('scrapeFromAnimesorion tenta o host seguinte quando o primeiro não tem página', async () => {
+      const { svc, orion } = buildWithNewSources();
+      orion.resolveEpisodeUrl.mockReset();
+      orion.resolveEpisodeUrl
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce('https://animexhd.xyz/y/');
+      const spy = jest.spyOn(svc, 'scrapeEpisodeVideo').mockResolvedValue({
+        videos: [],
+        iframes: [],
+        cloudflare: false,
+      });
+
+      await expect(svc.scrapeFromAnimesorion('foo', 1, 2)).resolves.toBeNull();
+      expect(orion.resolveEpisodeUrl).toHaveBeenCalledTimes(2);
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy).toHaveBeenCalledWith(
+        'https://animexhd.xyz/y/',
+        undefined,
+        false,
+      );
+    });
+
+    it('scrapeFromAnimesorion devolve o vídeo do primeiro host com página', async () => {
+      const { svc } = buildWithNewSources();
+      jest.spyOn(svc, 'scrapeEpisodeVideo').mockResolvedValue({
+        videos: ['https://cdn.test/orion.mp4'],
+        iframes: [],
+        cloudflare: false,
+      });
+
+      await expect(svc.scrapeFromAnimesorion('foo', 1, 1)).resolves.toBe(
+        'https://cdn.test/orion.mp4',
+      );
+    });
+
+    it('scrapeFromAnimesorion engole erro da extração', async () => {
+      const { svc } = buildWithNewSources();
+      jest
+        .spyOn(svc, 'scrapeEpisodeVideo')
+        .mockRejectedValueOnce(new Error('orion down'));
+      await expect(svc.scrapeFromAnimesorion('foo', 1)).resolves.toBeNull();
+    });
+
+    it('scrapeFromAnimesorion pula quando a fonte está disabled', async () => {
+      const { svc, health } = buildWithNewSources();
+      health.isDisabled.mockImplementation(
+        async (id: string) => id === 'animesorion',
+      );
+      const spy = jest.spyOn(svc, 'scrapeEpisodeVideo');
+
+      await expect(svc.scrapeFromAnimesorion('foo', 1)).resolves.toBeNull();
+      expect(spy).not.toHaveBeenCalled();
+    });
+
+    it('as fontes novas são opcionais: sem injeção, devolvem null', async () => {
+      const { svc } = build();
+      await expect(svc.scrapeFromTopanimes('foo', 1)).resolves.toBeNull();
+      await expect(svc.scrapeFromAnimesorion('foo', 1)).resolves.toBeNull();
+    });
+  });
+
+  describe('hosts de mídia confiáveis', () => {
+    beforeEach(() => clearTrustedMediaHosts());
+    afterAll(() => clearTrustedMediaHosts());
+
+    it('refreshTrustedMediaHosts carrega os hosts do Episode.videoUrl', async () => {
+      const prisma = makePrisma();
+      prisma.$queryRaw = jest.fn(async () => [
+        { host: 'media-limit-xr8a2.peliculaplay.com' },
+        { host: 'data-limit-c.solo-latino.com' },
+      ]);
+      const svc = new ScrapeService(
+        makeSource('meusanimes', ['meusanimes.io']) as any,
+        makeSource('animesonline', ['animesonline.cloud']) as any,
+        prisma as any,
+        makeHealth() as any,
+        makeMetrics() as any,
+        { acquireContext: jest.fn() } as any,
+      );
+
+      await svc.refreshTrustedMediaHosts();
+
+      expect(isTrustedMediaHost('media-limit-xr8a2.peliculaplay.com')).toBe(
+        true,
+      );
+      expect(isTrustedMediaHost('data-limit-c.solo-latino.com')).toBe(true);
+    });
+
+    it('refreshTrustedMediaHosts engole falha do banco', async () => {
+      const prisma = makePrisma();
+      prisma.$queryRaw = jest.fn(async () => {
+        throw new Error('db fora');
+      });
+      const svc = new ScrapeService(
+        makeSource('meusanimes', ['meusanimes.io']) as any,
+        makeSource('animesonline', ['animesonline.cloud']) as any,
+        prisma as any,
+        makeHealth() as any,
+        makeMetrics() as any,
+        { acquireContext: jest.fn() } as any,
+      );
+
+      await expect(svc.refreshTrustedMediaHosts()).resolves.toBeUndefined();
+    });
+
+    it('onModuleInit aquece sem bloquear', () => {
+      const prisma = makePrisma();
+      prisma.$queryRaw = jest.fn(async () => [{ host: 'a.com' }]);
+      const svc = new ScrapeService(
+        makeSource('meusanimes', ['meusanimes.io']) as any,
+        makeSource('animesonline', ['animesonline.cloud']) as any,
+        prisma as any,
+        makeHealth() as any,
+        makeMetrics() as any,
+        { acquireContext: jest.fn() } as any,
+      );
+
+      expect(() => svc.onModuleInit()).not.toThrow();
+    });
+
+    it('extração registra o host do CDN como confiável', async () => {
+      const svc = new ScrapeService(
+        makeSource('meusanimes', ['meusanimes.io']) as any,
+        makeSource('animesonline', ['animesonline.cloud']) as any,
+        makePrisma() as any,
+        makeHealth() as any,
+        makeMetrics() as any,
+        {
+          acquireContext: jest.fn(async () => ({
+            context: {
+              newPage: jest.fn(async () => makePageMock()),
+              close: jest.fn(async () => undefined),
+            },
+            release: jest.fn(async () => undefined),
+          })),
+        } as any,
+      );
+
+      await svc.scrapeEpisodeVideo(
+        'https://meusanimes.io/a/cdn-trust',
+        undefined,
+        false,
+      );
+
+      // makeSource devolve https://cdn.meusanimes.test/v.mp4: o host tem de ficar
+      // confiável sem nunca ter passado pela allowlist.
+      expect(isTrustedMediaHost('cdn.meusanimes.test')).toBe(true);
+    });
   });
 
   it('resultado sem playerTokens não é cacheado e registra failure', async () => {

@@ -15,7 +15,7 @@
  */
 import { Injectable } from '@nestjs/common';
 import { HealthMonitor } from './health-monitor.service';
-import { SOURCE_IDS, sourceEpisodeUrl } from './watchtower.types';
+import { SOURCE_IDS, sourceEpisodeUrlVariants } from './watchtower.types';
 
 const UA =
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
@@ -60,7 +60,12 @@ export class SourceDiscovery {
 
     for (const sourceId of order) {
       if (onlyExplicit.has(sourceId)) continue;
-      const urls = this.urlsFor(sourceId, animeSlug, episodeNumber, season);
+      const urls = sourceEpisodeUrlVariants(
+        sourceId,
+        animeSlug,
+        episodeNumber,
+        season,
+      );
       const ok: SourceCandidate[] = [];
       const blocked: SourceCandidate[] = [];
       const inconclusive: SourceCandidate[] = [];
@@ -85,17 +90,25 @@ export class SourceDiscovery {
     return out;
   }
 
-  /** Todas as URLs candidatas (sem probe) — p/ fallback quando probe falha. */
+  /**
+   * Todas as URLs candidatas (sem probe) — p/ fallback quando probe falha.
+   * Inclui TODAS as variantes de slug: sem o probe não dá para saber qual
+   * existe, e o consumidor tenta em ordem. */
   allCandidates(
     animeSlug: string,
     episodeNumber: number,
     season: number = 1,
   ): SourceCandidate[] {
     const out: SourceCandidate[] = [];
-    const order = SOURCE_IDS;
-    for (const sourceId of order) {
-      const urls = this.urlsFor(sourceId, animeSlug, episodeNumber, season);
-      if (urls[0]) out.push({ sourceId, url: urls[0] });
+    for (const sourceId of SOURCE_IDS) {
+      for (const url of sourceEpisodeUrlVariants(
+        sourceId,
+        animeSlug,
+        episodeNumber,
+        season,
+      )) {
+        out.push({ sourceId, url });
+      }
     }
     return out;
   }
@@ -118,18 +131,13 @@ export class SourceDiscovery {
     if (/animesdigital\.org/i.test(lower)) {
       return { sourceId: 'animesdigital', url: episodeUrl };
     }
+    if (/topanimes\.net/i.test(lower)) {
+      return { sourceId: 'topanimes', url: episodeUrl };
+    }
+    if (/animesorion\.cc|animexhd\.xyz/i.test(lower)) {
+      return { sourceId: 'animesorion', url: episodeUrl };
+    }
     return null;
-  }
-
-  private urlsFor(
-    sourceId: string,
-    slug: string,
-    ep: number,
-    season: number = 1,
-  ): string[] {
-    const base = sourceEpisodeUrl(sourceId, slug, ep, season);
-    if (!base) return [];
-    return [base];
   }
 
   /**

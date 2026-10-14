@@ -3,6 +3,7 @@ import { probeMediaUrlDead } from '@/common/media-probe';
 import {
   Inject,
   Injectable,
+  OnModuleInit,
   Optional,
   ServiceUnavailableException,
   forwardRef,
@@ -13,6 +14,8 @@ import type { Page, BrowserContext, Browser } from 'playwright';
 import { ScrapeSource, ScrapeEpisodeResult } from './scrape-source.interface';
 import { MeusanimesScrapeSource } from './meusanimes.source';
 import { AnimesonlineScrapeSource } from './animesonline.source';
+import { TopanimesScrapeSource } from './topanimes.source';
+import { AnimesorionScrapeSource } from './animesorion.source';
 import { AnimesdigitalScrapeSource } from './animesdigital.source';
 import { youtubeEmbedUrl } from './extract';
 import {
@@ -31,6 +34,10 @@ import { OPTIONAL_SOURCE_IDS, SOURCE_IDS } from '@/watchtower/watchtower.types';
 const TRACKED_SOURCE_IDS = [...SOURCE_IDS, ...OPTIONAL_SOURCE_IDS] as const;
 import { ensureXvfb } from './xvfb.helper';
 import { refererForMediaUrlWithFallback } from '@/common/url-utils';
+import {
+  replaceTrustedMediaHosts,
+  trustMediaHosts,
+} from '@/common/trusted-media-hosts';
 import { playwrightProxy } from '@/common/outbound-proxy';
 /** Remove quebras de linha/separadores Unicode de dados externos antes de logar. */
 function sanitizeLog(v: string): string {
@@ -110,7 +117,7 @@ interface ScrapeCacheEntry {
  * ESTUDO/AMBIENTE ISOLADO: nao redistribui o conteudo extraido.
  */
 @Injectable()
-export class ScrapeService {
+export class ScrapeService implements OnModuleInit {
   private readonly sources: ScrapeSource[];
   private activeScrapes = 0;
   private readonly MAX_CONCURRENT_SCRAPES: number;
@@ -138,11 +145,15 @@ export class ScrapeService {
     private readonly metrics: MetricsService,
     private readonly browserPool: BrowserPool,
     @Optional() private readonly animesdigital?: AnimesdigitalScrapeSource,
+    @Optional() private readonly topanimes?: TopanimesScrapeSource,
+    @Optional() private readonly animesorion?: AnimesorionScrapeSource,
   ) {
     this.sources = [
       meusanimes,
       animesonline,
       ...(animesdigital ? [animesdigital] : []),
+      ...(topanimes ? [topanimes] : []),
+      ...(animesorion ? [animesorion] : []),
     ];
     const ttl = Number(process.env.SCRAPE_CACHE_TTL_MS ?? 10 * 60_000);
     const stale = Number(process.env.SCRAPE_CACHE_STALE_MS ?? 60 * 60_000);
@@ -155,6 +166,41 @@ export class ScrapeService {
     const queueTimeout = Number(process.env.SCRAPE_QUEUE_TIMEOUT_MS ?? 30_000);
     this.SCRAPE_QUEUE_TIMEOUT_MS =
       Number.isFinite(queueTimeout) && queueTimeout > 0 ? queueTimeout : 30_000;
+  }
+
+  /**
+   * Hosts dos CDNs já persistidos em Episode.videoUrl entram como confiáveis.
+   *
+   * Sem isso a confiança se perderia a cada restart (o conjunto é em memória) e
+   * todo episódio extraído antes do boot voltaria a "Host de destino não
+   * permitido". A query extrai o host direto no Postgres e devolve poucas
+   * linhas — cada CDN vira uma linha só.
+   */
+  @Cron(CronExpression.EVERY_HOUR)
+  async refreshTrustedMediaHosts(): Promise<void> {
+    try {
+      const rows = await this.prisma.$queryRaw<{ host: string | null }[]>`
+        SELECT DISTINCT substring("videoUrl" from '^https?://([^/]+)') AS host
+        FROM "Episode"
+        WHERE "videoUrl" IS NOT NULL
+      `;
+      const count = replaceTrustedMediaHosts(rows.map((r) => r.host ?? ''));
+      if (count > 0) {
+        dbg(`[SCRAPE] hosts de mídia confiáveis (do banco): ${count}`);
+      }
+    } catch (err) {
+      dbg(
+        `[SCRAPE] falha ao carregar hosts confiáveis: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  /**
+   * Aquece os hosts confiáveis no boot, sem travar a subida: o primeiro
+   * request de mídia pode chegar antes do primeiro refresh do cron.
+   */
+  onModuleInit(): void {
+    void this.refreshTrustedMediaHosts();
   }
 
   /** Remove entradas depois da janela SWR, mesmo quando não são acessadas. */
@@ -921,6 +967,97 @@ export class ScrapeService {
   }
 
   /**
+   * Tenta extrair de topanimes.net (HTTP puro, sem browser). Usado como
+   * fallback quando meusanimes/animesonline falham — em 13/10/2026 ambos caíram
+   * em challenge Cloudflare para o IP da VPS e o topanimes continuou em 200.
+   */
+  async scrapeFromTopanimes(
+    animeSlug: string,
+    episodeNumber: number,
+  ): Promise<string | null> {
+    if (!this.topanimes) return null;
+    if (await this.sourceDisabled('topanimes')) return null;
+    const episodeUrl = await this.topanimes.resolveEpisodeUrl(
+      animeSlug,
+      episodeNumber,
+    );
+    if (!episodeUrl) {
+      dbg(`[TOPANIMES] sem página p/ ${animeSlug}/${episodeNumber}`);
+      return null;
+    }
+    dbg(`[TOPANIMES] try ${animeSlug}/${episodeNumber} -> ${episodeUrl}`);
+    try {
+      const result = await this.scrapeEpisodeVideo(
+        episodeUrl,
+        undefined,
+        false,
+      );
+      const video = result.videos[0] ?? null;
+      if (video) {
+        dbg(
+          `[TOPANIMES] OK ${animeSlug}/${episodeNumber}: ${video.slice(0, 80)}...`,
+        );
+      } else {
+        dbg(`[TOPANIMES] no video returned ${animeSlug}/${episodeNumber}`);
+      }
+      return video;
+    } catch (err) {
+      dbg(
+        `[TOPANIMES] failed ${episodeUrl}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Tenta extrair de animesorion.cc / animexhd.xyz (mesma rede, mesmo player).
+   * A cadeia termina em tokens Blogger, resolvidos em .mp4 via Playwright.
+   */
+  async scrapeFromAnimesorion(
+    animeSlug: string,
+    episodeNumber: number,
+    season: number = 1,
+  ): Promise<string | null> {
+    if (!this.animesorion) return null;
+    if (await this.sourceDisabled('animesorion')) return null;
+    for (const host of ['https://animesorion.cc', 'https://animexhd.xyz']) {
+      const episodeUrl = await this.animesorion.resolveEpisodeUrl(
+        animeSlug,
+        episodeNumber,
+        season,
+        host,
+      );
+      if (!episodeUrl) {
+        dbg(
+          `[ANIMESORION] sem página ${host} p/ ${animeSlug}/${episodeNumber}`,
+        );
+        continue;
+      }
+      dbg(`[ANIMESORION] try ${animeSlug}/${episodeNumber} -> ${episodeUrl}`);
+      try {
+        const result = await this.scrapeEpisodeVideo(
+          episodeUrl,
+          undefined,
+          false,
+        );
+        const video = result.videos[0] ?? null;
+        if (video) {
+          dbg(
+            `[ANIMESORION] OK ${animeSlug}/${episodeNumber}: ${video.slice(0, 80)}...`,
+          );
+          return video;
+        }
+        dbg(`[ANIMESORION] no video returned ${animeSlug}/${episodeNumber}`);
+      } catch (err) {
+        dbg(
+          `[ANIMESORION] failed ${episodeUrl}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+    return null;
+  }
+
+  /**
    * Estrategia de player (legado, usado como fallback): abre a pagina do player
    * num frame proprio do mesmo contexto do browser (mesmo IP p/ satisfazer o
    * IP-vinculo), clica no botao de play e intercepta a request
@@ -1027,6 +1164,11 @@ export class ScrapeService {
     episodeUrl: string,
     wrap: boolean,
   ): ScrapeEpisodeResult {
+    // Todo retorno de extração passa por aqui (cache hit, stale e miss), então
+    // é o ponto único onde o host do CDN passa a ser confiável para o proxy
+    // de mídia. A URL já foi probeada antes de chegar aqui.
+    trustMediaHosts(result.videos);
+
     return {
       videos: wrap
         ? result.videos.map((v) => wrapMediaUrl(v, episodeUrl))

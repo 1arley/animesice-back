@@ -1,3 +1,24 @@
+# [1.48.0](https://github.com/1arley/animesice-back/compare/v1.47.0...v1.48.0) (2026-10-13)
+
+
+### Features
+
+* **embed:** confia em host de mídia que o próprio scraper validou ([5553ccf](https://github.com/1arley/animesice-back/commit/5553ccfc78781c642e2bc2959d239d356f2dc2b6))
+
+# [1.47.0](https://github.com/1arley/animesice-back/compare/v1.46.1...v1.47.0) (2026-10-13)
+
+
+### Features
+
+* **streaming:** adiciona topanimes e animesorion como fontes e adapta slugs por fonte ([2a62e3d](https://github.com/1arley/animesice-back/commit/2a62e3d29e167b3e9fad009891fdc576b28f7a96))
+
+## [1.46.1](https://github.com/1arley/animesice-back/compare/v1.46.0...v1.46.1) (2026-10-13)
+
+
+### Bug Fixes
+
+* **scrape:** stop retrying providers that return 403 ([3b3edbf](https://github.com/1arley/animesice-back/commit/3b3edbfee3f4ec5d40b2890cc246f8330e5c8404))
+
 # [1.46.0](https://github.com/1arley/animesice-back/compare/v1.45.3...v1.46.0) (2026-10-13)
 
 

@@ -6,6 +6,8 @@ import { BrowserPool } from '@/embed/scrape/browser-pool.service';
 import { MeusanimesScrapeSource } from '@/embed/scrape/meusanimes.source';
 import { AnimesonlineScrapeSource } from '@/embed/scrape/animesonline.source';
 import { AnimesdigitalScrapeSource } from '@/embed/scrape/animesdigital.source';
+import { TopanimesScrapeSource } from '@/embed/scrape/topanimes.source';
+import { AnimesorionScrapeSource } from '@/embed/scrape/animesorion.source';
 import { PrismaModule } from '@/prisma/prisma.module';
 import { WatchtowerModule } from '@/watchtower/watchtower.module';
 import { MetricsService } from '@/metrics/metrics.service';
@@ -26,6 +28,8 @@ import { MetricsService } from '@/metrics/metrics.service';
     MeusanimesScrapeSource,
     AnimesonlineScrapeSource,
     AnimesdigitalScrapeSource,
+    TopanimesScrapeSource,
+    AnimesorionScrapeSource,
     ScrapeService,
     MetricsService,
   ],

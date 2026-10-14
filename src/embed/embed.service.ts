@@ -12,6 +12,7 @@ import {
   pinnedDispatcher,
   resolveSafeUrl,
 } from '@/common/ssrf';
+import { isTrustedMediaHost } from '@/common/trusted-media-hosts';
 import { fetch as undiciFetch, type Dispatcher } from 'undici';
 
 // Os testes existentes mockam global.fetch. Em runtime, o Agent e o fetch
@@ -652,8 +653,14 @@ export class EmbedService {
    * Enforce de allowlist para saída HTTP:
    * - sem configuração => bloqueia por padrão (fail closed)
    * - aceita match exato e subdomínio
+   * - ou host que o próprio scraper já validou e persistiu (CDN rotativo:
+   *   o topanimes muda o host por episódio e não há domínio comum)
+   *
+   * A checagem de hostname bloqueado (IP privado/link-local) vem ANTES, em
+   * validateAndNormalizeUrl, e não é afetada por esta exceção.
    */
   private isHostAllowed(host: string): boolean {
+    if (isTrustedMediaHost(host)) return true;
     if (this.allowedOutboundHosts.length === 0) return false;
 
     return this.allowedOutboundHosts.some(

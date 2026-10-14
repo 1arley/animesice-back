@@ -120,7 +120,11 @@ export const BACKOFF_MS: number[] = [
 /** IDs de fonte canônicos (devem bater com ScrapeSource.id). */
 export const SOURCE_IDS = ['meusanimes', 'animesonline'] as const;
 
-export const OPTIONAL_SOURCE_IDS = ['animesdigital'] as const;
+export const OPTIONAL_SOURCE_IDS = [
+  'animesdigital',
+  'topanimes',
+  'animesorion',
+] as const;
 
 export function extractJobKey(
   animeId: string,
@@ -137,17 +141,64 @@ export function sourceEpisodeUrl(
   episodeNumber: number,
   _season: number = 1,
 ): string | null {
-  switch (sourceId) {
-    case 'meusanimes':
-      return `https://meusanimes.blog/e/${animeSlug}-episodio-${episodeNumber}/`;
-    case 'animesonlinecc':
-      return `https://animesonlinecc.to/episodio/${animeSlug}-episodio-${episodeNumber}/`;
-    case 'animesonline':
-      return `https://animesonline.cloud/episodio/${animeSlug}-episodio-${episodeNumber}`;
-    default:
-      return null;
-  }
+  const template = SOURCE_URL_TEMPLATES[sourceId];
+  return template ? template(animeSlug, episodeNumber, _season) : null;
 }
+
+/**
+ * Variações de slug que as fontes usam para o MESMO anime.
+ *
+ * Nosso slug carrega áudio e temporada (`bleach-dublado-2`), mas os sites
+ * indexam pelo nome do anime (`bleach`). Medido em 13/10/2026 na VPS: das 17
+ * URLs de dublado testadas, 6 respondiam com o sufixo e 12 sem — e para
+ * `bleach-dublado-2`/`dr-stone-dublado-4` só a forma sem sufixo existe.
+ * Sem isso o probe 404 descarta a fonte inteira.
+ *
+ * Ordem = mais específica -> mais genérica (o chamador usa a 1ª que existir).
+ */
+export function slugVariants(animeSlug: string): string[] {
+  const variants = [
+    animeSlug,
+    animeSlug.replace(/-(?:dublado|legendado)(?:-\d+)?$/i, ''),
+  ];
+  return variants.filter((slug, i, all) => !!slug && all.indexOf(slug) === i);
+}
+
+/**
+ * Todas as URLs candidatas de um episódio numa fonte, na ordem de preferência.
+ * Variantes de slug x formato de URL da fonte.
+ */
+export function sourceEpisodeUrlVariants(
+  sourceId: string,
+  animeSlug: string,
+  episodeNumber: number,
+  season: number = 1,
+): string[] {
+  const template = SOURCE_URL_TEMPLATES[sourceId];
+  if (!template) return [];
+  return slugVariants(animeSlug).map((slug) =>
+    template(slug, episodeNumber, season),
+  );
+}
+
+/** Formato de URL de cada fonte: (slug, episodio, season) -> URL. */
+const SOURCE_URL_TEMPLATES: Record<
+  string,
+  (slug: string, ep: number, season: number) => string
+> = {
+  meusanimes: (slug, ep) => `https://meusanimes.blog/e/${slug}-episodio-${ep}/`,
+  animesonlinecc: (slug, ep) =>
+    `https://animesonlinecc.to/episodio/${slug}-episodio-${ep}/`,
+  animesonline: (slug, ep) =>
+    `https://animesonline.cloud/episodio/${slug}-episodio-${ep}`,
+  topanimes: (slug, ep) =>
+    `https://topanimes.net/episodio/${slug}-episodio-${ep}/`,
+  // Formato NxM (Kitsune): animesorion.cc e animexhd.xyz usam este.
+  animesorion: (slug, ep, season) =>
+    `https://animesorion.cc/episodios/${slug}-${season}x${ep}/`,
+  animexhd: (slug, ep, season) =>
+    `https://animexhd.xyz/episodios/${slug}-${season}x${ep}/`,
+};
 
 /** Helper: backoff p/ próxima tentativa. */
 export function nextBackoffMs(attempts: number): number {
