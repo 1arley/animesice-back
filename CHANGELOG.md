@@ -1,3 +1,10 @@
+# [1.49.0](https://github.com/1arley/animesice-back/compare/v1.48.0...v1.49.0) (2026-10-14)
+
+
+### Features
+
+* **streaming:** add job resumption for expired extraction leases ([b437038](https://github.com/1arley/animesice-back/commit/b43703829ccc40d7f01ab1f8ebbfacd3b5582544))
+
 # [1.48.0](https://github.com/1arley/animesice-back/compare/v1.47.0...v1.48.0) (2026-10-13)
 
 
