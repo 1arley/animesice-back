@@ -1,0 +1,12 @@
+npm warn Unknown project config "allowScripts". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+npm warn Unknown env config "allowscripts". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+npm warn Unknown project config "allowScripts". This will stop working in the next major version of npm. See `npm help npmrc` for supported config options.
+testPathPattern:
+
+  Option "testPathPattern" was replaced by "--testPathPatterns". "--testPathPatterns" is only available as a command-line option.
+  
+  Please update your configuration.
+
+  CLI Options Documentation:
+  https://jestjs.io/docs/cli
+

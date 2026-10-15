@@ -21,6 +21,15 @@ export class PrismaService
       const databaseUrl = process.env.DATABASE_URL || '';
       const pool = new Pool({
         connectionString: databaseUrl,
+        // Aumenta pool p/ absorver bursts do Watchtower (tick + repair + checkReleases concorrentes)
+        // Default node-postgres = 10; 20 evita "pool exhausted" sob carga.
+        max: Number(process.env.DATABASE_POOL_MAX ?? 20),
+        // Idle timeout: libera conexões ociosas após 30s (default 30s)
+        idleTimeoutMillis: Number(process.env.DATABASE_IDLE_TIMEOUT ?? 30_000),
+        // Connection timeout: falha rápido se pool cheio (default 0 = infinito)
+        connectionTimeoutMillis: Number(
+          process.env.DATABASE_CONN_TIMEOUT ?? 5_000,
+        ),
       });
       const adapter = new PrismaPg(pool);
       super({ adapter });

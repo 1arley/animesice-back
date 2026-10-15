@@ -82,7 +82,6 @@ export class HealthMonitor {
           "lastError" = ${error},
           "lastFailureKind" = ${failure.kind},
           "disabled" = CASE
-            WHEN ${/retornou 403\b/i.test(error ?? '')} THEN true
             WHEN "consecutiveFailures" + 1 >= ${DISABLE_THRESHOLD} THEN true
             ELSE "disabled"
           END
@@ -161,10 +160,6 @@ export class HealthMonitor {
       where: {
         disabled: true,
         disabledByAdmin: false,
-        OR: [
-          { lastError: null },
-          { lastError: { not: { contains: 'retornou 403' } } },
-        ],
       },
       orderBy: { lastFailureAt: 'desc' },
     });

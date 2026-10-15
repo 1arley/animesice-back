@@ -120,7 +120,7 @@ describe('HealthMonitor', () => {
     expect(row.disabled).toBe(false);
   });
 
-  it('recordFailure incrementa failureCount', async () => {
+  it('403 isolado não desabilita uma fonte', async () => {
     await health.recordFailure('meusanimes', {
       kind: 'AVAILABILITY',
       error: 'https://meusanimes.blog/e/bleach-1/ retornou 403',
@@ -129,7 +129,7 @@ describe('HealthMonitor', () => {
     expect(row.failureCount).toBe(1);
     expect(row.consecutiveFailures).toBe(1);
     expect(row.lastFailureAt).toBeInstanceOf(Date);
-    expect(row.disabled).toBe(true);
+    expect(row.disabled).toBe(false);
   });
 
   it('recordFailure desabilita após 5 falhas consecutivas', async () => {

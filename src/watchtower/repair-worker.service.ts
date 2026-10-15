@@ -16,9 +16,12 @@ import { JobsService } from './jobs.service';
 import { extractJobKey, JOB_TYPE, PRIORITY } from './watchtower.types';
 
 // A amostra pode fazer probes HTTP sequenciais; mantenha o trabalho diário curto.
-const DEFAULT_DAILY_CAP = 100;
+const DEFAULT_DAILY_CAP = 5000;
 const SOURCE_BACKFILL_CAP = 50;
 const CHECK_INTERVAL_MS = 7 * 24 * 60 * 60_000;
+
+/** Pausa repair sweep se fila de extração (EXTRACT_EPISODE) passar deste limite. */
+const EXTRACTION_QUEUE_BACKPRESSURE = 200;
 
 @Injectable()
 export class RepairWorker {
@@ -32,6 +35,18 @@ export class RepairWorker {
     const anime = slugFilter
       ? { published: true, slug: slugFilter }
       : { published: true };
+
+    // Backpressure: pausa repair se fila de EXTRACT_EPISODE estiver saturada
+    // (evita encher a fila com reparos enquanto extrações novas não saem).
+    const pendingExtracts = await this.prisma.watchtowerJob.count({
+      where: { type: JOB_TYPE.EXTRACT_EPISODE, status: 'PENDING' },
+    });
+    if (pendingExtracts > EXTRACTION_QUEUE_BACKPRESSURE) {
+      console.error(
+        `[REPAIR] backpressure: ${pendingExtracts} EXTRACT_EPISODE pendentes > ${EXTRACTION_QUEUE_BACKPRESSURE}, sweep pulado`,
+      );
+      return 0;
+    }
 
     // Sem filtro embedUrl — eps sem embed também precisam de repair
     const checkBefore = new Date(Date.now() - CHECK_INTERVAL_MS);
