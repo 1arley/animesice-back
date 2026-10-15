@@ -12,8 +12,9 @@ import { releaseTradesForCard } from '@/gacha/trade-escrow';
 import { PrismaService } from '@/prisma/prisma.service';
 import { CrystalAccountingService } from '@/gacha/crystal-accounting.service';
 import { GachaConfigService } from '@/gacha/gacha-config.service';
-import { cardValue } from '@/gacha/gacha.constants';
+import { cardValue, conditionMult, GACHA_FOILS } from '@/gacha/gacha.constants';
 import type { GachaFoil, GachaTier } from '@/gacha/gacha.constants';
+import { GACHA_TIERS } from '@/gacha/gacha-config.service';
 import {
   BoxTier,
   dateFromDayKey,
@@ -796,6 +797,296 @@ export class EconomyService {
         where: { userId_day: { userId, day: dateFromDayKey(dayKey()) } },
       })),
     };
+  }
+
+  tradeUpCards(userId: string, copyIds: string[]) {
+    if (copyIds.length !== 4 || new Set(copyIds).size !== 4) {
+      throw new BadRequestException('Selecione quatro cartas diferentes.');
+    }
+    return this.prisma.$transaction(
+      async (tx) => {
+        await this.assertEconomyEnabled(tx, userId);
+        const copies = await tx.userCard.findMany({
+          where: { id: { in: copyIds }, userId, status: 'ACTIVE' },
+          select: {
+            id: true,
+            condition: true,
+            foil: true,
+            edition: true,
+            card: { select: { rarity: true } },
+          },
+        });
+        if (copies.length !== 4) {
+          throw new ConflictException('Uma carta não está disponível.');
+        }
+        const rarity = copies[0]!.card.rarity;
+        if (copies.some((copy) => copy.card.rarity !== rarity)) {
+          throw new BadRequestException(
+            'As quatro cartas precisam ter a mesma raridade.',
+          );
+        }
+        const rarityIndex = GACHA_TIERS.indexOf(rarity as GachaTier);
+        const nextRarity = GACHA_TIERS[rarityIndex + 1];
+        if (rarityIndex < 0 || !nextRarity) {
+          throw new ConflictException(
+            'Não existe trade-up para essa raridade.',
+          );
+        }
+
+        const cards = await tx.card.findMany({
+          where: {
+            status: 'ACTIVE',
+            rarity: nextRarity,
+            id: { notIn: await this.inactiveEventItems(tx, 'cardIds') },
+          },
+          select: {
+            id: true,
+            name: true,
+            rarity: true,
+            animeId: true,
+            editionCounter: true,
+          },
+        });
+        if (!cards.length) {
+          throw new ConflictException(
+            'Não há cartas disponíveis na raridade seguinte.',
+          );
+        }
+
+        const [cardWishes, setWishes] = await Promise.all([
+          tx.gachaCardWishlist.findMany({
+            where: { userId, cardId: { in: cards.map((card) => card.id) } },
+            select: {
+              cardId: true,
+              priority: true,
+              acceptedFoils: true,
+              minCondition: true,
+              maxEdition: true,
+            },
+          }),
+          tx.gachaSetWishlist.findMany({
+            where: {
+              userId,
+              animeId: { in: cards.flatMap((card) => card.animeId ?? []) },
+            },
+            select: { animeId: true, priority: true },
+          }),
+        ]);
+        const cardWishById = new Map(
+          cardWishes.map((wish) => [wish.cardId, wish]),
+        );
+        const setWishByAnime = new Map(
+          setWishes.map((wish) => [wish.animeId, wish]),
+        );
+        const priorityWeight = {
+          LOW: 2,
+          NORMAL: 3,
+          HIGH: 4,
+        } as const;
+        const averageEditionQuality =
+          copies.reduce((sum, copy) => sum + 1 / Math.max(copy.edition, 1), 0) /
+          copies.length;
+        const candidateWeights = Object.fromEntries(
+          cards.map((card) => {
+            const wish = cardWishById.get(card.id);
+            const setWish = card.animeId
+              ? setWishByAnime.get(card.animeId)
+              : undefined;
+            const priority = Math.max(
+              wish ? priorityWeight[wish.priority] : 1,
+              setWish ? priorityWeight[setWish.priority] : 1,
+            );
+            const edition = Math.max(card.editionCounter + 1, 1);
+            const matchesEditionWish =
+              wish?.maxEdition !== null &&
+              wish?.maxEdition !== undefined &&
+              edition <= wish.maxEdition;
+            return [
+              card.id,
+              priority *
+                (1 + averageEditionQuality / edition) *
+                (matchesEditionWish ? 2 : 1),
+            ];
+          }),
+        );
+        const cardId = weightedPick(candidateWeights);
+        const card = cards.find((candidate) => candidate.id === cardId);
+        if (!card)
+          throw new ConflictException('Carta resultante indisponível.');
+
+        const wish = cardWishById.get(card.id);
+        const minimumCondition = wish?.minCondition
+          ? { POOR: 1, PLAYED: 2, EX: 3, NM: 4, MINT: 5 }[wish.minCondition]
+          : undefined;
+        const conditionWeights = Object.fromEntries(
+          copies.map((copy) => {
+            const conditionLevel =
+              {
+                POOR: 1,
+                PLAYED: 2,
+                EX: 3,
+                NM: 4,
+                MINT: 5,
+              }[this.conditionLabel(copy.condition)] ?? 0;
+            const matchesWish =
+              minimumCondition !== undefined &&
+              conditionLevel >= minimumCondition;
+            return [
+              copy.id,
+              conditionMult(copy.condition) * (matchesWish ? 2 : 1),
+            ];
+          }),
+        );
+        const conditionCopyId = weightedPick(conditionWeights);
+        const conditionCopy = copies.find(
+          (copy) => copy.id === conditionCopyId,
+        );
+        if (!conditionCopy) {
+          throw new ConflictException('Qualidade da carta indisponível.');
+        }
+        const { config } = await this.currentVersion(tx);
+        const foilWeights = { ...config.foil_weights };
+        for (const foil of GACHA_FOILS) {
+          const count = copies.filter((copy) => copy.foil === foil).length;
+          const matchesWish = wish?.acceptedFoils.includes(foil) ?? false;
+          foilWeights[foil] *= 1 + count / copies.length;
+          if (matchesWish) foilWeights[foil] *= 2;
+        }
+        const foil = weightedPick(foilWeights);
+
+        for (const copy of copies) {
+          await this.prepareCardForSale(tx, userId, copy.id);
+        }
+        const consumed = await tx.userCard.updateMany({
+          where: { id: { in: copyIds }, userId, status: 'ACTIVE' },
+          data: { status: 'BURNED' },
+        });
+        if (consumed.count !== 4) {
+          throw new ConflictException('Uma carta não está mais disponível.');
+        }
+
+        const counter = await tx.card.update({
+          where: { id: card.id },
+          data: { editionCounter: { increment: 1 } },
+          select: { editionCounter: true },
+        });
+        const condition = conditionCopy.condition;
+        const value = cardValue(
+          nextRarity,
+          condition,
+          foil,
+          counter.editionCounter,
+          config.base_value,
+          config.foil_mult,
+        );
+        const result = await tx.userCard.create({
+          data: {
+            userId,
+            originalUserId: userId,
+            cardId: card.id,
+            condition,
+            foil,
+            edition: counter.editionCounter,
+            value,
+            rankedValue: value,
+          },
+          select: {
+            id: true,
+            cardId: true,
+            condition: true,
+            foil: true,
+            edition: true,
+            value: true,
+          },
+        });
+        await tx.gachaCardDiscovery.createMany({
+          data: { userId, cardId: card.id },
+          skipDuplicates: true,
+        });
+        return {
+          type: 'CARD',
+          consumedIds: copies.map((copy) => copy.id),
+          result: { ...result, card },
+        };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+  }
+
+  tradeUpSkins(userId: string, copyIds: string[]) {
+    if (copyIds.length !== 3 || new Set(copyIds).size !== 3) {
+      throw new BadRequestException('Selecione três skins diferentes.');
+    }
+    return this.prisma.$transaction(
+      async (tx) => {
+        await this.assertEconomyEnabled(tx, userId);
+        const copies = await tx.userGachaSkin.findMany({
+          where: { id: { in: copyIds }, userId, status: 'ACTIVE' },
+          select: { id: true, skinId: true, rarity: true },
+        });
+        if (copies.length !== 3) {
+          throw new ConflictException('Uma skin não está disponível.');
+        }
+        const rarity = copies[0]!.rarity;
+        if (copies.some((copy) => copy.rarity !== rarity)) {
+          throw new BadRequestException(
+            'As três skins precisam ter a mesma raridade.',
+          );
+        }
+        const skins = await tx.gachaSkin.findMany({
+          where: {
+            active: true,
+            blocked: false,
+            rarity,
+            id: { notIn: await this.inactiveEventItems(tx, 'skinIds') },
+          },
+          select: { id: true, name: true, imageUrl: true, rarity: true },
+        });
+        if (!skins.length) {
+          throw new ConflictException('Pool de skins vazio.');
+        }
+        const skin = skins[Math.floor(Math.random() * skins.length)]!;
+        for (const skinId of new Set(copies.map((copy) => copy.skinId))) {
+          await tx.userCard.updateMany({
+            where: { userId, skinId },
+            data: { skinId: null },
+          });
+          await tx.user.updateMany({
+            where: { id: userId, equippedGachaSkinId: skinId },
+            data: { equippedGachaSkinId: null },
+          });
+        }
+        const consumed = await tx.userGachaSkin.updateMany({
+          where: { id: { in: copyIds }, userId, status: 'ACTIVE' },
+          data: { status: 'BURNED' },
+        });
+        if (consumed.count !== 3) {
+          throw new ConflictException('Uma skin não está mais disponível.');
+        }
+        const result = await tx.userGachaSkin.create({
+          data: {
+            userId,
+            skinId: skin.id,
+            name: skin.name,
+            imageUrl: skin.imageUrl,
+            rarity: skin.rarity,
+          },
+          select: {
+            id: true,
+            skinId: true,
+            name: true,
+            imageUrl: true,
+            rarity: true,
+          },
+        });
+        return {
+          type: 'SKIN',
+          consumedIds: copies.map((copy) => copy.id),
+          result,
+        };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
   }
 
   buyKey(userId: string) {

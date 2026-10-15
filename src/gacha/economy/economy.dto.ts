@@ -10,6 +10,8 @@ import {
   IsBoolean,
   IsArray,
   ArrayUnique,
+  ArrayMinSize,
+  ArrayMaxSize,
   MaxLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -23,6 +25,26 @@ export class BuyBoxDto {
 }
 
 export class OpenBoxDto extends BuyBoxDto {}
+
+export class TradeUpCardsDto {
+  @ApiProperty({ type: [String], minItems: 4, maxItems: 4, uniqueItems: true })
+  @IsArray()
+  @ArrayMinSize(4)
+  @ArrayMaxSize(4)
+  @ArrayUnique()
+  @IsString({ each: true })
+  copyIds!: string[];
+}
+
+export class TradeUpSkinsDto {
+  @ApiProperty({ type: [String], minItems: 3, maxItems: 3, uniqueItems: true })
+  @IsArray()
+  @ArrayMinSize(3)
+  @ArrayMaxSize(3)
+  @ArrayUnique()
+  @IsString({ each: true })
+  copyIds!: string[];
+}
 
 export class CreateBuyOrderDto {
   @ApiProperty({ enum: ['CARD', 'SKIN'] })

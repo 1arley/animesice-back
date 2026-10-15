@@ -26,6 +26,8 @@ import {
   MarketHistoryDto,
   EconomicEventDto,
   EconomyAdminReasonDto,
+  TradeUpCardsDto,
+  TradeUpSkinsDto,
 } from './economy.dto';
 import { EconomyService } from './economy.service';
 
@@ -104,6 +106,16 @@ export class EconomyController {
   @Get()
   inventory(@Req() req: AuthenticatedRequest) {
     return this.economy.inventory(req.user.id);
+  }
+
+  @Post('trade-up/cards')
+  tradeUpCards(@Req() req: AuthenticatedRequest, @Body() dto: TradeUpCardsDto) {
+    return this.economy.tradeUpCards(req.user.id, dto.copyIds);
+  }
+
+  @Post('trade-up/skins')
+  tradeUpSkins(@Req() req: AuthenticatedRequest, @Body() dto: TradeUpSkinsDto) {
+    return this.economy.tradeUpSkins(req.user.id, dto.copyIds);
   }
 
   @Post('daily')

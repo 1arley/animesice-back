@@ -1155,6 +1155,7 @@ enum GachaOwnedItemStatus {
   ESCROW
   SOLD
   REMOVED
+  BURNED
 }
 
 enum CardStatus {
