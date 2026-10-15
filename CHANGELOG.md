@@ -1,3 +1,17 @@
+# [1.50.0](https://github.com/1arley/animesice-back/compare/v1.49.0...v1.50.0) (2026-10-15)
+
+
+### Bug Fixes
+
+* **upload:** disable avatar caching with no-store header ([5b79ff8](https://github.com/1arley/animesice-back/commit/5b79ff871bc0bbbd5e54dd8d8d257df9bce09296))
+* **watchtower,embed:** align specs with real behavior and drop NODE_ENV=test shortcut ([73163a0](https://github.com/1arley/animesice-back/commit/73163a05d7b336e95a6e22929175075879ef6f58))
+
+
+### Features
+
+* **user:** add cache busting to avatar URLs ([0e8eec2](https://github.com/1arley/animesice-back/commit/0e8eec22cd3927f52c386803a270c97c4c7c1be3))
+* **watchtower,streaming:** add catalog absence tracking with auto-unpublish and audio support ([a35d001](https://github.com/1arley/animesice-back/commit/a35d001b359ab5ebb1d275fc611b60f2657e0770)), closes [#catalog-tracking](https://github.com/1arley/animesice-back/issues/catalog-tracking)
+
 # [1.49.0](https://github.com/1arley/animesice-back/compare/v1.48.0...v1.49.0) (2026-10-14)
 
 
