@@ -167,7 +167,7 @@ export class WorkerService {
   private async handleExtract(p: ExtractPayload): Promise<void> {
     const anime = await this.prisma.anime.findUnique({
       where: { id: p.animeId },
-      select: { id: true, slug: true, coverImage: true },
+      select: { id: true, slug: true, coverImage: true, audio: true },
     });
     if (!anime) throw new Error(`Anime ${p.animeId} não encontrado`);
 
@@ -177,6 +177,7 @@ export class WorkerService {
       p.episodeNumber,
       season,
       p.episodeUrl,
+      anime.audio,
     );
     if (candidates.length === 0) {
       await this.markEpisodeBrokenIfAny(anime.id, season, p.episodeNumber);
@@ -185,7 +186,11 @@ export class WorkerService {
       );
     }
 
-    const valid = await this.validator.pickValid(candidates, anime.id);
+    const validSources = await this.validator.pickValidSources(
+      candidates,
+      anime.id,
+    );
+    const valid = validSources[0];
     if (!valid) {
       for (const c of candidates) {
         await this.health.recordFailure(c.sourceId, {
@@ -216,6 +221,17 @@ export class WorkerService {
       videoUrl: valid.videoUrl,
       embedUrl,
       sourceId: valid.sourceId,
+      sources: validSources.map((candidate) => ({
+        sourceId: candidate.sourceId,
+        pageUrl:
+          candidate.embedUrl ??
+          this.embedUrlForSource(
+            candidate.sourceId,
+            anime.slug,
+            p.episodeNumber,
+            season,
+          ),
+      })),
       thumbnailUrl: valid.thumbnailUrl ?? anime.coverImage,
       title: valid.title ?? `Episódio ${p.episodeNumber}`,
       duration: valid.duration,
@@ -251,7 +267,7 @@ export class WorkerService {
 
     const anime = await this.prisma.anime.findUnique({
       where: { id: p.animeId },
-      select: { id: true, slug: true, coverImage: true },
+      select: { id: true, slug: true, coverImage: true, audio: true },
     });
     if (!anime) throw new Error(`Anime ${p.animeId} não encontrado`);
 
@@ -283,11 +299,16 @@ export class WorkerService {
       p.episodeNumber,
       p.season ?? 1,
       episode.embedUrl ?? undefined,
+      anime.audio,
     );
     if (candidates.length === 0)
       throw new Error(`Repair: sem fonte p/ ${anime.slug}/${p.episodeNumber}`);
 
-    const valid = await this.validator.pickValid(candidates, anime.id);
+    const validSources = await this.validator.pickValidSources(
+      candidates,
+      anime.id,
+    );
+    const valid = validSources[0];
     if (!valid)
       throw new Error(
         `Repair: validação falhou ${anime.slug}/${p.episodeNumber}`,
@@ -308,6 +329,17 @@ export class WorkerService {
       videoUrl: valid.videoUrl,
       embedUrl,
       sourceId: valid.sourceId,
+      sources: validSources.map((candidate) => ({
+        sourceId: candidate.sourceId,
+        pageUrl:
+          candidate.embedUrl ??
+          this.embedUrlForSource(
+            candidate.sourceId,
+            anime.slug,
+            p.episodeNumber,
+            p.season ?? 1,
+          ),
+      })),
       thumbnailUrl: valid.thumbnailUrl ?? anime.coverImage,
       title: `Episódio ${p.episodeNumber}`,
     });

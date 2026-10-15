@@ -47,6 +47,7 @@ function makeMocks() {
           id: args.where.id,
           ...args.data,
         })),
+        updateMany: jest.fn(async () => ({ count: 1 })),
       },
     },
     notifications: {

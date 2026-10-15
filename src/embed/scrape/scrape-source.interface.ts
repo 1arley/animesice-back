@@ -1,4 +1,5 @@
 import type { Page } from 'playwright';
+import type { AudioType } from '@prisma/client';
 
 /** Resultado da extração de um episódio. */
 export interface ScrapeEpisodeResult {
@@ -23,6 +24,8 @@ export interface HttpExtractContext {
   episodeUrl: string;
   /** User-Agent desktop real (nao bot). */
   ua: string;
+  /** Áudio esperado pelo anime; adapters podem rejeitar opções incompatíveis. */
+  audio?: AudioType;
 }
 
 /**

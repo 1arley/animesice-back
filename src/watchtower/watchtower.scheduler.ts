@@ -177,10 +177,6 @@ export class WatchtowerScheduler implements OnModuleInit {
       payload: {},
       priority: PRIORITY.CHECK_RELEASES,
     });
-    // Sweep contínuo: TTL de token ~8h, diário não acompanha. Roda a cada 15 min
-    // com cap WT_REPAIR_DAILY_CAP (default 500) — só URLs expiradas
-    // assinadas (signedExpiryDead), sem rede.
-    await this.repair.sweep();
   }
 
   /**
@@ -206,6 +202,12 @@ export class WatchtowerScheduler implements OnModuleInit {
       await this.repair.sweep().catch((e) => {
         console.error(
           '[WATCHTOWER] repair sweep falhou:',
+          e instanceof Error ? e.message : String(e),
+        );
+      });
+      await this.repair.backfillSources().catch((e) => {
+        console.error(
+          '[WATCHTOWER] source backfill falhou:',
           e instanceof Error ? e.message : String(e),
         );
       });

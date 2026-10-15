@@ -190,13 +190,32 @@ export class JobsService {
   /** Claim N jobs devidos (status=PENDING, nextRunAt<=agora), mais urgentes 1º. */
   async claimBatch(limit: number): Promise<WatchtowerJobRow[]> {
     const lockId = crypto.randomUUID();
+    const batchSize = Math.max(0, limit);
+    const repairSlots =
+      batchSize > 1 || (batchSize === 1 && new Date().getUTCMinutes() % 5 === 0)
+        ? 1
+        : 0;
     return this.prisma.$queryRaw<WatchtowerJobRow[]>`
-      WITH candidates AS (
+      WITH repair_candidates AS (
         SELECT "id" FROM "WatchtowerJob"
         WHERE "status" = 'PENDING' AND "nextRunAt" <= NOW()
+          AND "type" = 'REPAIR_EPISODE'
+        ORDER BY "createdAt" ASC
+        FOR UPDATE SKIP LOCKED
+        LIMIT ${repairSlots}
+      ),
+      regular_candidates AS (
+        SELECT "id" FROM "WatchtowerJob"
+        WHERE "status" = 'PENDING' AND "nextRunAt" <= NOW()
+          AND "id" NOT IN (SELECT "id" FROM repair_candidates)
         ORDER BY "priority" ASC, "nextRunAt" ASC
         FOR UPDATE SKIP LOCKED
-        LIMIT ${Math.max(0, limit)}
+        LIMIT ${batchSize} - (SELECT COUNT(*) FROM repair_candidates)
+      ),
+      candidates AS (
+        SELECT "id" FROM repair_candidates
+        UNION ALL
+        SELECT "id" FROM regular_candidates
       )
       UPDATE "WatchtowerJob" AS job
       SET "status" = 'RUNNING', "lockedBy" = ${lockId},

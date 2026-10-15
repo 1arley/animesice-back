@@ -4,6 +4,7 @@ import { SOURCE_IDS } from '@/watchtower/watchtower.types';
 function makeMockHealth() {
   return {
     rankedSources: jest.fn(async () => ['meusanimes', 'animesonline']),
+    isDisabled: jest.fn(async () => false),
     recordSuccess: jest.fn(async () => undefined),
     recordFailure: jest.fn(async () => undefined),
     reviveOne: jest.fn(async () => null),

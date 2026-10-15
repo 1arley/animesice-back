@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import type { AudioType } from '@prisma/client';
 import type { Page } from 'playwright';
 import { fetchSafeRaw } from '@/common/ssrf';
 import type {
@@ -117,6 +118,14 @@ export class AnimesorionScrapeSource implements ScrapeSource {
     if (!serie) {
       throw new Error(`${ctx.episodeUrl} sem iframe myembed.biz`);
     }
+    const requested = ctx.episodeUrl.match(/-(\d+)x(\d+)(?:\/|$)/i);
+    if (
+      !requested ||
+      serie.season !== Number(requested[1]) ||
+      serie.episode !== Number(requested[2])
+    ) {
+      throw new Error(`${ctx.episodeUrl} aponta para episódio diferente`);
+    }
 
     const options = await this.playerOptions(
       serie.id,
@@ -126,6 +135,7 @@ export class AnimesorionScrapeSource implements ScrapeSource {
     const playerTokens = [
       ...new Set(
         options
+          .filter((option) => this.matchesAudio(option, ctx.audio))
           .map((o) => o.embed)
           .filter((e): e is string => !!e && /^https?:\/\//i.test(e)),
       ),
@@ -136,6 +146,19 @@ export class AnimesorionScrapeSource implements ScrapeSource {
     }
 
     return { videos: [], iframes: [], cloudflare: false, playerTokens };
+  }
+
+  private matchesAudio(option: PlayerOption, audio?: AudioType): boolean {
+    if (!audio) return true;
+    const label = `${option.label ?? ''}`
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase();
+    return audio === 'DUBLADO'
+      ? /\b(dublado|dub|portugu[eê]s|pt[-_ ]?br)\b/.test(label)
+      : /\b(legendado|sub(?:title|titles)?|original|japanese|ja[-_ ]?jp)\b/.test(
+          label,
+        );
   }
 
   /** id/season/episode do player, extraído do iframe myembed.biz. */

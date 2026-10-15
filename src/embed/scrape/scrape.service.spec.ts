@@ -243,6 +243,19 @@ describe('ScrapeService (orquestração + cache SWR)', () => {
     expect(af.extractHttp).toHaveBeenCalledTimes(1);
   });
 
+  it('não atribui falha de host a sourceId explícito incompatível', async () => {
+    const { svc, af, health } = build();
+    await expect(
+      svc.scrapeEpisodeVideo(
+        'https://animefire.io/animes/foo/1',
+        'meusanimes',
+        false,
+      ),
+    ).rejects.toThrow('AnimeFire não tem scraper ativo.');
+    expect(af.extractHttp).not.toHaveBeenCalled();
+    expect(health.recordFailure).not.toHaveBeenCalled();
+  });
+
   it('cacheia RAW e embrulha no proxy de mídia na saída (wrap)', async () => {
     const { svc, af } = build();
     const wrapped = await svc.scrapeEpisodeVideo(

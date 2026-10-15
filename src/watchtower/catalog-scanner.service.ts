@@ -20,9 +20,30 @@ interface CatalogScan {
   /** Slug real na fonte (p/ persistir como AnimeSource.externalKey). */
   sourceSlug: string;
   entries: CatalogEntry[];
+  /** Só confirma ausência quando a chave persistida respondeu 404/410. */
+  definitiveMissing: boolean;
 }
 
-const EMPTY_SCAN: CatalogScan = { sourceId: '', sourceSlug: '', entries: [] };
+interface CatalogResponse {
+  entries: CatalogEntry[];
+  definitiveMissing: boolean;
+}
+
+interface CatalogDiscovery {
+  slug: string | null;
+  complete: boolean;
+}
+
+const EMPTY_RESPONSE: CatalogResponse = {
+  entries: [],
+  definitiveMissing: false,
+};
+const EMPTY_SCAN: CatalogScan = {
+  sourceId: '',
+  sourceSlug: '',
+  entries: [],
+  definitiveMissing: false,
+};
 
 @Injectable()
 export class CatalogScanner implements OnModuleInit {
@@ -80,6 +101,7 @@ export class CatalogScanner implements OnModuleInit {
           });
           return {
             ...meusanimes,
+            definitiveMissing: false,
             entries: [...meusanimes.entries, ...additional].sort(
               (a, b) => a.season - b.season || a.episode - b.episode,
             ),
@@ -88,7 +110,8 @@ export class CatalogScanner implements OnModuleInit {
       }
       return meusanimes;
     }
-    return this.scanAnimesdigital(animeSlug, animeId);
+    const animesdigital = await this.scanAnimesdigital(animeSlug, animeId);
+    return { ...animesdigital, definitiveMissing: false };
   }
 
   /** Compatibilidade: só as entradas (sem metadados da fonte). */
@@ -117,10 +140,19 @@ export class CatalogScanner implements OnModuleInit {
       : null;
     const mappedSlug = mapping?.externalKey ?? animeSlug;
     const found = async (slug: string): Promise<CatalogScan> => {
-      const entries = await this.tryScan(slug);
-      return entries.length > 0
-        ? { sourceId: 'meusanimes', sourceSlug: slug, entries }
-        : EMPTY_SCAN;
+      const result = await this.tryScan(slug);
+      return result.entries.length > 0
+        ? {
+            sourceId: 'meusanimes',
+            sourceSlug: slug,
+            entries: result.entries,
+            definitiveMissing: false,
+          }
+        : {
+            ...EMPTY_SCAN,
+            definitiveMissing:
+              result.definitiveMissing && Boolean(mapping?.externalKey),
+          };
     };
 
     const entries = await found(mappedSlug);
@@ -135,10 +167,10 @@ export class CatalogScanner implements OnModuleInit {
       const viaBase = await found(baseSlug);
       if (viaBase.entries.length > 0) return viaBase;
     }
-    if (process.env.NODE_ENV === 'test') return EMPTY_SCAN;
-
-    const discovered = await this.discoverSlug(animeSlug);
-    return discovered ? found(discovered) : EMPTY_SCAN;
+    const discovery = await this.discoverSlug(animeSlug);
+    if (discovery.slug) return found(discovery.slug);
+    // Um slug descoberto pela busca, ou não encontrado por ela, não prova ausência.
+    return { ...EMPTY_SCAN, definitiveMissing: false };
   }
 
   /**
@@ -164,37 +196,50 @@ export class CatalogScanner implements OnModuleInit {
       : null;
 
     const candidates: string[] = [];
-    for (const raw of [mapping?.externalKey, animeSlug]) {
-      const slug = raw?.replace(/-\d+$/, '').trim();
+    for (const raw of [mapping?.externalKey, animeSlug.replace(/-\d+$/, '')]) {
+      const slug = raw?.trim();
       if (slug && !candidates.includes(slug)) candidates.push(slug);
     }
 
     for (const slug of candidates) {
-      const entries = await this.tryScanAnimesdigital(slug);
-      if (entries.length > 0) {
-        return { sourceId: 'animesdigital', sourceSlug: slug, entries };
+      const result = await this.tryScanAnimesdigital(slug);
+      if (result.entries.length > 0) {
+        return {
+          sourceId: 'animesdigital',
+          sourceSlug: slug,
+          entries: result.entries,
+          definitiveMissing: false,
+        };
       }
     }
 
     if (process.env.NODE_ENV === 'test') return EMPTY_SCAN;
-    const discovered = await this.discoverAnimesdigitalSlug(animeSlug);
-    if (!discovered) return EMPTY_SCAN;
-    const entries = await this.tryScanAnimesdigital(discovered);
-    return entries.length > 0
-      ? { sourceId: 'animesdigital', sourceSlug: discovered, entries }
-      : EMPTY_SCAN;
+    const discovery = await this.discoverAnimesdigitalSlug(animeSlug);
+    if (!discovery.slug) return EMPTY_SCAN;
+    const result = await this.tryScanAnimesdigital(discovery.slug);
+    return result.entries.length > 0
+      ? {
+          sourceId: 'animesdigital',
+          sourceSlug: discovery.slug,
+          entries: result.entries,
+          definitiveMissing: false,
+        }
+      : {
+          ...EMPTY_SCAN,
+          definitiveMissing: false,
+        };
   }
 
   /** Resolve MeusAnimes identity via its own search, never by slug rewriting. */
-  private async discoverSlug(animeSlug: string): Promise<string | null> {
+  private async discoverSlug(animeSlug: string): Promise<CatalogDiscovery> {
     const query = animeSlug.replace(/-\d+$/, '').replace(/-/g, ' ').trim();
-    if (!query) return null;
+    if (!query) return { slug: null, complete: false };
     const url = `https://meusanimes.blog/?s=${encodeURIComponent(query)}`;
     try {
       const res = await fetch(url, {
         headers: { 'user-agent': UA, accept: 'text/html' },
       });
-      if (!res.ok) return null;
+      if (!res.ok) return { slug: null, complete: false };
       const html = await res.text();
       const wantedDub = /\bdublado\b/i.test(query);
       const links = [
@@ -208,9 +253,12 @@ export class CatalogScanner implements OnModuleInit {
       const exact = links.find(
         (x) => this.normalize(x.title) === normalizedQuery,
       );
-      return (exact ?? links[0])?.slug ?? null;
+      return {
+        slug: (exact ?? links[0])?.slug ?? null,
+        complete: this.completeSearchResponse(html),
+      };
     } catch {
-      return null;
+      return { slug: null, complete: false };
     }
   }
 
@@ -223,12 +271,23 @@ export class CatalogScanner implements OnModuleInit {
       .trim();
   }
 
+  private completeSearchResponse(html: string): boolean {
+    return (
+      html.length > 500 &&
+      !/(cf-chl-|just a moment|checking your browser|attention required|cloudflare)/i.test(
+        html,
+      ) &&
+      /(<html\b|wp-content|wp-json)/i.test(html) &&
+      /(wp-content|wp-json|wordpress)/i.test(html)
+    );
+  }
+
   /** Busca no animesdigital.org -> slug da página /anime/a/<slug>. */
   private async discoverAnimesdigitalSlug(
     animeSlug: string,
-  ): Promise<string | null> {
+  ): Promise<CatalogDiscovery> {
     const query = animeSlug.replace(/-\d+$/, '').replace(/-/g, ' ').trim();
-    if (!query) return null;
+    if (!query) return { slug: null, complete: false };
     const url = `https://animesdigital.org/?s=${encodeURIComponent(query)}`;
     let html: string;
     try {
@@ -236,10 +295,10 @@ export class CatalogScanner implements OnModuleInit {
         headers: { 'user-agent': UA, accept: 'text/html' },
         redirect: 'follow',
       });
-      if (!res.ok) return null;
+      if (!res.ok) return { slug: null, complete: false };
       html = await res.text();
     } catch {
-      return null;
+      return { slug: null, complete: false };
     }
 
     const wantedDub = /\bdublado\b/i.test(query);
@@ -254,11 +313,14 @@ export class CatalogScanner implements OnModuleInit {
     const exact = links.find(
       (s) => this.normalize(s.replace(/-/g, ' ')) === normalizedQuery,
     );
-    return exact ?? links[0] ?? null;
+    return {
+      slug: exact ?? links[0] ?? null,
+      complete: this.completeSearchResponse(html),
+    };
   }
 
   /** Baixa a página /anime/a/<slug> do animesdigital e extrai os episódios. */
-  private async tryScanAnimesdigital(slug: string): Promise<CatalogEntry[]> {
+  private async tryScanAnimesdigital(slug: string): Promise<CatalogResponse> {
     const url = `https://animesdigital.org/anime/a/${slug}`;
     console.error(`[CATALOG] scanning ${url}`);
 
@@ -275,12 +337,17 @@ export class CatalogScanner implements OnModuleInit {
         redirect: 'follow',
         signal: controller.signal,
       });
-      if (!res.ok) throw new Error(`${url} retornou ${res.status}`);
+      if (!res.ok) {
+        return {
+          ...EMPTY_RESPONSE,
+          definitiveMissing: res.status === 404 || res.status === 410,
+        };
+      }
       html = await res.text();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[CATALOG] fetch falhou p/ ${url}:`, msg);
-      return [];
+      return EMPTY_RESPONSE;
     } finally {
       clearTimeout(timeout);
     }
@@ -289,7 +356,7 @@ export class CatalogScanner implements OnModuleInit {
     console.error(
       `[CATALOG] animesdigital ${slug}: ${entries.length} episódios encontrados`,
     );
-    return entries;
+    return { entries, definitiveMissing: false };
   }
 
   /**
@@ -324,7 +391,7 @@ export class CatalogScanner implements OnModuleInit {
     return entries;
   }
 
-  private async tryScan(animeSlug: string): Promise<CatalogEntry[]> {
+  private async tryScan(animeSlug: string): Promise<CatalogResponse> {
     const url = `https://meusanimes.blog/a/${animeSlug}/`;
     console.error(`[CATALOG] scanning ${url}`);
 
@@ -342,13 +409,16 @@ export class CatalogScanner implements OnModuleInit {
         signal: controller.signal,
       });
       if (!res.ok) {
-        throw new Error(`${url} retornou ${res.status}`);
+        return {
+          ...EMPTY_RESPONSE,
+          definitiveMissing: res.status === 404 || res.status === 410,
+        };
       }
       html = await res.text();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[CATALOG] fetch falhou p/ ${url}:`, msg);
-      return [];
+      return EMPTY_RESPONSE;
     } finally {
       clearTimeout(timeout);
     }
@@ -357,7 +427,7 @@ export class CatalogScanner implements OnModuleInit {
     console.error(
       `[CATALOG] ${animeSlug}: ${entries.length} episódios encontrados (${new Set(entries.map((e) => e.season)).size} temporadas)`,
     );
-    return entries;
+    return { entries, definitiveMissing: false };
   }
   /**
    * Escaneia todos os animes FINALIZADO/EM_LANCAMENTO.
@@ -380,9 +450,10 @@ export class CatalogScanner implements OnModuleInit {
           select: { episodes: true },
         },
         sourceMappings: {
-          where: { sourceId: 'animesdigital' },
+          where: { sourceId: { in: ['meusanimes', 'animesdigital'] } },
           select: { sourceId: true },
         },
+        catalogUnpublished: true,
       },
     });
 
@@ -392,15 +463,19 @@ export class CatalogScanner implements OnModuleInit {
     for (const anime of animes) {
       const dbEpisodeCount = anime._count.episodes;
       const expected = anime.episodeCount ?? 0;
-      const hasAnimesdigitalCatalog =
-        process.env.ANIMESDIGITAL_ENABLED === 'true' &&
-        (anime.sourceMappings?.length ?? 0) > 0;
+      const hasCatalogMapping =
+        (anime.sourceMappings ?? []).some(
+          (mapping) =>
+            mapping.sourceId === 'meusanimes' ||
+            (mapping.sourceId === 'animesdigital' &&
+              process.env.ANIMESDIGITAL_ENABLED === 'true'),
+        ) || anime.catalogUnpublished;
 
       // Sem force: pula apenas se tem episódios e parece completo (count real >= expected)
       // MAS se expected é 0 (episodeCount null), sempre escaneia
       if (
         !force &&
-        !hasAnimesdigitalCatalog &&
+        !hasCatalogMapping &&
         expected > 0 &&
         dbEpisodeCount >= expected
       ) {
@@ -409,7 +484,7 @@ export class CatalogScanner implements OnModuleInit {
       // Sem force e sem episodeCount: pula se tem pelo menos 1 episódio
       if (
         !force &&
-        !hasAnimesdigitalCatalog &&
+        !hasCatalogMapping &&
         expected === 0 &&
         dbEpisodeCount > 0
       ) {
@@ -448,7 +523,10 @@ export class CatalogScanner implements OnModuleInit {
   ): Promise<{ found: number; missing: number }> {
     const scan = await this.scanAnimeResolved(slug, animeId);
     const { entries } = scan;
-    if (entries.length === 0) return { found: 0, missing: 0 };
+    if (entries.length === 0) {
+      if (scan.definitiveMissing) await this.recordCatalogAbsence(animeId);
+      return { found: 0, missing: 0 };
+    }
 
     // Detecta se este anime é um sibling (slug termina em -<n>)
     const siblingMatch = slug.match(/-(\d+)$/);
@@ -480,9 +558,18 @@ export class CatalogScanner implements OnModuleInit {
         themes: true,
         alternativeTitles: true,
         published: true,
+        catalogUnpublished: true,
       },
     });
     if (!baseAnime) return { found: 0, missing: 0 };
+
+    await this.prisma.anime.updateMany({
+      where: { id: animeId },
+      data: {
+        catalogAbsentChecks: 0,
+        catalogAbsenceCheckedAt: null,
+      },
+    });
 
     // Persiste o mapeamento na fonte que de fato respondeu.
     // meusanimes: mantém o comportamento anterior — externalKey é derivado da
@@ -524,6 +611,7 @@ export class CatalogScanner implements OnModuleInit {
       .catch(() => undefined);
 
     let missing = 0;
+    let recoveryQueued = false;
 
     // Se sibling, processa apenas a sua temporada
     const seasonsToProcess = siblingSeason
@@ -561,8 +649,15 @@ export class CatalogScanner implements OnModuleInit {
           });
           const haveSet = new Set(existingEps.map((e) => e.number));
           for (const entry of seasonEntries) {
-            if (haveSet.has(entry.episode)) continue;
+            if (
+              haveSet.has(entry.episode) &&
+              (!baseAnime.catalogUnpublished ||
+                targetId !== animeId ||
+                recoveryQueued)
+            )
+              continue;
             missing++;
+            if (targetId === animeId) recoveryQueued = true;
             await this.jobs.enqueue({
               type: JOB_TYPE.EXTRACT_EPISODE,
               dedupeKey: extractJobKey(targetId, 1, entry.episode),
@@ -612,8 +707,15 @@ export class CatalogScanner implements OnModuleInit {
       const haveSet = new Set(existing.map((e) => e.number));
 
       for (const entry of seasonEntries) {
-        if (haveSet.has(entry.episode)) continue;
+        if (
+          haveSet.has(entry.episode) &&
+          (!baseAnime.catalogUnpublished ||
+            targetId !== animeId ||
+            recoveryQueued)
+        )
+          continue;
         missing++;
+        if (targetId === animeId) recoveryQueued = true;
         await this.jobs.enqueue({
           type: JOB_TYPE.EXTRACT_EPISODE,
           dedupeKey: extractJobKey(targetId, 1, entry.episode),
@@ -633,6 +735,34 @@ export class CatalogScanner implements OnModuleInit {
       `[CATALOG] ${slug}: ${entries.length} encontrados, ${missing} faltantes enfileirados`,
     );
     return { found: entries.length, missing };
+  }
+
+  private async recordCatalogAbsence(animeId: string): Promise<void> {
+    const anime = await this.prisma.anime.findUnique({
+      where: { id: animeId },
+      select: {
+        catalogAbsentChecks: true,
+        catalogAbsenceCheckedAt: true,
+        catalogUnpublished: true,
+      },
+    });
+    if (!anime || anime.catalogUnpublished) return;
+
+    const now = new Date();
+    const lastCheck = anime.catalogAbsenceCheckedAt;
+    if (lastCheck && now.getTime() - lastCheck.getTime() < 24 * 60 * 60_000)
+      return;
+
+    const checks = (anime.catalogAbsentChecks ?? 0) + 1;
+    const updated = await this.prisma.anime.updateMany({
+      where: { id: animeId, catalogAbsenceCheckedAt: lastCheck },
+      data: {
+        catalogAbsentChecks: { increment: 1 },
+        catalogAbsenceCheckedAt: now,
+        ...(checks >= 3 ? { published: false, catalogUnpublished: true } : {}),
+      },
+    });
+    if (updated.count === 0) return;
   }
 
   /**

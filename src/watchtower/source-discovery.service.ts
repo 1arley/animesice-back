@@ -49,7 +49,7 @@ export class SourceDiscovery {
     // Se o catálogo forneceu a URL real, prioriza a fonte dona dela.
     if (episodeUrl) {
       const explicit = this.explicitCandidate(episodeUrl);
-      if (explicit) {
+      if (explicit && !(await this.health.isDisabled(explicit.sourceId))) {
         const status = await this.probeExists(explicit.url);
         if (status !== 'missing') out.push(explicit);
       }
@@ -123,7 +123,7 @@ export class SourceDiscovery {
       return { sourceId: 'animefire', url: episodeUrl };
     }
     if (/animesonlinecc\.to/i.test(lower)) {
-      return { sourceId: 'animesonlinecc', url: episodeUrl };
+      return { sourceId: 'animesonline', url: episodeUrl };
     }
     if (/animesonline\.cloud/i.test(lower)) {
       return { sourceId: 'animesonline', url: episodeUrl };

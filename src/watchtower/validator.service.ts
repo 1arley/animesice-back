@@ -33,12 +33,24 @@ export class Validator {
     candidates: EpisodeCandidate[],
     animeId: string,
   ): Promise<EpisodeCandidate | null> {
+    return (await this.pickValidSources(candidates, animeId, 1))[0] ?? null;
+  }
+
+  /** Valida fontes distintas para manter uma principal e alternativas reais. */
+  async pickValidSources(
+    candidates: EpisodeCandidate[],
+    animeId: string,
+    limit = 2,
+  ): Promise<EpisodeCandidate[]> {
     let animeCover: string | null = null;
+    const valid: EpisodeCandidate[] = [];
+    const seenSources = new Set<string>();
 
     for (const c of candidates) {
-      if (!c.videoUrl) continue;
+      if (!c.videoUrl || seenSources.has(c.sourceId)) continue;
       const dead = await probeMediaUrlDead(c.videoUrl);
       if (dead) continue;
+      seenSources.add(c.sourceId);
       if (!c.thumbnailUrl) {
         if (animeCover === null) {
           const a = await this.prisma.anime.findUnique({
@@ -49,8 +61,9 @@ export class Validator {
         }
         c.thumbnailUrl = animeCover;
       }
-      return c;
+      valid.push(c);
+      if (valid.length >= limit) break;
     }
-    return null;
+    return valid;
   }
 }

@@ -336,49 +336,52 @@ model PasswordResetToken {
 }
 
 model Anime {
-  id                    String             @id @default(uuid())
-  slug                  String             @unique
-  title                 String
-  synopsis              String?
-  coverImage            String?
-  bannerImage           String?
-  rating                Float?             @default(0)
-  ageRating             String?            @default("A14")
-  status                String             @default("LANCAMENTO")
-  audio                 AudioType          @default(LEGENDADO)
-  format                AnimeFormat?       @default(TV)
-  year                  Int?
-  season                AnimeSeason?
-  studios               String[]
-  themes                String[]
-  alternativeTitles     String[]
-  japaneseTitle         String?
-  source                String?
-  releaseDate           DateTime?
-  endDate               DateTime?
-  episodeCount          Int?
-  anilistId             Int?               @unique
-  malId                 Int?               @unique
-  externalUrl           String?
-  externalSource        String?
-  published             Boolean            @default(true)
-  editorialSynopsis     String?
-  editorialWhereToWatch String?
-  editorialDubbingInfo  String?
-  editorialSeasonsInfo  String?
-  episodes              Episode[]
-  sourceMappings        AnimeSource[]
-  genres                Genre[]
-  comments              Comment[]
-  ratings               Rating[]
-  favorites             Favorite[]
-  animeSchedules        AnimeSchedule[]
-  animeList             UserAnimeList[]
-  posts                 Post[]
-  cards                 Card[]
-  gachaSetWishlists     GachaSetWishlist[]
-  createdAt             DateTime           @default(now())
-  updatedAt             DateTime           @updatedAt
+  id                      String             @id @default(uuid())
+  slug                    String             @unique
+  title                   String
+  synopsis                String?
+  coverImage              String?
+  bannerImage             String?
+  rating                  Float?             @default(0)
+  ageRating               String?            @default("A14")
+  status                  String             @default("LANCAMENTO")
+  audio                   AudioType          @default(LEGENDADO)
+  format                  AnimeFormat?       @default(TV)
+  year                    Int?
+  season                  AnimeSeason?
+  studios                 String[]
+  themes                  String[]
+  alternativeTitles       String[]
+  japaneseTitle           String?
+  source                  String?
+  releaseDate             DateTime?
+  endDate                 DateTime?
+  episodeCount            Int?
+  anilistId               Int?               @unique
+  malId                   Int?               @unique
+  externalUrl             String?
+  externalSource          String?
+  published               Boolean            @default(true)
+  catalogAbsentChecks     Int                @default(0)
+  catalogAbsenceCheckedAt DateTime?
+  catalogUnpublished      Boolean            @default(false)
+  editorialSynopsis       String?
+  editorialWhereToWatch   String?
+  editorialDubbingInfo    String?
+  editorialSeasonsInfo    String?
+  episodes                Episode[]
+  sourceMappings          AnimeSource[]
+  genres                  Genre[]
+  comments                Comment[]
+  ratings                 Rating[]
+  favorites               Favorite[]
+  animeSchedules          AnimeSchedule[]
+  animeList               UserAnimeList[]
+  posts                   Post[]
+  cards                   Card[]
+  gachaSetWishlists       GachaSetWishlist[]
+  createdAt               DateTime           @default(now())
+  updatedAt               DateTime           @updatedAt
 
   @@index([slug])
   @@index([rating])
@@ -419,6 +422,7 @@ model Episode {
   sourceId        String?
   videoBroken     Boolean          @default(false)
   videoCheckedAt  DateTime?
+  repairQueuedAt  DateTime?
   anime           Anime            @relation(fields: [animeId], references: [id], onDelete: Cascade)
   animeId         String
   comments        Comment[]
@@ -433,6 +437,7 @@ model Episode {
   @@index([animeId, season])
   @@index([animeId, number, season])
   @@index([dateModified])
+  @@index([repairQueuedAt])
 }
 
 model AnimeSource {
@@ -1270,20 +1275,20 @@ model GachaTrade {
   createdAt           DateTime         @default(now()) @db.Timestamptz(6)
   completedAt         DateTime?        @db.Timestamptz(6)
   /// Cristais que o offeredUser reserva enquanto a troca está PENDING.
-  crystalsOffered   Int    @default(0)
+  crystalsOffered     Int              @default(0)
   /// Cristais que o requestedUser reserva enquanto a troca está PENDING.
-  crystalsRequested Int    @default(0)
+  crystalsRequested   Int              @default(0)
   /// Rodada da cadeia de contrapropostas (1 = proposta original).
-  round         Int     @default(1)
+  round               Int              @default(1)
   /// Raiz da cadeia de contrapropostas (achatada — aponta sempre para a
   /// primeira troca da conversa).
-  parentTradeId String?
-  parentTrade   GachaTrade?  @relation("TradeCounterChain", fields: [parentTradeId], references: [id], onDelete: SetNull)
-  counters      GachaTrade[] @relation("TradeCounterChain")
-  closedBy      String?
+  parentTradeId       String?
+  parentTrade         GachaTrade?      @relation("TradeCounterChain", fields: [parentTradeId], references: [id], onDelete: SetNull)
+  counters            GachaTrade[]     @relation("TradeCounterChain")
+  closedBy            String?
   /// Motivo do fechamento: ACCEPTED, CANCELLED, DECLINED, COUNTERED,
   /// EXPIRED, CARD_BLOCKED.
-  closedReason String?
+  closedReason        String?
 
   cards GachaTradeCard[]
 

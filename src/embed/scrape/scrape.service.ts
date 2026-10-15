@@ -39,6 +39,7 @@ import {
   trustMediaHosts,
 } from '@/common/trusted-media-hosts';
 import { playwrightProxy } from '@/common/outbound-proxy';
+import type { AudioType } from '@prisma/client';
 /** Remove quebras de linha/separadores Unicode de dados externos antes de logar. */
 function sanitizeLog(v: string): string {
   return v.replace(/[\r\n\u2028\u2029]/g, ' ');
@@ -231,9 +232,10 @@ export class ScrapeService implements OnModuleInit {
     sourceId?: string,
     wrap = false,
     forceRefresh = false,
+    audio?: AudioType,
   ): Promise<ScrapeEpisodeResult> {
     const source = await this.resolveSource(episodeUrl, sourceId);
-    const cacheKey = this.cacheKey(source.id, episodeUrl);
+    const cacheKey = this.cacheKey(source.id, episodeUrl, audio);
     const now = Date.now();
     const entry = this.cache.get(cacheKey);
 
@@ -253,10 +255,11 @@ export class ScrapeService implements OnModuleInit {
         `[SCRAPE] cache STALE (servindo + revalidando) source=${source.id} url=${sanitizeLog(episodeUrl.slice(0, 80))}`,
       );
       this.metrics.recordCacheHit('stale');
-      void this.startOrJoinFetch(cacheKey, episodeUrl, source).catch((err) =>
-        dbg(
-          `[SCRAPE] revalidação em background falhou: ${err instanceof Error ? err.message : String(err)}`,
-        ),
+      void this.startOrJoinFetch(cacheKey, episodeUrl, source, audio).catch(
+        (err) =>
+          dbg(
+            `[SCRAPE] revalidação em background falhou: ${err instanceof Error ? err.message : String(err)}`,
+          ),
       );
       return this.wrapResult(entry.result, episodeUrl, wrap);
     }
@@ -267,7 +270,12 @@ export class ScrapeService implements OnModuleInit {
     );
     this.metrics.recordCacheMiss();
     try {
-      const result = await this.startOrJoinFetch(cacheKey, episodeUrl, source);
+      const result = await this.startOrJoinFetch(
+        cacheKey,
+        episodeUrl,
+        source,
+        audio,
+      );
       return this.wrapResult(result, episodeUrl, wrap);
     } catch (err) {
       // Provider falhou mas temos resultado stale: degrada servindo o stale
@@ -304,16 +312,20 @@ export class ScrapeService implements OnModuleInit {
     cacheKey: string,
     episodeUrl: string,
     source: ScrapeSource,
+    audio?: AudioType,
   ): Promise<ScrapeEpisodeResult> {
     let inflight = this.inflight.get(cacheKey);
     if (!inflight) {
-      inflight = this.fetchAndCache(episodeUrl, source, cacheKey).finally(
-        () => {
-          if (this.inflight.get(cacheKey) === inflight) {
-            this.inflight.delete(cacheKey);
-          }
-        },
-      );
+      inflight = this.fetchAndCache(
+        episodeUrl,
+        source,
+        cacheKey,
+        audio,
+      ).finally(() => {
+        if (this.inflight.get(cacheKey) === inflight) {
+          this.inflight.delete(cacheKey);
+        }
+      });
       this.inflight.set(cacheKey, inflight);
     }
     return inflight;
@@ -327,6 +339,7 @@ export class ScrapeService implements OnModuleInit {
     episodeUrl: string,
     source: ScrapeSource,
     cacheKey: string,
+    audio?: AudioType,
   ): Promise<ScrapeEpisodeResult> {
     await this.acquireScrapeSlot();
     const t0 = Date.now();
@@ -334,7 +347,7 @@ export class ScrapeService implements OnModuleInit {
       dbg(
         `[SCRAPE] extraindo source=${source.id} url=${sanitizeLog(episodeUrl.slice(0, 120))}`,
       );
-      const result = await this.fetchRawVideos(episodeUrl, source);
+      const result = await this.fetchRawVideos(episodeUrl, source, audio);
       // Só cacheia resultados úteis (vídeo OU player token). Resultado vazio
       // vira failure p/ demover o provider (página mudou/foi bloqueada).
       const ok =
@@ -416,11 +429,16 @@ export class ScrapeService implements OnModuleInit {
   private async fetchRawVideos(
     episodeUrl: string,
     source: ScrapeSource,
+    audio?: AudioType,
   ): Promise<ScrapeEpisodeResult> {
     // Caminho HTTP puro: se o adapter implementa extractHttp, pula o Playwright.
     if (typeof source.extractHttp === 'function') {
       dbg(`[SCRAPE] calling extractHttp on ${source.id}...`);
-      const raw = await source.extractHttp({ episodeUrl, ua: UA_DESKTOP });
+      const raw = await source.extractHttp({
+        episodeUrl,
+        ua: UA_DESKTOP,
+        audio,
+      });
       dbg(
         `[SCRAPE] extractHttp OK: videos=${raw.videos.length} playerTokens=${(raw.playerTokens ?? []).length}`,
       );
@@ -634,7 +652,9 @@ export class ScrapeService implements OnModuleInit {
   ): Promise<ScrapeSource> {
     if (sourceId) {
       const found = this.sources.find((s) => s.id === sourceId);
-      if (found && !(await this.sourceDisabled(found.id))) return found;
+      if (found?.supports(url) && !(await this.sourceDisabled(found.id))) {
+        return found;
+      }
       // sourceId desconhecido: cai p/ auto-detect (nao falha).
     }
     const ordered = await this.healthOrderedSources();
@@ -799,6 +819,7 @@ export class ScrapeService implements OnModuleInit {
     animeSlug: string,
     episodeNumber: number,
     season: number = 1,
+    audio?: AudioType,
   ): Promise<string | null> {
     if (await this.sourceDisabled('meusanimes')) {
       dbg(
@@ -819,6 +840,8 @@ export class ScrapeService implements OnModuleInit {
           episodeUrl,
           undefined,
           false,
+          false,
+          audio,
         );
         const video = result.videos[0] ?? null;
         if (video) {
@@ -916,12 +939,14 @@ export class ScrapeService implements OnModuleInit {
   async scrapeFromAnimesonline(
     animeSlug: string,
     episodeNumber: number,
+    audio?: AudioType,
   ): Promise<string | null> {
     if (await this.sourceDisabled('animesonline')) return null;
     const direct = await this.tryAnimesonlineUrl(
       this.animesonlineEpisodeUrl(animeSlug, episodeNumber),
       animeSlug,
       episodeNumber,
+      audio,
     );
     if (direct) return direct;
 
@@ -935,13 +960,14 @@ export class ScrapeService implements OnModuleInit {
     dbg(
       `[ANIMESONLINE] slug resolvido ${animeSlug} -> ${resolved.slice(0, 120)}`,
     );
-    return this.tryAnimesonlineUrl(resolved, animeSlug, episodeNumber);
+    return this.tryAnimesonlineUrl(resolved, animeSlug, episodeNumber, audio);
   }
 
   private async tryAnimesonlineUrl(
     episodeUrl: string,
     animeSlug: string,
     episodeNumber: number,
+    audio?: AudioType,
   ): Promise<string | null> {
     dbg(`[ANIMESONLINE] try ${animeSlug}/${episodeNumber} -> ${episodeUrl}`);
     try {
@@ -949,6 +975,8 @@ export class ScrapeService implements OnModuleInit {
         episodeUrl,
         undefined,
         false,
+        false,
+        audio,
       );
       const video = result.videos[0] ?? null;
       if (video) {
@@ -974,6 +1002,7 @@ export class ScrapeService implements OnModuleInit {
   async scrapeFromTopanimes(
     animeSlug: string,
     episodeNumber: number,
+    audio?: AudioType,
   ): Promise<string | null> {
     if (!this.topanimes) return null;
     if (await this.sourceDisabled('topanimes')) return null;
@@ -991,6 +1020,8 @@ export class ScrapeService implements OnModuleInit {
         episodeUrl,
         undefined,
         false,
+        false,
+        audio,
       );
       const video = result.videos[0] ?? null;
       if (video) {
@@ -1017,6 +1048,7 @@ export class ScrapeService implements OnModuleInit {
     animeSlug: string,
     episodeNumber: number,
     season: number = 1,
+    audio?: AudioType,
   ): Promise<string | null> {
     if (!this.animesorion) return null;
     if (await this.sourceDisabled('animesorion')) return null;
@@ -1039,6 +1071,8 @@ export class ScrapeService implements OnModuleInit {
           episodeUrl,
           undefined,
           false,
+          false,
+          audio,
         );
         const video = result.videos[0] ?? null;
         if (video) {
@@ -1179,8 +1213,12 @@ export class ScrapeService implements OnModuleInit {
     };
   }
 
-  private cacheKey(sourceId: string, episodeUrl: string): string {
-    return `scrape:${sourceId}:${episodeUrl}`;
+  private cacheKey(
+    sourceId: string,
+    episodeUrl: string,
+    audio?: AudioType,
+  ): string {
+    return `scrape:${sourceId}:${audio ?? 'auto'}:${episodeUrl}`;
   }
 
   /** Invalida entradas de cache de um episódio (após re-extração bem-sucedida). */

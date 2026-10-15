@@ -8,6 +8,7 @@ function makeMocks() {
         findMany: jest.fn(),
         findUnique: jest.fn(),
         create: jest.fn(),
+        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },
       episode: {
         findMany: jest.fn(),
@@ -51,6 +52,56 @@ describe('CatalogScanner', () => {
       scanner.onModuleInit();
       expect(spy).toHaveBeenCalled();
       spy.mockRestore();
+    });
+  });
+
+  describe('remoção reversível por ausência de catálogo', () => {
+    it('não conta resposta inconclusiva como ausência', async () => {
+      jest.spyOn(scanner, 'scanAnimeResolved').mockResolvedValue({
+        sourceId: '',
+        sourceSlug: '',
+        entries: [],
+        definitiveMissing: false,
+      });
+      await scanner.processScanCatalog('a1', 'anime-1');
+      expect(m.prisma.anime.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('conta no máximo uma ausência a cada 24h e despublica na terceira', async () => {
+      jest.spyOn(scanner, 'scanAnimeResolved').mockResolvedValue({
+        sourceId: '',
+        sourceSlug: '',
+        entries: [],
+        definitiveMissing: true,
+      });
+      m.prisma.anime.findUnique.mockResolvedValue({
+        catalogAbsentChecks: 2,
+        catalogAbsenceCheckedAt: new Date(Date.now() - 25 * 60 * 60_000),
+        catalogUnpublished: false,
+      });
+
+      await scanner.processScanCatalog('a1', 'anime-1');
+      expect(m.prisma.anime.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: 'a1',
+          catalogAbsenceCheckedAt: expect.any(Date),
+        },
+        data: {
+          catalogAbsentChecks: { increment: 1 },
+          catalogAbsenceCheckedAt: expect.any(Date),
+          published: false,
+          catalogUnpublished: true,
+        },
+      });
+
+      m.prisma.anime.updateMany.mockClear();
+      m.prisma.anime.findUnique.mockResolvedValue({
+        catalogAbsentChecks: 2,
+        catalogAbsenceCheckedAt: new Date(Date.now() - 60_000),
+        catalogUnpublished: false,
+      });
+      await scanner.processScanCatalog('a1', 'anime-1');
+      expect(m.prisma.anime.updateMany).not.toHaveBeenCalled();
     });
   });
 

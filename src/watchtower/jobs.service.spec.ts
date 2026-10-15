@@ -83,9 +83,9 @@ function makeMockPrisma() {
     $queryRaw: jest.fn(
       async (strings: TemplateStringsArray, ...values: any[]) => {
         const sql = strings.join(' ');
-        if (sql.includes('WITH candidates')) {
-          const lockId = values[1];
-          const limit = values[0];
+        if (sql.includes('candidates AS')) {
+          const lockId = values[2];
+          const limit = values[1];
           const candidates = [...store.values()]
             .filter((job) => job.status === 'PENDING')
             .slice(0, limit);

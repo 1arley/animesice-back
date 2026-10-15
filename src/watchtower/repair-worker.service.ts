@@ -1,11 +1,11 @@
 /**
  * RepairWorker — varre episódios com videoUrl null/videoBroken=true + amostra
  * aleatória de episódios antigos p/ probe. Enfileira REPAIR_EPISODE p/ os
- * mortos (prioridade 50, cap diário configurável via env WT_REPAIR_DAILY_CAP).
+ * mortos (prioridade baixa, cap diário configurável via env WT_REPAIR_DAILY_CAP).
  *
  * Post-split: sem filtro embedUrl — eps recém-criados pelo scan podem não ter
- * embedUrl ainda mas ainda precisam de repair. Cap aumentado para 500 default
- * (33k eps no catálogo, 20/dia = 4.5 anos).
+ * embedUrl ainda mas ainda precisam de repair. A amostra roda em rodízio
+ * semanal para não sondar sempre os primeiros episódios.
  *
  * Reusa probeMediaUrlDead (common/media-probe).
  */
@@ -13,11 +13,12 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '@/prisma/prisma.service';
 import { probeMediaUrlDead, signedExpiryDead } from '@/common/media-probe';
 import { JobsService } from './jobs.service';
-import { JOB_TYPE, PRIORITY } from './watchtower.types';
+import { extractJobKey, JOB_TYPE, PRIORITY } from './watchtower.types';
 
-// 500 episódios/dia deixa o catálogo aquecido sem abrir centenas de Chromium
-// ao mesmo tempo; a fila continua serializada pelo batch do Watchtower.
-const DEFAULT_DAILY_CAP = 500;
+// A amostra pode fazer probes HTTP sequenciais; mantenha o trabalho diário curto.
+const DEFAULT_DAILY_CAP = 100;
+const SOURCE_BACKFILL_CAP = 50;
+const CHECK_INTERVAL_MS = 7 * 24 * 60 * 60_000;
 
 @Injectable()
 export class RepairWorker {
@@ -33,12 +34,22 @@ export class RepairWorker {
       : { published: true };
 
     // Sem filtro embedUrl — eps sem embed também precisam de repair
+    const checkBefore = new Date(Date.now() - CHECK_INTERVAL_MS);
     const broken = await this.prisma.episode.findMany({
       where: {
         OR: [{ videoUrl: null }, { videoBroken: true }],
+        AND: [
+          {
+            OR: [
+              { repairQueuedAt: null },
+              { repairQueuedAt: { lt: checkBefore } },
+            ],
+          },
+        ],
         anime,
       },
       take: cap,
+      orderBy: [{ repairQueuedAt: { sort: 'asc', nulls: 'first' } }],
       select: { id: true, animeId: true, number: true, season: true },
     });
 
@@ -62,10 +73,15 @@ export class RepairWorker {
       });
     }
 
+    if (enqueueInputs.length > 0) await this.jobs.enqueueMany(enqueueInputs);
+    if (broken.length > 0) {
+      await this.prisma.episode.updateMany({
+        where: { id: { in: broken.map((episode) => episode.id) } },
+        data: { repairQueuedAt: new Date() },
+      });
+    }
     let enqueued = enqueueInputs.length;
-
     if (enqueued >= cap) {
-      await this.jobs.enqueueMany(enqueueInputs);
       return enqueued;
     }
 
@@ -74,14 +90,11 @@ export class RepairWorker {
       where: {
         videoUrl: { not: null },
         videoBroken: false,
+        OR: [{ videoCheckedAt: null }, { videoCheckedAt: { lt: checkBefore } }],
         anime,
       },
-      // Espaço de busca = orçamento do sweep: signedExpiryDead decide sem
-      // rede, então varrer `cap` linhas custa o mesmo que sondar 200.
-      take: cap,
-      // Mais antigos primeiro: com TTL de ~8h, os últimos extraídos são os
-      // que mais provavelmente venceram.
-      orderBy: { updatedAt: 'asc' },
+      take: Math.max(0, cap - enqueued),
+      orderBy: [{ videoCheckedAt: { sort: 'asc', nulls: 'first' } }],
       select: {
         id: true,
         animeId: true,
@@ -91,9 +104,11 @@ export class RepairWorker {
       },
     });
     const deadIds: string[] = [];
-    const checkedIds = sample.map((ep) => ep.id);
+    const checkedIds: string[] = [];
+    const sampleInputs: typeof enqueueInputs = [];
     for (const ep of sample) {
       if (enqueued >= cap) break;
+      checkedIds.push(ep.id);
       if (!ep.videoUrl) continue;
       // Tokens googlevideo/Blogger expiram em ~8h. signedExpiryDead decide
       // isso localmente (parse do `expire`), sem gastar request de rede;
@@ -103,7 +118,7 @@ export class RepairWorker {
         signed === null ? await probeMediaUrlDead(ep.videoUrl) : signed;
       if (dead) {
         deadIds.push(ep.id);
-        enqueueInputs.push({
+        sampleInputs.push({
           type: JOB_TYPE.REPAIR_EPISODE,
           dedupeKey: `repair:${ep.animeId}:${ep.season ?? 1}:${ep.number}`,
           payload: {
@@ -116,16 +131,14 @@ export class RepairWorker {
         enqueued++;
       }
     }
+    // Enfileira antes de marcar a amostra para não perder reparos em falha de DB.
+    if (sampleInputs.length > 0) await this.jobs.enqueueMany(sampleInputs);
     if (checkedIds.length > 0) {
-      await this.prisma.episode
-        .updateMany({
-          where: { id: { in: checkedIds } },
-          data: { videoCheckedAt: new Date() },
-        })
-        .catch(() => undefined);
+      await this.prisma.episode.updateMany({
+        where: { id: { in: checkedIds } },
+        data: { videoCheckedAt: new Date() },
+      });
     }
-
-    // Batch: marcar episódios mortos + enfileirar repair jobs em uma ida.
     if (deadIds.length > 0) {
       await this.prisma.episode
         .updateMany({
@@ -134,9 +147,48 @@ export class RepairWorker {
         })
         .catch(() => undefined);
     }
-    if (enqueueInputs.length > 0) {
-      await this.jobs.enqueueMany(enqueueInputs);
-    }
     return enqueued;
+  }
+
+  /** Completa fontes secundárias em lote pequeno e com intervalo entre tentativas. */
+  async backfillSources(): Promise<number> {
+    const episodes = await this.prisma.$queryRaw<
+      Array<{ animeId: string; slug: string; number: number; season: number }>
+    >`
+      SELECT e."animeId", a.slug, e.number, e.season
+      FROM "Episode" e
+      JOIN "Anime" a ON a.id = e."animeId"
+      LEFT JOIN "EpisodeSource" s ON s."episodeId" = e.id
+        AND s."verifiedAt" IS NOT NULL
+      LEFT JOIN "WatchtowerJob" j ON j.type = 'EXTRACT_EPISODE'
+        AND j."dedupeKey" = 'extract:' || e."animeId" || ':' || e.season || ':' || e.number
+      WHERE a.published = true
+        AND (j.id IS NULL OR (j.status IN ('DONE', 'DEAD')
+          AND j."updatedAt" < NOW() - INTERVAL '7 days'))
+      GROUP BY e.id, e."animeId", a.slug, e.number, e.season, e."updatedAt", j."updatedAt"
+      HAVING COUNT(DISTINCT s."sourceId") < 2
+      ORDER BY COALESCE(j."updatedAt", e."updatedAt") ASC
+      LIMIT ${SOURCE_BACKFILL_CAP}
+    `;
+    if (episodes.length === 0) return 0;
+
+    await this.jobs.enqueueMany(
+      episodes.map((episode) => ({
+        type: JOB_TYPE.EXTRACT_EPISODE,
+        dedupeKey: extractJobKey(
+          episode.animeId,
+          episode.season,
+          episode.number,
+        ),
+        payload: {
+          animeId: episode.animeId,
+          slug: episode.slug,
+          episodeNumber: episode.number,
+          season: episode.season,
+        },
+        priority: PRIORITY.SOURCE_BACKFILL,
+      })),
+    );
+    return episodes.length;
   }
 }

@@ -73,6 +73,7 @@ function makeMocks() {
     },
     validator: {
       pickValid: jest.fn(async (cands: any[]) => cands[0] ?? null),
+      pickValidSources: jest.fn(async (cands: any[]) => cands.slice(0, 2)),
     },
     publisher: {
       publish: jest.fn(async () => undefined),
@@ -161,7 +162,7 @@ describe('WorkerService', () => {
       }),
     );
     expect(m.extractor.extract).toHaveBeenCalledWith('solo', 1, 1, undefined);
-    expect(m.validator.pickValid).toHaveBeenCalledWith(
+    expect(m.validator.pickValidSources).toHaveBeenCalledWith(
       expect.arrayContaining([
         expect.objectContaining({ videoUrl: 'new.mp4' }),
       ]),
@@ -690,7 +691,7 @@ describe('WorkerService', () => {
   });
 
   it('process EXTRACT_EPISODE marca vídeo quebrado quando validação falha', async () => {
-    m.validator.pickValid = jest.fn(async () => null) as any;
+    m.validator.pickValidSources = jest.fn(async () => []) as any;
     const worker = new WorkerService(
       m.prisma as any,
       m.jobs as any,
@@ -894,7 +895,7 @@ describe('WorkerService', () => {
   });
 
   it('process REPAIR_EPISODE lança fail quando validação falha', async () => {
-    m.validator.pickValid = jest.fn(async () => null) as any;
+    m.validator.pickValidSources = jest.fn(async () => []) as any;
     const worker = new WorkerService(
       m.prisma as any,
       m.jobs as any,

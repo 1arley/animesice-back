@@ -303,6 +303,11 @@ export class AdminService {
       ),
       audio: audioTypeFromTitle(dto.title ?? anime.title),
     };
+    if (dto.published !== undefined) {
+      data.catalogUnpublished = false;
+      data.catalogAbsentChecks = 0;
+      data.catalogAbsenceCheckedAt = null;
+    }
     if (genreSlugs !== undefined) {
       data.genres = { set: genreSlugs.map((slug) => ({ slug })) };
     }

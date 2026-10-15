@@ -1,12 +1,9 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsString, IsNotEmpty, IsOptional, IsIn } from 'class-validator';
+import { OPTIONAL_SOURCE_IDS, SOURCE_IDS } from '@/watchtower/watchtower.types';
 
 /** Fontes de scrape suportadas pelo ScrapeService. */
-export const SCRAPE_SOURCES = [
-  'animefire',
-  'animesonlinecc',
-  'meusanimes',
-] as const;
+export const SCRAPE_SOURCES = [...SOURCE_IDS, ...OPTIONAL_SOURCE_IDS] as const;
 export type ScrapeSourceId = (typeof SCRAPE_SOURCES)[number];
 
 export class EmbedProxyDto {
@@ -22,8 +19,7 @@ export class EmbedProxyDto {
     required: false,
     enum: SCRAPE_SOURCES,
     description:
-      'Força um adapter de scrape (animefire/animesonlinecc/meusanimes). ' +
-      'Omitir = auto-detectar pelo host da URL.',
+      'Força um adapter de scrape. Omitir = auto-detectar pelo host da URL.',
   })
   @IsOptional()
   @IsIn(SCRAPE_SOURCES, { message: 'fonte de scrape desconhecida.' })

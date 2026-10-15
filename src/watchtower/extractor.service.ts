@@ -11,6 +11,7 @@ import { Injectable } from '@nestjs/common';
 import { ScrapeService } from '@/embed/scrape/scrape.service';
 import { SourceDiscovery } from './source-discovery.service';
 import type { EpisodeCandidate } from './validator.service';
+import type { AudioType } from '@prisma/client';
 
 export interface ExtractResult {
   candidates: EpisodeCandidate[];
@@ -29,6 +30,7 @@ export class Extractor {
     episodeNumber: number,
     season: number = 1,
     episodeUrl?: string,
+    audio?: AudioType,
   ): Promise<ExtractResult> {
     const candidates = await this.discovery.candidates(
       animeSlug,
@@ -51,6 +53,8 @@ export class Extractor {
           c.url,
           c.sourceId,
           false,
+          false,
+          audio,
         );
         const videoUrl = result.videos[0];
         if (!videoUrl) continue;

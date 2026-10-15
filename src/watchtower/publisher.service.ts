@@ -17,6 +17,7 @@ export interface PublishInput {
   videoUrl: string;
   embedUrl: string;
   sourceId: string;
+  sources?: Array<{ sourceId: string; pageUrl: string }>;
   thumbnailUrl?: string | null;
   title?: string | null;
   duration?: string | null;
@@ -81,25 +82,39 @@ export class Publisher {
       select: { audio: true },
     });
     if (animeAudio) {
-      await this.prisma.episodeSource?.upsert({
-        where: {
-          episodeId_sourceId: {
-            episodeId: episode.id,
-            sourceId: input.sourceId,
+      const sources = input.sources?.length
+        ? input.sources
+        : [{ sourceId: input.sourceId, pageUrl: input.embedUrl }];
+      for (const source of sources) {
+        await this.prisma.episodeSource?.upsert({
+          where: {
+            episodeId_sourceId: {
+              episodeId: episode.id,
+              sourceId: source.sourceId,
+            },
           },
-        },
-        update: {
-          pageUrl: input.embedUrl,
-          audio: animeAudio.audio,
-          verifiedAt: new Date(),
-          lastError: null,
-        },
-        create: {
-          episodeId: episode.id,
-          sourceId: input.sourceId,
-          pageUrl: input.embedUrl,
-          audio: animeAudio.audio,
-          verifiedAt: new Date(),
+          update: {
+            pageUrl: source.pageUrl,
+            audio: animeAudio.audio,
+            verifiedAt: new Date(),
+            lastError: null,
+          },
+          create: {
+            episodeId: episode.id,
+            sourceId: source.sourceId,
+            pageUrl: source.pageUrl,
+            audio: animeAudio.audio,
+            verifiedAt: new Date(),
+          },
+        });
+      }
+      await this.prisma.anime.updateMany({
+        where: { id: episode.animeId, catalogUnpublished: true },
+        data: {
+          published: true,
+          catalogUnpublished: false,
+          catalogAbsentChecks: 0,
+          catalogAbsenceCheckedAt: null,
         },
       });
     }

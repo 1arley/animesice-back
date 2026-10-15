@@ -204,6 +204,40 @@ describe('AnimesorionScrapeSource', () => {
     expect(result.playerTokens).toHaveLength(1);
   });
 
+  it('filtra opções de player para o mesmo áudio do anime', async () => {
+    queueFetch(
+      { body: KIT_HTML },
+      {
+        body: JSON.stringify({
+          status: true,
+          data: {
+            options: [
+              { embed: 'https://player.test/dub', lang: 'pt-br' },
+              { embed: 'https://player.test/sub', lang: 'ja-jp' },
+            ],
+          },
+        }),
+      },
+    );
+
+    const result = await source.extractHttp({
+      episodeUrl: EPISODE_URL,
+      ua: 'ua',
+      audio: 'DUBLADO',
+    });
+    expect(result.playerTokens).toEqual(['https://player.test/dub']);
+  });
+
+  it('rejeita iframe que aponta para outra temporada ou episódio', async () => {
+    queueFetch({
+      body: KIT_HTML.replace('/serie/73223/1/1', '/serie/73223/1/2'),
+    });
+    await expect(
+      source.extractHttp({ episodeUrl: EPISODE_URL, ua: 'ua' }),
+    ).rejects.toThrow(/episódio diferente/);
+    expect(mockedFetchSafeRaw).toHaveBeenCalledTimes(1);
+  });
+
   it('extractHttp lança quando a página não tem iframe myembed', async () => {
     queueFetch({ body: '<html><p>sem player</p></html>' });
 

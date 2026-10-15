@@ -45,29 +45,29 @@ export type JobStatus = (typeof JOB_STATUS)[keyof typeof JOB_STATUS];
 
 /** Prioridades (menor = mais urgente).
  *
- * Jobs de controle (CHECK_RELEASES, DISCOVER_SEASON, SYNC_AIRING, SYNC_SCHEDULES,
- * BACKFILL_ANILIST) ficam ACIMA
- * do backfill (EXTRACT/SCAN_CATALOG) para nunca serem famintos por uma fila
- * cheia de extrações de catálogo. Episódios NOVOS (ReleaseMonitor) usam
- * EXTRACT_NEW, que fura a fila de backfill (EXTRACT).
+ * Releases e sincronizações ficam à frente do backfill. Reparos antigos rodam
+ * depois de extrações e scans, sem impedir a fila de recuperar a cobertura.
  */
 export const PRIORITY = {
   /** Novo episódio de anime em lançamento — o mais urgente */
   CHECK_RELEASES: 40,
-  REPAIR: 50,
+  /** Reparos antigos ficam atrás de releases, extrações e descoberta de catálogo. */
+  REPAIR: 130,
   GAP_CHECK: 60,
-  /** Extração de episódio NOVO vinda do ReleaseMonitor (fura o backfill) */
+  /** Extração de episódio NOVO vinda do ReleaseMonitor. */
+  DISCOVER_SEASON: 65,
+  SYNC_AIRING: 70,
   EXTRACT_NEW: 80,
   VALIDATE: 90,
   EXTRACT: 100,
-  SYNC_AIRING: 150,
-  DISCOVER_SEASON: 160,
+  /** Backfill de redundância fica atrás das extrações normais. */
+  SOURCE_BACKFILL: 105,
   /** Sync de horários de exibição (SYNC_SCHEDULES) — backfill leve, atrás de
    * descobertas e releases (episódios novos têm prioridade de fila). */
-  SYNC_SCHEDULES: 170,
+  SYNC_SCHEDULES: 120,
   /** Backfill de anilistId/metadados — ainda menos urgente (só enriquece catálogo). */
   BACKFILL_ANILIST: 180,
-  SCAN_CATALOG: 280,
+  SCAN_CATALOG: 110,
 } as const;
 
 /* ---------------------------------------------------------------------------

@@ -84,4 +84,32 @@ describe('Validator', () => {
     const result = await validator.pickValid([], 'anime-1');
     expect(result).toBeNull();
   });
+
+  it('retém fontes distintas com mídia viva e ignora duplicatas do mesmo site', async () => {
+    const future = Math.floor(Date.now() / 1000) + 7200;
+    const result = await validator.pickValidSources(
+      [
+        {
+          videoUrl: `https://rr1---sn-x.googlevideo.com/videoplayback?expire=${future}&id=one`,
+          sourceId: 'meusanimes',
+          embedUrl: 'https://meusanimes.blog/e/anime-episodio-1/',
+        },
+        {
+          videoUrl: `https://rr1---sn-x.googlevideo.com/videoplayback?expire=${future}&id=two`,
+          sourceId: 'meusanimes',
+          embedUrl: 'https://meusanimes.blog/e/anime-episodio-1/',
+        },
+        {
+          videoUrl: `https://rr1---sn-x.googlevideo.com/videoplayback?expire=${future}&id=three`,
+          sourceId: 'animesorion',
+          embedUrl: 'https://animesorion.cc/episodios/anime-1x1/',
+        },
+      ],
+      'anime-1',
+    );
+    expect(result.map((source) => source.sourceId)).toEqual([
+      'meusanimes',
+      'animesorion',
+    ]);
+  });
 });

@@ -20,6 +20,7 @@ import {
 } from '@/common/media-probe';
 import { refererForMediaUrl } from '@/common/url-utils';
 import { Readable } from 'stream';
+import type { AudioType } from '@prisma/client';
 
 function dbg(msg: string): void {
   const safeMsg = msg.replace(/[\r\n\u2028\u2029]/g, ' ');
@@ -255,6 +256,7 @@ export class StreamingService {
     season: number,
     forceRefresh = false,
     skipLiveness = false,
+    audio?: AudioType,
   ): Promise<{
     videoUrl: string | null;
     playerEmbed: string | null;
@@ -329,7 +331,7 @@ export class StreamingService {
     }
 
     // Sem videoUrl utilizável -> re-extração (single-flight + cache curto).
-    const key = `${animeSlug}:${season}:${episodeNumber}`;
+    const key = `${animeSlug}:${season}:${episodeNumber}:${audio ?? 'auto'}`;
     if (forceRefresh) {
       this.scrapeCache.delete(key);
     }
@@ -348,7 +350,14 @@ export class StreamingService {
 
     let inflight = this.scrapeInflight.get(key);
     if (!inflight) {
-      inflight = this.doSingleScrape(episode, animeSlug, episodeNumber, season)
+      inflight = this.doSingleScrape(
+        episode,
+        animeSlug,
+        episodeNumber,
+        season,
+        true,
+        audio,
+      )
         .then((result) => {
           this.scrapeCache.set(key, { result, at: Date.now() });
           return result;
@@ -384,8 +393,9 @@ export class StreamingService {
     animeSlug: string,
     episodeNumber: number,
     season: number,
+    audio?: AudioType,
   ): void {
-    const key = `${animeSlug}:${season}:${episodeNumber}`;
+    const key = `${animeSlug}:${season}:${episodeNumber}:${audio ?? 'auto'}`;
     if (this.scrapeInflight.has(key)) return;
     const cached = this.scrapeCache.get(key);
     if (cached && Date.now() - cached.at < this.SCRAPE_CACHE_TTL_MS) return;
@@ -395,6 +405,8 @@ export class StreamingService {
       animeSlug,
       episodeNumber,
       season,
+      true,
+      audio,
     )
       .then((result) => {
         this.scrapeCache.set(key, { result, at: Date.now() });
@@ -414,6 +426,7 @@ export class StreamingService {
     episodeNumber: number,
     season: number,
     persist = true,
+    audio?: AudioType,
   ): Promise<{ videoUrl: string | null; playerEmbed: string | null }> {
     let rawVideoUrl: string | null = null;
     let playerEmbed: string | null = null;
@@ -452,6 +465,7 @@ export class StreamingService {
           source.sourceId,
           false,
           true,
+          audio,
         );
         for (const video of result.videos) {
           if (!(await probeMediaUrlDead(video, true))) {
@@ -483,7 +497,11 @@ export class StreamingService {
         [
           'topanimes',
           () =>
-            this.scrapeService.scrapeFromTopanimes(animeSlug, episodeNumber),
+            this.scrapeService.scrapeFromTopanimes(
+              animeSlug,
+              episodeNumber,
+              audio,
+            ),
         ],
         [
           'animesorion',
@@ -492,12 +510,17 @@ export class StreamingService {
               animeSlug,
               episodeNumber,
               season,
+              audio,
             ),
         ],
         [
           'animesonline',
           () =>
-            this.scrapeService.scrapeFromAnimesonline(animeSlug, episodeNumber),
+            this.scrapeService.scrapeFromAnimesonline(
+              animeSlug,
+              episodeNumber,
+              audio,
+            ),
         ],
         [
           'meusanimes',
@@ -506,6 +529,7 @@ export class StreamingService {
               animeSlug,
               episodeNumber,
               season,
+              audio,
             ),
         ],
       ] as const) {
@@ -554,7 +578,7 @@ export class StreamingService {
   ): Promise<StreamSourceResponse> {
     const anime = await this.prisma.anime.findUnique({
       where: { slug: animeSlug, published: true },
-      select: { id: true, slug: true },
+      select: { id: true, slug: true, audio: true },
     });
     if (!anime) {
       throw new NotFoundException('Anime não encontrado.');
@@ -591,6 +615,7 @@ export class StreamingService {
       season,
       forceRefresh,
       skipLiveness,
+      anime.audio,
     );
 
     if (!rawVideoUrl && !playerEmbed) {
@@ -648,7 +673,7 @@ export class StreamingService {
   ): Promise<{ jobId: string } | null> {
     const anime = await this.prisma.anime.findUnique({
       where: { slug: animeSlug },
-      select: { id: true, slug: true },
+      select: { id: true, slug: true, audio: true },
     });
     if (!anime) throw new NotFoundException('Anime não encontrado.');
 
@@ -707,6 +732,7 @@ export class StreamingService {
           episodeNumber,
           season,
           false,
+          anime.audio,
         );
         return result;
       },
@@ -742,7 +768,7 @@ export class StreamingService {
     ) {
       const anime = await this.prisma.anime.findUnique({
         where: { slug: job.animeSlug },
-        select: { id: true },
+        select: { id: true, audio: true },
       });
       const episode = anime
         ? await this.prisma.episode.findUnique({
@@ -764,6 +790,7 @@ export class StreamingService {
             job.episodeNumber,
             job.season,
             false,
+            anime?.audio,
           ),
         );
       }
