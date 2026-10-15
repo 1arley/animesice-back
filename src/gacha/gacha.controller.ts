@@ -58,6 +58,7 @@ import {
 } from '@/common/constants';
 import type { AuthenticatedRequest } from '@/common/interfaces/request.interface';
 import type { Request } from 'express';
+import { CardStatus } from '@prisma/client';
 import { GACHA_TIERS } from '@/gacha/gacha.constants';
 import { GachaConfigService } from '@/gacha/gacha-config.service';
 import { EconomyService } from '@/gacha/economy/economy.service';
@@ -938,6 +939,119 @@ export class GachaController {
       { status: 'ARCHIVED' },
       { adminId: req.user.id },
     );
+  }
+
+  @Delete('admin/cards/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  @Audit('DELETE_GACHA_CARD', 'Card')
+  adminDeleteCard(
+    @Param('id') id: string,
+    @Req() req: AuthenticatedRequest,
+    @Body('reason') reason?: string,
+  ) {
+    return this.gachaService.adminDeleteCard(id, {
+      adminId: req.user.id,
+      reason,
+    });
+  }
+
+  @Post('admin/cards/bulk-delete')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  @Audit('BULK_DELETE_GACHA_CARDS', 'Card')
+  adminBulkDeleteCards(
+    @Body() body: { cardIds: string[]; reason?: string },
+    @Req() req: AuthenticatedRequest,
+  ) {
+    if (!Array.isArray(body?.cardIds) || body.cardIds.length === 0) {
+      throw new BadRequestException('Nenhuma carta especificada.');
+    }
+    return this.gachaService.adminBulkDeleteCards(body.cardIds, {
+      adminId: req.user.id,
+      reason: body.reason,
+    });
+  }
+
+  @Post('admin/cards/bulk-status')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('SUPERADMIN')
+  @Audit('BULK_STATUS_GACHA_CARDS', 'Card')
+  adminBulkStatusCards(
+    @Body() body: { cardIds: string[]; status: string; reason?: string },
+    @Req() req: AuthenticatedRequest,
+  ) {
+    if (!Array.isArray(body?.cardIds) || body.cardIds.length === 0) {
+      throw new BadRequestException('Nenhuma carta especificada.');
+    }
+    if (!Object.values(CardStatus).includes(body.status as CardStatus)) {
+      throw new BadRequestException('Status inválido.');
+    }
+    return this.gachaService.adminBulkStatusCards(
+      body.cardIds,
+      body.status as CardStatus,
+      { adminId: req.user.id, reason: body.reason },
+    );
+  }
+
+  @Post('admin/cards/bulk-create')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  @Audit('BULK_CREATE_GACHA_CARDS', 'Card')
+  adminBulkCreateCards(
+    @Body()
+    body: {
+      cards: Array<{
+        name: string;
+        image: string;
+        imageHidden?: boolean;
+        rarity: string;
+        animeId: string;
+        variantName?: string;
+      }>;
+    },
+  ) {
+    if (!Array.isArray(body?.cards) || body.cards.length === 0) {
+      throw new BadRequestException('Nenhuma carta informada para criação.');
+    }
+    return this.gachaService.adminBulkCreateCards(body.cards);
+  }
+
+  @Post('admin/cards/bulk-update')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  @Audit('BULK_UPDATE_GACHA_CARDS', 'Card')
+  adminBulkUpdateCards(
+    @Body()
+    body: {
+      cardIds: string[];
+      animeId?: string;
+      rarity?: string;
+      imageHidden?: boolean;
+      reason?: string;
+    },
+    @Req() req: AuthenticatedRequest,
+  ) {
+    if (!Array.isArray(body?.cardIds) || body.cardIds.length === 0) {
+      throw new BadRequestException('Nenhuma carta especificada.');
+    }
+    return this.gachaService.adminBulkUpdateCards(
+      body.cardIds,
+      {
+        animeId: body.animeId,
+        rarity: body.rarity,
+        imageHidden: body.imageHidden,
+        reason: body.reason,
+      },
+      { adminId: req.user.id },
+    );
+  }
+
+  @Get('admin/sets')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  adminCardSets() {
+    return this.gachaService.adminCardSets();
   }
 
   @Post('admin/skins')

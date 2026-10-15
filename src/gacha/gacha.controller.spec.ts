@@ -22,6 +22,12 @@ function makeMocks() {
       adminCards: jest.fn(),
       adminCreateCard: jest.fn(),
       adminUpdateCard: jest.fn(),
+      adminDeleteCard: jest.fn(),
+      adminBulkDeleteCards: jest.fn(),
+      adminBulkStatusCards: jest.fn(),
+      adminBulkCreateCards: jest.fn(),
+      adminBulkUpdateCards: jest.fn(),
+      adminCardSets: jest.fn(),
       adminUserCards: jest.fn(),
       adminGrantUserCard: jest.fn(),
       adminDeleteUserCard: jest.fn(),
@@ -201,6 +207,34 @@ describe('GachaController', () => {
       await controller.adminGrantUserCard('u1', { cardId: 'c1' });
       await controller.adminDeleteUserCard('p1');
       await controller.adminResetRoll('u1');
+      await controller.adminDeleteCard('c1', req('admin'), 'Motivo teste');
+      await controller.adminBulkDeleteCards(
+        { cardIds: ['c1', 'c2'] },
+        req('admin'),
+      );
+      await controller.adminBulkStatusCards(
+        { cardIds: ['c1'], status: 'ACTIVE' },
+        req('admin'),
+      );
+      await controller.adminBulkCreateCards({
+        cards: [
+          {
+            name: 'Card Lote',
+            image: 'https://img.test/c.jpg',
+            rarity: 'COMUM',
+            animeId: 'a1',
+          },
+        ],
+      });
+      await controller.adminBulkUpdateCards(
+        {
+          cardIds: ['c1'],
+          rarity: 'RARA',
+          reason: 'Motivo com mais de 10 chars',
+        },
+        req('admin'),
+      );
+      await controller.adminCardSets();
 
       expect(m.gachaService.adminCards).toHaveBeenCalledWith(
         2,
@@ -222,6 +256,38 @@ describe('GachaController', () => {
         { rarity: 'RARA' },
         { adminId: 'admin', reason: 'Ajuste editorial' },
       );
+      expect(m.gachaService.adminDeleteCard).toHaveBeenCalledWith('c1', {
+        adminId: 'admin',
+        reason: 'Motivo teste',
+      });
+      expect(m.gachaService.adminBulkDeleteCards).toHaveBeenCalledWith(
+        ['c1', 'c2'],
+        { adminId: 'admin', reason: undefined },
+      );
+      expect(m.gachaService.adminBulkStatusCards).toHaveBeenCalledWith(
+        ['c1'],
+        'ACTIVE',
+        { adminId: 'admin', reason: undefined },
+      );
+      expect(m.gachaService.adminBulkCreateCards).toHaveBeenCalledWith([
+        {
+          name: 'Card Lote',
+          image: 'https://img.test/c.jpg',
+          rarity: 'COMUM',
+          animeId: 'a1',
+        },
+      ]);
+      expect(m.gachaService.adminBulkUpdateCards).toHaveBeenCalledWith(
+        ['c1'],
+        {
+          animeId: undefined,
+          rarity: 'RARA',
+          imageHidden: undefined,
+          reason: 'Motivo com mais de 10 chars',
+        },
+        { adminId: 'admin' },
+      );
+      expect(m.gachaService.adminCardSets).toHaveBeenCalled();
       expect(m.gachaService.adminUserCards).toHaveBeenCalledWith('u1', 2, 10);
       expect(m.gachaService.adminGrantUserCard).toHaveBeenCalledWith(
         'u1',

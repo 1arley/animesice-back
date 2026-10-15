@@ -3504,6 +3504,7 @@ export class GachaService {
         orderBy: { name: 'asc' },
         include: {
           anime: { select: { id: true, slug: true, title: true, malId: true } },
+          _count: { select: { owners: true } },
         },
       }),
       this.prisma.card.count({ where }),
@@ -3730,6 +3731,348 @@ export class GachaService {
       previousTotal: updated.previousTotal,
       nextTotal: updated.nextTotal,
     };
+  }
+
+  async adminDeleteCard(
+    id: string,
+    actor?: { adminId: string; reason?: string },
+  ) {
+    return this.prisma.$transaction(async (tx) => {
+      const card = await tx.card.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          name: true,
+          rarity: true,
+          animeId: true,
+          animeTitle: true,
+          owners: { select: { id: true } },
+        },
+      });
+      if (!card) throw new NotFoundException('Carta não encontrada.');
+
+      const userCardIds = card.owners.map((o) => o.id);
+      if (userCardIds.length > 0) {
+        await tx.user.updateMany({
+          where: { featuredUserCardId: { in: userCardIds } },
+          data: {
+            featuredUserCardId: null,
+            featuredSettledAt: null,
+          },
+        });
+      }
+
+      if (actor) {
+        await tx.gachaAdminChange.create({
+          data: {
+            adminId: actor.adminId,
+            action: 'DELETE_CARD',
+            cardId: id,
+            reason: actor.reason ?? 'Carta excluída pelo admin',
+            before: {
+              name: card.name,
+              rarity: card.rarity,
+              animeId: card.animeId,
+              animeTitle: card.animeTitle,
+              ownersCount: card.owners.length,
+            },
+          },
+        });
+      }
+
+      await tx.card.delete({ where: { id } });
+      return { success: true, id };
+    });
+  }
+
+  async adminBulkDeleteCards(
+    cardIds: string[],
+    actor?: { adminId: string; reason?: string },
+  ) {
+    if (!cardIds || cardIds.length === 0) return { deletedCount: 0 };
+    return this.prisma.$transaction(async (tx) => {
+      const cards = await tx.card.findMany({
+        where: { id: { in: cardIds } },
+        select: {
+          id: true,
+          name: true,
+          rarity: true,
+          owners: { select: { id: true } },
+        },
+      });
+      const allUserCardIds = cards.flatMap((c) => c.owners.map((o) => o.id));
+      if (allUserCardIds.length > 0) {
+        await tx.user.updateMany({
+          where: { featuredUserCardId: { in: allUserCardIds } },
+          data: {
+            featuredUserCardId: null,
+            featuredSettledAt: null,
+          },
+        });
+      }
+
+      if (actor) {
+        await tx.gachaAdminChange.create({
+          data: {
+            adminId: actor.adminId,
+            action: 'BULK_DELETE_CARDS',
+            reason:
+              actor.reason ?? `Exclusão em lote de ${cards.length} cartas`,
+            before: {
+              count: cards.length,
+              cardIds: cards.map((c) => c.id),
+            },
+          },
+        });
+      }
+
+      const res = await tx.card.deleteMany({
+        where: { id: { in: cardIds } },
+      });
+      return { deletedCount: res.count };
+    });
+  }
+
+  async adminBulkStatusCards(
+    cardIds: string[],
+    status: CardStatus,
+    actor?: { adminId: string; reason?: string },
+  ) {
+    if (!cardIds || cardIds.length === 0) return { updatedCount: 0 };
+    return this.prisma.$transaction(async (tx) => {
+      if (status === CardStatus.ACTIVE) {
+        const invalid = await tx.card.findFirst({
+          where: {
+            id: { in: cardIds },
+            OR: [{ name: '' }, { image: null }, { animeId: null }],
+          },
+        });
+        if (invalid) {
+          throw new BadRequestException(
+            'Todas as cartas precisam de nome, imagem e anime para serem ativadas.',
+          );
+        }
+      }
+
+      const res = await tx.card.updateMany({
+        where: { id: { in: cardIds } },
+        data: { status },
+      });
+
+      if (actor) {
+        await tx.gachaAdminChange.create({
+          data: {
+            adminId: actor.adminId,
+            action: 'BULK_STATUS_CARDS',
+            reason: actor.reason ?? `Status em lote alterado para ${status}`,
+            after: { status, count: res.count, cardIds },
+          },
+        });
+      }
+
+      return { updatedCount: res.count };
+    });
+  }
+
+  async adminBulkCreateCards(
+    cards: Array<{
+      name: string;
+      image: string;
+      imageHidden?: boolean;
+      rarity: string;
+      animeId: string;
+      variantName?: string;
+    }>,
+  ) {
+    if (!cards || cards.length === 0) return { createdCount: 0, cards: [] };
+    if (cards.length > 100) {
+      throw new BadRequestException('Limite máximo de 100 cartas por lote.');
+    }
+    const animeIds = [...new Set(cards.map((c) => c.animeId))];
+    const animes = await this.prisma.anime.findMany({
+      where: { id: { in: animeIds } },
+      select: { id: true, title: true },
+    });
+    const animeMap = new Map(animes.map((a) => [a.id, a.title]));
+
+    for (const card of cards) {
+      if (!card.name?.trim())
+        throw new BadRequestException('Todas as cartas precisam de nome.');
+      if (!card.image?.trim() || !/^https:\/\//i.test(card.image)) {
+        throw new BadRequestException(
+          `Imagem inválida (precisa ser HTTPS) na carta: ${card.name}`,
+        );
+      }
+      if (!(GACHA_TIERS as readonly string[]).includes(card.rarity)) {
+        throw new BadRequestException(
+          `Raridade inválida (${card.rarity}) na carta: ${card.name}`,
+        );
+      }
+      if (!animeMap.has(card.animeId)) {
+        throw new BadRequestException(
+          `Anime com ID ${card.animeId} não encontrado.`,
+        );
+      }
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const created = [];
+      for (const card of cards) {
+        const malCharacterId = -randomInt(1, 2_000_000_000);
+        const animeTitle = animeMap.get(card.animeId);
+        const item = await tx.card.create({
+          data: {
+            name: card.name.trim(),
+            image: card.image.trim(),
+            imageHidden: card.imageHidden ?? false,
+            rarity: card.rarity,
+            animeId: card.animeId,
+            animeTitle,
+            variantName: card.variantName?.trim() || null,
+            malCharacterId,
+            source: CardSource.MANUAL,
+            status: CardStatus.DRAFT,
+          },
+        });
+        created.push(item);
+      }
+      return { createdCount: created.length, cards: created };
+    });
+  }
+
+  async adminBulkUpdateCards(
+    cardIds: string[],
+    updates: {
+      animeId?: string;
+      rarity?: string;
+      imageHidden?: boolean;
+      reason?: string;
+    },
+    actor?: { adminId: string },
+  ) {
+    if (!cardIds || cardIds.length === 0) return { updatedCount: 0 };
+    if (
+      updates.rarity &&
+      !(GACHA_TIERS as readonly string[]).includes(updates.rarity)
+    ) {
+      throw new BadRequestException('Raridade inválida.');
+    }
+    if (
+      (updates.rarity || updates.animeId) &&
+      (!updates.reason || updates.reason.trim().length < 10)
+    ) {
+      throw new BadRequestException(
+        'Motivo de no mínimo 10 caracteres é obrigatório para alteração de raridade ou anime.',
+      );
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      let animeTitle: string | undefined;
+      if (updates.animeId) {
+        const anime = await tx.anime.findUnique({
+          where: { id: updates.animeId },
+          select: { id: true, title: true },
+        });
+        if (!anime) throw new BadRequestException('Anime não encontrado.');
+        animeTitle = anime.title;
+      }
+
+      if (updates.rarity) {
+        const copies = await tx.userCard.findMany({
+          where: { cardId: { in: cardIds }, valueOverride: null },
+          select: { id: true, condition: true, foil: true, edition: true },
+        });
+        for (const copy of copies) {
+          const nextVal = cardValue(
+            updates.rarity as GachaTier,
+            copy.condition,
+            copy.foil as GachaFoil,
+            copy.edition,
+            this.config.baseValue,
+            this.config.foilMult,
+          );
+          await tx.userCard.update({
+            where: { id: copy.id },
+            data: { value: nextVal },
+          });
+        }
+      }
+
+      const res = await tx.card.updateMany({
+        where: { id: { in: cardIds } },
+        data: {
+          ...(updates.rarity ? { rarity: updates.rarity } : {}),
+          ...(updates.animeId ? { animeId: updates.animeId, animeTitle } : {}),
+          ...(updates.imageHidden !== undefined
+            ? { imageHidden: updates.imageHidden }
+            : {}),
+        },
+      });
+
+      if (actor) {
+        await tx.gachaAdminChange.create({
+          data: {
+            adminId: actor.adminId,
+            action: 'BULK_UPDATE_CARDS',
+            reason: updates.reason ?? 'Atualização em lote de cartas',
+            after: { updates, cardIds, count: res.count },
+          },
+        });
+      }
+
+      return { updatedCount: res.count };
+    });
+  }
+
+  async adminCardSets() {
+    const animes = await this.prisma.anime.findMany({
+      where: { cards: { some: {} } },
+      select: {
+        id: true,
+        title: true,
+        slug: true,
+        coverImage: true,
+        year: true,
+        malId: true,
+        cards: {
+          select: {
+            id: true,
+            rarity: true,
+            status: true,
+            _count: { select: { owners: true } },
+          },
+        },
+      },
+      orderBy: { title: 'asc' },
+    });
+
+    return animes.map((a) => {
+      const activeCards = a.cards.filter((c) => c.status === 'ACTIVE').length;
+      const draftCards = a.cards.filter((c) => c.status === 'DRAFT').length;
+      const archivedCards = a.cards.filter(
+        (c) => c.status === 'ARCHIVED',
+      ).length;
+      const totalOwners = a.cards.reduce((sum, c) => sum + c._count.owners, 0);
+      const rarityCounts: Record<string, number> = {};
+      for (const c of a.cards) {
+        rarityCounts[c.rarity] = (rarityCounts[c.rarity] || 0) + 1;
+      }
+
+      return {
+        id: a.id,
+        title: a.title,
+        slug: a.slug,
+        coverImage: a.coverImage,
+        year: a.year,
+        malId: a.malId,
+        totalCards: a.cards.length,
+        activeCards,
+        draftCards,
+        archivedCards,
+        totalOwners,
+        rarityCounts,
+      };
+    });
   }
 
   adminUserCards(userId: string, page = 1, limit = 50) {
