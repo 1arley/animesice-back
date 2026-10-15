@@ -1305,12 +1305,16 @@ describe('ScrapeService (cobertura avançada)', () => {
       'https://meusanimes.blog/e/foo-episodio-1/',
       undefined,
       false,
+      false,
+      undefined,
     );
     expect(spy).toHaveBeenNthCalledWith(
       2,
       'https://meusanimes.blog/e/foo/',
       undefined,
       false,
+      false,
+      undefined,
     );
   });
 
@@ -1371,10 +1375,12 @@ describe('ScrapeService (cobertura avançada)', () => {
     const cache = (svc as any).cache as Map<string, any>;
     expect(cache.size).toBe(2);
     svc.invalidateEpisode('https://meusanimes.io/a/9');
-    expect(cache.has('scrape:meusanimes:https://meusanimes.io/a/9')).toBe(
+    expect(cache.has('scrape:meusanimes:auto:https://meusanimes.io/a/9')).toBe(
       false,
     );
-    expect(cache.has('scrape:meusanimes:https://meusanimes.io/b/9')).toBe(true);
+    expect(cache.has('scrape:meusanimes:auto:https://meusanimes.io/b/9')).toBe(
+      true,
+    );
   });
 
   it('evicta a entrada mais antiga quando o cache estoura', () => {
@@ -1784,6 +1790,8 @@ describe('ScrapeService (cobertura de recuperação)', () => {
         'https://animexhd.xyz/y/',
         undefined,
         false,
+        false,
+        undefined,
       );
     });
 

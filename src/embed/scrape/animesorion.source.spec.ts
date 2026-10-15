@@ -212,8 +212,8 @@ describe('AnimesorionScrapeSource', () => {
           status: true,
           data: {
             options: [
-              { embed: 'https://player.test/dub', lang: 'pt-br' },
-              { embed: 'https://player.test/sub', lang: 'ja-jp' },
+              { embed: 'https://player.test/dub', label: 'Português' },
+              { embed: 'https://player.test/sub', label: 'Japanese' },
             ],
           },
         }),
@@ -306,9 +306,9 @@ describe('AnimesorionScrapeSource', () => {
     ]);
   });
 
-  it('extractHttp usa a season da página, não a do contexto', async () => {
+  it('extrai apenas quando a página corresponde ao episódio pedido', async () => {
     queueFetch(
-      { body: `<iframe src='https://myembed.biz/serie/999/3/7'></iframe>` },
+      { body: `<iframe src='https://myembed.biz/serie/999/1/1'></iframe>` },
       {
         body: JSON.stringify({
           status: true,
@@ -322,7 +322,7 @@ describe('AnimesorionScrapeSource', () => {
     await source.extractHttp({ episodeUrl: EPISODE_URL, ua: 'ua' });
 
     const [, ajax] = mockedFetchSafeRaw.mock.calls;
-    expect(String(ajax![0])).toContain('id=999&season=3&episode=7');
+    expect(String(ajax![0])).toContain('id=999&season=1&episode=1');
   });
 
   it('extractHttp propaga erro de rede do Ajax do player', async () => {

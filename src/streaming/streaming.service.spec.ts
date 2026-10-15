@@ -653,6 +653,7 @@ describe('StreamingService.getSource', () => {
       'zenonzard-the-animation',
       1,
       1,
+      undefined,
     );
     expect(prisma.episode.update).not.toHaveBeenCalled();
   });
@@ -830,6 +831,7 @@ describe('StreamingService.getSource', () => {
       undefined,
       false,
       true,
+      undefined,
     );
     expect(prisma.episode.update).toHaveBeenCalledWith({
       where: { id: 'ep-1' },
@@ -874,6 +876,7 @@ describe('StreamingService.getSource', () => {
       undefined,
       false,
       true,
+      undefined,
     );
   });
 
@@ -1126,6 +1129,7 @@ describe('StreamingService.getSource', () => {
     expect(scrapeService.scrapeFromAnimesonline).toHaveBeenCalledWith(
       'anime-tio-fallback',
       1,
+      undefined,
     );
   });
 
@@ -1229,6 +1233,7 @@ describe('StreamingService.getSourceAsync', () => {
       undefined,
       false,
       true,
+      undefined,
     );
   });
 

@@ -213,7 +213,6 @@ export class CatalogScanner implements OnModuleInit {
       }
     }
 
-    if (process.env.NODE_ENV === 'test') return EMPTY_SCAN;
     const discovery = await this.discoverAnimesdigitalSlug(animeSlug);
     if (!discovery.slug) return EMPTY_SCAN;
     const result = await this.tryScanAnimesdigital(discovery.slug);

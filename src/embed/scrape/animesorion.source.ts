@@ -154,6 +154,7 @@ export class AnimesorionScrapeSource implements ScrapeSource {
       .normalize('NFKD')
       .replace(/[\u0300-\u036f]/g, '')
       .toLowerCase();
+    if (!label) return false;
     return audio === 'DUBLADO'
       ? /\b(dublado|dub|portugu[eê]s|pt[-_ ]?br)\b/.test(label)
       : /\b(legendado|sub(?:title|titles)?|original|japanese|ja[-_ ]?jp)\b/.test(

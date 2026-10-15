@@ -316,7 +316,9 @@ describe('CatalogScanner', () => {
       });
       const entries = await scanner.scanAnime('test');
       expect(entries).toEqual([]);
-      expect(global.fetch).toHaveBeenCalledTimes(1);
+      // Sem sufixo de temporada, o slug base é o próprio slug: só a página
+      // do slug + a busca do MeusAnimes são consultadas.
+      expect(global.fetch).toHaveBeenCalledTimes(2);
     });
 
     it('remove duplicatas mantendo primeira ocorrência', async () => {
@@ -729,8 +731,9 @@ describe('CatalogScanner', () => {
       const scan = await scanner.scanAnimeResolved('test');
       expect(scan.sourceId).toBe('');
       expect(scan.entries).toEqual([]);
-      // Só o meusanimes foi consultado
-      expect(global.fetch).toHaveBeenCalledTimes(1);
+      // MeusAnimes (slug + busca) = 2 fetches. AnimesDigital é pulado
+      // (ANIMESDIGITAL_ENABLED não setado).
+      expect(global.fetch).toHaveBeenCalledTimes(2);
     });
 
     it('não vaza o rótulo do card seguinte ao parsear', async () => {
@@ -770,7 +773,8 @@ describe('CatalogScanner', () => {
       const found = await (scanner as any).discoverAnimesdigitalSlug(
         'jojo-no-kimyou-na-bouken-steel-ball-run',
       );
-      expect(found).toBe('jojo-no-kimyou-na-bouken-steel-ball-run');
+      expect(found.slug).toBe('jojo-no-kimyou-na-bouken-steel-ball-run');
+      expect(found.complete).toBe(false);
     });
 
     it('respeita dublado/legendado na descoberta de slug', async () => {
@@ -786,7 +790,7 @@ describe('CatalogScanner', () => {
       const dub = await (scanner as any).discoverAnimesdigitalSlug(
         'jojo-steel-ball-run-dublado',
       );
-      expect(dub).toBe('jojo-steel-ball-run-dublado');
+      expect(dub.slug).toBe('jojo-steel-ball-run-dublado');
     });
 
     it('processScanCatalog grava AnimeSource na fonte animesdigital', async () => {

@@ -161,7 +161,13 @@ describe('WorkerService', () => {
         payload: { animeId: 'anime-1', slug: 'solo', episodeNumber: 1 },
       }),
     );
-    expect(m.extractor.extract).toHaveBeenCalledWith('solo', 1, 1, undefined);
+    expect(m.extractor.extract).toHaveBeenCalledWith(
+      'solo',
+      1,
+      1,
+      undefined,
+      undefined,
+    );
     expect(m.validator.pickValidSources).toHaveBeenCalledWith(
       expect.arrayContaining([
         expect.objectContaining({ videoUrl: 'new.mp4' }),
@@ -479,6 +485,7 @@ describe('WorkerService', () => {
       3,
       1,
       'https://meusanimes.blog/e/solo-2-episodio-3/',
+      undefined,
     );
     expect(m.publisher.publish).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -784,7 +791,13 @@ describe('WorkerService', () => {
         payload: { animeId: 'anime-1', episodeNumber: 9 },
       }),
     );
-    expect(m.extractor.extract).toHaveBeenCalledWith('solo', 9, 1, undefined);
+    expect(m.extractor.extract).toHaveBeenCalledWith(
+      'solo',
+      9,
+      1,
+      undefined,
+      undefined,
+    );
     expect(m.publisher.publish).toHaveBeenCalled();
     expect(m.jobs.complete).toHaveBeenCalledWith('job-repair-miss', '');
   });

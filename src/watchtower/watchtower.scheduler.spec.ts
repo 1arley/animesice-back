@@ -18,6 +18,7 @@ function makeMocks() {
     },
     repair: {
       sweep: jest.fn(async () => 0),
+      backfillSources: jest.fn(async () => 0),
     },
     health: {
       reviveOne: jest.fn(async () => null),

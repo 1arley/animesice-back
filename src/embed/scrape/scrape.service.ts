@@ -1223,9 +1223,12 @@ export class ScrapeService implements OnModuleInit {
 
   /** Invalida entradas de cache de um episódio (após re-extração bem-sucedida). */
   invalidateEpisode(episodeUrl: string): void {
-    const suffix = `:${episodeUrl}`;
     for (const key of this.cache.keys()) {
-      if (key.endsWith(suffix)) this.cache.delete(key);
+      const separator = key.indexOf(':', 'scrape:'.length);
+      const urlStart = key.indexOf(':', separator + 1);
+      if (urlStart >= 0 && key.slice(urlStart + 1) === episodeUrl) {
+        this.cache.delete(key);
+      }
     }
   }
 
