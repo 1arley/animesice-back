@@ -11,6 +11,7 @@ function makeMocks() {
   const enqueue = jest.fn(async () => undefined);
   const enqueueMany = jest.fn(async () => undefined);
   const prisma = {
+    watchtowerJob: { count: jest.fn(async () => 0) },
     episode: {
       findMany: jest.fn(async (args: any) => {
         if (args.where?.videoUrl)
