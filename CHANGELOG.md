@@ -1,3 +1,10 @@
+# [1.51.0](https://github.com/1arley/animesice-back/compare/v1.50.0...v1.51.0) (2026-10-15)
+
+
+### Features
+
+* **watchtower:** enhanced load handling with database pooling and backpressure control ([cbc86c9](https://github.com/1arley/animesice-back/commit/cbc86c917cf30f14c151b5498646762596eae6f3))
+
 # [1.50.0](https://github.com/1arley/animesice-back/compare/v1.49.0...v1.50.0) (2026-10-15)
 
 
