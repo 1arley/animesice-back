@@ -1,3 +1,18 @@
+# [1.52.0](https://github.com/1arley/animesice-back/compare/v1.51.0...v1.52.0) (2026-10-15)
+
+
+### Bug Fixes
+
+* **embed:** increase meusanimes scrape fetch timeout to 30s ([719825f](https://github.com/1arley/animesice-back/commit/719825f13100f5b97fda5395b92d8c76733526d5))
+* **gacha:** validate counterproposal target cards ([24fa164](https://github.com/1arley/animesice-back/commit/24fa1641480dde7a23e9036cad3b5d95df1aa4b6))
+* **scrape:** allow slower MeusAnimes responses ([#124](https://github.com/1arley/animesice-back/issues/124)) ([ac7283e](https://github.com/1arley/animesice-back/commit/ac7283e6e5c418ef004a555f03f6f8d0cb2e7c42))
+
+
+### Features
+
+* **gacha:** add admin card management endpoints ([61b9130](https://github.com/1arley/animesice-back/commit/61b9130d9b53263763cc0f2fd511810def269c0b))
+* **gacha:** add card and skin trade-up endpoints ([b98c853](https://github.com/1arley/animesice-back/commit/b98c853a98f32bcd2f2f770de6e2d07c7aa385a4))
+
 # [1.51.0](https://github.com/1arley/animesice-back/compare/v1.50.0...v1.51.0) (2026-10-15)
 
 
