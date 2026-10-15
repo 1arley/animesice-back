@@ -1,6 +1,12 @@
 {
   "version": 1,
   "skills": {
+    "grill-with-jev": {
+      "source": "1arley/grill-with-jev",
+      "sourceType": "github",
+      "skillPath": "skills/productivity/grill-with-jev/SKILL.md",
+      "computedHash": "9860c927a64f99d9dbda894cb77c2a76008a4e6ca75744989c69a7cf66138852"
+    },
     "javascript-typescript-jest": {
       "source": "github/awesome-copilot",
       "sourceType": "github",

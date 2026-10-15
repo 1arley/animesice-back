@@ -4286,6 +4286,11 @@ export class GachaService {
             offeredIds,
             requestedIds,
           );
+          if (prepared.targetUserId !== parent.offeredUserId) {
+            throw new BadRequestException(
+              'As cartas pedidas na contraproposta devem pertencer a quem enviou a proposta.',
+            );
+          }
           const row = await this.createTradeTx(
             tx,
             userId,
@@ -4312,7 +4317,7 @@ export class GachaService {
         actorId: userId,
         tradeId: notify!.tradeId,
         cardCount: created.cards.filter((c) => c.side === 'OFFERED').length,
-        crystals: dto.crystalsOffered ?? 0,
+        crystals: created.crystalsOffered,
       });
       return fmtTrade(created);
     } catch (e) {

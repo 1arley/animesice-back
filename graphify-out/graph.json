@@ -5092,7 +5092,7 @@
       "file_type": "code",
       "norm_label": ".canceltrade()",
       "source_file": "src/gacha/gacha.service.ts",
-      "source_location": "L4544"
+      "source_location": "L4549"
     },
     {
       "id": "src_gacha_gacha_service_gachaservice_cardbackbykey",
@@ -5260,7 +5260,7 @@
       "file_type": "code",
       "norm_label": ".declinetrade()",
       "source_file": "src/gacha/gacha.service.ts",
-      "source_location": "L4548"
+      "source_location": "L4553"
     },
     {
       "id": "src_gacha_gacha_service_gachaservice_deletecardwishlist",
@@ -5368,7 +5368,7 @@
       "file_type": "code",
       "norm_label": ".expirependingtrades()",
       "source_file": "src/gacha/gacha.service.ts",
-      "source_location": "L4648"
+      "source_location": "L4653"
     },
     {
       "id": "src_gacha_gacha_service_gachaservice_favoriteprofilecards",
@@ -5560,7 +5560,7 @@
       "file_type": "code",
       "norm_label": ".publishpullpost()",
       "source_file": "src/gacha/gacha.service.ts",
-      "source_location": "L4664"
+      "source_location": "L4669"
     },
     {
       "id": "src_gacha_gacha_service_gachaservice_ranking",
@@ -5728,7 +5728,7 @@
       "file_type": "code",
       "norm_label": ".settletrade()",
       "source_file": "src/gacha/gacha.service.ts",
-      "source_location": "L4552"
+      "source_location": "L4557"
     },
     {
       "id": "src_gacha_gacha_service_gachaservice_setwishlistprivacy",
@@ -19528,7 +19528,7 @@
       "file_type": "code",
       "norm_label": ".accepttrade()",
       "source_file": "src/gacha/gacha.service.ts",
-      "source_location": "L4340"
+      "source_location": "L4345"
     },
     {
       "id": "src_gacha_gacha_service_gachaservice_constructor",
@@ -19588,7 +19588,7 @@
       "file_type": "code",
       "norm_label": ".expiretrade()",
       "source_file": "src/gacha/gacha.service.ts",
-      "source_location": "L4626"
+      "source_location": "L4631"
     },
     {
       "id": "src_gacha_gacha_service_gachaservice_mytrades",
@@ -19600,7 +19600,7 @@
       "file_type": "code",
       "norm_label": ".mytrades()",
       "source_file": "src/gacha/gacha.service.ts",
-      "source_location": "L4330"
+      "source_location": "L4335"
     },
     {
       "id": "src_gacha_gacha_service_gachaservice_notifytradeproposal",
@@ -58425,7 +58425,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/gacha/gacha.service.ts",
-      "source_location": "L4341",
+      "source_location": "L4346",
       "weight": 1.0
     },
     {
@@ -58437,7 +58437,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/gacha/gacha.service.ts",
-      "source_location": "L4347",
+      "source_location": "L4352",
       "weight": 1.0
     },
     {
@@ -58449,7 +58449,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/gacha/gacha.service.ts",
-      "source_location": "L4541",
+      "source_location": "L4546",
       "weight": 1.0
     },
     {
@@ -58701,7 +58701,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/gacha/gacha.service.ts",
-      "source_location": "L4545",
+      "source_location": "L4550",
       "weight": 1.0
     },
     {
@@ -58929,7 +58929,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/gacha/gacha.service.ts",
-      "source_location": "L4289",
+      "source_location": "L4294",
       "weight": 1.0
     },
     {
@@ -58941,7 +58941,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/gacha/gacha.service.ts",
-      "source_location": "L4310",
+      "source_location": "L4315",
       "weight": 1.0
     },
     {
@@ -58953,7 +58953,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/gacha/gacha.service.ts",
-      "source_location": "L4317",
+      "source_location": "L4322",
       "weight": 1.0
     },
     {
@@ -59097,7 +59097,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/gacha/gacha.service.ts",
-      "source_location": "L4549",
+      "source_location": "L4554",
       "weight": 1.0
     },
     {
@@ -59157,7 +59157,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/gacha/gacha.service.ts",
-      "source_location": "L4657",
+      "source_location": "L4662",
       "weight": 1.0
     },
     {
@@ -59169,7 +59169,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/gacha/gacha.service.ts",
-      "source_location": "L4629",
+      "source_location": "L4634",
       "weight": 1.0
     },
     {
@@ -59397,7 +59397,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/gacha/gacha.service.ts",
-      "source_location": "L4671",
+      "source_location": "L4676",
       "weight": 1.0
     },
     {
@@ -59409,7 +59409,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/gacha/gacha.service.ts",
-      "source_location": "L4676",
+      "source_location": "L4681",
       "weight": 1.0
     },
     {
@@ -59625,7 +59625,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/gacha/gacha.service.ts",
-      "source_location": "L4558",
+      "source_location": "L4563",
       "weight": 1.0
     },
     {
@@ -59637,7 +59637,7 @@
       "confidence_score": 1.0,
       "context": "call",
       "source_file": "src/gacha/gacha.service.ts",
-      "source_location": "L4584",
+      "source_location": "L4589",
       "weight": 1.0
     },
     {
@@ -81177,7 +81177,7 @@
       "confidence_score": 1.0,
       "context": "decorator",
       "source_file": "src/gacha/gacha.service.ts",
-      "source_location": "L4647",
+      "source_location": "L4652",
       "weight": 1.0
     },
     {
@@ -159280,7 +159280,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "src/gacha/gacha.service.ts",
-      "source_location": "L4330",
+      "source_location": "L4335",
       "weight": 1.0
     },
     {
@@ -159291,7 +159291,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "src/gacha/gacha.service.ts",
-      "source_location": "L4340",
+      "source_location": "L4345",
       "weight": 1.0
     },
     {
@@ -159335,7 +159335,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "src/gacha/gacha.service.ts",
-      "source_location": "L4544",
+      "source_location": "L4549",
       "weight": 1.0
     },
     {
@@ -159346,7 +159346,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "src/gacha/gacha.service.ts",
-      "source_location": "L4548",
+      "source_location": "L4553",
       "weight": 1.0
     },
     {
@@ -159357,7 +159357,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "src/gacha/gacha.service.ts",
-      "source_location": "L4552",
+      "source_location": "L4557",
       "weight": 1.0
     },
     {
@@ -159379,18 +159379,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "src/gacha/gacha.service.ts",
-      "source_location": "L4626",
-      "weight": 1.0
-    },
-    {
-      "source": "src_gacha_gacha_service_gachaservice",
-      "target": "src_gacha_gacha_service_gachaservice_expirependingtrades",
-      "relation": "method",
-      "_origin": "ast",
-      "confidence": "EXTRACTED",
-      "confidence_score": 1.0,
-      "source_file": "src/gacha/gacha.service.ts",
-      "source_location": "L4648",
+      "source_location": "L4631",
       "weight": 1.0
     },
     {
@@ -159406,13 +159395,24 @@
     },
     {
       "source": "src_gacha_gacha_service_gachaservice",
+      "target": "src_gacha_gacha_service_gachaservice_expirependingtrades",
+      "relation": "method",
+      "_origin": "ast",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "src/gacha/gacha.service.ts",
+      "source_location": "L4653",
+      "weight": 1.0
+    },
+    {
+      "source": "src_gacha_gacha_service_gachaservice",
       "target": "src_gacha_gacha_service_gachaservice_publishpullpost",
       "relation": "method",
       "_origin": "ast",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "src/gacha/gacha.service.ts",
-      "source_location": "L4664",
+      "source_location": "L4669",
       "weight": 1.0
     },
     {
@@ -166147,7 +166147,7 @@
       "confidence_score": 0.85,
       "context": "argument",
       "source_file": "src/gacha/gacha.service.ts",
-      "source_location": "L4337",
+      "source_location": "L4342",
       "weight": 1.0
     },
     {
@@ -169339,7 +169339,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "src/gacha/gacha.service.ts",
-      "source_location": "L4369",
+      "source_location": "L4374",
       "weight": 1.0
     },
     {
@@ -169351,7 +169351,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "src/gacha/gacha.service.ts",
-      "source_location": "L4390",
+      "source_location": "L4395",
       "weight": 1.0
     },
     {
@@ -169363,7 +169363,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "src/gacha/gacha.service.ts",
-      "source_location": "L4398",
+      "source_location": "L4403",
       "weight": 1.0
     },
     {
@@ -169375,7 +169375,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "src/gacha/gacha.service.ts",
-      "source_location": "L4526",
+      "source_location": "L4531",
       "weight": 1.0
     },
     {
@@ -169495,7 +169495,7 @@
       "confidence_score": 0.85,
       "context": "call",
       "source_file": "src/gacha/gacha.service.ts",
-      "source_location": "L4607",
+      "source_location": "L4612",
       "weight": 1.0
     },
     {
@@ -172716,5 +172716,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "6d8c668610c2e97a96843f2117ac2871a52319a6"
+  "built_at_commit": "18631f41a80305a66363fe27e85ceb78e1bbc8a0"
 }

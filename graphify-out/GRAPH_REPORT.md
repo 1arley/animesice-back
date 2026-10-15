@@ -1,9 +1,9 @@
 # Graph Report - animesice-back  (2026-10-15)
 
 ## Corpus Check
-- 501 files · ~282,050 words
+- 501 files · ~282,277 words
 - Verdict: corpus is large enough that graph structure adds value.
-- Unclassified: 22 file(s) not represented in the graph (top: (none) 17, .toml 2, .example 1)
+- Unclassified: 23 file(s) not represented in the graph (top: (none) 17, .toml 2, .example 1)
 
 ## Summary
 - 4328 nodes · 10460 edges · 256 communities (179 shown, 77 thin omitted)
@@ -11,7 +11,7 @@
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `6d8c6686`
+- Built from commit: `18631f41`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 

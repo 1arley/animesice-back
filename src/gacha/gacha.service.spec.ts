@@ -1767,6 +1767,106 @@ describe('GachaService', () => {
         });
       });
     });
+
+    describe('counterTrade', () => {
+      beforeEach(() => {
+        mockTradeOwners();
+        mockPrisma.gachaListing.count.mockResolvedValue(0);
+        mockPrisma.gachaTrade.count.mockResolvedValue(0);
+        mockPrisma.privacySettings.findUnique.mockResolvedValue({
+          showGacha: true,
+        });
+        mockPrisma.gachaTrade.updateMany.mockResolvedValue({ count: 1 });
+        mockPrisma.gachaTrade.create.mockImplementation((args: any) =>
+          Promise.resolve(
+            tradeRow({
+              id: 't2',
+              offeredUserId: args.data.offeredUserId,
+              requestedUserId: args.data.requestedUserId,
+              offeredUserCardId: args.data.offeredUserCardId,
+              requestedUserCardId: args.data.requestedUserCardId,
+              crystalsOffered: args.data.crystalsOffered,
+              crystalsRequested: args.data.crystalsRequested,
+              round: args.data.round,
+              parentTradeId: args.data.parentTradeId,
+            }),
+          ),
+        );
+      });
+
+      it('permite que o recebedor envie contraproposta com novas cartas e cristais', async () => {
+        mockPrisma.gachaTrade.findUnique.mockResolvedValue(
+          tradeRow({
+            id: 't1',
+            offeredUserId: 'u1',
+            requestedUserId: 'u2',
+            offeredUserCardId: 'oc1',
+            requestedUserCardId: 'rc1',
+            round: 1,
+            parentTradeId: null,
+          }),
+        );
+
+        const result = await service.counterTrade('u2', 't1', {
+          offeredUserCardIds: ['rc1'],
+          requestedUserCardIds: ['oc1'],
+          crystalsOffered: 15,
+          crystalsRequested: 25,
+        });
+
+        expect(result.id).toBe('t2');
+        expect(mockPrisma.gachaTrade.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              offeredUserId: 'u2',
+              requestedUserId: 'u1',
+              offeredUserCardId: 'rc1',
+              requestedUserCardId: 'oc1',
+              crystalsOffered: 15,
+              crystalsRequested: 25,
+              round: 2,
+              parentTradeId: 't1',
+            }),
+          }),
+        );
+      });
+
+      it('rejeita contraproposta se quem tenta não for o recebedor da troca original', async () => {
+        mockPrisma.gachaTrade.findUnique.mockResolvedValue(
+          tradeRow({
+            id: 't1',
+            offeredUserId: 'u1',
+            requestedUserId: 'u2',
+          }),
+        );
+
+        await expect(
+          service.counterTrade('u1', 't1', {}),
+        ).rejects.toBeInstanceOf(ForbiddenException);
+      });
+
+      it('rejeita contraproposta se as cartas pedidas pertencerem a um terceiro usuário', async () => {
+        mockPrisma.gachaTrade.findUnique.mockResolvedValue(
+          tradeRow({
+            id: 't1',
+            offeredUserId: 'u1',
+            requestedUserId: 'u2',
+          }),
+        );
+
+        mockPrisma.userCard.findMany.mockResolvedValue([
+          tradeCardRow('rc1', 'u2'),
+          tradeCardRow('c3', 'u3'),
+        ]);
+
+        await expect(
+          service.counterTrade('u2', 't1', {
+            offeredUserCardIds: ['rc1'],
+            requestedUserCardIds: ['c3'],
+          }),
+        ).rejects.toBeInstanceOf(BadRequestException);
+      });
+    });
   });
 
   describe('crystals', () => {
