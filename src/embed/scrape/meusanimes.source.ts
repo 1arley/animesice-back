@@ -236,7 +236,7 @@ export class MeusanimesScrapeSource implements ScrapeSource {
     let response: Response;
     let dispatcher: import('undici').Dispatcher;
     try {
-      ({ response, dispatcher } = await fetchSafeRaw(url, { headers }, 15_000));
+      ({ response, dispatcher } = await fetchSafeRaw(url, { headers }, 30_000));
     } catch (err) {
       const cause = err instanceof Error ? err.cause : undefined;
       throw new Error(
