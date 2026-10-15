@@ -97,6 +97,9 @@ describe('MeusanimesScrapeSource.extractHttp', () => {
     expect(result.playerTokens).toHaveLength(1);
     expect(result.playerTokens![0]).toMatch(/blogger\.com\/video\.g\?token=/);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls.map(([, , timeout]) => timeout)).toEqual([
+      30_000, 30_000,
+    ]);
   });
 
   it('converte youtube-nocookie embed em playerToken de embed', async () => {
