@@ -845,6 +845,8 @@ export class EconomyService {
             rarity: true,
             animeId: true,
             editionCounter: true,
+            image: true,
+            imageHidden: true,
           },
         });
         if (!cards.length) {
@@ -984,7 +986,13 @@ export class EconomyService {
         return {
           type: 'CARD',
           consumedIds: copies.map((copy) => copy.id),
-          result: { ...result, card },
+          // Mesma máscara do inventário: carta misteriosa não entrega arte/nome.
+          result: {
+            ...result,
+            card: card.imageHidden
+              ? { ...card, name: '???', image: null }
+              : card,
+          },
         };
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },

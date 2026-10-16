@@ -59,6 +59,9 @@ describe('EconomyService safeguards', () => {
         'gachaTrade',
         'gachaOfficialOffer',
         'gachaSpin',
+        'gachaCardWishlist',
+        'gachaSetWishlist',
+        'gachaCardDiscovery',
       ].map((name) => [name, model()]),
     );
     db.$transaction = jest.fn();
@@ -467,6 +470,77 @@ describe('EconomyService safeguards', () => {
     });
     expect(db.crystalEvent.create).toHaveBeenCalledWith({
       data: expect.objectContaining({ delta: -1000, type: 'SPEND' }),
+    });
+  });
+
+  describe('trade-up result payload', () => {
+    const copies = ['c1', 'c2', 'c3', 'c4'].map((id) => ({
+      id,
+      condition: 0.5,
+      foil: 'NORMAL',
+      edition: 1,
+      card: { rarity: 'RARA' },
+    }));
+
+    beforeEach(() => {
+      db.userCard.findMany.mockResolvedValue(copies);
+      db.gachaCardWishlist.findMany.mockResolvedValue([]);
+      db.gachaSetWishlist.findMany.mockResolvedValue([]);
+      db.userCard.updateMany.mockResolvedValue({ count: 4 });
+      db.card.update.mockResolvedValue({ editionCounter: 1 });
+      db.userCard.create.mockResolvedValue({
+        id: 'uc-new',
+        cardId: 'card-epica',
+        condition: 0.5,
+        foil: 'NORMAL',
+        edition: 1,
+        value: 500,
+      });
+      db.gachaCardDiscovery.createMany.mockResolvedValue({ count: 1 });
+    });
+
+    it('returns the forged card art', async () => {
+      db.card.findMany.mockResolvedValue([
+        {
+          id: 'card-epica',
+          name: 'Gojo',
+          rarity: 'EPICA',
+          animeId: 'jujutsu',
+          editionCounter: 0,
+          image: 'https://cdn.test/gojo.webp',
+          imageHidden: false,
+        },
+      ]);
+
+      const res = await service.tradeUpCards('u1', ['c1', 'c2', 'c3', 'c4']);
+
+      expect(db.card.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          select: expect.objectContaining({ image: true, imageHidden: true }),
+        }),
+      );
+      expect(res.result.card).toMatchObject({
+        name: 'Gojo',
+        image: 'https://cdn.test/gojo.webp',
+      });
+    });
+
+    it('masks name and art of a hidden card', async () => {
+      db.card.findMany.mockResolvedValue([
+        {
+          id: 'card-epica',
+          name: 'Gojo',
+          rarity: 'EPICA',
+          animeId: 'jujutsu',
+          editionCounter: 0,
+          image: 'https://cdn.test/gojo.webp',
+          imageHidden: true,
+        },
+      ]);
+
+      const res = await service.tradeUpCards('u1', ['c1', 'c2', 'c3', 'c4']);
+
+      expect(res.result.card).toMatchObject({ name: '???', image: null });
     });
   });
 });
