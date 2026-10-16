@@ -1,3 +1,11 @@
+## [1.52.1](https://github.com/1arley/animesice-back/compare/v1.52.0...v1.52.1) (2026-10-16)
+
+
+### Bug Fixes
+
+* **gacha:** roll trade-up condition uniformly and guarantee foil when copies match ([abff389](https://github.com/1arley/animesice-back/commit/abff38965873282314aaa08633deb48619f4f734))
+* **social:** point follow notification link at the follower ([b7490fd](https://github.com/1arley/animesice-back/commit/b7490fdc688abfc61fb65ed2e17c358b7e30c2fe))
+
 # [1.52.0](https://github.com/1arley/animesice-back/compare/v1.51.0...v1.52.0) (2026-10-15)
 
 
