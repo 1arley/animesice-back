@@ -12,7 +12,7 @@ import { releaseTradesForCard } from '@/gacha/trade-escrow';
 import { PrismaService } from '@/prisma/prisma.service';
 import { CrystalAccountingService } from '@/gacha/crystal-accounting.service';
 import { GachaConfigService } from '@/gacha/gacha-config.service';
-import { cardValue, conditionMult, GACHA_FOILS } from '@/gacha/gacha.constants';
+import { cardValue, GACHA_FOILS } from '@/gacha/gacha.constants';
 import type { GachaFoil, GachaTier } from '@/gacha/gacha.constants';
 import { GACHA_TIERS } from '@/gacha/gacha-config.service';
 import {
@@ -915,32 +915,7 @@ export class EconomyService {
           throw new ConflictException('Carta resultante indisponível.');
 
         const wish = cardWishById.get(card.id);
-        const minimumCondition = wish?.minCondition
-          ? { POOR: 1, PLAYED: 2, EX: 3, NM: 4, MINT: 5 }[wish.minCondition]
-          : undefined;
-        const conditionWeights = Object.fromEntries(
-          copies.map((copy) => {
-            const conditionLevel =
-              {
-                POOR: 1,
-                PLAYED: 2,
-                EX: 3,
-                NM: 4,
-                MINT: 5,
-              }[this.conditionLabel(copy.condition)] ?? 0;
-            const matchesWish =
-              minimumCondition !== undefined &&
-              conditionLevel >= minimumCondition;
-            return [
-              copy.id,
-              conditionMult(copy.condition) * (matchesWish ? 2 : 1),
-            ];
-          }),
-        );
-        const conditionCopyId = weightedPick(conditionWeights);
-        const conditionCopy = copies.find(
-          (copy) => copy.id === conditionCopyId,
-        );
+        const conditionCopy = copies[Math.floor(Math.random() * copies.length)];
         if (!conditionCopy) {
           throw new ConflictException('Qualidade da carta indisponível.');
         }
@@ -952,7 +927,10 @@ export class EconomyService {
           foilWeights[foil] *= 1 + count / copies.length;
           if (matchesWish) foilWeights[foil] *= 2;
         }
-        const foil = weightedPick(foilWeights);
+        const guaranteedFoil = GACHA_FOILS.find((foil) =>
+          copies.every((copy) => copy.foil === foil),
+        );
+        const foil = guaranteedFoil ?? weightedPick(foilWeights);
 
         for (const copy of copies) {
           await this.prepareCardForSale(tx, userId, copy.id);
