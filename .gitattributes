@@ -18,4 +18,3 @@
 
 # Optional
 # *.ts linguist-language=TypeScript
-graphify-out/graph.json merge=graphify

@@ -58,10 +58,8 @@ docker-compose.override.yml
 .turbo
 .cache
 
-# Agent tooling (local): keep only the shared graph artifacts
-graphify-out/*
-!graphify-out/graph.json
-!graphify-out/GRAPH_REPORT.md
+# Agent tooling (local)
+graphify-out/
 
 #Bun
 bun.lock
