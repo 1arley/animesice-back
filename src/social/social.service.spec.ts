@@ -328,6 +328,7 @@ describe('SocialService', () => {
           userId: 'u2',
           type: 'NEW_FOLLOW',
           title: 'Ana começou a seguir você',
+          linkUrl: '/users/ana',
         }),
       );
     });

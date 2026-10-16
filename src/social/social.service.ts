@@ -416,7 +416,7 @@ export class SocialService {
         title: `${
           follower?.name ?? follower?.userName ?? 'Alguém'
         } começou a seguir você`,
-        linkUrl: `/users/${target.userName ?? targetUserId}`,
+        linkUrl: `/users/${follower?.userName ?? userId}`,
         actorId: userId,
         targetId: targetUserId,
       }),
