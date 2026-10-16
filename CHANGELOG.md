@@ -1,3 +1,10 @@
+## [1.52.2](https://github.com/1arley/animesice-back/compare/v1.52.1...v1.52.2) (2026-10-16)
+
+
+### Bug Fixes
+
+* **gacha:** return forged card art in trade-up result ([dd4a86d](https://github.com/1arley/animesice-back/commit/dd4a86d6d0164a04077e63db370aefc2834ab212))
+
 ## [1.52.1](https://github.com/1arley/animesice-back/compare/v1.52.0...v1.52.1) (2026-10-16)
 
 
