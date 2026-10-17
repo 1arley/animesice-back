@@ -110,6 +110,16 @@ export class WatchtowerScheduler implements OnModuleInit {
     return process.env.WATCHTOWER_ENABLED === 'true';
   }
 
+  /**
+   * Jobs de controle não podem segurar o tick. `running` é a trava que impede
+   * dois batches simultâneos (senão estoura MAX_CONCURRENT_SCRAPES), mas ela só
+   * é liberada quando TODO o batch resolve — e um CHECK_RELEASES tem timeout de
+   * 15min, então um control job lento travava a fila inteira por 15min a cada
+   * rodada. Medido: vazão caindo de 1957 jobs/dia p/ 6 enquanto um
+   * CHECK_RELEASES ficava RUNNING. Eles são raros e idempotentes (dedupeKey +
+   * status RUNNING), então despachar sem await é seguro — o worker já protege
+   * o completion por lockedBy.
+   */
   @Cron(CronExpression.EVERY_MINUTE)
   async tick(): Promise<void> {
     if (!this.enabled() || this.running) return;
@@ -117,8 +127,12 @@ export class WatchtowerScheduler implements OnModuleInit {
     try {
       const batch = await this.jobs.claimBatch(
         Math.min(TICK_BATCH, TICK_CONCURRENCY),
+        process.env.WT_RUST_REPAIR_ENABLED === 'true',
       );
-      await Promise.all(batch.map((job) => this.processWithTimeout(job)));
+      const controls = batch.filter((job) => CONTROL_JOB_TYPES.has(job.type));
+      const scrapes = batch.filter((job) => !CONTROL_JOB_TYPES.has(job.type));
+      for (const job of controls) void this.processWithTimeout(job);
+      await Promise.all(scrapes.map((job) => this.processWithTimeout(job)));
     } finally {
       this.running = false;
     }

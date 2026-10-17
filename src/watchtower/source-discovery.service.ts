@@ -140,6 +140,11 @@ export class SourceDiscovery {
     return null;
   }
 
+  exactCandidate(episodeUrl: string, sourceId: string): SourceCandidate | null {
+    const candidate = this.explicitCandidate(episodeUrl);
+    return candidate?.sourceId === sourceId ? candidate : null;
+  }
+
   /**
    * Probe HEAD/GET classificado:
    *  - ok: 2xx/3xx — página existe.

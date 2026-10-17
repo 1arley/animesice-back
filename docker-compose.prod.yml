@@ -45,6 +45,7 @@ services:
       - .env
     environment:
       - DISPLAY=:99
+      - WT_RUST_REPAIR_ENABLED=${WT_RUST_REPAIR_ENABLED:-false}
       # SKIP_MIGRATE=1 pula o migrate deploy (restore de dump). Default: aplica.
       # - SKIP_MIGRATE=${SKIP_MIGRATE:-0}
     depends_on:
@@ -62,6 +63,38 @@ services:
       traefik.http.routers.animesice-back.service: "animesice-back"
       traefik.http.routers.animesice-back.tls.certresolver: "le"
       traefik.http.services.animesice-back.loadbalancer.server.port: "3000"
+      com.centurylinklabs.watchtower.enable: "true"
+
+  watchtower-worker:
+    image: arthuriarley/animesice-back:latest
+    restart: unless-stopped
+    init: true
+    user: node
+    mem_limit: 384m
+    mem_reservation: 192m
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      SERVICE_ROLE: watchtower-worker
+      SKIP_MIGRATE: "1"
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      EMBED_ALLOWED_HOSTS: ${EMBED_ALLOWED_HOSTS:-}
+      WT_RUST_REPAIR_ENABLED: ${WT_RUST_REPAIR_ENABLED:-false}
+      WT_SCRAPER_BIN: /usr/local/bin/animefire-scraper
+    depends_on:
+      db:
+        condition: service_healthy
+      app:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/watchtower-worker", "--healthcheck"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 20s
+    networks:
+      - web
+    labels:
       com.centurylinklabs.watchtower.enable: "true"
 
 volumes:

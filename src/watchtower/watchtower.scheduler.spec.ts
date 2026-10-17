@@ -100,13 +100,35 @@ describe('WatchtowerScheduler', () => {
     await scheduler.tick();
     const concurrency = Number(process.env.MAX_CONCURRENT_SCRAPES ?? 2);
     const batchSize = Number(process.env.WT_TICK_BATCH ?? 20);
-    expect(m.jobs.claimBatch).toHaveBeenCalledWith(
-      Math.min(
-        Number.isInteger(concurrency) && concurrency > 0 ? concurrency : 2,
-        batchSize,
-      ),
+    const size = Math.min(
+      Number.isInteger(concurrency) && concurrency > 0 ? concurrency : 2,
+      batchSize,
     );
+    expect(m.jobs.claimBatch).toHaveBeenCalledWith(size, expect.anything());
     expect(m.worker.process).toHaveBeenCalledTimes(2);
+  });
+
+  it('tick NÃO espera control job: um CHECK_RELEASES lento não pode congelar a fila', async () => {
+    process.env.WATCHTOWER_ENABLED = 'true';
+    let releaseControl: () => void = () => {};
+    const controlGate = new Promise<void>((r) => {
+      releaseControl = r;
+    });
+    m.worker.process.mockImplementation((async (job: any) => {
+      if (job.type === 'CHECK_RELEASES') await controlGate;
+    }) as any);
+    m.jobs.claimBatch.mockResolvedValueOnce([
+      { id: 'j1', type: 'EXTRACT_EPISODE', payload: {}, status: 'RUNNING' },
+      { id: 'j2', type: 'CHECK_RELEASES', payload: {}, status: 'RUNNING' },
+    ] as any);
+
+    // O tick precisa resolver antes do control job — se voltasse a segurar
+    // `running` nele, os 15min de timeout do CHECK_RELEASES paravam a fila toda.
+    await scheduler.tick();
+    expect(m.worker.process).toHaveBeenCalledTimes(2);
+
+    releaseControl();
+    await controlGate;
   });
 
   it('tick não overlap quando running=true', async () => {

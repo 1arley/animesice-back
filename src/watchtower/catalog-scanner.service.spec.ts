@@ -178,7 +178,7 @@ describe('CatalogScanner', () => {
       expect(result.enqueued).toBe(1);
     });
 
-    it('pula anime com episodeCount null mas 1+ episódios sem force', async () => {
+    it('NAO pula anime com episodeCount null e 1+ episodio: total desconhecido nao e prova de completo', async () => {
       m.prisma.anime.findMany.mockResolvedValue([
         {
           id: 'a1',
@@ -189,8 +189,8 @@ describe('CatalogScanner', () => {
         },
       ]);
       const result = await scanner.scanAll(false);
-      expect(result.scanned).toBe(0);
-      expect(result.enqueued).toBe(0);
+      expect(result.scanned).toBe(1);
+      expect(result.enqueued).toBe(1);
     });
 
     it('reescaneia catálogos AnimesDigital mapeados mesmo completos ou sem episodeCount', async () => {
@@ -390,10 +390,12 @@ describe('CatalogScanner', () => {
       expect(m.jobs.enqueue).toHaveBeenCalledTimes(1);
     });
 
-    it('meusanimes: externalKey vem da URL meusa mesmo se um episódio AnimesDigital vier primeiro', async () => {
-      // O catálogo do meusanimes inclui infixo de temporada na URL do episódio
-      // ("<slug>-1-episodio-N"), então a chave persistida é "<slug>-1" — não o
-      // slug da página /a/. Um episódio mesclado de outra fonte não pode mudá-la.
+    it('meusanimes: externalKey é o slug da página de catálogo que respondeu', async () => {
+      // O catálogo publica todas as temporadas sob /a/<base>/, enquanto a URL do
+      // episódio carrega infixo de temporada ("<base>-1-episodio-N") que NÃO é
+      // endereço de catálogo. Persistir esse infixo como chave fazia o scan
+      // seguinte só acertar pelo fallback que remove o "-<n>" — e o fallback
+      // não existe quando a chave é da própria temporada 1.
       jest.spyOn(scanner, 'scanAnimeResolved' as any).mockResolvedValue({
         sourceId: 'meusanimes',
         sourceSlug: 'yamada-kun',
@@ -437,8 +439,8 @@ describe('CatalogScanner', () => {
             animeId_sourceId: { animeId: 'a1', sourceId: 'meusanimes' },
           },
           update: expect.objectContaining({
-            externalUrl: 'https://meusanimes.blog/a/yamada-kun-1/',
-            externalKey: 'yamada-kun-1',
+            externalUrl: 'https://meusanimes.blog/a/yamada-kun/',
+            externalKey: 'yamada-kun',
           }),
         }),
       );

@@ -67,7 +67,12 @@ export const PRIORITY = {
   SYNC_SCHEDULES: 120,
   /** Backfill de anilistId/metadados — ainda menos urgente (só enriquece catálogo). */
   BACKFILL_ANILIST: 180,
-  SCAN_CATALOG: 110,
+  /** SCAN_CATALOG de anime em lançamento ou com catálogo mapeado.
+   *  Fura a fila de backfill: é o único caminho pra DESCOBRIR episódio novo
+   *  (catálogo mapeado não tem template de URL por slug), e atrás de
+   *  EXTRACT/REPAIR o anime em lançamento fica semanas sem episódio.
+   *  Custo: 1 GET por anime. */
+  SCAN_CATALOG: 75,
 } as const;
 
 /* ---------------------------------------------------------------------------

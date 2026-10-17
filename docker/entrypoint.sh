@@ -11,6 +11,10 @@
 # Para ignorar de proposito (restore de dump, bootstrap), defina SKIP_MIGRATE=1.
 set -e
 
+if [ "$SERVICE_ROLE" = "watchtower-worker" ]; then
+  exec /usr/local/bin/watchtower-worker
+fi
+
 PRISMA=/app/node_modules/.bin/prisma
 
 if [ -z "$DATABASE_URL" ]; then

@@ -42,6 +42,8 @@ interface RepairPayload {
   animeId: string;
   episodeNumber: number;
   season?: number;
+  rustFallbackUrl?: string;
+  rustFallbackSourceId?: string;
 }
 
 interface ScanCatalogPayload {
@@ -294,13 +296,21 @@ export class WorkerService {
       })
       .catch(() => undefined);
 
-    const { candidates } = await this.extractor.extract(
-      anime.slug,
-      p.episodeNumber,
-      p.season ?? 1,
-      episode.embedUrl ?? undefined,
-      anime.audio,
-    );
+    const { candidates } =
+      p.rustFallbackUrl && p.rustFallbackSourceId
+        ? await this.extractor.extractExact(
+            p.rustFallbackSourceId,
+            p.rustFallbackUrl,
+            p.rustFallbackSourceId,
+            anime.audio,
+          )
+        : await this.extractor.extract(
+            anime.slug,
+            p.episodeNumber,
+            p.season ?? 1,
+            episode.embedUrl ?? undefined,
+            anime.audio,
+          );
     if (candidates.length === 0)
       throw new Error(`Repair: sem fonte p/ ${anime.slug}/${p.episodeNumber}`);
 

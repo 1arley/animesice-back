@@ -40,20 +40,14 @@ export class JobsService {
     });
 
     if (existing) {
-      // Singleton com paginação em curso: se o payload atual carrega um cursor
-      // (afterId) ativo, NÃO sobrescreva. Continuação é owned pelo worker
-      // que detém o lock; re-enfileiramentos diários/startup só refrescam
-      // prioridade ou marcam para re-executar quando DONE.
+      // Payload e lock de um job em execução pertencem ao worker que o claimou.
       const payload = existing.payload;
-      const payloadHasCursor =
-        typeof payload === 'object' &&
-        payload !== null &&
-        'afterId' in payload &&
-        typeof payload.afterId === 'string';
+
+      if (existing.status === 'RUNNING') return;
 
       if (existing.status === 'DONE' || existing.status === 'DEAD') {
-        await this.prisma.watchtowerJob.update({
-          where: { id: existing.id },
+        await this.prisma.watchtowerJob.updateMany({
+          where: { id: existing.id, status: existing.status },
           data: {
             status: 'PENDING',
             nextRunAt,
@@ -65,21 +59,26 @@ export class JobsService {
             priority,
           },
         });
-      } else if (payloadHasCursor && existing.status === 'RUNNING') {
-        // Paginação em curso — não toca no payload nem no lock.
-        return;
       } else {
-        // PENDING sem cursor (próximo arranque) ou RUNNING sem cursor: aceita
-        // novo payload e atualiza prioridade.
-        await this.prisma.watchtowerJob
-          .update({
-            where: { id: existing.id },
-            data: {
-              payload: input.payload as object,
-              priority: Math.min(existing.priority ?? 100, priority),
-            },
-          })
-          .catch(() => undefined);
+        const previousPayload =
+          typeof payload === 'object' && payload !== null
+            ? (payload as Record<string, unknown>)
+            : null;
+        const nextPayload =
+          previousPayload && 'rustFallbackAt' in previousPayload
+            ? {
+                ...((input.payload ?? {}) as Record<string, unknown>),
+                rustEligible: false,
+                rustFallbackAt: previousPayload.rustFallbackAt,
+              }
+            : input.payload;
+        await this.prisma.watchtowerJob.updateMany({
+          where: { id: existing.id, status: 'PENDING' },
+          data: {
+            payload: nextPayload as object,
+            priority: Math.min(existing.priority ?? 100, priority),
+          },
+        });
       }
       return;
     }
@@ -102,6 +101,7 @@ export class JobsService {
       this.logger.error(
         `enqueue failed for ${input.type}:${input.dedupeKey}: ${err instanceof Error ? err.message : String(err)}`,
       );
+      throw err;
     }
   }
 
@@ -136,84 +136,161 @@ export class JobsService {
   }
 
   /** Insere/atualiza vários jobs em uma única ida ao PostgreSQL. */
-  async enqueueMany(inputs: EnqueueInput[]): Promise<void> {
-    if (inputs.length === 0) return;
-    const rows = inputs.map((input) => {
-      const slug = (input.payload as { slug?: string } | null)?.slug ?? null;
-      return Prisma.sql`(
-        ${input.type}, ${input.dedupeKey},
-        CAST(${JSON.stringify(input.payload ?? {})} AS jsonb),
-        ${priorityForSlug(slug, input.priority ?? 100)},
-        ${input.maxAttempts ?? 5}, NOW()
-      )`;
-    });
+  async enqueueMany(
+    inputs: EnqueueInput[],
+    maxPendingRepairs?: number,
+  ): Promise<string[]> {
+    if (inputs.length === 0) return [];
+    const unique = new Map<string, EnqueueInput>();
+    for (const input of inputs) {
+      const key = `${input.type}:${input.dedupeKey}`;
+      const existing = unique.get(key);
+      if (!existing || (input.priority ?? 100) < (existing.priority ?? 100)) {
+        unique.set(key, input);
+      }
+    }
+    return this.prisma.$transaction(async (tx) => {
+      let selected = [...unique.values()];
+      if (maxPendingRepairs !== undefined) {
+        await tx.$queryRaw`SELECT pg_advisory_xact_lock(991233, 2)`;
+        const pending = await tx.watchtowerJob.count({
+          where: {
+            type: 'REPAIR_EPISODE',
+            status: { in: ['PENDING', 'RUNNING'] },
+          },
+        });
+        const slots = Math.max(0, maxPendingRepairs - pending);
+        const repairs = selected
+          .filter((input) => input.type === 'REPAIR_EPISODE')
+          .sort((a, b) => (a.priority ?? 100) - (b.priority ?? 100));
+        const other = selected.filter(
+          (input) => input.type !== 'REPAIR_EPISODE',
+        );
+        selected = [...other, ...repairs.slice(0, slots)];
+      }
+      if (selected.length === 0) return [];
 
-    await this.prisma.$executeRaw`
-      INSERT INTO "WatchtowerJob"
-        ("id", "type", "dedupeKey", "payload", "priority", "maxAttempts",
-         "nextRunAt", "createdAt", "updatedAt")
-      SELECT gen_random_uuid()::text, v.type, v.dedupe_key, v.payload,
-             v.priority::int, v.max_attempts::int, v.next_run_at, NOW(), NOW()
-      FROM (VALUES ${Prisma.join(rows)})
-        AS v(type, dedupe_key, payload, priority, max_attempts, next_run_at)
-      ON CONFLICT ("type", "dedupeKey") DO UPDATE SET
-        "payload" = EXCLUDED."payload",
-        "priority" = LEAST("WatchtowerJob"."priority", EXCLUDED."priority"),
-        "status" = CASE
-          WHEN "WatchtowerJob"."status" IN ('DONE', 'DEAD') THEN 'PENDING'
-          ELSE "WatchtowerJob"."status"
-        END,
-        "attempts" = CASE
-          WHEN "WatchtowerJob"."status" IN ('DONE', 'DEAD') THEN 0
-          ELSE "WatchtowerJob"."attempts"
-        END,
-        "nextRunAt" = CASE
-          WHEN "WatchtowerJob"."status" IN ('DONE', 'DEAD') THEN NOW()
-          ELSE "WatchtowerJob"."nextRunAt"
-        END,
-        "lastError" = CASE
-          WHEN "WatchtowerJob"."status" IN ('DONE', 'DEAD') THEN NULL
-          ELSE "WatchtowerJob"."lastError"
-        END,
-        "lockedBy" = CASE
-          WHEN "WatchtowerJob"."status" IN ('DONE', 'DEAD') THEN NULL
-          ELSE "WatchtowerJob"."lockedBy"
-        END,
-        "lockedAt" = CASE
-          WHEN "WatchtowerJob"."status" IN ('DONE', 'DEAD') THEN NULL
-          ELSE "WatchtowerJob"."lockedAt"
-        END,
-        "updatedAt" = NOW()
-    `;
+      const rows = selected.map((input) => {
+        const slug = (input.payload as { slug?: string } | null)?.slug ?? null;
+        return Prisma.sql`(
+          ${input.type}, ${input.dedupeKey},
+          CAST(${JSON.stringify(input.payload ?? {})} AS jsonb),
+          ${priorityForSlug(slug, input.priority ?? 100)},
+          ${input.maxAttempts ?? 5}, NOW()
+        )`;
+      });
+      const inserted = await tx.$queryRaw<Array<{ dedupeKey: string }>>`
+        INSERT INTO "WatchtowerJob"
+          ("id", "type", "dedupeKey", "payload", "priority", "maxAttempts",
+           "nextRunAt", "createdAt", "updatedAt")
+        SELECT gen_random_uuid()::text, v.type, v.dedupe_key, v.payload,
+               v.priority::int, v.max_attempts::int, v.next_run_at, NOW(), NOW()
+        FROM (VALUES ${Prisma.join(rows)})
+          AS v(type, dedupe_key, payload, priority, max_attempts, next_run_at)
+        ON CONFLICT ("type", "dedupeKey") DO UPDATE SET
+          "payload" = CASE
+            WHEN "WatchtowerJob"."status" = 'RUNNING'
+            THEN "WatchtowerJob"."payload"
+            WHEN "WatchtowerJob"."status" = 'PENDING'
+              AND "WatchtowerJob"."payload" ? 'rustFallbackAt'
+            THEN EXCLUDED."payload" || jsonb_build_object(
+              'rustEligible', false,
+              'rustFallbackAt', "WatchtowerJob"."payload"->'rustFallbackAt'
+            )
+            ELSE EXCLUDED."payload"
+          END,
+          "priority" = LEAST("WatchtowerJob"."priority", EXCLUDED."priority"),
+          "status" = CASE
+            WHEN "WatchtowerJob"."status" IN ('DONE', 'DEAD') THEN 'PENDING'
+            ELSE "WatchtowerJob"."status"
+          END,
+          "attempts" = CASE
+            WHEN "WatchtowerJob"."status" IN ('DONE', 'DEAD') THEN 0
+            ELSE "WatchtowerJob"."attempts"
+          END,
+          "nextRunAt" = CASE
+            WHEN "WatchtowerJob"."status" IN ('DONE', 'DEAD') THEN NOW()
+            ELSE "WatchtowerJob"."nextRunAt"
+          END,
+          "lastError" = CASE
+            WHEN "WatchtowerJob"."status" IN ('DONE', 'DEAD') THEN NULL
+            ELSE "WatchtowerJob"."lastError"
+          END,
+          "lockedBy" = CASE
+            WHEN "WatchtowerJob"."status" IN ('DONE', 'DEAD') THEN NULL
+            ELSE "WatchtowerJob"."lockedBy"
+          END,
+          "lockedAt" = CASE
+            WHEN "WatchtowerJob"."status" IN ('DONE', 'DEAD') THEN NULL
+            ELSE "WatchtowerJob"."lockedAt"
+          END,
+          "updatedAt" = NOW()
+        RETURNING "dedupeKey"
+      `;
+      return inserted.map((row) => row.dedupeKey);
+    });
   }
 
-  /** Claim N jobs devidos (status=PENDING, nextRunAt<=agora), mais urgentes 1º. */
-  async claimBatch(limit: number): Promise<WatchtowerJobRow[]> {
+  /**
+   * Claim N jobs devidos (status=PENDING, nextRunAt<=agora), mais urgentes 1º.
+   *
+   * Reserva um slot para escoar reparos antigos quando há concorrência. O
+   * restante usa aging por tempo vencido, sem depender do relógio do cron.
+   */
+  async claimBatch(
+    limit: number,
+    rustRepairEnabled = false,
+  ): Promise<WatchtowerJobRow[]> {
     const lockId = crypto.randomUUID();
     const batchSize = Math.max(0, limit);
-    const repairSlots =
-      batchSize > 1 || (batchSize === 1 && new Date().getUTCMinutes() % 5 === 0)
-        ? 1
-        : 0;
+    const repairSlots = batchSize > 1 ? 1 : 0;
     return this.prisma.$queryRaw<WatchtowerJobRow[]>`
       WITH repair_candidates AS (
         SELECT "id" FROM "WatchtowerJob"
         WHERE "status" = 'PENDING' AND "nextRunAt" <= NOW()
           AND "type" = 'REPAIR_EPISODE'
+          AND (
+            NOT ${rustRepairEnabled}
+            OR "payload"->>'rustEligible' IS DISTINCT FROM 'true'
+            OR NOT EXISTS (
+              SELECT 1 FROM pg_locks
+              WHERE locktype = 'advisory' AND granted
+                AND classid = 991233::oid AND objid = 1::oid AND objsubid = 2
+            )
+          )
         ORDER BY "createdAt" ASC
         FOR UPDATE SKIP LOCKED
         LIMIT ${repairSlots}
       ),
+      reserved_candidates AS (
+        SELECT "id" FROM repair_candidates
+      ),
       regular_candidates AS (
         SELECT "id" FROM "WatchtowerJob"
         WHERE "status" = 'PENDING' AND "nextRunAt" <= NOW()
-          AND "id" NOT IN (SELECT "id" FROM repair_candidates)
-        ORDER BY "priority" ASC, "nextRunAt" ASC
+          AND (
+            NOT ${rustRepairEnabled}
+            OR "type" <> 'REPAIR_EPISODE'
+            OR "payload"->>'rustEligible' IS DISTINCT FROM 'true'
+            OR NOT EXISTS (
+              SELECT 1 FROM pg_locks
+              WHERE locktype = 'advisory' AND granted
+                AND classid = 991233::oid AND objid = 1::oid AND objsubid = 2
+            )
+          )
+          AND "id" NOT IN (SELECT "id" FROM reserved_candidates)
+        ORDER BY GREATEST(
+          1,
+          "priority" - LEAST(
+            "priority" - 1,
+            FLOOR(EXTRACT(EPOCH FROM (NOW() - "nextRunAt")) / 3600)::int
+          )
+        ) ASC, "nextRunAt" ASC, "createdAt" ASC
         FOR UPDATE SKIP LOCKED
-        LIMIT ${batchSize} - (SELECT COUNT(*) FROM repair_candidates)
+        LIMIT ${batchSize} - (SELECT COUNT(*) FROM reserved_candidates)
       ),
       candidates AS (
-        SELECT "id" FROM repair_candidates
+        SELECT "id" FROM reserved_candidates
         UNION ALL
         SELECT "id" FROM regular_candidates
       )
@@ -229,7 +306,7 @@ export class JobsService {
   /** Marca job como DONE, limpa lock. Guarda lockedBy p/ checar ownership. */
   async complete(id: string, lockedBy: string): Promise<void> {
     const r = await this.prisma.watchtowerJob.updateMany({
-      where: { id, lockedBy },
+      where: { id, lockedBy, status: 'RUNNING' },
       data: { status: 'DONE', lockedBy: null, lockedAt: null, lastError: null },
     });
     if (r.count === 0) {

@@ -40,7 +40,7 @@ WORKDIR /rust
 COPY scraper-rust/ ./
 # ponytail: sem layer de dependências, todo build recompila reqwest/serde/url
 # (~3 min). Separar `cargo build` de dummy src se o tempo de CI incomodar.
-RUN cargo build --release --locked
+RUN cargo build --release --locked --bins
 
 # Stage 5: Production
 FROM base AS production
@@ -56,6 +56,7 @@ COPY --chown=node:node --from=build /app/node_modules/@prisma ./node_modules/@pr
 COPY --chown=node:node --from=build /app/prisma.config.ts ./
 COPY --chown=node:node package.json ./
 COPY --from=rustbuild /rust/target/release/animefire-scraper /usr/local/bin/animefire-scraper
+COPY --from=rustbuild /rust/target/release/watchtower-worker /usr/local/bin/watchtower-worker
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 
 # Chromium p/ o fluxo Playwright (scrape de fontes + resolver tokens Blogger

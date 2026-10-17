@@ -470,22 +470,19 @@ export class CatalogScanner implements OnModuleInit {
               process.env.ANIMESDIGITAL_ENABLED === 'true'),
         ) || anime.catalogUnpublished;
 
-      // Sem force: pula apenas se tem episódios e parece completo (count real >= expected)
-      // MAS se expected é 0 (episodeCount null), sempre escaneia
+      // Só pula o que dá PROVA de estar completo: total conhecido (AniList) e
+      // já extraído até ele. Total desconhecido (episodeCount 0/null) nunca é
+      // prova — a regra antiga pulava todo anime com total desconhecido e ≥1 eps,
+      // o que congelava para sempre os irmãos criados pelo próprio split do
+      // scanner (nascem com episodeCount: 0) e qualquer anime sem metadado
+      // AniList. Medido antes da correção: 427 animes presos assim.
+      // Custo: 1 GET por anime/dia, e a dedupeKey mantém o teto em 1 job por
+      // anime — a fila não cresce com o tempo.
       if (
         !force &&
         !hasCatalogMapping &&
         expected > 0 &&
         dbEpisodeCount >= expected
-      ) {
-        continue;
-      }
-      // Sem force e sem episodeCount: pula se tem pelo menos 1 episódio
-      if (
-        !force &&
-        !hasCatalogMapping &&
-        expected === 0 &&
-        dbEpisodeCount > 0
       ) {
         continue;
       }
@@ -570,21 +567,19 @@ export class CatalogScanner implements OnModuleInit {
       },
     });
 
-    // Persiste o mapeamento na fonte que de fato respondeu.
-    // meusanimes: mantém o comportamento anterior — externalKey é derivado da
-    // URL do episódio (o catálogo publica as temporadas na mesma página).
-    // animesdigital: é série única, então o slug da própria página é a chave.
+    // Persiste o mapeamento na fonte que de fato respondeu. externalKey é o
+    // slug da PÁGINA DE CATÁLOGO que respondeu (scan.sourceSlug), não um slug
+    // derivado da URL de episódio: o catálogo do meusanimes publica todas as
+    // temporadas sob /a/<base>/, e derivar de /e/<base>-1-episodio-1/ gravava
+    // "<base>-1" como chave — o scan seguinte só acertava por causa do fallback
+    // que removia o "-<n>", e esse fallback não existe quando a chave é da
+    // própria temporada 1.
     const sourceId = scan.sourceId || 'meusanimes';
-    const seriesSlug =
-      entries
-        .find((entry) => entry.url.includes('meusanimes.blog'))
-        ?.url.match(/https:\/\/meusanimes\.blog\/e\/([^/]+)\//i)?.[1]
-        ?.replace(/-episodio-\d+.*$/i, '') ?? slug;
-    const externalKey =
-      sourceId === 'animesdigital' ? scan.sourceSlug : seriesSlug;
+    const seriesSlug = scan.sourceSlug || slug;
+    const externalKey = seriesSlug;
     const externalUrl =
       sourceId === 'animesdigital'
-        ? `https://animesdigital.org/anime/a/${scan.sourceSlug}`
+        ? `https://animesdigital.org/anime/a/${seriesSlug}`
         : `https://meusanimes.blog/a/${seriesSlug}/`;
     await this.prisma.animeSource
       ?.upsert({

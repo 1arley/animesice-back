@@ -9,16 +9,23 @@ function makeMocks() {
   const brokenEps: any[] = [];
   const sampleEps: any[] = [];
   const enqueue = jest.fn(async () => undefined);
-  const enqueueMany = jest.fn(async () => undefined);
+  // enqueueMany devolve as dedupeKeys aceitas: o sweep só marca repairQueuedAt
+  // nos episódios cuja chave voltou na resposta (cap de backlog pode cortar).
+  const enqueueMany = jest.fn(async (inputs: any[]) =>
+    inputs.map((input) => input.dedupeKey),
+  );
   const prisma = {
     watchtowerJob: { count: jest.fn(async () => 0) },
     episode: {
       findMany: jest.fn(async (args: any) => {
-        if (args.where?.videoUrl)
-          return sampleEps.slice(0, args.take ?? sampleEps.length);
-        if (args.where?.OR)
-          return brokenEps.slice(0, args.take ?? brokenEps.length);
-        return [];
+        const rows = args.where?.videoUrl
+          ? sampleEps
+          : args.where?.OR
+            ? brokenEps
+            : [];
+        return rows
+          .slice(0, args.take ?? rows.length)
+          .map((ep: any) => ({ sources: [], ...ep }));
       }),
       update: jest.fn(async () => undefined),
       updateMany: jest.fn(async () => undefined),
@@ -57,9 +64,15 @@ describe('RepairWorker', () => {
         expect.objectContaining({
           type: 'REPAIR_EPISODE',
           priority: 130,
-          payload: { animeId: 'a1', episodeNumber: 1, season: 1 },
+          payload: {
+            animeId: 'a1',
+            episodeNumber: 1,
+            season: 1,
+            rustEligible: false,
+          },
         }),
       ]),
+      expect.any(Number),
     );
   });
 
@@ -109,6 +122,7 @@ describe('RepairWorker', () => {
       expect.arrayContaining([
         expect.objectContaining({ type: 'REPAIR_EPISODE' }),
       ]),
+      expect.any(Number),
     );
     delete process.env.WT_REPAIR_DAILY_CAP;
   });
@@ -138,6 +152,7 @@ describe('RepairWorker', () => {
       expect.arrayContaining([
         expect.objectContaining({ type: 'REPAIR_EPISODE' }),
       ]),
+      expect.any(Number),
     );
     delete process.env.WT_REPAIR_DAILY_CAP;
   });

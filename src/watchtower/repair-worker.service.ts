@@ -17,11 +17,29 @@ import { extractJobKey, JOB_TYPE, PRIORITY } from './watchtower.types';
 
 // A amostra pode fazer probes HTTP sequenciais; mantenha o trabalho diário curto.
 const DEFAULT_DAILY_CAP = 5000;
+const DEFAULT_PENDING_REPAIR_CAP = 1000;
 const SOURCE_BACKFILL_CAP = 50;
 const CHECK_INTERVAL_MS = 7 * 24 * 60 * 60_000;
 
 /** Pausa repair sweep se fila de extração (EXTRACT_EPISODE) passar deste limite. */
 const EXTRACTION_QUEUE_BACKPRESSURE = 200;
+const RUST_REPAIR_HOSTS = [
+  'meusanimes.blog',
+  'meusdoramas.club',
+  'animesonline.cloud',
+];
+
+function rustCanRepair(url: string | null | undefined): boolean {
+  if (!url) return false;
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return RUST_REPAIR_HOSTS.some(
+      (allowed) => host === allowed || host.endsWith(`.${allowed}`),
+    );
+  } catch {
+    return false;
+  }
+}
 
 @Injectable()
 export class RepairWorker {
@@ -31,7 +49,13 @@ export class RepairWorker {
   ) {}
 
   async sweep(slugFilter?: string): Promise<number> {
-    const cap = Number(process.env.WT_REPAIR_DAILY_CAP ?? DEFAULT_DAILY_CAP);
+    const configuredCap = Number(
+      process.env.WT_REPAIR_DAILY_CAP ?? DEFAULT_DAILY_CAP,
+    );
+    const dailyCap =
+      Number.isSafeInteger(configuredCap) && configuredCap > 0
+        ? configuredCap
+        : DEFAULT_DAILY_CAP;
     const anime = slugFilter
       ? { published: true, slug: slugFilter }
       : { published: true };
@@ -44,6 +68,27 @@ export class RepairWorker {
     if (pendingExtracts > EXTRACTION_QUEUE_BACKPRESSURE) {
       console.error(
         `[REPAIR] backpressure: ${pendingExtracts} EXTRACT_EPISODE pendentes > ${EXTRACTION_QUEUE_BACKPRESSURE}, sweep pulado`,
+      );
+      return 0;
+    }
+
+    const configuredBacklogCap = Number(
+      process.env.WT_REPAIR_MAX_PENDING ?? DEFAULT_PENDING_REPAIR_CAP,
+    );
+    const backlogCap =
+      Number.isSafeInteger(configuredBacklogCap) && configuredBacklogCap > 0
+        ? configuredBacklogCap
+        : DEFAULT_PENDING_REPAIR_CAP;
+    const pendingRepairs = await this.prisma.watchtowerJob.count({
+      where: {
+        type: JOB_TYPE.REPAIR_EPISODE,
+        status: { in: ['PENDING', 'RUNNING'] },
+      },
+    });
+    const cap = Math.min(dailyCap, Math.max(0, backlogCap - pendingRepairs));
+    if (cap === 0) {
+      console.error(
+        `[REPAIR] backlog cap: ${pendingRepairs} jobs pendentes/em execução >= ${backlogCap}; sweep adiado`,
       );
       return 0;
     }
@@ -65,13 +110,24 @@ export class RepairWorker {
       },
       take: cap,
       orderBy: [{ repairQueuedAt: { sort: 'asc', nulls: 'first' } }],
-      select: { id: true, animeId: true, number: true, season: true },
+      select: {
+        id: true,
+        animeId: true,
+        number: true,
+        season: true,
+        sources: { select: { pageUrl: true, verifiedAt: true } },
+      },
     });
 
     const enqueueInputs: Array<{
       type: string;
       dedupeKey: string;
-      payload: { animeId: string; episodeNumber: number; season: number };
+      payload: {
+        animeId: string;
+        episodeNumber: number;
+        season: number;
+        rustEligible: boolean;
+      };
       priority: number;
     }> = [];
 
@@ -83,21 +139,34 @@ export class RepairWorker {
           animeId: ep.animeId,
           episodeNumber: ep.number,
           season: ep.season ?? 1,
+          rustEligible: ep.sources.some(
+            (source) =>
+              source.verifiedAt !== null && rustCanRepair(source.pageUrl),
+          ),
         },
         priority: PRIORITY.REPAIR,
       });
     }
 
-    if (enqueueInputs.length > 0) await this.jobs.enqueueMany(enqueueInputs);
-    if (broken.length > 0) {
+    const acceptedBroken =
+      enqueueInputs.length > 0
+        ? await this.jobs.enqueueMany(enqueueInputs, backlogCap)
+        : [];
+    const acceptedBrokenSet = new Set(acceptedBroken);
+    const queuedBroken = broken.filter((episode) =>
+      acceptedBrokenSet.has(
+        `repair:${episode.animeId}:${episode.season ?? 1}:${episode.number}`,
+      ),
+    );
+    if (queuedBroken.length > 0) {
       await this.prisma.episode.updateMany({
-        where: { id: { in: broken.map((episode) => episode.id) } },
+        where: { id: { in: queuedBroken.map((episode) => episode.id) } },
         data: { repairQueuedAt: new Date() },
       });
     }
-    let enqueued = enqueueInputs.length;
-    if (enqueued >= cap) {
-      return enqueued;
+    const alreadyEnqueued = acceptedBroken.length;
+    if (alreadyEnqueued >= cap) {
+      return alreadyEnqueued;
     }
 
     // Amostra maior p/ detectar vídeos mortos mais rápido
@@ -108,7 +177,7 @@ export class RepairWorker {
         OR: [{ videoCheckedAt: null }, { videoCheckedAt: { lt: checkBefore } }],
         anime,
       },
-      take: Math.max(0, cap - enqueued),
+      take: Math.max(0, cap - alreadyEnqueued),
       orderBy: [{ videoCheckedAt: { sort: 'asc', nulls: 'first' } }],
       select: {
         id: true,
@@ -116,13 +185,14 @@ export class RepairWorker {
         number: true,
         season: true,
         videoUrl: true,
+        sources: { select: { pageUrl: true, verifiedAt: true } },
       },
     });
     const deadIds: string[] = [];
     const checkedIds: string[] = [];
     const sampleInputs: typeof enqueueInputs = [];
     for (const ep of sample) {
-      if (enqueued >= cap) break;
+      if (alreadyEnqueued + sampleInputs.length >= cap) break;
       checkedIds.push(ep.id);
       if (!ep.videoUrl) continue;
       // Tokens googlevideo/Blogger expiram em ~8h. signedExpiryDead decide
@@ -140,14 +210,21 @@ export class RepairWorker {
             animeId: ep.animeId,
             episodeNumber: ep.number,
             season: ep.season ?? 1,
+            rustEligible: ep.sources.some(
+              (source) =>
+                source.verifiedAt !== null && rustCanRepair(source.pageUrl),
+            ),
           },
           priority: PRIORITY.REPAIR,
         });
-        enqueued++;
       }
     }
     // Enfileira antes de marcar a amostra para não perder reparos em falha de DB.
-    if (sampleInputs.length > 0) await this.jobs.enqueueMany(sampleInputs);
+    const acceptedSample =
+      sampleInputs.length > 0
+        ? await this.jobs.enqueueMany(sampleInputs, backlogCap)
+        : [];
+    const enqueued = alreadyEnqueued + acceptedSample.length;
     if (checkedIds.length > 0) {
       await this.prisma.episode.updateMany({
         where: { id: { in: checkedIds } },

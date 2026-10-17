@@ -83,9 +83,15 @@ function makeMockPrisma() {
     $queryRaw: jest.fn(
       async (strings: TemplateStringsArray, ...values: any[]) => {
         const sql = strings.join(' ');
+        if (sql.includes('RETURNING "dedupeKey"')) {
+          // enqueueMany: dedupeKeys aceitas vêm no RETURNING; o mock não
+          // parseia o VALUES, então os testes checam a query, não o retorno.
+          return [];
+        }
         if (sql.includes('candidates AS')) {
-          const lockId = values[2];
-          const limit = values[1];
+          // ordem de interpolação: repairSlots, rust, rust, batchSize, lockId
+          const lockId = values[4];
+          const limit = values[3];
           const candidates = [...store.values()]
             .filter((job) => job.status === 'PENDING')
             .slice(0, limit);
@@ -120,8 +126,27 @@ function makeMockPrisma() {
       },
     ),
     $executeRaw: jest.fn(async () => []),
+    // Interactive transaction: o callback recebe o mesmo mock. `cb` fica any
+    // de propósito — tipar com o prisma cria inferência circular aqui.
+    $transaction: jest.fn((cb: any): Promise<any> => cb(prisma)),
   };
   return prisma;
+}
+
+/** Valores interpolados na query de INSERT do enqueueMany, como texto. */
+function insertSql(mock: ReturnType<typeof makeMockPrisma>): string {
+  const call = mock.$queryRaw.mock.calls.find(([strings]) =>
+    strings.join(' ').includes('RETURNING "dedupeKey"'),
+  );
+  if (!call) throw new Error('enqueueMany não executou o INSERT');
+  return call
+    .slice(1)
+    .flatMap((value: unknown) => {
+      const nested = (value as { values?: unknown[] } | null)?.values;
+      return Array.isArray(nested) ? nested : [value];
+    })
+    .map((value: unknown) => JSON.stringify(value) ?? String(value))
+    .join(' ');
 }
 
 describe('JobsService', () => {
@@ -254,6 +279,27 @@ describe('JobsService', () => {
     expect(claimed[0]!.lockedBy).toBeDefined();
   });
 
+  it('claimBatch usa aging: job muito vencido fura a fila por prioridade', async () => {
+    await svc.enqueue({
+      type: 'SCAN_CATALOG',
+      dedupeKey: 'scan:aged',
+      payload: {},
+      priority: 75,
+    });
+
+    // O critério de ordenação É o comportamento: sem aging, um backlog de
+    // REPAIR_EPISODE que se reenfileira mantém SCAN_CATALOG (único caminho pra
+    // descobrir episódio novo) semanas parado — foi o que segurou o eps 4/5 do
+    // JoJo por 2 semanas. Aging reduz a prioridade efetiva em 1/h vencida.
+    await svc.claimBatch(6);
+    const call = mock.$queryRaw.mock.calls.find(([strings]) =>
+      strings.join(' ').includes('candidates AS'),
+    );
+    const sql = call![0].join(' ');
+    expect(sql).toMatch(/GREATEST\(/);
+    expect(sql).toMatch(/NOW\(\) - "nextRunAt"/);
+  });
+
   it('complete marca DONE e limpa lock', async () => {
     await svc.enqueue({
       type: 'EXTRACT_EPISODE',
@@ -363,15 +409,19 @@ describe('JobsService', () => {
     ).resolves.toBeUndefined();
   });
 
-  it('enqueue loga erro não-P2002', async () => {
+  it('enqueue loga e relança erro não-P2002', async () => {
     mock.watchtowerJob.findUnique.mockResolvedValue(null);
     mock.watchtowerJob.create.mockRejectedValue(new Error('db down'));
     const loggerSpy = jest.spyOn(svc['logger'], 'error').mockImplementation();
-    await svc.enqueue({
-      type: 'EXTRACT_EPISODE',
-      dedupeKey: 'extract:err:1',
-      payload: {},
-    });
+    // Relança: enfileirar em silêncio engolia reparos (decisão no registro de
+    // 2026-10-17). Quem chama decide o que fazer com a falha.
+    await expect(
+      svc.enqueue({
+        type: 'EXTRACT_EPISODE',
+        dedupeKey: 'extract:err:1',
+        payload: {},
+      }),
+    ).rejects.toThrow('db down');
     expect(loggerSpy).toHaveBeenCalled();
   });
 
@@ -380,11 +430,13 @@ describe('JobsService', () => {
     mock.watchtowerJob.create.mockRejectedValue('db down');
     const loggerSpy = jest.spyOn(svc['logger'], 'error').mockImplementation();
 
-    await svc.enqueue({
-      type: 'EXTRACT_EPISODE',
-      dedupeKey: 'extract:string-error',
-      payload: {},
-    });
+    await expect(
+      svc.enqueue({
+        type: 'EXTRACT_EPISODE',
+        dedupeKey: 'extract:string-error',
+        payload: {},
+      }),
+    ).rejects.toBe('db down');
 
     expect(loggerSpy).toHaveBeenCalledWith(expect.stringContaining('db down'));
   });
@@ -439,7 +491,8 @@ describe('JobsService', () => {
         payload: { slug: 'b' },
       },
     ]);
-    expect(mock.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(insertSql(mock)).toContain('extract:batch:2');
+    expect(mock.$transaction).toHaveBeenCalledTimes(1);
   });
 
   it('enqueueMany substitui payload nulo por objeto vazio', async () => {
@@ -451,7 +504,7 @@ describe('JobsService', () => {
       },
     ]);
 
-    expect(mock.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(insertSql(mock)).toContain('extract:batch:null-payload');
   });
 
   it('enqueueMany com lista vazia não executa', async () => {

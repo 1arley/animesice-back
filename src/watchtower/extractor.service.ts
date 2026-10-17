@@ -77,4 +77,34 @@ export class Extractor {
 
     return { candidates: out, triedSources: tried };
   }
+
+  async extractExact(
+    sourceId: string,
+    pageUrl: string,
+    expectedSourceId: string,
+    audio?: AudioType,
+  ): Promise<ExtractResult> {
+    const candidate = this.discovery.exactCandidate(pageUrl, expectedSourceId);
+    if (!candidate || candidate.sourceId !== sourceId) {
+      throw new Error('Handoff Rust contém URL/fonte incompatíveis');
+    }
+    const result = await this.scrape.scrapeEpisodeVideo(
+      candidate.url,
+      candidate.sourceId,
+      false,
+      false,
+      audio,
+    );
+    return {
+      candidates: result.videos.map((videoUrl) => ({
+        videoUrl,
+        sourceId: candidate.sourceId,
+        embedUrl: candidate.url,
+        thumbnailUrl: null,
+        title: null,
+        duration: null,
+      })),
+      triedSources: [candidate.sourceId],
+    };
+  }
 }
