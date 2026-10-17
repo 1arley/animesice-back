@@ -85,7 +85,19 @@ Multi-stage build (base → deps → build → production). Chromium + Xvfb inst
 
 ## Key env vars
 
-`DATABASE_URL`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET` (all required, ≥32 chars). `TURNSTILE_SECRET` for CAPTCHA. `EMBED_ALLOWED_HOSTS` for media proxy allowlist (fail-closed if empty). `TRUST_PROXY` must stay `false` unless behind Cloudflare with proper firewall.
+`DATABASE_URL`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET` (all required, ≥32 chars). `TURNSTILE_SECRET` for CAPTCHA. `TRUST_PROXY` must stay `false` unless behind Cloudflare with proper firewall.
+
+`EMBED_ALLOWED_HOSTS` é só a allowlist **estática** do proxy de mídia (fail-closed se vazia). O CDN do topanimes muda por episódio e não tem domínio comum, então ele **não** pode ser mantido à mão: quem resolve é `src/common/trusted-media-hosts.ts`, que confia no host que **o próprio scraper** extraiu, probeou e persistiu em `Episode.videoUrl`. Ponto único de registro: `ScrapeService.wrapResult`. O conjunto é reconstruído do banco no boot e de hora em hora. Isso **não** afrouxa SSRF — `isBlockedHostname` roda antes, em `validateAndNormalizeUrl` — e a confiança é por host exato, sem herdar para subdomínio. Os domínios que estão no `EMBED_ALLOWED_HOSTS` são belt-and-braces; se precisar tocar, meça antes.
+
+`MAX_CONCURRENT_SCRAPES` (=`TICK_CONCURRENCY`, prod=6) é o que define a taxa do backfill. `claimBatch` usa `min(WT_TICK_BATCH, TICK_CONCURRENCY)`, então subir só `WT_TICK_BATCH` **não faz nada**. Elevar exige `mem_limit` junto: os caminhos animesorion/animexhd resolvem token Blogger via Chromium (~60-100 MB por contexto).
+
+## Fontes de vídeo (regras que custaram tempo)
+
+- **Slug nosso ≠ slug da fonte.** Nosso slug carrega áudio/temporada (`bleach-dublado-2`), os sites indexam por nome (`bleach`). Cada fonte resolve em 2 passos: variantes de slug na URL template e, se falhar, a **listagem da página do anime**.
+- **As listagens estão no HTML estático** e usam `href='...'` com **aspas simples**. Regex que só caseia aspas duplas devolve zero e faz a fonte parecer sem episódios — foi assim que o topanimes pareceu não ter nada.
+- **Teste o caminho real, não Playwright naïf.** Espera fixa por `<video>` dá falso negativo: o Blogger resolve em `resolvePlayerToken` (event-driven por `batchexecute`). O commit `5553ccf` registrou que o player Blogger estava quebrado na VPS — **estava errado**, e a conclusão errada foi "animesorion está inativo".
+- `playerflix.ink` responde **0 bytes sem o Referer** correto; a cadeia quebra em silêncio sem isso.
+- **CUIDADO na VPS:** o Watchtower clona a config do container, então **mudança em `.env` (`env_file`) não é relida** — precisa recreate. Não há `docker compose` na VPS (nem plugin nem v1). E o `docker-compose.yml` do host declara `prisma migrate deploy && ...`, mas o container em produção roda `|| true`: há migration com `rolled_back_at`, e com `&&` ela derrubaria o boot.
 
 ## Architecture
 

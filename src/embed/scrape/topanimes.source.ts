@@ -35,6 +35,16 @@ const EMBED_FILE_RE = /\[(\d{3,4})p\](https?:\/\/[^\s"',[\]]+\.mp4)/gi;
 /** src de <iframe> (players secundários). */
 const IFRAME_SRC_RE = /<iframe[^>]+src=["']([^"']+)["']/gi;
 
+/**
+ * Link de episódio na página do anime: `/episodio/<slug>-episodio-<n>/`.
+ * Aceita aspas simples E duplas — o tema emite as simples.
+ */
+const EPISODE_LINK_RE =
+  /href=["'](https?:\/\/topanimes\.net\/episodio\/[^"']*?-episodio-(\d+)\/?)["']/gi;
+
+const UA_ANIME_PAGE =
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
 /** Modo que a própria página do player usa para obter o JSON de mídias. */
 const PLAYER_API_MODE = 'to-salvando-seu-ip';
 
@@ -101,8 +111,17 @@ export class TopanimesScrapeSource implements ScrapeSource {
   }
 
   /**
-   * URL real do episódio: tenta as variantes de slug e devolve a primeira
-   * que responde 200 (o topanimes nem sempre tem o sufixo `-dublado`).
+   * URL real do episódio.
+   *
+   * 1) variantes de slug (`bleach-dublado-2` -> `bleach`) na URL template;
+   * 2) página do anime, que traz a lista real de episódios.
+   *
+   * O passo 2 é o que pega o resto: o topanimes indexa o episódio sob um slug
+   * derivado do título original (`buchigire-...-chikara-de-sokoku-wo-ta` vira
+   * `...-wo-tatakitsubushimasu`), que o template nunca adivinha.
+   *
+   * NOTA: os links usam `href='...'` (aspas simples) — um padrão que só
+   * caseia aspas duplas devolve zero e faz a fonte parecer sem episódios.
    */
   async resolveEpisodeUrl(
     animeSlug: string,
@@ -111,6 +130,29 @@ export class TopanimesScrapeSource implements ScrapeSource {
     for (const slug of this.slugVariants(animeSlug)) {
       const url = this.episodeUrl(slug, episodeNumber);
       if (await this.exists(url)) return url;
+    }
+    return this.episodeLinkFromAnimePage(animeSlug, episodeNumber);
+  }
+
+  /** Procura o episódio na listagem da página do anime. */
+  private async episodeLinkFromAnimePage(
+    animeSlug: string,
+    episodeNumber: number,
+  ): Promise<string | null> {
+    for (const slug of this.slugVariants(animeSlug)) {
+      let html: string;
+      try {
+        html = await this.get(
+          `https://topanimes.net/animes/${slug}/`,
+          UA_ANIME_PAGE,
+        );
+      } catch {
+        continue;
+      }
+      const hit = [...html.matchAll(EPISODE_LINK_RE)]
+        .map((m) => ({ url: m[1]!, ep: Number(m[2]) }))
+        .find((c) => c.ep === episodeNumber);
+      if (hit) return hit.url;
     }
     return null;
   }

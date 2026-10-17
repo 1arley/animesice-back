@@ -135,6 +135,39 @@ describe('AnimesorionScrapeSource', () => {
     expect(mockedFetchSafeRaw).toHaveBeenCalledTimes(2);
   });
 
+  it('resolveEpisodeUrl cai na listagem da página do anime quando o template falha', async () => {
+    // Aspas SIMPLES, formato <season>x<ep>. Precisa casaar season E episódio:
+    // sem o filtro, o ep 1 da temporada 2 seria aceito como o da 1.
+    const animePage = `
+      <a href='https://animesorion.cc/episodios/pokemon-1x1/'>1x1</a>
+      <a href='https://animesorion.cc/episodios/pokemon-2x1/'>2x1</a>
+      <a href='https://animesorion.cc/episodios/pokemon-1x3/'>1x3</a>
+    `;
+    // slug sem sufixo dublado => 1 variante => exists() 404 + página do anime
+    queueFetch({ body: '', status: 404 }, { body: animePage });
+
+    const resolved = await source.resolveEpisodeUrl(
+      'pokemon-2023',
+      3,
+      1,
+      'https://animesorion.cc',
+    );
+
+    expect(resolved).toBe('https://animesorion.cc/episodios/pokemon-1x3/');
+  });
+
+  it('resolveEpisodeUrl da listagem respeita a temporada', async () => {
+    const animePage = `
+      <a href='https://animexhd.xyz/episodios/pokemon-1x1/'>1x1</a>
+      <a href='https://animexhd.xyz/episodios/pokemon-2x1/'>2x1</a>
+    `;
+    queueFetch({ body: '', status: 404 }, { body: animePage });
+
+    expect(
+      await source.resolveEpisodeUrl('pokemon', 1, 2, 'https://animexhd.xyz'),
+    ).toBe('https://animexhd.xyz/episodios/pokemon-2x1/');
+  });
+
   it('extractHttp extrai o serie id do iframe myembed e devolve tokens Blogger', async () => {
     queueFetch(
       { body: KIT_HTML },

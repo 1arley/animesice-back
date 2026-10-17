@@ -96,9 +96,14 @@ export class AnimesorionScrapeSource implements ScrapeSource {
   }
 
   /**
-   * URL real do episódio: as variantes de slug são tentadas em ordem e a
-   * primeira que responde 2xx/3xx vence. Nossas slugs carregam áudio
-   * (`bleach-dublado-2`) que a fonte não indexa (`bleach`).
+   * URL real do episódio.
+   *
+   * 1) variantes de slug na URL template;
+   * 2) página do anime, que traz a listagem real (formato `<slug>-<s>x<n>`).
+   *
+   * O passo 2 pega o que o template não acerta. NOTA: o HTML usa
+   * `href='...'` (aspas simples) — um padrão que só caseia aspas duplas
+   * devolve zero e faz a fonte parecer sem episódios.
    */
   async resolveEpisodeUrl(
     animeSlug: string,
@@ -109,6 +114,41 @@ export class AnimesorionScrapeSource implements ScrapeSource {
     for (const slug of this.slugVariants(animeSlug)) {
       const url = this.episodeUrl(slug, episodeNumber, season, host);
       if (await this.exists(url)) return url;
+    }
+    return this.episodeLinkFromAnimePage(
+      animeSlug,
+      episodeNumber,
+      season,
+      host,
+    );
+  }
+
+  /** Procura (season, episódio) na listagem da página do anime. */
+  private async episodeLinkFromAnimePage(
+    animeSlug: string,
+    episodeNumber: number,
+    season: number,
+    host: string,
+  ): Promise<string | null> {
+    const hostKey = host.replace(/^https?:\/\//, '');
+    const re = new RegExp(
+      String.raw`href=["'](https?://${hostKey.replace(
+        /\./g,
+        String.raw`\.`,
+      )}/episodios/[^"']*?-(\d+)x(\d+)\/?)["']`,
+      'gi',
+    );
+    for (const slug of this.slugVariants(animeSlug)) {
+      let html: string;
+      try {
+        html = await this.get(`${host}/animes/${slug}/`, `${host}/`);
+      } catch {
+        continue;
+      }
+      const hit = [...html.matchAll(re)]
+        .map((m) => ({ url: m[1]!, s: Number(m[2]), ep: Number(m[3]) }))
+        .find((c) => c.s === season && c.ep === episodeNumber);
+      if (hit) return hit.url;
     }
     return null;
   }

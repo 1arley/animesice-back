@@ -107,6 +107,53 @@ describe('TopanimesScrapeSource', () => {
     expect(mockedFetchSafeRaw).toHaveBeenCalledTimes(2);
   });
 
+  it('resolveEpisodeUrl cai na listagem da página do anime quando o template falha', async () => {
+    // Aspas SIMPLES — o que o tema emite. Um padrão que só caseia aspas
+    // duplas faz a fonte parecer não ter episódios.
+    const animePage = `
+      <div class='episodiotitle'><a href='https://topanimes.net/episodio/buchigire-reijou-wo-tatakitsubushimasu-episodio-1/'>Episódio 1</a></div>
+      <div class='episodiotitle'><a href='https://topanimes.net/episodio/buchigire-reijou-wo-tatakitsubushimasu-episodio-7/'>Episódio 7</a></div>
+    `;
+    // slug sem sufixo dublado => 1 variante => exists() 404 + página do anime
+    queueFetch({ body: '', status: 404 }, { body: animePage });
+
+    const resolved = await source.resolveEpisodeUrl('buchigire-reijou', 7);
+
+    expect(resolved).toBe(
+      'https://topanimes.net/episodio/buchigire-reijou-wo-tatakitsubushimasu-episodio-7/',
+    );
+  });
+
+  it('resolveEpisodeUrl aceita aspas duplas também', async () => {
+    const animePage = `<a href="https://topanimes.net/episodio/x-episodio-3/">3</a>`;
+    queueFetch({ body: '', status: 404 }, { body: animePage });
+
+    expect(await source.resolveEpisodeUrl('x', 3)).toBe(
+      'https://topanimes.net/episodio/x-episodio-3/',
+    );
+  });
+
+  it('resolveEpisodeUrl devolve null se a listagem não tem o episódio', async () => {
+    const animePage = `<a href='https://topanimes.net/episodio/x-episodio-1/'>1</a>`;
+    queueFetch({ body: '', status: 404 }, { body: animePage });
+
+    expect(await source.resolveEpisodeUrl('x', 9)).toBeNull();
+  });
+
+  it('resolveEpisodeUrl tenta as duas variantes antes da página do anime', async () => {
+    const animePage = `<a href='https://topanimes.net/episodio/bleach-episodio-2/'>2</a>`;
+    queueFetch(
+      { body: '', status: 404 }, // exists(bleach-dublado-2)
+      { body: '', status: 404 }, // exists(bleach)
+      { body: '', status: 404 }, // pagina(bleach-dublado-2) -> 404
+      { body: animePage },
+    );
+
+    expect(await source.resolveEpisodeUrl('bleach-dublado-2', 2)).toBe(
+      'https://topanimes.net/episodio/bleach-episodio-2/',
+    );
+  });
+
   it('extractHttp extrai o HLS do player sk-api, melhor qualidade primeiro', async () => {
     queueFetch(
       { body: HLS_HTML },
