@@ -35,6 +35,28 @@ describe('SourceDiscovery', () => {
     discovery = new SourceDiscovery(health as any);
   });
 
+  it('exactCandidate só devolve quando a fonte bate com o host', () => {
+    expect(
+      discovery.exactCandidate(
+        'https://meusanimes.blog/a/bleach/',
+        'meusanimes',
+      ),
+    ).toEqual({
+      sourceId: 'meusanimes',
+      url: 'https://meusanimes.blog/a/bleach/',
+    });
+    // Handoff Rust afirma outra fonte: não pode raspar URL alheia.
+    expect(
+      discovery.exactCandidate(
+        'https://meusanimes.blog/a/bleach/',
+        'animefire',
+      ),
+    ).toBeNull();
+    expect(
+      discovery.exactCandidate('https://desconhecido.test/e/1', 'meusanimes'),
+    ).toBeNull();
+  });
+
   it('candidates retorna ordem de health quando URLs respondem', async () => {
     global.fetch = makeFetchMock({}) as any;
     const result = await discovery.candidates('solo-leveling', 1);

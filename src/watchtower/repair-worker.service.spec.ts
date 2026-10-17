@@ -238,6 +238,70 @@ describe('RepairWorker', () => {
     ]);
   });
 
+  it('marca rustEligible só com fonte verificada que o worker Rust cobre', async () => {
+    m.brokenEps.push(
+      {
+        id: 'ep-rust',
+        animeId: 'a1',
+        number: 1,
+        season: 1,
+        sources: [
+          { pageUrl: 'https://meusanimes.blog/e/x-1/', verifiedAt: new Date() },
+        ],
+      },
+      {
+        id: 'ep-nao-verificada',
+        animeId: 'a1',
+        number: 2,
+        season: 1,
+        sources: [
+          { pageUrl: 'https://meusanimes.blog/e/y-1/', verifiedAt: null },
+        ],
+      },
+      {
+        id: 'ep-fora-da-allowlist',
+        animeId: 'a1',
+        number: 3,
+        season: 1,
+        sources: [
+          {
+            pageUrl: 'https://desconhecido.test/e/z-1/',
+            verifiedAt: new Date(),
+          },
+        ],
+      },
+    );
+    const worker = new RepairWorker(
+      m.prisma as any,
+      { enqueue: m.enqueue, enqueueMany: m.enqueueMany } as any,
+    );
+    await worker.sweep();
+
+    const payloads = m.enqueueMany.mock.calls[0]![0] as Array<{
+      dedupeKey: string;
+      payload: { rustEligible: boolean };
+    }>;
+    const byKey = new Map(
+      payloads.map((p) => [p.dedupeKey, p.payload.rustEligible]),
+    );
+    expect(byKey.get('repair:a1:1:1')).toBe(true);
+    expect(byKey.get('repair:a1:1:2')).toBe(false);
+    expect(byKey.get('repair:a1:1:3')).toBe(false);
+  });
+
+  it('atrasa o sweep quando o backlog de REPAIR já atingiu o cap', async () => {
+    process.env.WT_REPAIR_MAX_PENDING = '10';
+    m.prisma.watchtowerJob.count = jest.fn(async () => 10) as any;
+    m.brokenEps.push({ id: 'ep1', animeId: 'a1', number: 1, season: 1 });
+    const worker = new RepairWorker(
+      m.prisma as any,
+      { enqueue: m.enqueue, enqueueMany: m.enqueueMany } as any,
+    );
+    expect(await worker.sweep()).toBe(0);
+    expect(m.enqueueMany).not.toHaveBeenCalled();
+    delete process.env.WT_REPAIR_MAX_PENDING;
+  });
+
   it('marca reparos agendados em repairQueuedAt sem alterar videoCheckedAt', async () => {
     m.brokenEps.push({ id: 'broken-1', animeId: 'a1', number: 1, season: 1 });
     const worker = new RepairWorker(

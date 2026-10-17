@@ -44,6 +44,7 @@ function makeMockPrisma() {
         return row;
       }),
       groupBy: jest.fn(async () => [{ status: 'PENDING', _count: 3 }]),
+      count: jest.fn(async () => 0),
       update: jest.fn(async (args: any) => {
         const id = args.where?.id;
         if (!id || !store.has(id)) {
@@ -493,6 +494,39 @@ describe('JobsService', () => {
     ]);
     expect(insertSql(mock)).toContain('extract:batch:2');
     expect(mock.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('enqueueMany corta REPAIR_EPISODE acima do cap de backlog', async () => {
+    await svc.enqueueMany(
+      [
+        {
+          type: 'REPAIR_EPISODE',
+          dedupeKey: 'repair:cap:1',
+          payload: {},
+          priority: 130,
+        },
+        {
+          type: 'REPAIR_EPISODE',
+          dedupeKey: 'repair:cap:2',
+          payload: {},
+          priority: 130,
+        },
+        {
+          type: 'EXTRACT_EPISODE',
+          dedupeKey: 'extract:cap:keep',
+          payload: {},
+        },
+      ],
+      1,
+    );
+
+    // Só 1 slot de reparo: a mais urgente entra, o resto espera o próximo
+    // sweep. Reparo novo é fura-fila; encher a fila é o que travava a rodada.
+    const inserted = insertSql(mock);
+    expect(inserted).toContain('repair:cap:1');
+    expect(inserted).not.toContain('repair:cap:2');
+    // Reparo não pode passar na carona de outros tipos.
+    expect(inserted).toContain('extract:cap:keep');
   });
 
   it('enqueueMany substitui payload nulo por objeto vazio', async () => {

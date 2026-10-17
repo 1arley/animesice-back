@@ -23,6 +23,12 @@ function makeMocks() {
         },
         { sourceId: 'animefire', url: `https://animefire.io/animes/${slug}/1` },
       ]),
+      // Espelha o host→sourceId do SourceDiscovery real.
+      exactCandidate: jest.fn((url: string) => {
+        if (url.includes('animefire')) return { sourceId: 'animefire', url };
+        if (url.includes('meusanimes')) return { sourceId: 'meusanimes', url };
+        return null;
+      }),
     },
   };
 }
@@ -92,5 +98,40 @@ describe('Extractor', () => {
     const { candidates, triedSources } = await extractor.extract('solo', 1);
     expect(candidates).toHaveLength(0);
     expect(triedSources).toHaveLength(0);
+  });
+
+  it('extractExact raspa só a fonte do handoff Rust', async () => {
+    m.scrapeResults.set('meusanimes', ['https://cdn.test/rust.mp4']);
+    const extractor = new Extractor(m.scrape as any, m.discovery as any);
+    const { candidates, triedSources } = await extractor.extractExact(
+      'meusanimes',
+      'https://meusanimes.blog/e/bleach-1-episodio-1/',
+      'meusanimes',
+    );
+    expect(triedSources).toEqual(['meusanimes']);
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]!.videoUrl).toBe('https://cdn.test/rust.mp4');
+    expect(candidates[0]!.embedUrl).toContain('meusanimes.blog');
+  });
+
+  it('extractExact recusa handoff com fonte ou host divergente', async () => {
+    const extractor = new Extractor(m.scrape as any, m.discovery as any);
+    // URL é animefire mas o handoff afirma meusanimes.
+    await expect(
+      extractor.extractExact(
+        'meusanimes',
+        'https://animefire.io/animes/solo/1',
+        'meusanimes',
+      ),
+    ).rejects.toThrow('incompatíveis');
+    // Host fora da allowlist: discovery não devolve candidata.
+    await expect(
+      extractor.extractExact(
+        'meusanimes',
+        'https://desconhecido.test/e/1',
+        'meusanimes',
+      ),
+    ).rejects.toThrow('incompatíveis');
+    expect(m.scrape.scrapeEpisodeVideo).not.toHaveBeenCalled();
   });
 });
