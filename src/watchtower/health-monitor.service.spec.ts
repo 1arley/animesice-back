@@ -37,7 +37,12 @@ function makeMockPrisma() {
       update: jest.fn(async (args: any) => {
         const id = args.where?.sourceId;
         const existing = store.get(id) ?? {};
-        Object.assign(existing, args.data);
+        for (const [k, v] of Object.entries(args.data ?? {})) {
+          existing[k] =
+            v && typeof v === 'object' && 'increment' in v
+              ? (existing[k] ?? 0) + (v as any).increment
+              : v;
+        }
         store.set(id, existing);
         return existing;
       }),
@@ -100,6 +105,8 @@ describe('HealthMonitor', () => {
   beforeEach(() => {
     mock = makeMockPrisma();
     health = new HealthMonitor(mock as any);
+    // Probe da home injetado: o default faz fetch de rede.
+    health.probeUp = jest.fn(async () => false);
   });
 
   it('recordSuccess zera consecutiveFailures e habilita', async () => {
@@ -132,13 +139,81 @@ describe('HealthMonitor', () => {
     expect(row.disabled).toBe(false);
   });
 
-  it('recordFailure desabilita após 5 falhas consecutivas', async () => {
+  it('recordFailure desabilita após 5 falhas consecutivas com o site fora do ar', async () => {
     for (let i = 0; i < 5; i++) {
       await health.recordFailure('animesonlinecc');
     }
     const row = mock.store.get('animesonlinecc');
     expect(row.consecutiveFailures).toBe(5);
     expect(row.disabled).toBe(true);
+  });
+
+  it('403 em episódio com site no ar NÃO desabilita a fonte', async () => {
+    health.probeUp = jest.fn(async () => true);
+    for (let i = 0; i < 20; i++) {
+      await health.recordFailure('meusanimes', {
+        kind: 'AVAILABILITY',
+        error: 'https://meusanimes.blog/e/x/ retornou 403',
+      });
+    }
+    const row = mock.store.get('meusanimes');
+    expect(row.disabled).toBeFalsy();
+    expect(row.consecutiveFailures).toBe(0);
+    expect(row.failureCount).toBe(20);
+  });
+
+  it('probe da home roda no máximo 1 vez por TTL em rajada de falhas', async () => {
+    health.probeUp = jest.fn(async () => true);
+    for (let i = 0; i < 10; i++) {
+      await health.recordFailure('meusanimes', { kind: 'AVAILABILITY' });
+    }
+    expect(health.probeUp).toHaveBeenCalledTimes(1);
+  });
+
+  it('fonte auto-desativada volta sozinha depois do cooldown', async () => {
+    mock.store.set('meusanimes', {
+      sourceId: 'meusanimes',
+      disabled: true,
+      disabledByAdmin: false,
+      consecutiveFailures: 5,
+      lastFailureAt: new Date(Date.now() - 31 * 60_000),
+    });
+    expect(await health.isDisabled('meusanimes')).toBe(false);
+    expect(mock.store.get('meusanimes').disabled).toBe(false);
+    expect(mock.store.get('meusanimes').consecutiveFailures).toBe(0);
+  });
+
+  it('fonte desativada continua desligada dentro do cooldown', async () => {
+    mock.store.set('meusanimes', {
+      sourceId: 'meusanimes',
+      disabled: true,
+      disabledByAdmin: false,
+      lastFailureAt: new Date(Date.now() - 5 * 60_000),
+    });
+    expect(await health.isDisabled('meusanimes')).toBe(true);
+  });
+
+  it('fonte desligada por admin nunca volta sozinha', async () => {
+    mock.store.set('topanimes', {
+      sourceId: 'topanimes',
+      disabled: true,
+      disabledByAdmin: true,
+      lastFailureAt: new Date(Date.now() - 10 * 60 * 60_000),
+    });
+    expect(await health.isDisabled('topanimes')).toBe(true);
+  });
+
+  it('rankedSources reabilita fonte com cooldown expirado', async () => {
+    mock.store.set('meusanimes', {
+      sourceId: 'meusanimes',
+      successCount: 1,
+      failureCount: 0,
+      avgLatencyMs: 100,
+      disabled: true,
+      disabledByAdmin: false,
+      lastFailureAt: new Date(Date.now() - 31 * 60_000),
+    });
+    expect(await health.rankedSources()).toContain('meusanimes');
   });
 
   it('recordSuccess resseta consecutiveFailures apos falha', async () => {
