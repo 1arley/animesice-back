@@ -108,8 +108,12 @@ export class Publisher {
           },
         });
       }
+      // Qualquer anime despublicado volta quando um episódio é publicado —
+      // não só os marcados pelo scanner de catálogo. Sem isto, despublicar um
+      // anime 100% quebrado era irreversível: o reparo publicava o episódio
+      // mas o anime continuava fora do site.
       await this.prisma.anime.updateMany({
-        where: { id: episode.animeId, catalogUnpublished: true },
+        where: { id: episode.animeId, published: false },
         data: {
           published: true,
           catalogUnpublished: false,

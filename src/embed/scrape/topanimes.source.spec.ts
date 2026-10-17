@@ -65,11 +65,23 @@ const BLOGGER_HTML = `
   <iframe class='metaframe rptss' src='https://www.blogger.com/video.g?token=AD6v5dyGqQRTgspPq3ARl1yPAtmIn6c5JsuDLalrBA15V5v5Lp1KpVp'></iframe>
 `;
 
+/** Player atual (17/10/2026): embed csst/fsst/incvideo1 com `file` por qualidade. */
+const EMBED_HTML = `
+  <div id='source-player-1' class='source-box'><iframe class='metaframe rptss' src='https://csst.online/embed/847846/'></iframe></div>
+`;
+
+const EMBED_PLAYER_HTML = `
+  file:"[360p]https://www.incvideo1.online/get_file/9/aaa/847000/847846/847846_360p.mp4/,[720p]https://www.incvideo1.online/get_file/9/bbb/847000/847846/847846_720p.mp4/,[1080p]https://www.incvideo1.online/get_file/9/ccc/847000/847846/847846.mp4/"
+`;
+
 describe('TopanimesScrapeSource', () => {
   let source: TopanimesScrapeSource;
 
   beforeEach(() => {
     jest.clearAllMocks();
+    // clearAllMocks não volta a implementação: um caso que define
+    // mockImplementation vaza para o seguinte.
+    mockedProbe.mockImplementation(async () => false);
     source = new TopanimesScrapeSource();
   });
 
@@ -172,6 +184,58 @@ describe('TopanimesScrapeSource', () => {
     expect(result.playerTokens).toEqual([
       'https://www.blogger.com/video.g?token=AD6v5dyGqQRTgspPq3ARl1yPAtmIn6c5JsuDLalrBA15V5v5Lp1KpVp',
     ]);
+  });
+
+  it('extractHttp extrai o player embed atual, maior qualidade primeiro', async () => {
+    queueFetch({ body: EMBED_HTML }, { body: EMBED_PLAYER_HTML });
+
+    const result = await source.extractHttp({
+      episodeUrl: EPISODE_URL,
+      ua: UA,
+    });
+
+    expect(result.videos).toEqual([
+      'https://www.incvideo1.online/get_file/9/ccc/847000/847846/847846.mp4',
+      'https://www.incvideo1.online/get_file/9/bbb/847000/847846/847846_720p.mp4',
+      'https://www.incvideo1.online/get_file/9/aaa/847000/847846/847846_360p.mp4',
+    ]);
+    expect(result.cloudflare).toBe(false);
+  });
+
+  it('extractHttp segue o embed fsst e descarta mídias mortas no probe', async () => {
+    queueFetch(
+      {
+        body: "<iframe src='https://fsst.online/embed/12345/'></iframe>",
+      },
+      { body: EMBED_PLAYER_HTML },
+    );
+    mockedProbe.mockImplementation(async (url) => url.includes('_360p'));
+
+    const result = await source.extractHttp({
+      episodeUrl: EPISODE_URL,
+      ua: UA,
+    });
+
+    expect(result.videos).toEqual([
+      'https://www.incvideo1.online/get_file/9/ccc/847000/847846/847846.mp4',
+      'https://www.incvideo1.online/get_file/9/bbb/847000/847846/847846_720p.mp4',
+    ]);
+  });
+
+  it('extractHttp cai no player Blogger quando o embed não devolve mídia viva', async () => {
+    queueFetch(
+      { body: `${EMBED_HTML}${BLOGGER_HTML}` },
+      { body: '[1080p]https://cdn.exemplo/morta.mp4' },
+    );
+    mockedProbe.mockResolvedValue(true);
+
+    const result = await source.extractHttp({
+      episodeUrl: EPISODE_URL,
+      ua: UA,
+    });
+
+    expect(result.videos).toEqual([]);
+    expect(result.playerTokens).toHaveLength(1);
   });
 
   it('extractHttp lança quando a página não tem player nenhum', async () => {

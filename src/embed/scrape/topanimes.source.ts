@@ -13,8 +13,24 @@ import {
   keepVideoUrls,
 } from './extract';
 
-/** Host do player HLS: a página do episódio traz o iframe deste domínio. */
-const PLAYER_HOST_RE = /https:\/\/sk-api\.alibabacdn\.net\/\?id=([^'"&\s]+)/i;
+/**
+ * Host do player HLS: a página do episódio traz o iframe deste domínio.
+ * sk-dc é a variante regional do mesmo player (medido em 17/10/2026).
+ */
+const PLAYER_HOST_RE =
+  /https:\/\/((?:www\.)?sk-(?:api|dc)\.alibabacdn\.net)\/\?id=([^'"&\s]+)/i;
+
+/**
+ * Player atual (medido em 17/10/2026): o sk-api saiu do ar e a página passou a
+ * servir <iframe src="https://csst.online/embed/<id>/">, que responde 301 para
+ * incvideo1.online/embed/<id>/ com .mp4 direto por qualidade. Sem essa cadeia o
+ * adapter jogava "sem player reconhecido" em 100% dos episódios.
+ */
+const EMBED_RE =
+  /https?:\/\/(?:www\.)?(csst|fsst|incvideo1)\.online\/embed\/(\d+)/gi;
+
+/** `file:"[360p]https://...360p.mp4/,[720p]https://...720p.mp4/,[1080p]..."`. */
+const EMBED_FILE_RE = /\[(\d{3,4})p\](https?:\/\/[^\s"',[\]]+\.mp4)/gi;
 
 /** src de <iframe> (players secundários). */
 const IFRAME_SRC_RE = /<iframe[^>]+src=["']([^"']+)["']/gi;
@@ -33,6 +49,14 @@ const QUALITY_WEIGHT: Record<string, number> = {
 /** Teto de probes de liveness (evita ~5s x N candidatas mortas). */
 const MAX_PROBES = 4;
 
+function safeDecode(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 /**
  * Adapter topanimes.net — WordPress/Dooplay pt-BR, extração HTTP pura.
  *
@@ -41,15 +65,20 @@ const MAX_PROBES = 4;
  * O slug do episódio é IDÊNTICO ao nosso (template `-episodio-<n>`), então
  * não há mapeamento de catálogo.
  *
- * Cadeia (2 requests, sem navegador):
- *   1. GET /episodio/<slug>-episodio-<n>
- *        -> <iframe src="https://sk-api.alibabacdn.net/?id=<ID>">
- *   2. GET sk-api.alibabacdn.net/?id=<ID>&mode=to-salvando-seu-ip
- *        -> { status, midias: [{ qualidade, url }] }
+ * Cadeias (HTTP puro, sem navegador):
+ *   A) embed (player atual, medido em 17/10/2026):
+ *      1. GET /episodio/<slug>-episodio-<n> -> iframe `csst.online/embed/<id>`
+ *         (às vezes embrulhado em `/aviso/?url=<url-encoded>`)
+ *      2. GET <csst|fsst|incvideo1>.online/embed/<id>/ (o csst responde 301 p/
+ *         incvideo1) -> `file:"[1080p]https://...mp4/,[720p]..."`
+ *   B) sk-api (ainda em parte dos episódios):
+ *      1. GET página -> <iframe src="https://sk-api.alibabacdn.net/?id=<ID>">
+ *      2. GET sk-api...?id=<ID>&mode=to-salvando-seu-ip
+ *         -> { status, midias: [{ qualidade, url }] }
  *
- * `url` é HLS (.m3u8) assinado (hdnts=exp=..._hmac=...), TTL ~24h. O proxy
- * de mídia já reescreve playlist e roteia segmentos (.ts), então o host do
- * CDN precisa estar em EMBED_ALLOWED_HOSTS.
+ * HLS do sk-api é assinado (hdnts=exp=..._hmac=...), TTL ~24h; o embed devolve
+ * .mp4 direto. O host do CDN entra na confiança por procedência
+ * (`trusted-media-hosts`), sem depender de EMBED_ALLOWED_HOSTS.
  */
 @Injectable()
 export class TopanimesScrapeSource implements ScrapeSource {
@@ -110,35 +139,71 @@ export class TopanimesScrapeSource implements ScrapeSource {
       ),
     ];
 
-    const playerId = html.match(PLAYER_HOST_RE)?.[1];
-    if (!playerId) {
-      if (playerTokens.length === 0) {
-        throw new Error(
-          `topanimes: ${ctx.episodeUrl} sem player reconhecido (sk-api/Blogger)`,
-        );
+    // Metade dos players vem pelo wrapper `/aviso/?url=<url-encoded>`: o src do
+    // iframe não traz o host do player, então a página é decodificada antes de
+    // casar o embed.
+    const decoded = [...html.matchAll(/aviso\/\?url=([^'"&\s>]+)/g)]
+      .map((m) => safeDecode(m[1]!))
+      .join('\n');
+    const embeds = [
+      ...new Set(
+        [...`${html}\n${decoded}`.matchAll(EMBED_RE)].map(
+          (m) => `https://${m[1]!.toLowerCase()}.online/embed/${m[2]}/`,
+        ),
+      ),
+    ];
+
+    // O player sk-api é a via antiga: só vira fallback quando o embed não salva,
+    // então a falha dele é guardada em vez de quebrada na hora.
+    const player = html.match(PLAYER_HOST_RE);
+    let playerError: unknown;
+    let midias: string[] = [];
+    if (player) {
+      try {
+        midias = await this.playerSources(player[1]!, player[2]!, ctx.ua);
+      } catch (err) {
+        playerError = err;
       }
-      return { videos: [], iframes: [], cloudflare: false, playerTokens };
+    }
+    if (midias.length > 0) {
+      const videos = (
+        await Promise.all(
+          midias.slice(0, MAX_PROBES).map(async (url) => {
+            return (await probeMediaUrlDead(url, true)) ? null : url;
+          }),
+        )
+      ).filter((url): url is string => url !== null);
+      return { videos, iframes: [], cloudflare: false, playerTokens };
     }
 
-    const midias = await this.playerSources(playerId, ctx.ua);
-    const candidates = midias.slice(0, MAX_PROBES);
-
-    const videos: string[] = [];
-    for (const url of candidates) {
-      if (!(await probeMediaUrlDead(url, true))) videos.push(url);
+    // Vários embeds por página e alguns morrem (404): tenta em ordem até
+    // um devolver mídia viva.
+    for (const embedUrl of embeds) {
+      const videos = await this.embedSources(embedUrl, ctx.ua).catch(
+        () => [] as string[],
+      );
+      if (videos.length > 0) {
+        return { videos, iframes: [], cloudflare: false, playerTokens };
+      }
     }
 
-    return {
-      videos,
-      iframes: [],
-      cloudflare: false,
-      playerTokens,
-    };
+    if (playerTokens.length === 0) {
+      // Sem embed e sem token: a falha do sk-api é a informação mais útil.
+      if (playerError instanceof Error) throw playerError;
+      throw new Error(
+        `topanimes: ${ctx.episodeUrl} sem player reconhecido (sk-api/Blogger)`,
+      );
+    }
+    return { videos: [], iframes: [], cloudflare: false, playerTokens };
   }
 
   /** JSON do player, ordenado por qualidade (maior primeiro). */
-  private async playerSources(playerId: string, ua: string): Promise<string[]> {
-    const url = `https://sk-api.alibabacdn.net/?id=${encodeURIComponent(
+  private async playerSources(
+    host: string,
+    playerId: string,
+    ua: string,
+  ): Promise<string[]> {
+    const url = `https://${host}/?id=${encodeURIComponent(
       playerId,
     )}&mode=${PLAYER_API_MODE}`;
     const raw = await this.get(url, ua, 'application/json');
@@ -168,6 +233,28 @@ export class TopanimesScrapeSource implements ScrapeSource {
       }))
       .sort((a, b) => b.weight - a.weight)
       .map((m) => m.url);
+  }
+
+  /**
+   * Player embed: segue o embed (csst/fsst/incvideo1) e extrai os .mp4 por
+   * qualidade. O `file` é uma lista `,[<label>]` — não é JSON, então regex.
+   */
+  private async embedSources(embedUrl: string, ua: string): Promise<string[]> {
+    const html = await this.get(embedUrl, ua);
+    const byResolution = new Map<number, string>();
+    for (const [, label, url] of html.matchAll(EMBED_FILE_RE)) {
+      const resolution = Number(label);
+      if (!byResolution.has(resolution))
+        byResolution.set(resolution, url!.replace(/\/$/, ''));
+    }
+    const candidates = [...byResolution.entries()]
+      .sort((a, b) => b[0] - a[0])
+      .slice(0, MAX_PROBES);
+    const videos: string[] = [];
+    for (const [, url] of candidates) {
+      if (!(await probeMediaUrlDead(url, true))) videos.push(url);
+    }
+    return videos;
   }
 
   private async exists(url: string): Promise<boolean> {
