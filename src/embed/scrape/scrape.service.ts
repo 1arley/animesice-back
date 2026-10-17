@@ -76,6 +76,15 @@ function wrapMediaUrl(raw: string, episodeUrl: string): string {
 const UA_DESKTOP =
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
+/**
+ * Tokens que só resolvem com browser de janela (Xvfb + headless:false).
+ * Medido em 17/10/2026: filemoon faz attestation/proof-of-work antes de pedir
+ * o HLS e o mixdrop monta o player por JS — em headless os dois ficam 15s sem
+ * pedir mídia. Mesma lista do BROWSER_MIRROR_RE do topanimes.source.
+ */
+const HEADFUL_ONLY_TOKEN_RE =
+  /^https:\/\/(?:www\.)?(?:filemoon\.sx|mixdrop\.ag|mxdrop\.click|embedwish\.com)\/e\//i;
+
 /** Marcadores de tela de desafio do Cloudflare no <title>. */
 const CLOUDFLARE_MARKERS = ['just a moment', 'checking your browser'];
 
@@ -459,7 +468,16 @@ export class ScrapeService implements OnModuleInit {
         // slot em vez de pendurar a fila por +30s por token (cascata que
         // derrubava todas as fontes com "Fila de extração ocupada").
         let tokenPageLoaded = false;
+        // Espelhos que só entregam mídia com browser de janela (filemoon,
+        // mixdrop): em headless a página carrega mas nenhum `.mp4`/`.m3u8` é
+        // pedido — 15s por token no pool à toa. O retry com Xvfb abaixo é quem
+        // resolve, então aqui só marca que sobrou trabalho.
+        let headfulOnlyPending = false;
         for (const token of resolvableTokens) {
+          if (HEADFUL_ONLY_TOKEN_RE.test(token)) {
+            headfulOnlyPending = true;
+            continue;
+          }
           const { context, release } = await this.browserPool.acquireContext(
             `player-${source.id}`,
           );
@@ -489,7 +507,7 @@ export class ScrapeService implements OnModuleInit {
             `[SCRAPE] nenhum token carregou (rede/egress p/ o player?) — pulando retry Xvfb p/ liberar o slot.`,
           );
         }
-        if (!resolved && tokenPageLoaded) {
+        if (!resolved && (tokenPageLoaded || headfulOnlyPending)) {
           const display = await ensureXvfb();
           if (display) {
             dbg(
@@ -501,7 +519,14 @@ export class ScrapeService implements OnModuleInit {
                 proxy: playwrightProxy(),
                 headless: false,
                 chromiumSandbox: false,
-                args: ['--no-sandbox', '--disable-gpu'],
+                // Janela fora da tela mesmo se DISPLAY escaping apontar p/ um
+                // X físico (shell de dev sem DISPLAY=:99) — o usuário não vê
+                // nenhuma janela do scraper.
+                args: [
+                  '--no-sandbox',
+                  '--disable-gpu',
+                  '--window-position=-32000,-32000',
+                ],
               });
               await new Promise((r) => setTimeout(r, 1000));
               const context = await browser.newContext({

@@ -295,6 +295,7 @@ export class WorkerService {
         data: { videoBroken: true },
       })
       .catch(() => undefined);
+    await this.unpublishIfFullyBroken(anime.id);
 
     const { candidates } =
       p.rustFallbackUrl && p.rustFallbackSourceId
@@ -311,8 +312,10 @@ export class WorkerService {
             episode.embedUrl ?? undefined,
             anime.audio,
           );
-    if (candidates.length === 0)
+    if (candidates.length === 0) {
+      await this.unpublishIfFullyBroken(anime.id);
       throw new Error(`Repair: sem fonte p/ ${anime.slug}/${p.episodeNumber}`);
+    }
 
     const validSources = await this.validator.pickValidSources(
       candidates,
@@ -451,6 +454,34 @@ export class WorkerService {
           videoBroken: false,
         },
         data: { videoBroken: true, videoCheckedAt: new Date() },
+      })
+      .catch(() => undefined);
+    // Se todos os episódios do anime ficaram sem vídeo, despublica para não
+    // dar falsa esperança ao usuário. Volta sozinho quando um episódio for
+    // (re)publicado pelo publisher (auto-republish).
+    await this.unpublishIfFullyBroken(animeId);
+  }
+
+  private async unpublishIfFullyBroken(animeId: string): Promise<void> {
+    const anime = await this.prisma.anime.findUnique({
+      where: { id: animeId },
+      select: { id: true, published: true },
+    });
+    if (!anime || !anime.published) return;
+    // Episódio com videoUrl null/vazio também conta como quebrado.
+    const working = await this.prisma.episode.count({
+      where: {
+        animeId,
+        videoBroken: false,
+        videoUrl: { not: null },
+        NOT: { videoUrl: '' },
+      },
+    });
+    if (working > 0) return;
+    await this.prisma.anime
+      .update({
+        where: { id: animeId },
+        data: { published: false, catalogUnpublished: true },
       })
       .catch(() => undefined);
   }

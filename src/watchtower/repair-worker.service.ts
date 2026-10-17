@@ -238,6 +238,15 @@ export class RepairWorker {
           data: { videoBroken: true },
         })
         .catch(() => undefined);
+      // Despublica animes que ficaram 100% sem vídeo.
+      const affected = await this.prisma.episode.findMany({
+        where: { id: { in: deadIds } },
+        select: { animeId: true },
+        distinct: ['animeId'],
+      });
+      for (const { animeId } of affected) {
+        await this.unpublishIfFullyBroken(animeId);
+      }
     }
     return enqueued;
   }
@@ -282,5 +291,28 @@ export class RepairWorker {
       })),
     );
     return episodes.length;
+  }
+
+  private async unpublishIfFullyBroken(animeId: string): Promise<void> {
+    const anime = await this.prisma.anime.findUnique({
+      where: { id: animeId },
+      select: { id: true, published: true },
+    });
+    if (!anime || !anime.published) return;
+    const working = await this.prisma.episode.count({
+      where: {
+        animeId,
+        videoBroken: false,
+        videoUrl: { not: null },
+        NOT: { videoUrl: '' },
+      },
+    });
+    if (working > 0) return;
+    await this.prisma.anime
+      .update({
+        where: { id: animeId },
+        data: { published: false, catalogUnpublished: true },
+      })
+      .catch(() => undefined);
   }
 }

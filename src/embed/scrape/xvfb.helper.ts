@@ -32,22 +32,25 @@ function isDisplayAlive(display: string): boolean {
   return existsSync(displaySocket(display));
 }
 
+/** Primeiro display livre a partir de :99 (o Xvfb do entrypoint ocupa o :99). */
+function freeDisplay(start = 99): string {
+  for (let n = start; n < start + 20; n++) {
+    const display = `:${n}`;
+    if (!existsSync(displaySocket(display))) return display;
+  }
+  return `:${start}`;
+}
+
 /**
  * Garante que um display Xvfb está ativo e retorna o número do display.
- * Se um DISPLAY externo (entrypoint) tem socket vivo, usa-o. Se DISPLAY está
- * setado mas o X server morreu, limpa e relança. Se não há Xvfb instalado,
- * retorna null (caller decide o que fazer).
+ *
+ * Preferimos SEMPRE um Xvfb nosso. O DISPLAY herdado só entra quando não há
+ * Xvfb no sistema (dev em Windows/macOS): na máquina de dev o DISPLAY aponta
+ * para o X do usuário (`:0`) e confiar nele abriria a janela do scraper no
+ * meio da tela.
  */
 export async function ensureXvfb(): Promise<string | null> {
-  // Display externo do entrypoint — só confia se o X server estiver vivo.
-  if (process.env.DISPLAY && isDisplayAlive(process.env.DISPLAY)) {
-    return process.env.DISPLAY;
-  }
-  // DISPLAY órfão (X morreu) ou inválido — não pode ser reutilizado.
-  if (process.env.DISPLAY) {
-    delete process.env.DISPLAY;
-  }
-
+  // Display nosso já rodando.
   if (xvfbProcess && displayNumber && isDisplayAlive(displayNumber)) {
     return displayNumber;
   }
@@ -57,8 +60,12 @@ export async function ensureXvfb(): Promise<string | null> {
     displayNumber = null;
   }
 
-  // Procura um display livre a partir de :99.
-  const display = ':99';
+  // Sem Xvfb no sistema: só resta o display herdado.
+  if (!existsSync('/usr/bin/Xvfb')) {
+    return process.env.DISPLAY ?? null;
+  }
+
+  const display = freeDisplay();
   try {
     xvfbProcess = spawn(
       '/usr/bin/Xvfb',

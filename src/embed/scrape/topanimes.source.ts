@@ -32,6 +32,23 @@ const EMBED_RE =
 /** `file:"[360p]https://...360p.mp4/,[720p]https://...720p.mp4/,[1080p]..."`. */
 const EMBED_FILE_RE = /\[(\d{3,4})p\](https?:\/\/[^\s"',[\]]+\.mp4)/gi;
 
+/**
+ * Espelhos que só entregam a mídia com browser de verdade (headed). Medido em
+ * 17/10/2026: o filemoon é um SPA que faz attestation + proof-of-work antes de
+ * pedir o HLS, e o mixdrop (.ag redireciona p/ .click) monta o player por JS.
+ * Em headless os dois ficam 15s sem pedir nenhum `.mp4`/`.m3u8`.
+ *
+ * Devolvidos como playerToken para o ScrapeService resolver no Chromium via
+ * Xvfb — é o mesmo caminho do player Blogger, sem código de browser novo.
+ * `vgembed.com` e `streamtape.com` NÃO entram aqui: medidos 404 (o espelho
+ * morreu lá fora, não falta extração).
+ */
+const BROWSER_MIRROR_RE =
+  /^https:\/\/(?:www\.)?(?:filemoon\.sx|mixdrop\.ag|mxdrop\.click|embedwish\.com)\/e\//i;
+
+/** Teto de espelhos por episódio: cada um custa uma aba de browser. */
+const MAX_MIRRORS = 2;
+
 /** src de <iframe> (players secundários). */
 const IFRAME_SRC_RE = /<iframe[^>]+src=["']([^"']+)["']/gi;
 
@@ -184,9 +201,10 @@ export class TopanimesScrapeSource implements ScrapeSource {
     // Metade dos players vem pelo wrapper `/aviso/?url=<url-encoded>`: o src do
     // iframe não traz o host do player, então a página é decodificada antes de
     // casar o embed.
-    const decoded = [...html.matchAll(/aviso\/\?url=([^'"&\s>]+)/g)]
-      .map((m) => safeDecode(m[1]!))
-      .join('\n');
+    const decodedUrls = [...html.matchAll(/aviso\/\?url=([^'"&\s>]+)/g)].map(
+      (m) => safeDecode(m[1]!),
+    );
+    const decoded = decodedUrls.join('\n');
     const embeds = [
       ...new Set(
         [...`${html}\n${decoded}`.matchAll(EMBED_RE)].map(
@@ -229,14 +247,25 @@ export class TopanimesScrapeSource implements ScrapeSource {
       }
     }
 
-    if (playerTokens.length === 0) {
+    // Último recurso: espelhos que só entregam mídia em browser headed. Vão
+    // como playerToken para o ScrapeService abrir com Xvfb.
+    const mirrors = [
+      ...new Set(
+        decodedUrls
+          .map((u) => u.split(/[?#]/)[0] ?? '')
+          .filter((u) => BROWSER_MIRROR_RE.test(u)),
+      ),
+    ].slice(0, MAX_MIRRORS);
+    const tokens = [...playerTokens, ...mirrors];
+
+    if (tokens.length === 0) {
       // Sem embed e sem token: a falha do sk-api é a informação mais útil.
       if (playerError instanceof Error) throw playerError;
       throw new Error(
         `topanimes: ${ctx.episodeUrl} sem player reconhecido (sk-api/Blogger)`,
       );
     }
-    return { videos: [], iframes: [], cloudflare: false, playerTokens };
+    return { videos: [], iframes: [], cloudflare: false, playerTokens: tokens };
   }
 
   /** JSON do player, ordenado por qualidade (maior primeiro). */

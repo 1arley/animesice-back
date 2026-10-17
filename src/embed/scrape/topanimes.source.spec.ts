@@ -233,6 +233,28 @@ describe('TopanimesScrapeSource', () => {
     ]);
   });
 
+  it('extractHttp devolve os espelhos headful como playerToken (filemoon/mixdrop)', async () => {
+    queueFetch({
+      body: `
+      <iframe src='https://topanimes.net/aviso/?url=https%3A%2F%2Ffilemoon.sx%2Fe%2F56s8179zbevb%3Fposter%3Dhttps%3A%2F%2Fimg'></iframe>
+      <iframe src='https://topanimes.net/aviso/?url=https%3A%2F%2Fmixdrop.ag%2Fe%2F7rzw7kxocgvd7e'></iframe>
+      <iframe src='https://topanimes.net/aviso/?url=https%3A%2F%2Fstreamtape.com%2Fe%2Fabc'></iframe>
+    `,
+    });
+
+    const result = await source.extractHttp({
+      episodeUrl: EPISODE_URL,
+      ua: UA,
+    });
+
+    // streamtape fica de fora: o espelho morre com 404, não há o que extrair.
+    expect(result.playerTokens).toEqual([
+      'https://filemoon.sx/e/56s8179zbevb',
+      'https://mixdrop.ag/e/7rzw7kxocgvd7e',
+    ]);
+    expect(result.videos).toEqual([]);
+  });
+
   it('extractHttp extrai o player embed atual, maior qualidade primeiro', async () => {
     queueFetch({ body: EMBED_HTML }, { body: EMBED_PLAYER_HTML });
 
