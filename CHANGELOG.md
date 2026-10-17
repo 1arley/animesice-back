@@ -1,3 +1,10 @@
+## [1.53.1](https://github.com/1arley/animesice-back/compare/v1.53.0...v1.53.1) (2026-10-17)
+
+
+### Bug Fixes
+
+* **topanimes:** resolve player embed csst/fsst/incvideo1 e republica animes reparados ([cd34df5](https://github.com/1arley/animesice-back/commit/cd34df5ee3a2823931fc10aece8994ed3dc2b9cc))
+
 # [1.53.0](https://github.com/1arley/animesice-back/compare/v1.52.2...v1.53.0) (2026-10-17)
 
 
