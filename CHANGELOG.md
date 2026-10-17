@@ -1,3 +1,10 @@
+## [1.53.2](https://github.com/1arley/animesice-back/compare/v1.53.1...v1.53.2) (2026-10-17)
+
+
+### Bug Fixes
+
+* **scrape:** resolve episodio pela listagem da pagina do anime ([fbbb4c8](https://github.com/1arley/animesice-back/commit/fbbb4c8ada3aced7cb17c9d10147a6c4eb13fe63))
+
 ## [1.53.1](https://github.com/1arley/animesice-back/compare/v1.53.0...v1.53.1) (2026-10-17)
 
 
