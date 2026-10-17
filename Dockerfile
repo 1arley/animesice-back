@@ -34,7 +34,10 @@ RUN npm run build
 # Binário único que atende as três fontes de scrape (envs <FONTE>_RUST_BIN).
 # reqwest com rustls não depende de openssl e o glibc é o mesmo Debian da base,
 # então o binário roda direto na imagem final sem libs extras.
-FROM rust:1-slim AS rustbuild
+# `-bookworm` é obrigatório: `rust:1-slim` flutuou para Debian 13 (glibc 2.41)
+# e `node:24-slim` continua no 12 (glibc 2.36) — os binários saíam com
+# `GLIBC_2.38 not found` na imagem final. Mesma suíte, mesmo glibc.
+FROM rust:1-slim-bookworm AS rustbuild
 
 WORKDIR /rust
 COPY scraper-rust/ ./
