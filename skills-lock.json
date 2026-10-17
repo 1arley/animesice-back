@@ -7,6 +7,12 @@
       "skillPath": "skills/productivity/grill-with-jev/SKILL.md",
       "computedHash": "9860c927a64f99d9dbda894cb77c2a76008a4e6ca75744989c69a7cf66138852"
     },
+    "improve-codebase-architecture": {
+      "source": "mattpocock/skills",
+      "sourceType": "github",
+      "skillPath": "skills/engineering/improve-codebase-architecture/SKILL.md",
+      "computedHash": "ac2c94885f34ff8492dc12aa4543182f661f32ea1722b8d6b6c2c7045af33ae3"
+    },
     "javascript-typescript-jest": {
       "source": "github/awesome-copilot",
       "sourceType": "github",
