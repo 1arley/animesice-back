@@ -1,3 +1,16 @@
+# [1.53.0](https://github.com/1arley/animesice-back/compare/v1.52.2...v1.53.0) (2026-10-17)
+
+
+### Bug Fixes
+
+* **docker:** pin rustbuild to bookworm to match production glibc ([0c6c759](https://github.com/1arley/animesice-back/commit/0c6c759aa9e3d0ed0594e7fb7a74b8c7ab9cfc9f))
+* **watchtower:** stop auto-disabling sources on isolated episode failures ([b1d6ae9](https://github.com/1arley/animesice-back/commit/b1d6ae94b2ba6af0a2c4067aefa8b0469a66cd34))
+
+
+### Features
+
+* **watchtower:** add Rust repair worker ([0bc98e7](https://github.com/1arley/animesice-back/commit/0bc98e73f33beb6dd82df3fb57886f2b8f87e22c))
+
 ## [1.52.2](https://github.com/1arley/animesice-back/compare/v1.52.1...v1.52.2) (2026-10-16)
 
 
