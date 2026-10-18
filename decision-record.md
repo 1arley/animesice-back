@@ -1,36 +1,30 @@
-# Trade-up — registro de decisões
+# Decision Record — Streaming Resolution & Async Job Persistence (`arch-streaming-20261018-r1`)
 
-Sessão grill-with-jev: `trade-up-2026-10-15`  
-Estado: decisões fechadas; implementação aguardando confirmação deste registro.
+**Date:** 2026-10-18  
+**Session ID:** `arch-streaming-20261018-r1`  
+**Audit Log:** `.grill/arch-streaming-20261018-r1.jsonl`  
+**Candidate:** #1 — Collapse streaming resolution and async job persistence (`StreamingService` + `ExtractionJobService` + `ScrapeService.reextractEpisodeVideo`)
 
-## Decisões
+## Settled Decisions
 
-| Tema | Decisão | Proveniência |
-|---|---|---|
-| Trade-up de cartas | Consumir 4 cópias da mesma raridade e criar 1 carta da raridade imediatamente superior. | Usuário confirmou Q1. |
-| Carta resultante | Sortear uma carta ativa elegível da raridade seguinte, com peso adicional para cartas na wishlist do próprio usuário. A wishlist aumenta a chance, mas não garante o resultado. | Usuário aprovou Q2 após escalada do JEV. |
-| Condition, foil e edition | Sortear os atributos separadamente. As quatro entradas influenciam as chances de atributos melhores; preferências de wishlist adicionam peso às opções compatíveis sem garantir correspondência. | Usuário aprovou Q2 e Q5 após escaladas do JEV. |
-| Limite de raridade | Rejeitar trade-up na raridade máxima ou quando não houver carta elegível na raridade seguinte, antes de consumir entradas. | Usuário aprovou Q3 após escalada do JEV. |
-| Proteção do inventário | Aceitar apenas cópias `ACTIVE` do usuário; IDs devem ser distintos. Validar e consumir as entradas e conceder a saída em uma transação atômica. | Usuário aprovou Q4 após escalada do JEV. |
-| Trade-up de skins | Consumir 3 skins da mesma raridade e sortear uniformemente 1 skin ativa, não bloqueada, dessa raridade. Rejeitar se o pool estiver vazio, antes do consumo. | Usuário confirmou Q1 e Q6 após escalada do JEV. |
-| Persistência | Marcar as entradas como `BURNED` e criar a cópia resultante na mesma transação. Falhas revertem toda a operação. A resposta retorna o resultado e os IDs consumidos. | Usuário confirmou Q7 após escalada do JEV. |
+| ID | Title | Decision | Provenance | Rationale |
+| :--- | :--- | :--- | :--- | :--- |
+| **Q1** | Module boundary: fold `ExtractionJobService` into `StreamingService` | Fold `ExtractionJobService` into `StreamingService` so `StreamingService` directly owns the `StreamExtractionJob` lease lifecycle, completion listeners, and single-flight extraction without a closure handoff seam. | `user` (after `jev` accept `0.71`, confidence `0.56`) | Eliminates the single-caller closure seam (`fn: () => Promise<...>`), removing redundant DB re-queries on job resumption and consolidating all stream resolution state behind one interface. |
+| **Q2** | Unified persistence for async extraction jobs (`persistPlayerResolvedEpisode` + `trustMediaHosts`) | Always execute `persistPlayerResolvedEpisode` when a working `videoUrl` is resolved, and invoke `trustMediaHosts` in `buildSourceFromJobResult` when reading completed jobs. | `user` (after `jev` accept `0.56`, confidence `0.34`) | Ensures async extraction jobs register `TrustedMediaHosts` across replicas, upsert `EpisodeSource`, and enforce the `catalogUnpublished` auto-republish invariant without requiring a Prisma schema migration. |
+| **Q3** | Unify mid-stream proxy recovery (`proxyVideo`) onto `doSingleScrape` and remove `ScrapeService.reextractEpisodeVideo` | Remove `ScrapeService.reextractEpisodeVideo` and route `proxyVideo` mid-stream recovery through `StreamingService`'s single-flight `doSingleScrape` and `persistPlayerResolvedEpisode`. | `jev` (accept `0.82`, confidence `0.73`) | Eliminates a duplicate partial-persistence path in `ScrapeService` so mid-stream 403/5xx recovery tries `embedUrl`, `EpisodeSource` rows, and ranked fallback sources with full persistence invariants. |
+| **Q4** | Catalog visibility rule across `getSource` and `getSourceAsync` for `catalogUnpublished` titles | Allow `published: true` or `catalogUnpublished: true` in both `getSource` and `getSourceAsync`, while rejecting manually unpublished animes (`published: false, catalogUnpublished: false`) with 404. | `user` (after `jev` accept `0.68`, confidence `0.52`) | Aligns `getSource` and `getSourceAsync` lookup rules so auto-unpublished titles can self-heal on player demand while manually unpublished titles remain hidden. |
+| **Q5** | Deduplicating URL unwrapping and `StreamSourceResponse` formatting in `StreamingService` | Consolidate URL unwrapping and `StreamSourceResponse` construction into private helpers inside `StreamingService` while keeping `StreamingController`'s interface contract intact. | `jev` (accept `0.95`, confidence `0.92`) | Removes duplicated `/embed/media?url=` unwrapping and YouTube/Blogger/media proxy URL formatting across sync and async paths without breaking controller routes or specs. |
+| **Q6** | Lease-fenced persistence on async job completion (`finishJob`) | Return `{ videoUrl, playerEmbed, sourceId, pageUrl, audio }` from `doSingleScrape` and gate async job persistence on the `lockedBy` lease check in `finishJob` so expired workers are strictly fenced out before writing `Episode`, `EpisodeSource`, `TrustedMediaHosts`, or `Anime.published`. | `jev` (accept `0.81`, confidence `0.72`) | Preserves strict lease fencing when a slow worker's `lockedUntil` expires and another worker reclaims the job. |
+| **Q7** | Unifying `reextractInflight` and `scrapeInflight` for `proxyVideo` recovery | Route `proxyVideo` recovery through the shared `scrapeInflight` single-flight map (invalidating `scrapeCache` on upstream 403/5xx) and remove the redundant `reextractInflight` map. | `user` (after `jev` accept `0.74`, confidence `0.61`, escalated on keyword `delete`) | Coalesces concurrent mid-stream 403 recoveries and player `getSource` calls into a single extraction per episode. |
+| **Q8** | Republishing `catalogUnpublished` animes only after a live `videoUrl` probe (`persistPlayerResolvedEpisode`) | Require a verified live `rawVideoUrl` (via `persistPlayerResolvedEpisode`) before republishing a `catalogUnpublished: true` anime, and bypass `getSourceAsync`'s unprobed fast path whenever `anime.published === false`. | `user` (after `jev` amend `0.49`) | Prevents an unprobed stored URL or unverified embed from prematurely republishing an auto-unpublished anime. |
 
-## Premissas para implementação
+## Assumptions
 
-- A wishlist relevante é a do usuário que executa o trade-up, não a de outros usuários.
-- `condition` é melhor quanto menor seu valor; `edition` segue a regra existente de wishlist, em que uma edição menor pode satisfazer `maxEdition`.
-- Os pesos numéricos finais para combinar atributos das entradas, preferências da wishlist e pesos normais de foil serão simples e limitados para que nenhuma entrada ou preferência garanta um resultado.
-- Somente cartas do catálogo com status `ACTIVE` entram no pool de resultados.
+- `StreamExtractionJob` schema in `prisma/schema.prisma` remains unchanged (no database migration needed).
+- `StreamingController` public route contracts (`/stream/source`, `/stream/source/async`, `/stream/source/sse`, `/stream/token`, `/stream/video`) remain backward-compatible with the frontend.
+- `GLOSSARY.md` will be updated to document `Stream Resolution` alongside `Episode Resolution`.
 
-## Riscos em aberto
+## Open Risks
 
-- As regras definem direção e influência dos pesos, mas não fixam percentuais nem limites numéricos. A implementação precisa escolher valores concretos e mantê-los pequenos, determinísticos de testar e sem garantias indevidas.
-- Trade-up é irreversível para as cópias consumidas. A atomicidade, a validação de propriedade/status e o bloqueio de IDs duplicados são requisitos centrais.
-- A confirmação deste registro autoriza iniciar a implementação; não autoriza migração em banco de produção ou publicação.
-
-## Histórico do JEV
-
-- Q1 foi escalada pelo JEV por envolver consumo de inventário e baixa confiança; o usuário confirmou a proposta.
-- Q2–Q4 foram escaladas por risco/confiança; o usuário respondeu “avance”, registrado como aprovação das recomendações apresentadas.
-- Q5–Q7 foram escaladas por risco/confiança; o usuário confirmou as três recomendações.
-- O JEV forneceu recomendações de desenho. As decisões finais e aprovações registradas acima são do usuário.
+- **Multi-replica `TrustedMediaHosts` registration:** When Replica A completes an async extraction job and Replica B serves `getJobStatus` or `buildSourceResponseFromJob`, Replica B must call `trustMediaHosts([job.result.videoUrl])` before returning the wrapped `/embed/media` URL so Replica B's SSRF proxy allowlist immediately trusts the host without waiting for the hourly DB refresh. (Mitigated by Q2).
+- **Lease-fenced side effects:** `doSingleScrape` must not write to `Episode`, `EpisodeSource`, or `Anime` before `finishJob` confirms `updateMany({ where: { id, status: 'processing', lockedBy: lockId } }).count > 0` on the async job path. (Mitigated by Q6).

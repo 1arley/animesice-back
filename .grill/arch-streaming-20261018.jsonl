@@ -1,0 +1,1 @@
+{"timestamp":"2026-10-18T04:49:29.444Z","round":1,"ownerId":"543e5bf5-4265-487a-a204-a2a1908fea18","status":"provider-error","provider":{"provider":"typesafe","source":"dotenv","variable":"TYPESAFE_API_KEY","masked":"***7fae"},"model":"jev-1.13-free","budgetTokens":0,"costUsd":0,"actualTokens":0,"actualCostUsd":0}

@@ -15,6 +15,7 @@ Domain terms and bounded concepts for `animesice-back`. Use these terms consiste
   2. Repeated catalog scans confirm the title is absent from external catalogs.
   Conversely, publishing or repairing at least one valid episode automatically republishes the anime (`published: true, catalogUnpublished: false, catalogAbsentChecks: 0`).
 - **Rust Handoff (`rustFallbackUrl` / `rustFallbackSourceId`)**: When the out-of-process Rust Watchtower worker (`scraper-rust`) encounters a page that requires Chromium/Xvfb (`BROWSER_REQUIRED`), it marks `rustEligible: false` on the `WatchtowerJob` payload along with `rustFallbackUrl` and `rustFallbackSourceId` so the Node Watchtower worker can run targeted single-source browser extraction (`extractExact`).
+- **Stream Resolution (`StreamingService`)**: The player-facing streaming module (`src/streaming/streaming.service.ts`) that resolves playable streams across synchronous (`/stream/source`), asynchronous lease-fenced job (`/stream/source/async`, `/stream/source/sse`, `StreamExtractionJob`), and mid-stream proxy recovery (`/stream/video`) paths. It owns single-flight coalescing (`scrapeInflight`), liveness verification, and unified persistence (`persistPlayerResolvedEpisode`: `Episode.videoUrl`, `EpisodeSource` upsert, `TrustedMediaHosts` registration, and `catalogUnpublished` auto-republish).
 
 ## Gacha & Economy
 
