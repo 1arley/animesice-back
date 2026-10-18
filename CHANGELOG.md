@@ -1,3 +1,10 @@
+# [1.54.0](https://github.com/1arley/animesice-back/compare/v1.53.2...v1.54.0) (2026-10-18)
+
+
+### Features
+
+* **watchtower:** auto-unpublish anime when all episodes lose video source ([eb4547c](https://github.com/1arley/animesice-back/commit/eb4547c4f521f52c6bce63a669c7162cd1078184))
+
 ## [1.53.2](https://github.com/1arley/animesice-back/compare/v1.53.1...v1.53.2) (2026-10-17)
 
 
