@@ -1,16 +1,14 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
   ForbiddenException,
+  OnModuleDestroy,
 } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '@/prisma/prisma.service';
 import { EmbedService } from '@/embed/embed.service';
 import { ScrapeService } from '@/embed/scrape/scrape.service';
-import {
-  ExtractionJobService,
-  ExtractionJob,
-} from '@/streaming/extraction-job.service';
 import { isNoVideoUrl, youtubeEmbedUrl } from '@/embed/scrape/extract';
 import {
   probeMediaUrlDead,
@@ -41,6 +39,34 @@ function wrapMediaUrl(raw: string): string {
   return `/embed/media?url=${encodeURIComponent(trimmed)}&referer=${encodeURIComponent(referer)}`;
 }
 
+export type ExtractionJobStatus =
+  'pending' | 'processing' | 'completed' | 'failed';
+
+export interface ExtractionJob {
+  id: string;
+  animeSlug: string;
+  episodeNumber: number;
+  season: number;
+  status: ExtractionJobStatus;
+  result: { videoUrl: string | null; playerEmbed: string | null } | null;
+  error: string | null;
+  createdAt: number;
+  completedAt: number | null;
+  lockedUntil?: number | null;
+}
+
+type JobListener = (job: ExtractionJob) => void;
+
+const JOB_TTL_MS = 5 * 60_000;
+
+interface ScrapeOutcome {
+  videoUrl: string | null;
+  playerEmbed: string | null;
+  sourceId?: string;
+  pageUrl?: string;
+  audio?: AudioType;
+}
+
 /**
  * Estrutura do source do stream público. `src` aponta para o `/embed/media`
  * (mesmo host do backend, anti-hotlinking resolvido server-side); o player
@@ -62,7 +88,9 @@ export interface StreamSourceResponse {
 }
 
 @Injectable()
-export class StreamingService {
+export class StreamingService implements OnModuleDestroy {
+  private readonly logger = new Logger(StreamingService.name);
+
   /** Single-flight + cache curto p/ re-extrações (anti thundering herd no
    *  scraper de chromium, que é caro e concorrencia-limitado). */
   private readonly scrapeInflight = new Map<
@@ -76,10 +104,6 @@ export class StreamingService {
       at: number;
     }
   >();
-  private readonly reextractInflight = new Map<
-    string,
-    Promise<string | null>
-  >();
   private readonly SCRAPE_CACHE_TTL_MS = 5 * 60_000;
 
   /** Teto de entradas nos caches de inflight — evita crescimento ilimitado
@@ -90,22 +114,88 @@ export class StreamingService {
    *  Entradas mais antigas (por `at`) são evictadas quando o teto é atingido. */
   private static readonly MAX_SCRAPE_CACHE_ENTRIES = 300;
 
+  private readonly jobListeners = new Map<string, Set<JobListener>>();
+  private jobPollTimer?: ReturnType<typeof setTimeout>;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly embedService: EmbedService,
     private readonly scrapeService: ScrapeService,
-    private readonly extractionJobs: ExtractionJobService,
   ) {}
+
+  onModuleDestroy(): void {
+    clearTimeout(this.jobPollTimer);
+    this.jobPollTimer = undefined;
+    this.jobListeners.clear();
+  }
+
+  private scheduleJobPoll(): void {
+    if (this.jobPollTimer || !this.jobListeners.size) return;
+    this.jobPollTimer = setTimeout(() => {
+      void (async () => {
+        try {
+          for (const id of this.jobListeners.keys()) {
+            const job = await this.getJob(id);
+            if (job) this.notifyJobListeners(job);
+          }
+        } catch {
+          return;
+        } finally {
+          this.jobPollTimer = undefined;
+          this.scheduleJobPoll();
+        }
+      })();
+    }, 1_000);
+    this.jobPollTimer.unref();
+  }
+
+  private notifyJobListeners(job: ExtractionJob): void {
+    if (job.status !== 'completed' && job.status !== 'failed') return;
+    const listeners = this.jobListeners.get(job.id);
+    this.jobListeners.delete(job.id);
+    if (!this.jobListeners.size) {
+      clearTimeout(this.jobPollTimer);
+      this.jobPollTimer = undefined;
+    }
+    for (const listener of listeners ?? []) {
+      try {
+        listener(job);
+      } catch {
+        continue;
+      }
+    }
+  }
 
   /**
    * Registra um callback de conclusão de job para uso no SSE endpoint.
    * Retorna uma função de cleanup que remove o listener.
    */
-  onJobComplete(
+  async onJobComplete(
     jobId: string,
     listener: (job: ExtractionJob) => void,
   ): Promise<() => void> {
-    return this.extractionJobs.onComplete(jobId, listener);
+    const listeners = this.jobListeners.get(jobId) ?? new Set<JobListener>();
+    listeners.add(listener);
+    this.jobListeners.set(jobId, listeners);
+    const unsubscribe = () => {
+      listeners.delete(listener);
+      if (!listeners.size && this.jobListeners.get(jobId) === listeners) {
+        this.jobListeners.delete(jobId);
+      }
+      if (!this.jobListeners.size) {
+        clearTimeout(this.jobPollTimer);
+        this.jobPollTimer = undefined;
+      }
+    };
+    try {
+      const job = await this.getJob(jobId);
+      if (job) this.notifyJobListeners(job);
+      this.scheduleJobPoll();
+      return unsubscribe;
+    } catch (error) {
+      unsubscribe();
+      throw error;
+    }
   }
 
   /**
@@ -129,7 +219,7 @@ export class StreamingService {
     }
   }
 
-  /** Expiração física dos caches em memória, inclusive sem novos acessos. */
+  /** Expiração física dos caches em memória e jobs antigos. */
   @Cron(CronExpression.EVERY_MINUTE)
   cleanupMemoryCaches(): void {
     const now = Date.now();
@@ -138,9 +228,7 @@ export class StreamingService {
         this.scrapeCache.delete(key);
       }
     }
-    // Eviction por tamanho do scrapeCache — evita crescimento indefinido.
     this.evictScrapeCacheIfNeeded();
-    // Eviction por tamanho nos caches de inflight — evita OOM.
     if (this.scrapeInflight.size > StreamingService.MAX_INFLIGHT_ENTRIES) {
       const keys = [...this.scrapeInflight.keys()];
       for (const k of keys.slice(
@@ -150,16 +238,12 @@ export class StreamingService {
         this.scrapeInflight.delete(k);
       }
     }
-    if (this.reextractInflight.size > StreamingService.MAX_INFLIGHT_ENTRIES) {
-      const keys = [...this.reextractInflight.keys()];
-      for (const k of keys.slice(
-        0,
-        keys.length - StreamingService.MAX_INFLIGHT_ENTRIES,
-      )) {
-        this.reextractInflight.delete(k);
-      }
-    }
     purgeExpiredLivenessCache(now);
+    void this.prisma.streamExtractionJob
+      ?.deleteMany?.({
+        where: { completedAt: { lt: new Date(now - JOB_TTL_MS) } },
+      })
+      .catch(() => undefined);
   }
 
   /** Evicta a entrada mais antiga quando o cache excede o teto máximo. */
@@ -175,6 +259,92 @@ export class StreamingService {
       }
     }
     if (oldestKey) this.scrapeCache.delete(oldestKey);
+  }
+
+  /**
+   * Desembrulha URLs legadas `/embed/media?url=...` e filtra URLs vazias/no-video.
+   */
+  private unwrapStoredVideoUrl(raw: string | null): string | null {
+    let url = raw;
+    if (url && isNoVideoUrl(url)) url = null;
+    if (url && /\/embed\/media\?url=/i.test(url)) {
+      try {
+        const parsed = new URL(url);
+        const inner = parsed.searchParams.get('url');
+        if (inner) url = inner;
+      } catch {
+        /* mantém */
+      }
+    }
+    return url;
+  }
+
+  /**
+   * Formata o StreamSourceResponse único para fluxos síncronos, assíncronos e SSE.
+   */
+  private formatStreamSourceResponse(params: {
+    animeSlug: string;
+    episodeNumber: number;
+    episodeEmbedUrl: string | null;
+    thumbnailUrl: string | null;
+    rawVideoUrl: string | null;
+    playerEmbed: string | null;
+    reextracted: boolean;
+    apiOriginBackend: string;
+  }): StreamSourceResponse {
+    const {
+      animeSlug,
+      episodeNumber,
+      episodeEmbedUrl,
+      thumbnailUrl,
+      rawVideoUrl,
+      playerEmbed,
+      reextracted,
+      apiOriginBackend,
+    } = params;
+    const base = apiOriginBackend.replace(/\/$/, '');
+    const apiPrefix = process.env.API_PREFIX || 'api';
+
+    if (playerEmbed && !rawVideoUrl) {
+      const isYoutube = youtubeEmbedUrl(playerEmbed) !== null;
+      const embedSrc = isYoutube
+        ? playerEmbed
+        : `${base}/${apiPrefix}/embed/proxy?url=${encodeURIComponent(playerEmbed)}`;
+      dbg(`[STREAM] fonte é player embed — servindo iframe: ${embedSrc}`);
+      return {
+        animeSlug,
+        episodeNumber,
+        src: embedSrc,
+        rawVideoUrl: playerEmbed,
+        embedUrl: embedSrc,
+        reextracted,
+        thumbnailUrl,
+      };
+    }
+
+    const src = `${base}/${apiPrefix}${wrapMediaUrl(rawVideoUrl!)}`;
+    return {
+      animeSlug,
+      episodeNumber,
+      src,
+      rawVideoUrl,
+      embedUrl: episodeEmbedUrl,
+      reextracted,
+      thumbnailUrl,
+    };
+  }
+
+  /**
+   * Verifica se o anime pode ser resolvido pelo player:
+   * publicado (`published: true`) ou auto-despublicado pelo catálogo (`catalogUnpublished: true`).
+   * Títulos despublicados manualmente (`published: false, catalogUnpublished: false`) lançam 404.
+   */
+  private isAnimeResolvable(anime: {
+    published?: boolean;
+    catalogUnpublished?: boolean;
+  }): boolean {
+    if (anime.published === undefined || anime.published === true) return true;
+    return anime.catalogUnpublished === true;
   }
 
   async generateToken(
@@ -242,6 +412,47 @@ export class StreamingService {
   }
 
   /**
+   * Executa a extração sob single-flight e persiste o resultado no banco.
+   */
+  private runCoalescedScrape(
+    episode: { id: string; embedUrl: string | null },
+    animeSlug: string,
+    episodeNumber: number,
+    season: number,
+    audio?: AudioType,
+    forceRefresh = false,
+  ): Promise<{ videoUrl: string | null; playerEmbed: string | null }> {
+    const key = `${animeSlug}:${season}:${episodeNumber}:${audio ?? 'auto'}`;
+    if (forceRefresh) {
+      this.scrapeCache.delete(key);
+    }
+    let inflight = this.scrapeInflight.get(key);
+    if (!inflight) {
+      inflight = this.doSingleScrape(
+        episode,
+        animeSlug,
+        episodeNumber,
+        season,
+        true,
+        audio,
+      )
+        .then((outcome) => {
+          const result = {
+            videoUrl: outcome.videoUrl,
+            playerEmbed: outcome.playerEmbed,
+          };
+          this.scrapeCache.set(key, { result, at: Date.now() });
+          return result;
+        })
+        .finally(() => {
+          this.scrapeInflight.delete(key);
+        });
+      this.scrapeInflight.set(key, inflight);
+    }
+    return inflight;
+  }
+
+  /**
    * Resolve o videoUrl de um episódio com single-flight + cache TTL na parte
    * cara (scrape via chromium). Fluxo: unwrap legado -> probe de liveness ->
    * re-extração (embrulhada no single-flight).
@@ -258,42 +469,36 @@ export class StreamingService {
     forceRefresh = false,
     skipLiveness = false,
     audio?: AudioType,
+    isCatalogUnpublished = false,
   ): Promise<{
     videoUrl: string | null;
     playerEmbed: string | null;
     reextracted: boolean;
   }> {
-    let rawVideoUrl: string | null = episode.videoUrl;
-
-    if (rawVideoUrl && isNoVideoUrl(rawVideoUrl)) rawVideoUrl = null;
+    let rawVideoUrl = this.unwrapStoredVideoUrl(episode.videoUrl);
 
     dbg(
       `[STREAM] getSource animeSlug=${animeSlug} ep=${episodeNumber} embedUrl=${episode.embedUrl ?? 'null'} videoUrl=${episode.videoUrl?.slice(0, 80) ?? 'null'}`,
     );
 
-    // videoUrl pode estar no formato legado "http://localhost:3001/embed/media?url=..."
-    // (wrap que quebra em deploy). Tenta recuperar a URL CRU do parâmetro `url`.
-    if (rawVideoUrl && /\/embed\/media\?url=/i.test(rawVideoUrl)) {
-      try {
-        const u = new URL(rawVideoUrl);
-        const inner = u.searchParams.get('url');
-        if (inner) rawVideoUrl = inner;
-      } catch {
-        /* mantém */
-      }
-    }
     const lastKnownVideoUrl = rawVideoUrl;
     let lastKnownDead = false;
 
-    // Em recuperação solicitada pelo player, confirma a falha com um GET de
-    // 1 byte antes de gastar um slot de scraper. O probe normal pode decidir
-    // URLs assinadas localmente; o forçado precisa confirmar a resposta CDN.
     if (forceRefresh && rawVideoUrl && /^https?:\/\//i.test(rawVideoUrl)) {
       const dead = await probeMediaUrlDead(rawVideoUrl, true);
       dbg(
         `[STREAM] probe forçado videoUrl=${rawVideoUrl.slice(0, 80)} dead=${dead}`,
       );
       if (!dead) {
+        if (isCatalogUnpublished) {
+          await this.persistPlayerResolvedEpisode(
+            episode.id,
+            rawVideoUrl,
+            undefined,
+            undefined,
+            audio,
+          );
+        }
         return {
           videoUrl: rawVideoUrl,
           playerEmbed: null,
@@ -304,19 +509,14 @@ export class StreamingService {
       rawVideoUrl = null;
     }
 
-    // videoUrl guardada pode estar morta (token CDN/IP-URL expirado). Nunca
-    // devolva uma URL que o probe já confirmou como morta: alguns upstreams
-    // mantêm a conexão aberta sem responder e o <video> fica indefinidamente
-    // sem metadata (controles/play desabilitados). Nesse caso seguimos para a
-    // reextração single-flight abaixo e a primeira navegação já recebe uma
-    // fonte utilizável, sem depender de F5.
+    const mustProbeStored = !skipLiveness || isCatalogUnpublished;
     if (
       !forceRefresh &&
-      !skipLiveness &&
+      mustProbeStored &&
       rawVideoUrl &&
       /^https?:\/\//i.test(rawVideoUrl)
     ) {
-      const dead = await probeMediaUrlDead(rawVideoUrl);
+      const dead = await probeMediaUrlDead(rawVideoUrl, isCatalogUnpublished);
       dbg(`[STREAM] probe videoUrl=${rawVideoUrl.slice(0, 80)} dead=${dead}`);
       if (dead) {
         lastKnownDead = true;
@@ -324,6 +524,14 @@ export class StreamingService {
           `[STREAM] videoUrl morta — re-extraindo antes de responder p/ ${animeSlug}/${episodeNumber}`,
         );
         rawVideoUrl = null;
+      } else if (isCatalogUnpublished) {
+        await this.persistPlayerResolvedEpisode(
+          episode.id,
+          rawVideoUrl,
+          undefined,
+          undefined,
+          audio,
+        );
       }
     }
 
@@ -345,36 +553,33 @@ export class StreamingService {
         !(await probeMediaUrlDead(cached.result.videoUrl)))
     ) {
       dbg(`[STREAM] scrape cache hit p/ ${key}`);
+      if (isCatalogUnpublished && cached.result.videoUrl) {
+        await this.persistPlayerResolvedEpisode(
+          episode.id,
+          cached.result.videoUrl,
+          undefined,
+          undefined,
+          audio,
+        );
+      }
       return { ...cached.result, reextracted: false };
     }
     if (cached) this.scrapeCache.delete(key);
 
-    let inflight = this.scrapeInflight.get(key);
-    if (!inflight) {
-      inflight = this.doSingleScrape(
-        episode,
-        animeSlug,
-        episodeNumber,
-        season,
-        true,
-        audio,
-      )
-        .then((result) => {
-          this.scrapeCache.set(key, { result, at: Date.now() });
-          return result;
-        })
-        .finally(() => {
-          this.scrapeInflight.delete(key);
-        });
-      this.scrapeInflight.set(key, inflight);
-    }
-
-    const result = await inflight;
+    const result = await this.runCoalescedScrape(
+      episode,
+      animeSlug,
+      episodeNumber,
+      season,
+      audio,
+      false,
+    );
     if (
       !result.videoUrl &&
       !result.playerEmbed &&
       lastKnownVideoUrl &&
-      !lastKnownDead
+      !lastKnownDead &&
+      !isCatalogUnpublished
     ) {
       return {
         videoUrl: lastKnownVideoUrl,
@@ -385,41 +590,6 @@ export class StreamingService {
     return { ...result, reextracted: true };
   }
 
-  /** Dispara re-extração (single-flight + scrapeCache) sem bloquear o caller.
-   *  O doSingleScrape persiste o videoUrl fresco no DB e aquece o scrapeCache,
-   *  de modo que a próxima chamada (inclusive o recovery refresh=1 do player)
-   *  encontra o resultado pronto ou compartilha o scrape em andamento. */
-  private kickBackgroundScrape(
-    episode: { id: string; embedUrl: string | null },
-    animeSlug: string,
-    episodeNumber: number,
-    season: number,
-    audio?: AudioType,
-  ): void {
-    const key = `${animeSlug}:${season}:${episodeNumber}:${audio ?? 'auto'}`;
-    if (this.scrapeInflight.has(key)) return;
-    const cached = this.scrapeCache.get(key);
-    if (cached && Date.now() - cached.at < this.SCRAPE_CACHE_TTL_MS) return;
-    if (cached) this.scrapeCache.delete(key);
-    const inflight = this.doSingleScrape(
-      episode,
-      animeSlug,
-      episodeNumber,
-      season,
-      true,
-      audio,
-    )
-      .then((result) => {
-        this.scrapeCache.set(key, { result, at: Date.now() });
-        return result;
-      })
-      .finally(() => {
-        this.scrapeInflight.delete(key);
-      })
-      .catch(() => ({ videoUrl: null, playerEmbed: null }));
-    this.scrapeInflight.set(key, inflight);
-  }
-
   /** Scrape real usando URLs persistidas por fonte + fallback ranqueado por saúde. */
   private async doSingleScrape(
     episode: { id: string; embedUrl: string | null },
@@ -428,7 +598,7 @@ export class StreamingService {
     season: number,
     persist = true,
     audio?: AudioType,
-  ): Promise<{ videoUrl: string | null; playerEmbed: string | null }> {
+  ): Promise<ScrapeOutcome> {
     let rawVideoUrl: string | null = null;
     let playerEmbed: string | null = null;
     let winningSourceId: string | undefined;
@@ -533,7 +703,13 @@ export class StreamingService {
       );
     }
 
-    return { videoUrl: rawVideoUrl, playerEmbed };
+    return {
+      videoUrl: rawVideoUrl,
+      playerEmbed,
+      sourceId: winningSourceId,
+      pageUrl: winningPageUrl,
+      audio,
+    };
   }
 
   private async persistPlayerResolvedEpisode(
@@ -542,17 +718,22 @@ export class StreamingService {
     sourceId?: string,
     pageUrl?: string,
     audio?: AudioType,
+    db: {
+      episode?: PrismaService['episode'];
+      episodeSource?: PrismaService['episodeSource'];
+      anime?: PrismaService['anime'];
+    } = this.prisma,
   ): Promise<void> {
     trustMediaHosts([rawVideoUrl]);
-    await this.prisma.episode
-      .update({
+    await db.episode
+      ?.update({
         where: { id: episodeId },
         data: { videoUrl: rawVideoUrl },
       })
       .catch(() => undefined);
 
-    if (sourceId && pageUrl && this.prisma.episodeSource) {
-      await this.prisma.episodeSource
+    if (sourceId && pageUrl && db.episodeSource) {
+      await db.episodeSource
         .upsert({
           where: {
             episodeId_sourceId: {
@@ -577,7 +758,7 @@ export class StreamingService {
         .catch(() => undefined);
     }
 
-    await this.prisma.anime
+    await db.anime
       ?.updateMany?.({
         where: {
           episodes: { some: { id: episodeId } },
@@ -610,10 +791,16 @@ export class StreamingService {
     skipLiveness = false,
   ): Promise<StreamSourceResponse> {
     const anime = await this.prisma.anime.findUnique({
-      where: { slug: animeSlug, published: true },
-      select: { id: true, slug: true, audio: true },
+      where: { slug: animeSlug },
+      select: {
+        id: true,
+        slug: true,
+        audio: true,
+        published: true,
+        catalogUnpublished: true,
+      },
     });
-    if (!anime) {
+    if (!anime || !this.isAnimeResolvable(anime)) {
       throw new NotFoundException('Anime não encontrado.');
     }
 
@@ -637,6 +824,9 @@ export class StreamingService {
       throw new NotFoundException('Episódio não encontrado.');
     }
 
+    const isCatalogUnpublished =
+      anime.published === false && anime.catalogUnpublished === true;
+
     const {
       videoUrl: rawVideoUrl,
       playerEmbed,
@@ -649,6 +839,7 @@ export class StreamingService {
       forceRefresh,
       skipLiveness,
       anime.audio,
+      isCatalogUnpublished,
     );
 
     if (!rawVideoUrl && !playerEmbed) {
@@ -657,38 +848,22 @@ export class StreamingService {
       );
     }
 
-    // Fonte é player do YouTube (embed)
-    if (playerEmbed && !rawVideoUrl) {
-      const isYoutube = youtubeEmbedUrl(playerEmbed) !== null;
-      const embedSrc = isYoutube
-        ? playerEmbed
-        : `${apiOriginBackend.replace(/\/$/, '')}/${process.env.API_PREFIX || 'api'}/embed/proxy?url=${encodeURIComponent(playerEmbed)}`;
-      dbg(`[STREAM] fonte é player embed — servindo iframe: ${embedSrc}`);
-      return {
-        animeSlug: anime.slug,
-        episodeNumber: episode.number,
-        src: embedSrc,
-        rawVideoUrl: playerEmbed,
-        embedUrl: embedSrc,
-        reextracted,
-        thumbnailUrl: episode.thumbnailUrl,
-      };
+    if (isCatalogUnpublished && !rawVideoUrl) {
+      throw new NotFoundException(
+        'Vídeo não disponível: re-extração falhou em todas as fontes.',
+      );
     }
 
-    // Monta src final
-    const base = apiOriginBackend.replace(/\/$/, '');
-    const apiPrefix = process.env.API_PREFIX || 'api';
-    const src = `${base}/${apiPrefix}${wrapMediaUrl(rawVideoUrl!)}`;
-
-    return {
+    return this.formatStreamSourceResponse({
       animeSlug: anime.slug,
       episodeNumber: episode.number,
-      src,
-      rawVideoUrl,
-      embedUrl: episode.embedUrl,
-      reextracted,
+      episodeEmbedUrl: episode.embedUrl,
       thumbnailUrl: episode.thumbnailUrl,
-    };
+      rawVideoUrl,
+      playerEmbed,
+      reextracted,
+      apiOriginBackend,
+    });
   }
 
   /**
@@ -706,9 +881,17 @@ export class StreamingService {
   ): Promise<{ jobId: string } | null> {
     const anime = await this.prisma.anime.findUnique({
       where: { slug: animeSlug },
-      select: { id: true, slug: true, audio: true },
+      select: {
+        id: true,
+        slug: true,
+        audio: true,
+        published: true,
+        catalogUnpublished: true,
+      },
     });
-    if (!anime) throw new NotFoundException('Anime não encontrado.');
+    if (!anime || !this.isAnimeResolvable(anime)) {
+      throw new NotFoundException('Anime não encontrado.');
+    }
 
     const episode = await this.prisma.episode.findUnique({
       where: {
@@ -728,23 +911,14 @@ export class StreamingService {
     });
     if (!episode) throw new NotFoundException('Episódio não encontrado.');
 
-    // Links assinados vencidos precisam ser renovados antes de chegar ao player.
-    let rawVideoUrl = episode.videoUrl;
-    if (rawVideoUrl && isNoVideoUrl(rawVideoUrl)) rawVideoUrl = null;
-    if (rawVideoUrl && /\/embed\/media\?url=/i.test(rawVideoUrl)) {
-      try {
-        const u = new URL(rawVideoUrl);
-        const inner = u.searchParams.get('url');
-        if (inner) rawVideoUrl = inner;
-      } catch {
-        /* mantém */
-      }
-    }
-    // Não bloqueie a primeira visita com uma requisição à CDN. A URL
-    // persistida é servida imediatamente; falhas reais são tratadas pelo
-    // player, que chama o caminho de refresh forçado.
+    const isCatalogUnpublished =
+      anime.published === false && anime.catalogUnpublished === true;
+
+    const rawVideoUrl = this.unwrapStoredVideoUrl(episode.videoUrl);
+
     if (
       !forceRefresh &&
+      !isCatalogUnpublished &&
       rawVideoUrl &&
       /^https?:\/\//i.test(rawVideoUrl) &&
       signedExpiryDead(rawVideoUrl) !== true
@@ -752,29 +926,285 @@ export class StreamingService {
       return null;
     }
 
-    // Cria ou reclama o job persistido. O claim é atômico: em múltiplas
-    // réplicas só uma executa; após queda, um lease vencido pode ser retomado.
-    const job = await this.extractionJobs.submit(
+    const job = await this.submitExtractionJob(
       animeSlug,
       episodeNumber,
       season,
-      async () => {
-        const result = await this.doSingleScrape(
-          { id: episode.id, embedUrl: episode.embedUrl },
-          animeSlug,
-          episodeNumber,
-          season,
-          false,
-          anime.audio,
-        );
-        return result;
-      },
+      { id: episode.id, embedUrl: episode.embedUrl },
+      anime.audio,
     );
 
     dbg(
       `[STREAM] async extraction started: job=${job.id} anime=${animeSlug} ep=${episodeNumber}`,
     );
     return { jobId: job.id };
+  }
+
+  async getJob(id: string): Promise<ExtractionJob | undefined> {
+    const job = await this.prisma.streamExtractionJob.findUnique({
+      where: { id },
+    });
+    return job ? this.toExtractionJob(job) : undefined;
+  }
+
+  private async findActiveJobByEpisode(
+    animeSlug: string,
+    episodeNumber: number,
+    season: number,
+  ): Promise<ExtractionJob | undefined> {
+    const job = await this.prisma.streamExtractionJob.findFirst({
+      where: {
+        animeSlug,
+        episodeNumber,
+        season,
+        status: { in: ['pending', 'processing'] },
+      },
+    });
+    return job ? this.toExtractionJob(job) : undefined;
+  }
+
+  private async submitExtractionJob(
+    animeSlug: string,
+    episodeNumber: number,
+    season: number,
+    episode?: { id: string; embedUrl: string | null },
+    audio?: AudioType,
+  ): Promise<ExtractionJob> {
+    const activeKey = `${animeSlug}:s${season}:ep${episodeNumber}`;
+    let job = await this.findActiveJobByEpisode(
+      animeSlug,
+      episodeNumber,
+      season,
+    );
+    if (!job) {
+      try {
+        job = this.toExtractionJob(
+          await this.prisma.streamExtractionJob.create({
+            data: { activeKey, animeSlug, episodeNumber, season },
+          }),
+        );
+      } catch (error) {
+        if ((error as { code?: string }).code !== 'P2002') throw error;
+        job = await this.findActiveJobByEpisode(
+          animeSlug,
+          episodeNumber,
+          season,
+        );
+        if (!job) throw error;
+      }
+    }
+    void this.startExtractionJob(job, episode, audio).catch(
+      (error: unknown) => {
+        this.logger.error(
+          `Falha ao iniciar job de extração ${job.id}`,
+          error instanceof Error ? error.stack : String(error),
+        );
+      },
+    );
+    return job;
+  }
+
+  private resumeExtractionJobIfStale(job: ExtractionJob): void {
+    if (
+      job.status !== 'pending' &&
+      !(
+        job.status === 'processing' &&
+        job.lockedUntil != null &&
+        job.lockedUntil <= Date.now()
+      )
+    ) {
+      return;
+    }
+    void this.startExtractionJob(job).catch((error: unknown) => {
+      this.logger.error(
+        `Falha ao retomar job de extração ${job.id}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+    });
+  }
+
+  private async startExtractionJob(
+    job: ExtractionJob,
+    preloadedEpisode?: { id: string; embedUrl: string | null },
+    preloadedAudio?: AudioType,
+  ): Promise<void> {
+    const lockId = crypto.randomUUID();
+    const claim = await this.prisma.streamExtractionJob.updateMany({
+      where: {
+        id: job.id,
+        OR: [
+          { status: 'pending' },
+          { status: 'processing', lockedUntil: { lt: new Date() } },
+        ],
+      },
+      data: {
+        status: 'processing',
+        lockedBy: lockId,
+        lockedUntil: new Date(Date.now() + JOB_TTL_MS),
+      },
+    });
+    if (!claim.count) return;
+
+    try {
+      let episode = preloadedEpisode ?? null;
+      let audio = preloadedAudio;
+      if (!episode) {
+        const anime = await this.prisma.anime.findUnique({
+          where: { slug: job.animeSlug },
+          select: { id: true, audio: true },
+        });
+        audio = anime?.audio;
+        episode = anime
+          ? await this.prisma.episode.findUnique({
+              where: {
+                animeId_season_number: {
+                  animeId: anime.id,
+                  season: job.season,
+                  number: job.episodeNumber,
+                },
+              },
+              select: { id: true, embedUrl: true },
+            })
+          : null;
+      }
+
+      if (!episode) {
+        await this.finishExtractionJob(
+          job.id,
+          lockId,
+          'failed',
+          null,
+          null,
+          'Episódio não encontrado.',
+        );
+        return;
+      }
+
+      const outcome = await this.doSingleScrape(
+        episode,
+        job.animeSlug,
+        job.episodeNumber,
+        job.season,
+        false,
+        audio,
+      );
+      await this.finishExtractionJob(
+        job.id,
+        lockId,
+        'completed',
+        episode.id,
+        outcome,
+        null,
+      );
+    } catch (error) {
+      await this.finishExtractionJob(
+        job.id,
+        lockId,
+        'failed',
+        null,
+        null,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  }
+
+  private async finishExtractionJob(
+    id: string,
+    lockId: string,
+    status: 'completed' | 'failed',
+    episodeId: string | null,
+    outcome: ScrapeOutcome | null,
+    error: string | null,
+  ): Promise<void> {
+    const row = await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.streamExtractionJob.updateMany({
+        where: { id, status: 'processing', lockedBy: lockId },
+        data: {
+          activeKey: null,
+          status,
+          videoUrl: outcome?.videoUrl ?? null,
+          playerEmbed: outcome?.playerEmbed ?? null,
+          error,
+          lockedBy: null,
+          lockedUntil: null,
+          completedAt: new Date(),
+        },
+      });
+      if (!updated.count) return null;
+
+      const finished = await tx.streamExtractionJob.findUnique({
+        where: { id },
+      });
+      if (!finished) return null;
+
+      if (status === 'completed' && outcome?.videoUrl) {
+        let targetEpisodeId = episodeId;
+        if (!targetEpisodeId) {
+          const anime = await tx.anime.findUnique({
+            where: { slug: finished.animeSlug },
+            select: { id: true },
+          });
+          const ep = anime
+            ? await tx.episode.findUnique({
+                where: {
+                  animeId_season_number: {
+                    animeId: anime.id,
+                    season: finished.season,
+                    number: finished.episodeNumber,
+                  },
+                },
+                select: { id: true },
+              })
+            : null;
+          targetEpisodeId = ep?.id ?? null;
+        }
+        if (targetEpisodeId) {
+          await this.persistPlayerResolvedEpisode(
+            targetEpisodeId,
+            outcome.videoUrl,
+            outcome.sourceId,
+            outcome.pageUrl,
+            outcome.audio,
+            tx,
+          );
+        } else {
+          trustMediaHosts([outcome.videoUrl]);
+        }
+      }
+
+      return finished;
+    });
+    if (row) this.notifyJobListeners(this.toExtractionJob(row));
+  }
+
+  private toExtractionJob(job: {
+    id: string;
+    animeSlug: string;
+    episodeNumber: number;
+    season: number;
+    status: string;
+    videoUrl: string | null;
+    playerEmbed: string | null;
+    error: string | null;
+    createdAt: Date;
+    completedAt: Date | null;
+    lockedUntil: Date | null;
+  }): ExtractionJob {
+    return {
+      id: job.id,
+      animeSlug: job.animeSlug,
+      episodeNumber: job.episodeNumber,
+      season: job.season,
+      status: job.status as ExtractionJobStatus,
+      result:
+        job.videoUrl || job.playerEmbed
+          ? { videoUrl: job.videoUrl, playerEmbed: job.playerEmbed }
+          : null,
+      error: job.error,
+      createdAt: job.createdAt.getTime(),
+      completedAt: job.completedAt?.getTime() ?? null,
+      lockedUntil: job.lockedUntil?.getTime() ?? null,
+    };
   }
 
   /**
@@ -790,50 +1220,15 @@ export class StreamingService {
     result: StreamSourceResponse | null;
     error: string | null;
   } | null> {
-    const job = await this.extractionJobs.getJob(jobId);
+    const job = await this.getJob(jobId);
     if (!job) return null;
 
-    if (
-      job.status === 'pending' ||
-      (job.status === 'processing' &&
-        job.lockedUntil != null &&
-        job.lockedUntil <= Date.now())
-    ) {
-      const anime = await this.prisma.anime.findUnique({
-        where: { slug: job.animeSlug },
-        select: { id: true, audio: true },
-      });
-      const episode = anime
-        ? await this.prisma.episode.findUnique({
-            where: {
-              animeId_season_number: {
-                animeId: anime.id,
-                season: job.season,
-                number: job.episodeNumber,
-              },
-            },
-            select: { id: true, embedUrl: true },
-          })
-        : null;
-      if (episode) {
-        this.extractionJobs.resume(job, () =>
-          this.doSingleScrape(
-            episode,
-            job.animeSlug,
-            job.episodeNumber,
-            job.season,
-            false,
-            anime?.audio,
-          ),
-        );
-      }
-    }
+    this.resumeExtractionJobIfStale(job);
 
     if (
       job.status === 'completed' &&
       (job.result?.videoUrl || job.result?.playerEmbed)
     ) {
-      // Constrói o StreamSourceResponse diretamente a partir do resultado do job
       try {
         const result = await this.buildSourceFromJobResult(
           job,
@@ -873,8 +1268,7 @@ export class StreamingService {
 
   /**
    * Constrói um StreamSourceResponse a partir de um job completado.
-   * Replica a lógica de getSource() sem as probes de liveness
-   * (o job acabou de extrair, então o resultado é fresco).
+   * Registra `trustMediaHosts` na réplica leitora e formata a resposta.
    */
   private async buildSourceFromJobResult(
     job: {
@@ -912,37 +1306,20 @@ export class StreamingService {
     const rawVideoUrl = job.result!.videoUrl;
     const playerEmbed = job.result!.playerEmbed;
 
-    // Fonte é player do YouTube/Blogger (embed)
-    if (playerEmbed && !rawVideoUrl) {
-      const isYoutube = youtubeEmbedUrl(playerEmbed) !== null;
-      const embedSrc = isYoutube
-        ? playerEmbed
-        : `${apiOriginBackend.replace(/\/$/, '')}/${process.env.API_PREFIX || 'api'}/embed/proxy?url=${encodeURIComponent(playerEmbed)}`;
-      return {
-        animeSlug: anime.slug,
-        episodeNumber: episode.number,
-        src: embedSrc,
-        rawVideoUrl: playerEmbed,
-        embedUrl: embedSrc,
-        reextracted: true,
-        thumbnailUrl: episode.thumbnailUrl,
-      };
+    if (rawVideoUrl) {
+      trustMediaHosts([rawVideoUrl]);
     }
 
-    // Monta src final
-    const base = apiOriginBackend.replace(/\/$/, '');
-    const apiPrefix = process.env.API_PREFIX || 'api';
-    const src = `${base}/${apiPrefix}${wrapMediaUrl(rawVideoUrl!)}`;
-
-    return {
+    return this.formatStreamSourceResponse({
       animeSlug: anime.slug,
       episodeNumber: episode.number,
-      src,
-      rawVideoUrl,
-      embedUrl: episode.embedUrl,
-      reextracted: true,
+      episodeEmbedUrl: episode.embedUrl,
       thumbnailUrl: episode.thumbnailUrl,
-    };
+      rawVideoUrl,
+      playerEmbed,
+      reextracted: true,
+      apiOriginBackend,
+    });
   }
 
   /**
@@ -957,7 +1334,9 @@ export class StreamingService {
   ): Promise<{
     videoUrl: string;
     episodeId: string;
+    embedUrl: string | null;
     animeSlug: string;
+    animeAudio?: AudioType;
     episodeNumber: number;
     season: number;
   }> {
@@ -985,7 +1364,7 @@ export class StreamingService {
 
     const episode = await this.prisma.episode.findUnique({
       where: { id: stored.episodeId },
-      include: { anime: { select: { slug: true } } },
+      include: { anime: { select: { slug: true, audio: true } } },
     });
 
     if (!episode || !episode.videoUrl) {
@@ -995,7 +1374,9 @@ export class StreamingService {
     return {
       videoUrl: episode.videoUrl,
       episodeId: episode.id,
+      embedUrl: episode.embedUrl ?? null,
       animeSlug: episode.anime.slug,
+      animeAudio: episode.anime.audio,
       episodeNumber: episode.number,
       season: episode.season,
     };
@@ -1006,7 +1387,7 @@ export class StreamingService {
    * que injeta Referer/Origin/UA anti-hotlinking e streama pelo IP de saída
    * do backend (mesmo IP que fez a extração -> resolve IP-vinculo do token da
    * CDN). Repassa Range p/ seek. Em falha recuperável da CDN, re-extrai a
-   * fonte via ScrapeService.reextractEpisodeVideo e tenta uma vez mais.
+   * fonte via single-flight `runCoalescedScrape` e tenta uma vez mais.
    */
   async proxyVideo(
     token: string,
@@ -1018,13 +1399,19 @@ export class StreamingService {
     headers: Headers;
     body: Readable;
   }> {
-    const { videoUrl, episodeId, animeSlug, episodeNumber, season } =
-      await this.validateToken(token, expires, ip);
+    const {
+      videoUrl,
+      episodeId,
+      embedUrl,
+      animeSlug,
+      animeAudio,
+      episodeNumber,
+      season,
+    } = await this.validateToken(token, expires, ip);
 
     const reqHeaders: Record<string, string> = {};
     if (range) reqHeaders.range = range;
 
-    // Referer dinâmico por host da CDN (googlevideo vs lightspeedst).
     const sourceOrigin = refererForMediaUrl(videoUrl);
 
     let result = await this.embedService.proxyMedia(
@@ -1033,53 +1420,19 @@ export class StreamingService {
       sourceOrigin,
     );
 
-    // Fonte indisponível (inclusive 5xx) -> re-extração e retry único.
+    // Fonte indisponível (inclusive 5xx) -> re-extração compartilhada em single-flight e retry único.
     if (shouldReextractMedia(result.status)) {
       console.log(
         `[STREAM] ${result.status} p/ ${animeSlug}/s${season}/${episodeNumber}, re-extraindo...`,
       );
-      // Single-flight: N viewers com 403 compartilham UMA re-extração (o
-      // scraper é caro e concorrencia-limitado).
-      const key = `${animeSlug}:${season}:${episodeNumber}`;
-      let fallbackSource: { sourceId: string; pageUrl: string } | null = null;
-      let inflight = this.reextractInflight.get(key);
-      if (!inflight) {
-        inflight = (async () => {
-          // Tenta re-extração da fonte original.
-          let fresh = await this.scrapeService.reextractEpisodeVideo(
-            animeSlug,
-            episodeNumber,
-            season,
-          );
-          if (
-            !fresh &&
-            typeof this.scrapeService.scrapeEpisodeFromRankedSources ===
-              'function'
-          ) {
-            const fallback = await this.scrapeService
-              .scrapeEpisodeFromRankedSources(
-                animeSlug,
-                episodeNumber,
-                season,
-                undefined,
-                async (url) => !(await probeMediaUrlDead(url, true)),
-              )
-              .catch(() => null);
-            if (fallback?.videoUrl) {
-              fresh = fallback.videoUrl;
-              fallbackSource = {
-                sourceId: fallback.sourceId,
-                pageUrl: fallback.pageUrl,
-              };
-            }
-          }
-          return fresh;
-        })().finally(() => {
-          this.reextractInflight.delete(key);
-        });
-        this.reextractInflight.set(key, inflight);
-      }
-      const fresh = await inflight;
+      const { videoUrl: fresh } = await this.runCoalescedScrape(
+        { id: episodeId, embedUrl },
+        animeSlug,
+        episodeNumber,
+        season,
+        animeAudio,
+        true,
+      );
       if (fresh) {
         result.body?.destroy();
         const freshOrigin = refererForMediaUrl(fresh);
@@ -1088,18 +1441,6 @@ export class StreamingService {
           reqHeaders,
           freshOrigin,
         );
-        if (result.status === 200 || result.status === 206) {
-          const resolvedFallback = fallbackSource as {
-            sourceId: string;
-            pageUrl: string;
-          } | null;
-          await this.persistPlayerResolvedEpisode(
-            episodeId,
-            fresh,
-            resolvedFallback?.sourceId,
-            resolvedFallback?.pageUrl,
-          );
-        }
       }
     }
     if (result.status === 403) {

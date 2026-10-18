@@ -2,43 +2,114 @@ import { StreamingService } from './streaming.service';
 import { NotFoundException, ForbiddenException } from '@nestjs/common';
 import { Readable } from 'stream';
 import * as mediaProbe from '@/common/media-probe';
+import * as trustedMediaHosts from '@/common/trusted-media-hosts';
 
 function makeMocks() {
-  const prisma = {
-    anime: { findUnique: jest.fn() },
+  const jobRows = new Map<string, any>();
+  const matches = (row: any, where: any): boolean => {
+    if (!where) return true;
+    if (where.OR)
+      return where.OR.some((item: any) =>
+        matches(row, { ...where, OR: undefined, ...item }),
+      );
+    return Object.entries(where).every(([key, value]: [string, any]) => {
+      if (key === 'OR' || value === undefined) return true;
+      if (value?.in) return value.in.includes(row[key]);
+      if (value?.lt) return row[key] < value.lt;
+      return row[key] === value;
+    });
+  };
+
+  const db = {
+    anime: {
+      findUnique: jest.fn(),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+    },
     episode: {
       findUnique: jest.fn(),
       update: jest.fn().mockResolvedValue({}),
+    },
+    episodeSource: {
+      findMany: jest.fn().mockResolvedValue([]),
+      upsert: jest.fn().mockResolvedValue({}),
     },
     streamingToken: {
       deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
       findUnique: jest.fn(),
       create: jest.fn().mockResolvedValue({}),
     },
+    streamExtractionJob: {
+      create: jest.fn(async ({ data }: any) => {
+        if (
+          [...jobRows.values()].some(
+            (row) => data.activeKey && row.activeKey === data.activeKey,
+          )
+        ) {
+          const error: any = new Error('unique');
+          error.code = 'P2002';
+          throw error;
+        }
+        const row = {
+          id: data.id ?? crypto.randomUUID(),
+          status: 'pending',
+          videoUrl: null,
+          playerEmbed: null,
+          error: null,
+          lockedBy: null,
+          lockedUntil: null,
+          completedAt: null,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          ...data,
+        };
+        jobRows.set(row.id, row);
+        return row;
+      }),
+      findUnique: jest.fn(
+        async ({ where }: any) => jobRows.get(where.id) ?? null,
+      ),
+      findFirst: jest.fn(
+        async ({ where }: any) =>
+          [...jobRows.values()].find((row) => matches(row, where)) ?? null,
+      ),
+      updateMany: jest.fn(async ({ where, data }: any) => {
+        const found = [...jobRows.values()].filter((row) =>
+          matches(row, where),
+        );
+        found.forEach((row) =>
+          Object.assign(row, data, { updatedAt: new Date() }),
+        );
+        return { count: found.length };
+      }),
+      deleteMany: jest.fn(async ({ where }: any) => {
+        const found = [...jobRows.values()].filter((row) =>
+          matches(row, where),
+        );
+        found.forEach((row) => jobRows.delete(row.id));
+        return { count: found.length };
+      }),
+    },
+  };
+  const prisma = {
+    ...db,
+    $transaction: jest.fn(async (work: (tx: typeof db) => unknown) => work(db)),
   };
   const embedService = { proxyMedia: jest.fn() };
   const scrapeService = {
-    scrapeEpisodeVideo: jest.fn(),
+    scrapeEpisodeVideo: jest.fn().mockResolvedValue({ videos: [] }),
     isSourceDisabled: jest.fn(async () => false),
     detectSourceId: jest.fn(() => null),
     scrapeEpisodeFromRankedSources: jest.fn().mockResolvedValue(null),
-    reextractEpisodeVideo: jest.fn(),
-  };
-  const extractionJobs = {
-    submit: jest.fn(),
-    findByEpisode: jest.fn(),
-    getJob: jest.fn(),
-    onComplete: jest.fn(),
-    resume: jest.fn(),
   };
   const svc = new StreamingService(
     prisma as any,
     embedService as any,
     scrapeService as any,
-    extractionJobs as any,
   );
-  return { prisma, embedService, scrapeService, extractionJobs, svc };
+  return { prisma, jobRows, embedService, scrapeService, svc };
 }
+
+const flush = () => new Promise((resolve) => setTimeout(resolve, 10));
 
 describe('StreamingService.purgeExpiredTokens', () => {
   it('remove tokens expirados e loga quando count > 0', async () => {
@@ -94,10 +165,11 @@ describe('StreamingService.cleanupMemoryCaches', () => {
     expect(cache.has('fresh')).toBe(true);
   });
 
-  it('chama purgeExpiredLivenessCache', () => {
-    const { svc } = makeMocks();
+  it('chama purgeExpiredLivenessCache e limpa streamExtractionJob expirados', () => {
+    const { prisma, svc } = makeMocks();
     svc.cleanupMemoryCaches();
     expect(purgeSpy).toHaveBeenCalled();
+    expect(prisma.streamExtractionJob.deleteMany).toHaveBeenCalled();
   });
 
   it('evict scrapeCache quando excede MAX_SCRAPE_CACHE_ENTRIES', () => {
@@ -122,16 +194,6 @@ describe('StreamingService.cleanupMemoryCaches', () => {
     }
     svc.cleanupMemoryCaches();
     expect(inflight.size).toBe(200);
-  });
-
-  it('evict reextractInflight quando excede MAX_INFLIGHT_ENTRIES', () => {
-    const { svc } = makeMocks();
-    const reextract = (svc as any).reextractInflight as Map<string, any>;
-    for (let i = 0; i < 210; i++) {
-      reextract.set(`k${i}`, Promise.resolve(null));
-    }
-    svc.cleanupMemoryCaches();
-    expect(reextract.size).toBe(200);
   });
 });
 
@@ -158,6 +220,7 @@ describe('StreamingService.generateToken', () => {
     prisma.anime.findUnique.mockResolvedValue({ id: 'a1', slug: 'anime' });
     prisma.episode.findUnique.mockResolvedValue({
       id: 'ep-1',
+      number: 1,
       videoUrl: null,
     });
     await expect(svc.generateToken('1', 'anime', '127.0.0.1')).rejects.toThrow(
@@ -165,28 +228,24 @@ describe('StreamingService.generateToken', () => {
     );
   });
 
-  it('gera token com sucesso e inclui url/token/expires/ip', async () => {
+  it('gera token e URL assinada com sucesso', async () => {
     const { prisma, svc } = makeMocks();
     prisma.anime.findUnique.mockResolvedValue({ id: 'a1', slug: 'anime' });
     prisma.episode.findUnique.mockResolvedValue({
       id: 'ep-1',
       number: 1,
-      season: 1,
-      videoUrl: 'https://cdn.example.com/v.mp4',
+      videoUrl: 'https://cdn.example.com/video.mp4',
     });
-    prisma.streamingToken.create.mockResolvedValue({});
 
     const result = await svc.generateToken('1', 'anime', '10.0.0.1', 3600);
-
-    expect(result.url).toContain('token=');
-    expect(result.url).toContain('expires=');
-    expect(result.url).toContain('ip=10.0.0.1');
     expect(result.token).toBeDefined();
     expect(result.ip).toBe('10.0.0.1');
+    expect(result.url).toContain('token=');
+    expect(result.url).toContain('ip=10.0.0.1');
     expect(prisma.streamingToken.create).toHaveBeenCalled();
   });
 
-  it('lança NotFoundException para episodeSlug não numérico', async () => {
+  it('trata episodeSlug não-numérico como NaN na busca', async () => {
     const { prisma, svc } = makeMocks();
     prisma.anime.findUnique.mockResolvedValue({ id: 'a1', slug: 'anime' });
     prisma.episode.findUnique.mockResolvedValue(null);
@@ -197,18 +256,18 @@ describe('StreamingService.generateToken', () => {
 });
 
 describe('StreamingService.validateToken', () => {
-  it('lança ForbiddenException quando timestamp expirado', async () => {
+  it('lança ForbiddenException quando expires já passou', async () => {
     const { svc } = makeMocks();
-    const pastUnix = Math.floor(Date.now() / 1000) - 1000;
-    await expect(
-      svc.validateToken('tok', pastUnix, '127.0.0.1'),
-    ).rejects.toThrow(ForbiddenException);
+    const past = Math.floor(Date.now() / 1000) - 60;
+    await expect(svc.validateToken('tok', past, '127.0.0.1')).rejects.toThrow(
+      ForbiddenException,
+    );
   });
 
-  it('lança ForbiddenException quando token não existe no DB', async () => {
+  it('lança ForbiddenException quando token não existe no banco', async () => {
     const { prisma, svc } = makeMocks();
     prisma.streamingToken.findUnique.mockResolvedValue(null);
-    const future = Math.floor(Date.now() / 1000) + 9999;
+    const future = Math.floor(Date.now() / 1000) + 3600;
     await expect(svc.validateToken('tok', future, '127.0.0.1')).rejects.toThrow(
       ForbiddenException,
     );
@@ -216,87 +275,68 @@ describe('StreamingService.validateToken', () => {
 
   it('lança ForbiddenException quando IP não corresponde', async () => {
     const { prisma, svc } = makeMocks();
+    const future = Math.floor(Date.now() / 1000) + 3600;
     prisma.streamingToken.findUnique.mockResolvedValue({
       token: 'tok',
-      ip: '1.2.3.4',
-      expiresAt: new Date(Date.now() + 9999000),
+      ip: '10.0.0.1',
+      expiresAt: new Date(Date.now() + 3600_000),
       episodeId: 'ep-1',
     });
-    const future = Math.floor(Date.now() / 1000) + 9999;
-    await expect(svc.validateToken('tok', future, '5.6.7.8')).rejects.toThrow(
+    await expect(svc.validateToken('tok', future, '127.0.0.1')).rejects.toThrow(
       ForbiddenException,
     );
   });
 
-  it('lança ForbiddenException quando expiresAt já passou', async () => {
+  it('lança ForbiddenException quando expiresAt do banco já venceu', async () => {
     const { prisma, svc } = makeMocks();
+    const future = Math.floor(Date.now() / 1000) + 3600;
     prisma.streamingToken.findUnique.mockResolvedValue({
       token: 'tok',
       ip: '127.0.0.1',
-      expiresAt: new Date(Date.now() - 5000),
+      expiresAt: new Date(Date.now() - 1000),
       episodeId: 'ep-1',
     });
-    const futureUnix = Math.floor(Date.now() / 1000) + 9999;
-    await expect(
-      svc.validateToken('tok', futureUnix, '127.0.0.1'),
-    ).rejects.toThrow(ForbiddenException);
+    await expect(svc.validateToken('tok', future, '127.0.0.1')).rejects.toThrow(
+      ForbiddenException,
+    );
   });
 
-  it('lança NotFoundException quando episódio não existe', async () => {
+  it('lança NotFoundException quando episódio ou videoUrl não existe', async () => {
     const { prisma, svc } = makeMocks();
+    const future = Math.floor(Date.now() / 1000) + 3600;
     prisma.streamingToken.findUnique.mockResolvedValue({
       token: 'tok',
       ip: '127.0.0.1',
-      expiresAt: new Date(Date.now() + 9999000),
-      episodeId: 'ep-missing',
+      expiresAt: new Date(Date.now() + 3600_000),
+      episodeId: 'ep-1',
     });
     prisma.episode.findUnique.mockResolvedValue(null);
-    const future = Math.floor(Date.now() / 1000) + 9999;
     await expect(svc.validateToken('tok', future, '127.0.0.1')).rejects.toThrow(
       NotFoundException,
     );
   });
 
-  it('lança NotFoundException quando episódio não tem videoUrl', async () => {
+  it('retorna dados do episódio quando o token é válido', async () => {
     const { prisma, svc } = makeMocks();
+    const future = Math.floor(Date.now() / 1000) + 3600;
     prisma.streamingToken.findUnique.mockResolvedValue({
       token: 'tok',
       ip: '127.0.0.1',
-      expiresAt: new Date(Date.now() + 9999000),
-      episodeId: 'ep-1',
-    });
-    prisma.episode.findUnique.mockResolvedValue({
-      id: 'ep-1',
-      number: 1,
-      season: 1,
-      videoUrl: null,
-      anime: { slug: 'anime' },
-    });
-    const future = Math.floor(Date.now() / 1000) + 9999;
-    await expect(svc.validateToken('tok', future, '127.0.0.1')).rejects.toThrow(
-      NotFoundException,
-    );
-  });
-
-  it('retorna dados com sucesso', async () => {
-    const { prisma, svc } = makeMocks();
-    const expiresAt = new Date(Date.now() + 9999000);
-    prisma.streamingToken.findUnique.mockResolvedValue({
-      token: 'tok',
-      ip: '127.0.0.1',
-      expiresAt,
+      expiresAt: new Date(Date.now() + 3600_000),
       episodeId: 'ep-1',
     });
     prisma.episode.findUnique.mockResolvedValue({
       id: 'ep-1',
       number: 3,
       season: 1,
+      embedUrl: 'https://meusanimes.blog/e/meu-anime-3/',
       videoUrl: 'https://cdn.example.com/v.mp4',
-      anime: { slug: 'meu-anime' },
+      anime: { slug: 'meu-anime', audio: 'LEGENDADO' },
     });
-    const future = Math.floor(Date.now() / 1000) + 9999;
+
     const result = await svc.validateToken('tok', future, '127.0.0.1');
     expect(result.videoUrl).toBe('https://cdn.example.com/v.mp4');
+    expect(result.episodeId).toBe('ep-1');
     expect(result.animeSlug).toBe('meu-anime');
     expect(result.episodeNumber).toBe(3);
     expect(result.season).toBe(1);
@@ -308,6 +348,7 @@ describe('StreamingService.proxyVideo', () => {
     jest.spyOn(mediaProbe, 'probeMediaUrlDead').mockResolvedValue(false),
   );
   afterEach(() => jest.restoreAllMocks());
+
   it('retorna stream com sucesso (200)', async () => {
     const { prisma, embedService, svc } = makeMocks();
     const expiresAt = new Date(Date.now() + 9999000);
@@ -368,7 +409,7 @@ describe('StreamingService.proxyVideo', () => {
   });
 
   it.each([401, 403, 404, 410, 500, 502, 503])(
-    'em %i reextrai e refaz proxy com sucesso',
+    'em %i reextrai via doSingleScrape e refaz proxy com sucesso',
     async (status) => {
       const { prisma, embedService, scrapeService, svc } = makeMocks();
       const expiresAt = new Date(Date.now() + 9999000);
@@ -382,8 +423,9 @@ describe('StreamingService.proxyVideo', () => {
         id: 'ep-1',
         number: 1,
         season: 1,
+        embedUrl: 'https://meusanimes.blog/e/anime-1/',
         videoUrl: 'https://rr1.googlevideo.com/videoplayback?expire=100',
-        anime: { slug: 'anime' },
+        anime: { slug: 'anime', audio: 'LEGENDADO' },
       });
       embedService.proxyMedia
         .mockResolvedValueOnce({
@@ -396,22 +438,30 @@ describe('StreamingService.proxyVideo', () => {
           headers: { 'content-type': 'video/mp4' },
           body: null,
         });
-      scrapeService.reextractEpisodeVideo.mockResolvedValue(
-        'https://rr2.googlevideo.com/videoplayback?expire=999999',
-      );
+      scrapeService.scrapeEpisodeVideo.mockResolvedValue({
+        videos: ['https://rr2.googlevideo.com/videoplayback?expire=999999'],
+      });
 
       const future = Math.floor(Date.now() / 1000) + 9999;
       const result = await svc.proxyVideo('tok', future, '127.0.0.1');
       expect(result.status).toBe(200);
-      expect(scrapeService.reextractEpisodeVideo).toHaveBeenCalledWith(
-        'anime',
-        1,
-        1,
+      expect(scrapeService.scrapeEpisodeVideo).toHaveBeenCalledWith(
+        'https://meusanimes.blog/e/anime-1/',
+        undefined,
+        false,
+        true,
+        'LEGENDADO',
       );
+      expect(prisma.episode.update).toHaveBeenCalledWith({
+        where: { id: 'ep-1' },
+        data: {
+          videoUrl: 'https://rr2.googlevideo.com/videoplayback?expire=999999',
+        },
+      });
     },
   );
 
-  it('em 403 tenta scrapeEpisodeFromRankedSources como fallback se reextract retorna null', async () => {
+  it('em 403 tenta scrapeEpisodeFromRankedSources como fallback se a URL persistida falha', async () => {
     const { prisma, embedService, scrapeService, svc } = makeMocks();
     const expiresAt = new Date(Date.now() + 9999000);
     prisma.streamingToken.findUnique.mockResolvedValue({
@@ -434,7 +484,6 @@ describe('StreamingService.proxyVideo', () => {
         headers: { 'content-type': 'video/mp4' },
         body: null,
       });
-    scrapeService.reextractEpisodeVideo.mockResolvedValue(null);
     scrapeService.scrapeEpisodeFromRankedSources.mockResolvedValue({
       videoUrl: 'https://rr3.googlevideo.com/videoplayback?expire=999999',
       sourceId: 'meusanimes',
@@ -474,7 +523,6 @@ describe('StreamingService.proxyVideo', () => {
       headers: {},
       body: null,
     });
-    scrapeService.reextractEpisodeVideo.mockResolvedValue(null);
     scrapeService.scrapeEpisodeFromRankedSources.mockResolvedValue(null);
 
     const future = Math.floor(Date.now() / 1000) + 9999;
@@ -889,12 +937,62 @@ describe('StreamingService.getSource', () => {
     expect(scrapeService.scrapeEpisodeVideo).not.toHaveBeenCalled();
   });
 
-  it('lança NotFoundException quando o anime não existe', async () => {
+  it('lança NotFoundException quando o anime não existe ou foi despublicado manualmente', async () => {
     const { prisma, svc } = makeMocks();
     prisma.anime.findUnique.mockResolvedValue(null);
     await expect(
       svc.getSource('nao-existe', 1, 'https://api.animesice.app'),
     ).rejects.toThrow(NotFoundException);
+
+    prisma.anime.findUnique.mockResolvedValue({
+      id: 'a1',
+      slug: 'manual-unpub',
+      published: false,
+      catalogUnpublished: false,
+    });
+    await expect(
+      svc.getSource('manual-unpub', 1, 'https://api.animesice.app'),
+    ).rejects.toThrow(NotFoundException);
+  });
+
+  it('permite auto-recuperação de anime com catalogUnpublished=true quando videoUrl está vivo', async () => {
+    const { prisma, svc } = makeMocks();
+    prisma.anime.findUnique.mockResolvedValue({
+      id: 'a1',
+      slug: 'auto-unpub',
+      published: false,
+      catalogUnpublished: true,
+    });
+    prisma.episode.findUnique.mockResolvedValue({
+      id: 'ep-1',
+      number: 1,
+      videoUrl: 'https://cdn.example.com/live.mp4',
+      embedUrl: null,
+      thumbnailUrl: null,
+    });
+    probeSpy.mockResolvedValueOnce(false);
+
+    const result = await svc.getSource(
+      'auto-unpub',
+      1,
+      'https://api.animesice.app',
+      1,
+      false,
+      true,
+    );
+    expect(result.rawVideoUrl).toBe('https://cdn.example.com/live.mp4');
+    expect(prisma.anime.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          episodes: { some: { id: 'ep-1' } },
+          published: false,
+        },
+        data: expect.objectContaining({
+          published: true,
+          catalogUnpublished: false,
+        }),
+      }),
+    );
   });
 
   it('lança NotFoundException quando o episódio não existe', async () => {
@@ -971,13 +1069,6 @@ describe('StreamingService.getSource', () => {
 
   it('doSingleScrape falha na URL persistida e usa scrapeEpisodeFromRankedSources como fallback, persistindo EpisodeSource e republicando anime', async () => {
     const { prisma, scrapeService, svc } = makeMocks();
-    (prisma as any).episodeSource = {
-      findMany: jest.fn().mockResolvedValue([]),
-      upsert: jest.fn().mockResolvedValue({}),
-    };
-    (prisma.anime as any).updateMany = jest
-      .fn()
-      .mockResolvedValue({ count: 1 });
     prisma.anime.findUnique.mockResolvedValue({
       id: 'a1',
       slug: 'anime-fallback',
@@ -1005,7 +1096,7 @@ describe('StreamingService.getSource', () => {
     );
     expect(result.rawVideoUrl).toBe('https://fallback.example.com/v.mp4');
     expect(result.reextracted).toBe(true);
-    expect((prisma as any).episodeSource.upsert).toHaveBeenCalledWith(
+    expect(prisma.episodeSource.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
           episodeId_sourceId: {
@@ -1015,7 +1106,7 @@ describe('StreamingService.getSource', () => {
         },
       }),
     );
-    expect((prisma.anime as any).updateMany).toHaveBeenCalledWith(
+    expect(prisma.anime.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
           episodes: { some: { id: 'ep-1' } },
@@ -1079,9 +1170,6 @@ describe('StreamingService.getSource', () => {
 
   it('em 403 no proxyVideo usa scrapeEpisodeFromRankedSources e faz upsert de EpisodeSource', async () => {
     const { prisma, embedService, scrapeService, svc } = makeMocks();
-    (prisma as any).episodeSource = {
-      upsert: jest.fn().mockResolvedValue({}),
-    };
     const expiresAt = new Date(Date.now() + 9999000);
     prisma.streamingToken.findUnique.mockResolvedValue({
       token: 'tok',
@@ -1103,7 +1191,6 @@ describe('StreamingService.getSource', () => {
         headers: { 'content-type': 'video/mp4' },
         body: null,
       });
-    scrapeService.reextractEpisodeVideo.mockResolvedValue(null);
     scrapeService.scrapeEpisodeFromRankedSources.mockResolvedValue({
       videoUrl: 'https://cdn.animesonline.example/v.mp4',
       sourceId: 'animesonline',
@@ -1120,7 +1207,7 @@ describe('StreamingService.getSource', () => {
       undefined,
       expect.any(Function),
     );
-    expect((prisma as any).episodeSource.upsert).toHaveBeenCalledWith(
+    expect(prisma.episodeSource.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
           episodeId_sourceId: {
@@ -1133,10 +1220,22 @@ describe('StreamingService.getSource', () => {
   });
 });
 
-describe('StreamingService.getSourceAsync', () => {
-  it('callback do job reusa a extração da página persistida', async () => {
-    const { prisma, scrapeService, extractionJobs, svc } = makeMocks();
-    prisma.anime.findUnique.mockResolvedValue({ id: 'a1', slug: 'anime' });
+describe('StreamingService.getSourceAsync & Job Lease Lifecycle', () => {
+  beforeEach(() =>
+    jest.spyOn(mediaProbe, 'probeMediaUrlDead').mockResolvedValue(false),
+  );
+  afterEach(() => jest.restoreAllMocks());
+
+  it('executa extração assíncrona e persiste Episode, EpisodeSource, TrustedMediaHosts e republica anime', async () => {
+    const { prisma, scrapeService, svc } = makeMocks();
+    const trustSpy = jest.spyOn(trustedMediaHosts, 'trustMediaHosts');
+    prisma.anime.findUnique.mockResolvedValue({
+      id: 'a1',
+      slug: 'anime',
+      audio: 'DUBLADO',
+      published: false,
+      catalogUnpublished: true,
+    });
     prisma.episode.findUnique.mockResolvedValue({
       id: 'ep-1',
       number: 1,
@@ -1144,37 +1243,61 @@ describe('StreamingService.getSourceAsync', () => {
       embedUrl: 'https://meusanimes.blog/e/anime-episodio-1/',
       thumbnailUrl: null,
     });
+    scrapeService.detectSourceId.mockReturnValue('meusanimes' as any);
     scrapeService.scrapeEpisodeVideo.mockResolvedValue({
       videos: ['https://cdn.example/video.mp4'],
     });
-    extractionJobs.submit.mockImplementation(
-      async (
-        _slug: string,
-        _number: number,
-        _season: number,
-        run: () => Promise<unknown>,
-      ) => {
-        await run();
-        return { id: 'job-1' };
-      },
-    );
 
-    await expect(svc.getSourceAsync('anime', 1)).resolves.toEqual({
-      jobId: 'job-1',
-    });
+    const res = await svc.getSourceAsync('anime', 1);
+    expect(res?.jobId).toBeDefined();
+    await flush();
+
     expect(scrapeService.scrapeEpisodeVideo).toHaveBeenCalledWith(
       'https://meusanimes.blog/e/anime-episodio-1/',
       undefined,
       false,
       true,
-      undefined,
+      'DUBLADO',
+    );
+    expect(trustSpy).toHaveBeenCalledWith(['https://cdn.example/video.mp4']);
+    expect(prisma.episode.update).toHaveBeenCalledWith({
+      where: { id: 'ep-1' },
+      data: { videoUrl: 'https://cdn.example/video.mp4' },
+    });
+    expect(prisma.episodeSource.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          episodeId_sourceId: {
+            episodeId: 'ep-1',
+            sourceId: 'meusanimes',
+          },
+        },
+      }),
+    );
+    expect(prisma.anime.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          episodes: { some: { id: 'ep-1' } },
+          published: false,
+        },
+      }),
     );
   });
 
-  it('lança NotFoundException quando anime não existe', async () => {
+  it('lança NotFoundException quando anime não existe ou foi despublicado manualmente', async () => {
     const { prisma, svc } = makeMocks();
     prisma.anime.findUnique.mockResolvedValue(null);
     await expect(svc.getSourceAsync('nao-existe', 1)).rejects.toThrow(
+      NotFoundException,
+    );
+
+    prisma.anime.findUnique.mockResolvedValue({
+      id: 'a1',
+      slug: 'manual-unpub',
+      published: false,
+      catalogUnpublished: false,
+    });
+    await expect(svc.getSourceAsync('manual-unpub', 1)).rejects.toThrow(
       NotFoundException,
     );
   });
@@ -1188,7 +1311,59 @@ describe('StreamingService.getSourceAsync', () => {
     );
   });
 
-  it('retorna null quando videoUrl já está vivo', async () => {
+  it('retorna null quando videoUrl já está vivo e anime publicado', async () => {
+    const { prisma, svc } = makeMocks();
+    prisma.anime.findUnique.mockResolvedValue({
+      id: 'a1',
+      slug: 'anime',
+      published: true,
+    });
+    prisma.episode.findUnique.mockResolvedValue({
+      id: 'ep-1',
+      number: 1,
+      videoUrl: 'https://cdn.example.com/v.mp4',
+      embedUrl: null,
+      thumbnailUrl: null,
+    });
+    const result = await svc.getSourceAsync('anime', 1);
+    expect(result).toBeNull();
+  });
+
+  it('não retorna null no fast-path quando anime está catalogUnpublished=true (força job de validação)', async () => {
+    const { prisma, svc } = makeMocks();
+    prisma.anime.findUnique.mockResolvedValue({
+      id: 'a1',
+      slug: 'anime',
+      published: false,
+      catalogUnpublished: true,
+    });
+    prisma.episode.findUnique.mockResolvedValue({
+      id: 'ep-1',
+      number: 1,
+      videoUrl: 'https://cdn.example.com/v.mp4',
+      embedUrl: null,
+      thumbnailUrl: null,
+    });
+    const result = await svc.getSourceAsync('anime', 1);
+    expect(result?.jobId).toBeDefined();
+  });
+
+  it('submete extração quando a URL assinada já venceu', async () => {
+    const { prisma, svc } = makeMocks();
+    prisma.anime.findUnique.mockResolvedValue({ id: 'a1', slug: 'anime' });
+    prisma.episode.findUnique.mockResolvedValue({
+      id: 'ep-1',
+      number: 1,
+      videoUrl: `https://cdn.example.com/v.mp4?expire=${Math.floor(Date.now() / 1000) - 60}`,
+      embedUrl: null,
+      thumbnailUrl: null,
+    });
+
+    const res = await svc.getSourceAsync('anime', 1);
+    expect(res?.jobId).toBeDefined();
+  });
+
+  it('renova por job quando o player pede refresh explícito', async () => {
     const { prisma, svc } = makeMocks();
     prisma.anime.findUnique.mockResolvedValue({ id: 'a1', slug: 'anime' });
     prisma.episode.findUnique.mockResolvedValue({
@@ -1198,122 +1373,133 @@ describe('StreamingService.getSourceAsync', () => {
       embedUrl: null,
       thumbnailUrl: null,
     });
-    const probeSpy = jest
-      .spyOn(mediaProbe, 'probeMediaUrlDead')
-      .mockResolvedValue(false);
-    const result = await svc.getSourceAsync('anime', 1);
-    expect(result).toBeNull();
-    probeSpy.mockRestore();
+
+    const res = await svc.getSourceAsync('anime', 1, 1, true);
+    expect(res?.jobId).toBeDefined();
   });
 
-  it('submete extração quando a URL assinada já venceu', async () => {
-    const { prisma, extractionJobs, svc } = makeMocks();
-    prisma.anime.findUnique.mockResolvedValue({ id: 'a1', slug: 'anime' });
-    prisma.episode.findUnique.mockResolvedValue({
-      id: 'ep-1',
-      number: 1,
-      videoUrl: `https://cdn.example.com/v.mp4?expire=${Math.floor(Date.now() / 1000) - 60}`,
-      embedUrl: null,
-      thumbnailUrl: null,
-    });
-    extractionJobs.submit.mockResolvedValue({ id: 'job-expired' });
-
-    await expect(svc.getSourceAsync('anime', 1)).resolves.toEqual({
-      jobId: 'job-expired',
-    });
-    expect(extractionJobs.submit).toHaveBeenCalledWith(
-      'anime',
-      1,
-      1,
-      expect.any(Function),
-    );
-  });
-
-  it('renova por job quando o player pede refresh explícito', async () => {
-    const { prisma, extractionJobs, svc } = makeMocks();
-    prisma.anime.findUnique.mockResolvedValue({ id: 'a1', slug: 'anime' });
-    prisma.episode.findUnique.mockResolvedValue({
-      id: 'ep-1',
-      number: 1,
-      videoUrl: 'https://cdn.example.com/v.mp4',
-      embedUrl: null,
-      thumbnailUrl: null,
-    });
-    extractionJobs.submit.mockResolvedValue({ id: 'job-refresh' });
-
-    await expect(svc.getSourceAsync('anime', 1, 1, true)).resolves.toEqual({
-      jobId: 'job-refresh',
-    });
-    expect(extractionJobs.submit).toHaveBeenCalledWith(
-      'anime',
-      1,
-      1,
-      expect.any(Function),
-    );
-  });
-
-  it('delega o job existente ao claim persistido', async () => {
-    const { prisma, extractionJobs, svc } = makeMocks();
+  it('deduplica jobs concorrentes no banco', async () => {
+    const { prisma, scrapeService, svc } = makeMocks();
     prisma.anime.findUnique.mockResolvedValue({ id: 'a1', slug: 'anime' });
     prisma.episode.findUnique.mockResolvedValue({
       id: 'ep-1',
       number: 1,
       videoUrl: null,
-      embedUrl: null,
+      embedUrl: 'https://meusanimes.blog/e/anime-1/',
       thumbnailUrl: null,
     });
-    extractionJobs.submit.mockResolvedValue({ id: 'job-1' });
-    const result = await svc.getSourceAsync('anime', 1);
-    expect(result).toEqual({ jobId: 'job-1' });
-    expect(extractionJobs.submit).toHaveBeenCalledWith(
-      'anime',
-      1,
-      1,
-      expect.any(Function),
+    let release!: (v: { videos: string[] }) => void;
+    scrapeService.scrapeEpisodeVideo.mockImplementation(
+      () =>
+        new Promise<{ videos: string[] }>((res) => {
+          release = res;
+        }),
     );
+
+    const first = await svc.getSourceAsync('anime', 1);
+    const second = await svc.getSourceAsync('anime', 1);
+    expect(second?.jobId).toBe(first?.jobId);
+    release({ videos: ['https://cdn.example/ok.mp4'] });
+    await flush();
   });
 
-  it('submete novo job quando extração é necessária', async () => {
-    const { prisma, extractionJobs, svc } = makeMocks();
-    prisma.anime.findUnique.mockResolvedValue({ id: 'a1', slug: 'anime' });
+  it('isola worker antigo após outra instância reclamar lease expirado (fencing)', async () => {
+    const { prisma, scrapeService, svc } = makeMocks();
+    prisma.anime.findUnique.mockResolvedValue({ id: 'a1', slug: 'naruto' });
     prisma.episode.findUnique.mockResolvedValue({
-      id: 'ep-1',
-      number: 2,
-      videoUrl: null,
-      embedUrl: 'https://meusanimes.blog/e/x',
-      thumbnailUrl: null,
-    });
-    extractionJobs.findByEpisode.mockReturnValue(undefined);
-    extractionJobs.submit.mockReturnValue({ id: 'job-new' });
-    const result = await svc.getSourceAsync('anime', 2);
-    expect(result).toEqual({ jobId: 'job-new' });
-    expect(extractionJobs.submit).toHaveBeenCalledWith(
-      'anime',
-      2,
-      1,
-      expect.any(Function),
-    );
-  });
-
-  it('não faz probe da videoUrl no caminho assíncrono', async () => {
-    const { prisma, extractionJobs, svc } = makeMocks();
-    prisma.anime.findUnique.mockResolvedValue({ id: 'a1', slug: 'anime' });
-    prisma.episode.findUnique.mockResolvedValue({
-      id: 'ep-1',
+      id: 'episode-id',
       number: 1,
-      videoUrl: 'https://cdn.example.com/dead.mp4',
-      embedUrl: null,
+      videoUrl: null,
+      embedUrl: 'https://meusanimes.blog/e/naruto-1/',
       thumbnailUrl: null,
     });
-    const probeSpy = jest
-      .spyOn(mediaProbe, 'probeMediaUrlDead')
-      .mockResolvedValue(true);
-    extractionJobs.findByEpisode.mockReturnValue(undefined);
-    extractionJobs.submit.mockReturnValue({ id: 'job-dead' });
-    const result = await svc.getSourceAsync('anime', 1);
-    expect(result).toBeNull();
-    expect(extractionJobs.submit).not.toHaveBeenCalled();
-    probeSpy.mockRestore();
+
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    scrapeService.scrapeEpisodeVideo
+      .mockImplementationOnce(async () => {
+        await firstGate;
+        return { videos: ['https://cdn.example/old-source.mp4'] };
+      })
+      .mockResolvedValueOnce({
+        videos: ['https://cdn.example/new-source.mp4'],
+      });
+
+    const submitted = await svc.getSourceAsync('naruto', 1);
+    const jobId = submitted!.jobId;
+    await flush();
+
+    await prisma.streamExtractionJob.updateMany({
+      where: { id: jobId },
+      data: { lockedUntil: new Date(Date.now() - 1) },
+    });
+
+    await svc.getJobStatus(jobId, 'https://api.test');
+    await flush();
+
+    releaseFirst();
+    await flush();
+
+    const completed = await svc.getJob(jobId);
+    expect(completed?.status).toBe('completed');
+    expect(completed?.result?.videoUrl).toBe(
+      'https://cdn.example/new-source.mp4',
+    );
+    expect(prisma.episode.update).toHaveBeenCalledTimes(1);
+    expect(prisma.episode.update).toHaveBeenCalledWith({
+      where: { id: 'episode-id' },
+      data: { videoUrl: 'https://cdn.example/new-source.mp4' },
+    });
+    svc.onModuleDestroy();
+  });
+
+  it('notifica listeners em outra réplica via polling quando job termina', async () => {
+    jest.useFakeTimers();
+    try {
+      const { prisma, scrapeService, svc: first } = makeMocks();
+      const second = new StreamingService(
+        prisma as any,
+        { proxyMedia: jest.fn() } as any,
+        scrapeService as any,
+      );
+      prisma.anime.findUnique.mockResolvedValue({ id: 'a1', slug: 'naruto' });
+      prisma.episode.findUnique.mockResolvedValue({
+        id: 'ep-1',
+        number: 1,
+        videoUrl: null,
+        embedUrl: 'https://meusanimes.blog/e/naruto-1/',
+        thumbnailUrl: null,
+      });
+
+      let release!: () => void;
+      const pending = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      scrapeService.scrapeEpisodeVideo.mockImplementationOnce(async () => {
+        await pending;
+        return { videos: ['https://cdn.example/ok.mp4'] };
+      });
+
+      const submitted = await first.getSourceAsync('naruto', 1);
+      const listener = jest.fn();
+      const unsubscribe = await second.onJobComplete(
+        submitted!.jobId,
+        listener,
+      );
+      release();
+      await jest.advanceTimersByTimeAsync(2_000);
+      expect(listener).toHaveBeenCalledTimes(1);
+      expect(listener).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'completed' }),
+      );
+      unsubscribe();
+      first.onModuleDestroy();
+      second.onModuleDestroy();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('desembrulha /embed/media?url= sem bloquear a resposta', async () => {
@@ -1336,8 +1522,8 @@ describe('StreamingService.getSourceAsync', () => {
     probeSpy.mockRestore();
   });
 
-  it('mantém videoUrl quando desembrulho falha', async () => {
-    const { prisma, extractionJobs, svc } = makeMocks();
+  it('mantém videoUrl quando desembrulho falha e submete job por não ser http', async () => {
+    const { prisma, svc } = makeMocks();
     prisma.anime.findUnique.mockResolvedValue({ id: 'a1', slug: 'anime' });
     prisma.episode.findUnique.mockResolvedValue({
       id: 'ep-1',
@@ -1346,16 +1532,15 @@ describe('StreamingService.getSourceAsync', () => {
       embedUrl: null,
       thumbnailUrl: null,
     });
-    extractionJobs.findByEpisode.mockReturnValue(undefined);
-    extractionJobs.submit.mockReturnValue({ id: 'job-malformed' });
     const result = await svc.getSourceAsync('anime', 1);
-    expect(result).toEqual({ jobId: 'job-malformed' });
+    expect(result?.jobId).toBeDefined();
   });
 });
 
 describe('StreamingService.buildSourceResponseFromJob', () => {
-  it('monta a resposta de stream a partir de um job concluído', async () => {
+  it('monta a resposta de stream a partir de um job concluído e registra trustMediaHosts', async () => {
     const { prisma, svc } = makeMocks();
+    const trustSpy = jest.spyOn(trustedMediaHosts, 'trustMediaHosts');
     prisma.anime.findUnique.mockResolvedValue({ id: 'a1', slug: 'anime' });
     prisma.episode.findUnique.mockResolvedValue({
       id: 'ep-1',
@@ -1384,28 +1569,38 @@ describe('StreamingService.buildSourceResponseFromJob', () => {
 
     expect(result.src).toContain('/api/embed/media?url=');
     expect(result.rawVideoUrl).toBe('https://cdn.example/video.mp4');
+    expect(trustSpy).toHaveBeenCalledWith(['https://cdn.example/video.mp4']);
+    trustSpy.mockRestore();
   });
 });
 
 describe('StreamingService.getJobStatus', () => {
+  beforeEach(() =>
+    jest.spyOn(mediaProbe, 'probeMediaUrlDead').mockResolvedValue(false),
+  );
+  afterEach(() => jest.restoreAllMocks());
+
   it('retorna null quando job não existe', async () => {
-    const { extractionJobs, svc } = makeMocks();
-    extractionJobs.getJob.mockReturnValue(undefined);
+    const { svc } = makeMocks();
     await expect(
       svc.getJobStatus('missing', 'https://api.x'),
     ).resolves.toBeNull();
   });
 
   it('retorna completed com result quando job tem videoUrl', async () => {
-    const { prisma, extractionJobs, svc } = makeMocks();
-    extractionJobs.getJob.mockReturnValue({
+    const { prisma, jobRows, svc } = makeMocks();
+    jobRows.set('j1', {
       id: 'j1',
       animeSlug: 'anime',
       episodeNumber: 1,
       season: 1,
       status: 'completed',
-      result: { videoUrl: 'https://cdn.example.com/v.mp4', playerEmbed: null },
+      videoUrl: 'https://cdn.example.com/v.mp4',
+      playerEmbed: null,
       error: null,
+      createdAt: new Date(),
+      completedAt: new Date(),
+      lockedUntil: null,
     });
     prisma.anime.findUnique.mockResolvedValue({ id: 'a1', slug: 'anime' });
     prisma.episode.findUnique.mockResolvedValue({
@@ -1421,15 +1616,19 @@ describe('StreamingService.getJobStatus', () => {
   });
 
   it('retorna failed com erro quando construção da fonte falha', async () => {
-    const { prisma, extractionJobs, svc } = makeMocks();
-    extractionJobs.getJob.mockReturnValue({
+    const { prisma, jobRows, svc } = makeMocks();
+    jobRows.set('j2', {
       id: 'j2',
       animeSlug: 'anime',
       episodeNumber: 1,
       season: 1,
       status: 'completed',
-      result: { videoUrl: 'https://cdn.example.com/v.mp4', playerEmbed: null },
+      videoUrl: 'https://cdn.example.com/v.mp4',
+      playerEmbed: null,
       error: null,
+      createdAt: new Date(),
+      completedAt: new Date(),
+      lockedUntil: null,
     });
     prisma.anime.findUnique.mockResolvedValue(null);
     const out = await svc.getJobStatus('j2', 'https://api.animesice.app');
@@ -1441,15 +1640,19 @@ describe('StreamingService.getJobStatus', () => {
   });
 
   it('retorna failed quando job termina sem video nem embed', async () => {
-    const { extractionJobs, svc } = makeMocks();
-    extractionJobs.getJob.mockReturnValue({
+    const { jobRows, svc } = makeMocks();
+    jobRows.set('j0', {
       id: 'j0',
       animeSlug: 'anime',
       episodeNumber: 1,
       season: 1,
       status: 'completed',
-      result: { videoUrl: null, playerEmbed: null },
+      videoUrl: null,
+      playerEmbed: null,
       error: null,
+      createdAt: new Date(),
+      completedAt: new Date(),
+      lockedUntil: null,
     });
     const out = await svc.getJobStatus('j0', 'https://api.x');
     expect(out).toEqual({
@@ -1459,29 +1662,20 @@ describe('StreamingService.getJobStatus', () => {
     });
   });
 
-  it('retorna failed quando job concluído não tem resultado', async () => {
-    const { extractionJobs, svc } = makeMocks();
-    extractionJobs.getJob.mockReturnValue({
-      id: 'jn',
-      status: 'completed',
-      result: null,
-      error: null,
-    });
-    const out = await svc.getJobStatus('jn', 'https://api.x');
-    expect(out).toEqual({
-      status: 'failed',
-      result: null,
-      error: 'A extração terminou sem encontrar uma fonte de vídeo.',
-    });
-  });
-
-  it('retorna failed com erro do job', async () => {
-    const { extractionJobs, svc } = makeMocks();
-    extractionJobs.getJob.mockReturnValue({
+  it('retorna failed com erro quando job falhou', async () => {
+    const { jobRows, svc } = makeMocks();
+    jobRows.set('j3', {
       id: 'j3',
+      animeSlug: 'anime',
+      episodeNumber: 1,
+      season: 1,
       status: 'failed',
-      result: null,
+      videoUrl: null,
+      playerEmbed: null,
       error: 'boom',
+      createdAt: new Date(),
+      completedAt: new Date(),
+      lockedUntil: null,
     });
     const out = await svc.getJobStatus('j3', 'https://api.x');
     expect(out).toEqual({
@@ -1492,61 +1686,72 @@ describe('StreamingService.getJobStatus', () => {
   });
 
   it('retorna status pendente para jobs em andamento', async () => {
-    const { extractionJobs, svc } = makeMocks();
-    extractionJobs.getJob.mockReturnValue({
+    const { jobRows, svc } = makeMocks();
+    jobRows.set('j4', {
       id: 'j4',
+      animeSlug: 'anime',
+      episodeNumber: 1,
+      season: 1,
       status: 'processing',
-      result: null,
+      videoUrl: null,
+      playerEmbed: null,
       error: null,
+      createdAt: new Date(),
+      completedAt: null,
+      lockedUntil: new Date(Date.now() + 60_000),
     });
     const out = await svc.getJobStatus('j4', 'https://api.x');
     expect(out).toEqual({ status: 'processing', result: null, error: null });
   });
 
   it('retoma um job com lease vencido ao consultar o status', async () => {
-    const { prisma, extractionJobs, svc } = makeMocks();
-    extractionJobs.getJob.mockReturnValue({
+    const { prisma, jobRows, scrapeService, svc } = makeMocks();
+    jobRows.set('expired-job', {
       id: 'expired-job',
       animeSlug: 'anime',
       episodeNumber: 1,
       season: 1,
       status: 'processing',
-      result: null,
+      videoUrl: null,
+      playerEmbed: null,
       error: null,
-      lockedUntil: Date.now() - 1,
+      createdAt: new Date(),
+      completedAt: null,
+      lockedUntil: new Date(Date.now() - 1000),
     });
-    prisma.anime.findUnique.mockResolvedValue({ id: 'a1' });
-    prisma.episode.findUnique.mockResolvedValue({ id: 'ep-1', embedUrl: null });
+    prisma.anime.findUnique.mockResolvedValue({ id: 'a1', slug: 'anime' });
+    prisma.episode.findUnique.mockResolvedValue({
+      id: 'ep-1',
+      number: 1,
+      embedUrl: 'https://meusanimes.blog/e/anime-1/',
+    });
+    scrapeService.scrapeEpisodeVideo.mockResolvedValue({
+      videos: ['https://cdn.example/resumed.mp4'],
+    });
 
     await svc.getJobStatus('expired-job', 'https://api.test');
+    await flush();
 
-    expect(extractionJobs.resume).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'expired-job' }),
-      expect.any(Function),
-    );
-  });
-
-  it('onJobComplete delega para extractionJobs', () => {
-    const { extractionJobs, svc } = makeMocks();
-    const cleanup = jest.fn();
-    extractionJobs.onComplete.mockReturnValue(cleanup);
-    const listener = jest.fn();
-    const out = svc.onJobComplete('j1', listener);
-    expect(extractionJobs.onComplete).toHaveBeenCalledWith('j1', listener);
-    expect(out).toBe(cleanup);
+    const updated = await svc.getJob('expired-job');
+    expect(updated?.status).toBe('completed');
+    expect(updated?.result?.videoUrl).toBe('https://cdn.example/resumed.mp4');
   });
 
   it('retorna embed YouTube direto quando job tem playerEmbed', async () => {
-    const { prisma, extractionJobs, svc } = makeMocks();
+    const { prisma, jobRows, svc } = makeMocks();
     const youtubeEmbed = 'https://www.youtube.com/embed/dQw4w9WgXcQ';
-    extractionJobs.getJob.mockReturnValue({
+    jobRows.set('jy', {
       id: 'jy',
       animeSlug: 'anime',
       episodeNumber: 1,
       season: 1,
       status: 'completed',
-      result: { videoUrl: null, playerEmbed: youtubeEmbed },
+      videoUrl: null,
+      playerEmbed: youtubeEmbed,
       error: null,
+      createdAt: new Date(),
+      completedAt: new Date(),
+      lockedUntil: null,
     });
     prisma.anime.findUnique.mockResolvedValue({ id: 'a1', slug: 'anime' });
     prisma.episode.findUnique.mockResolvedValue({
@@ -1562,16 +1767,20 @@ describe('StreamingService.getJobStatus', () => {
   });
 
   it('usa proxy de embed quando player não é YouTube', async () => {
-    const { prisma, extractionJobs, svc } = makeMocks();
+    const { prisma, jobRows, svc } = makeMocks();
     const bloggerEmbed = 'https://www.blogger.com/video.g?token=x';
-    extractionJobs.getJob.mockReturnValue({
+    jobRows.set('jb', {
       id: 'jb',
       animeSlug: 'anime',
       episodeNumber: 1,
       season: 1,
       status: 'completed',
-      result: { videoUrl: null, playerEmbed: bloggerEmbed },
+      videoUrl: null,
+      playerEmbed: bloggerEmbed,
       error: null,
+      createdAt: new Date(),
+      completedAt: new Date(),
+      lockedUntil: null,
     });
     prisma.anime.findUnique.mockResolvedValue({ id: 'a1', slug: 'anime' });
     prisma.episode.findUnique.mockResolvedValue({
@@ -1619,15 +1828,19 @@ describe('StreamingService (cobertura de recuperação)', () => {
   }
 
   it('serve URL relativa de job sem embrulhar em proxy', async () => {
-    const { prisma, extractionJobs, svc } = makeMocks();
-    extractionJobs.getJob.mockReturnValue({
+    const { prisma, jobRows, svc } = makeMocks();
+    jobRows.set('jrel', {
       id: 'jrel',
       animeSlug: 'anime',
       episodeNumber: 1,
       season: 1,
       status: 'completed',
-      result: { videoUrl: 'relative/path.mp4', playerEmbed: null },
+      videoUrl: 'relative/path.mp4',
+      playerEmbed: null,
       error: null,
+      createdAt: new Date(),
+      completedAt: new Date(),
+      lockedUntil: null,
     });
     mockEpisode(prisma);
     const out = await svc.getJobStatus('jrel', 'https://api.test');
@@ -1662,7 +1875,7 @@ describe('StreamingService (cobertura de recuperação)', () => {
   it('descarta cache de scrape expirado e re-extrai', async () => {
     const { prisma, scrapeService, svc } = makeMocks();
     mockEpisode(prisma);
-    (svc as any).scrapeCache.set('anime:1:1', {
+    (svc as any).scrapeCache.set('anime:1:1:auto', {
       result: { videoUrl: 'https://cdn.old/v.mp4', playerEmbed: null },
       at: 0,
     });
@@ -1758,9 +1971,6 @@ describe('StreamingService (cobertura de recuperação)', () => {
     expect(out.rawVideoUrl).toBe('https://cdn.test/live4.mp4');
   });
 
-  // Regressão: o fallback cross-source era gateado por NODE_ENV === 'test',
-  // então em produção a fonte persistida morta (meusanimes no Cloudflare
-  // challenge) deixava o player sem vídeo nenhum.
   it('em produção usa o fallback cross-source quando a fonte persistida morre', async () => {
     const origEnv = process.env.NODE_ENV;
     process.env.NODE_ENV = 'production';
@@ -1806,18 +2016,19 @@ describe('StreamingService (cobertura de recuperação)', () => {
 
   it('usa proxy de embed do job sem API_PREFIX', async () => {
     delete process.env.API_PREFIX;
-    const { prisma, extractionJobs, svc } = makeMocks();
-    extractionJobs.getJob.mockReturnValue({
+    const { prisma, jobRows, svc } = makeMocks();
+    jobRows.set('jb2', {
       id: 'jb2',
       animeSlug: 'anime',
       episodeNumber: 1,
       season: 1,
       status: 'completed',
-      result: {
-        videoUrl: null,
-        playerEmbed: 'https://www.blogger.com/video.g?token=y',
-      },
+      videoUrl: null,
+      playerEmbed: 'https://www.blogger.com/video.g?token=y',
       error: null,
+      createdAt: new Date(),
+      completedAt: new Date(),
+      lockedUntil: null,
     });
     mockEpisode(prisma);
     const out = await svc.getJobStatus('jb2', 'https://api.test');
@@ -1825,22 +2036,26 @@ describe('StreamingService (cobertura de recuperação)', () => {
   });
 
   it('getSourceAsync retorna null para legada sem url e viva', async () => {
-    const { prisma, extractionJobs, svc } = makeMocks();
+    const { prisma, svc } = makeMocks();
     mockEpisode(prisma, { videoUrl: 'https://cdn.test/embed/media?url=' });
     await expect(svc.getSourceAsync('anime', 1, 1)).resolves.toBeNull();
-    expect(extractionJobs.submit).not.toHaveBeenCalled();
+    expect(prisma.streamExtractionJob.create).not.toHaveBeenCalled();
   });
 
   it('getJobStatus falha claramente quando episódio sumiu', async () => {
-    const { prisma, extractionJobs, svc } = makeMocks();
-    extractionJobs.getJob.mockReturnValue({
+    const { prisma, jobRows, svc } = makeMocks();
+    jobRows.set('jg', {
       id: 'jg',
       animeSlug: 'anime',
       episodeNumber: 1,
       season: 1,
       status: 'completed',
-      result: { videoUrl: 'https://cdn.test/v.mp4', playerEmbed: null },
+      videoUrl: 'https://cdn.test/v.mp4',
+      playerEmbed: null,
       error: null,
+      createdAt: new Date(),
+      completedAt: new Date(),
+      lockedUntil: null,
     });
     prisma.anime.findUnique.mockResolvedValue({ id: 'a1', slug: 'anime' });
     prisma.episode.findUnique.mockResolvedValue(null);
@@ -1866,6 +2081,7 @@ describe('StreamingService (cobertura de recuperação)', () => {
       id: 'ep-1',
       number: 1,
       season: 1,
+      embedUrl: 'https://meusanimes.blog/e/anime-1/',
       videoUrl,
       anime: { slug: 'anime' },
     });
@@ -1887,19 +2103,19 @@ describe('StreamingService (cobertura de recuperação)', () => {
       .mockResolvedValueOnce(streamBody(403))
       .mockResolvedValueOnce(streamBody(403))
       .mockResolvedValue(streamBody(206));
-    let releaseFresh!: (v: string | null) => void;
-    scrapeService.reextractEpisodeVideo.mockImplementation(
+    let releaseFresh!: (v: { videos: string[] }) => void;
+    scrapeService.scrapeEpisodeVideo.mockImplementation(
       () =>
-        new Promise<string | null>((res) => {
+        new Promise<{ videos: string[] }>((res) => {
           releaseFresh = res;
         }),
     );
     const p1 = svc.proxyVideo('tok', future, '127.0.0.1');
     const p2 = svc.proxyVideo('tok', future, '127.0.0.1');
-    await waitForCall(scrapeService.reextractEpisodeVideo);
-    releaseFresh('https://cdn.test/fresh.mp4');
+    await waitForCall(scrapeService.scrapeEpisodeVideo);
+    releaseFresh({ videos: ['https://cdn.test/fresh.mp4'] });
     const [r1, r2] = await Promise.all([p1, p2]);
-    expect(scrapeService.reextractEpisodeVideo).toHaveBeenCalledTimes(1);
+    expect(scrapeService.scrapeEpisodeVideo).toHaveBeenCalledTimes(1);
     expect(r1.status).toBe(206);
     expect(r2.status).toBe(206);
   });
@@ -1913,7 +2129,7 @@ describe('StreamingService (cobertura de recuperação)', () => {
     embedService.proxyMedia
       .mockResolvedValueOnce(streamBody(403))
       .mockResolvedValue(streamBody(200));
-    scrapeService.reextractEpisodeVideo.mockResolvedValue(null);
+    scrapeService.scrapeEpisodeVideo.mockResolvedValue({ videos: [] });
     scrapeService.scrapeEpisodeFromRankedSources.mockImplementation(
       async (
         _slug: string,
@@ -1950,7 +2166,7 @@ describe('StreamingService (cobertura de recuperação)', () => {
     const { prisma, embedService, scrapeService, svc } = makeMocks();
     const future = mockValidToken(prisma);
     embedService.proxyMedia.mockResolvedValue(streamBody(403));
-    scrapeService.reextractEpisodeVideo.mockResolvedValue(null);
+    scrapeService.scrapeEpisodeVideo.mockResolvedValue({ videos: [] });
     scrapeService.scrapeEpisodeFromRankedSources.mockResolvedValue(null);
     await expect(svc.proxyVideo('tok', future, '127.0.0.1')).rejects.toThrow(
       ForbiddenException,
@@ -1964,9 +2180,9 @@ describe('StreamingService (cobertura de recuperação)', () => {
     embedService.proxyMedia
       .mockResolvedValueOnce(streamBody(403))
       .mockResolvedValue(streamBody(206));
-    scrapeService.reextractEpisodeVideo.mockResolvedValue(
-      'https://cdn.test/fresh2.mp4',
-    );
+    scrapeService.scrapeEpisodeVideo.mockResolvedValue({
+      videos: ['https://cdn.test/fresh2.mp4'],
+    });
     prisma.episode.update.mockRejectedValueOnce(new Error('db down'));
     const result = await svc.proxyVideo('tok', future, '127.0.0.1');
     expect(result.status).toBe(206);
@@ -1974,35 +2190,22 @@ describe('StreamingService (cobertura de recuperação)', () => {
 
   it('usa API_PREFIX custom no embed de player do job', async () => {
     process.env.API_PREFIX = 'customapi';
-    const { prisma, extractionJobs, svc } = makeMocks();
-    extractionJobs.getJob.mockReturnValue({
+    const { prisma, jobRows, svc } = makeMocks();
+    jobRows.set('jb3', {
       id: 'jb3',
       animeSlug: 'anime',
       episodeNumber: 1,
       season: 1,
       status: 'completed',
-      result: {
-        videoUrl: null,
-        playerEmbed: 'https://www.blogger.com/video.g?token=z',
-      },
+      videoUrl: null,
+      playerEmbed: 'https://www.blogger.com/video.g?token=z',
       error: null,
+      createdAt: new Date(),
+      completedAt: new Date(),
+      lockedUntil: null,
     });
     mockEpisode(prisma);
     const out = await svc.getJobStatus('jb3', 'https://api.test');
     expect(out?.result?.src).toContain('/customapi/embed/proxy');
-  });
-
-  it('proxyVideo não persiste retry sem sucesso', async () => {
-    const { prisma, embedService, scrapeService, svc } = makeMocks();
-    const future = mockValidToken(prisma);
-    embedService.proxyMedia
-      .mockResolvedValueOnce(streamBody(403))
-      .mockResolvedValue(streamBody(500));
-    scrapeService.reextractEpisodeVideo.mockResolvedValue(
-      'https://cdn.test/fresh3.mp4',
-    );
-    const result = await svc.proxyVideo('tok', future, '127.0.0.1');
-    expect(result.status).toBe(500);
-    expect(prisma.episode.update).not.toHaveBeenCalled();
   });
 });

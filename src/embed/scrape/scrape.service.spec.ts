@@ -482,38 +482,6 @@ describe('ScrapeService (orquestração + cache SWR)', () => {
     await svc.scrapeEpisodeVideo('https://meusanimes.io/a/9', undefined, false);
     expect(af.extractHttp).toHaveBeenCalledTimes(2);
   });
-
-  it('não persiste nem semeia cache com URL rejeitada pela CDN', async () => {
-    const { svc, prisma } = build();
-    prisma.episode.findUnique.mockResolvedValue({
-      id: 'e1',
-      embedUrl: 'https://meusanimes.io/animes/x/1',
-    });
-    jest.mocked(probeMediaUrlDead).mockResolvedValueOnce(true);
-    expect(await svc.reextractEpisodeVideo('x', 1)).toBeNull();
-    expect(prisma.episode.update).not.toHaveBeenCalled();
-  });
-
-  it('reextractEpisodeVideo usa fonte saudável, invalida e semeia o cache', async () => {
-    const { svc, af, prisma, health } = build();
-    prisma.episode.findUnique.mockResolvedValue({
-      id: 'e1',
-      embedUrl: 'https://meusanimes.io/animes/x/1',
-    });
-    const url = 'https://meusanimes.io/animes/x/1';
-
-    await svc.scrapeEpisodeVideo(url, undefined, false);
-    const fresh = await svc.reextractEpisodeVideo('x', 1, 1);
-    expect(fresh).toContain('cdn.meusanimes');
-    expect(health.recordSuccess).toHaveBeenCalledWith(
-      'meusanimes',
-      expect.any(Number),
-    );
-
-    const again = await svc.scrapeEpisodeVideo(url, undefined, false);
-    expect(again.videos[0]).toContain('cdn.meusanimes');
-    expect(af.extractHttp).toHaveBeenCalledTimes(2);
-  });
 });
 
 describe('ScrapeService (cobertura avançada)', () => {
@@ -1223,66 +1191,6 @@ describe('ScrapeService (cobertura avançada)', () => {
     ]);
   });
 
-  it('reextract retorna null quando o anime não existe', async () => {
-    const { svc, prisma } = build();
-    prisma.anime.findUnique.mockResolvedValue(null as any);
-    expect(await svc.reextractEpisodeVideo('nao-existe', 1)).toBeNull();
-  });
-
-  it('reextract retorna null quando o episódio não existe ou sem embedUrl', async () => {
-    const { svc, prisma } = build();
-    prisma.anime.findUnique.mockResolvedValue({ id: 'a1' });
-    prisma.episode.findUnique.mockResolvedValue(null as any);
-    expect(await svc.reextractEpisodeVideo('x', 1)).toBeNull();
-
-    prisma.episode.findUnique.mockResolvedValue({
-      id: 'e1',
-      embedUrl: null,
-    } as any);
-    expect(await svc.reextractEpisodeVideo('x', 1)).toBeNull();
-  });
-
-  it('reextract retorna null quando nenhuma fonte HTTP suporta a URL', async () => {
-    const { svc, prisma } = build();
-    prisma.episode.findUnique.mockResolvedValue({
-      id: 'e1',
-      embedUrl: 'https://desconhecido.test/x',
-    });
-    expect(await svc.reextractEpisodeVideo('x', 1)).toBeNull();
-  });
-
-  it('reextract registra failure e retorna null quando extractHttp lança', async () => {
-    const { svc, prisma, af, health } = build();
-    prisma.episode.findUnique.mockResolvedValue({
-      id: 'e1',
-      embedUrl: 'https://meusanimes.io/animes/x/1',
-    });
-    af.extractHttp.mockRejectedValueOnce(new Error('boom'));
-    expect(await svc.reextractEpisodeVideo('x', 1)).toBeNull();
-    expect(health.recordFailure).toHaveBeenCalledWith(
-      'meusanimes',
-      expect.any(Object),
-    );
-  });
-
-  it('reextract retorna null quando extração HTTP devolve sem vídeo', async () => {
-    const { svc, prisma, af, health } = build();
-    prisma.episode.findUnique.mockResolvedValue({
-      id: 'e1',
-      embedUrl: 'https://meusanimes.io/animes/x/1',
-    });
-    af.extractHttp.mockResolvedValueOnce({
-      videos: [],
-      iframes: [],
-      cloudflare: false,
-    });
-    expect(await svc.reextractEpisodeVideo('x', 1)).toBeNull();
-    expect(health.recordFailure).toHaveBeenCalledWith(
-      'meusanimes',
-      expect.any(Object),
-    );
-  });
-
   it('detectSourceId identifica fonte conhecida ou devolve null', () => {
     const { svc } = build();
     expect(svc.detectSourceId('https://meusanimes.io/e/kaguya-1/')).toBe(
@@ -1547,23 +1455,6 @@ describe('ScrapeService (cobertura de recuperação)', () => {
     );
     expect(res.videos[0]).toContain('cdn.meusanimes');
     expect(af.extractHttp).toHaveBeenCalledTimes(1);
-  });
-
-  it('reextract usa season padrão quando omitido', async () => {
-    const { svc, prisma } = build();
-    const out = await svc.reextractEpisodeVideo('foo', 1);
-    expect(out).toBe('https://cdn.meusanimes.test/v.mp4');
-    expect(prisma.episode.update).toHaveBeenCalled();
-  });
-
-  it('reextract retorna null com rejeição não-Error', async () => {
-    const { svc, af, health } = build();
-    af.extractHttp.mockRejectedValueOnce('extract down string');
-    await expect(svc.reextractEpisodeVideo('foo', 1, 1)).resolves.toBeNull();
-    expect(health.recordFailure).toHaveBeenCalledWith(
-      'meusanimes',
-      expect.any(Object),
-    );
   });
 
   it('scrapeEpisodeFromRankedSources usa season padrão quando omitido', async () => {

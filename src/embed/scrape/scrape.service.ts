@@ -702,19 +702,6 @@ export class ScrapeService implements OnModuleInit {
     throw new ServiceUnavailableException('Nenhum scraper está ativo.');
   }
 
-  /**
-   * Primeira fonte HTTP pura que suporta a URL, na ordem de saúde (ranked).
-   * Usado por reextractEpisodeVideo p/ preferir providers saudáveis.
-   */
-  private async firstHttpSource(url: string): Promise<ScrapeSource | null> {
-    const ordered = await this.healthOrderedSources();
-    return (
-      ordered.find(
-        (s) => typeof s.extractHttp === 'function' && s.supports(url),
-      ) ?? null
-    );
-  }
-
   /** Fontes ativas ordenadas pela saúde; fontes desativadas ficam fora. */
   private async healthOrderedSources(): Promise<ScrapeSource[]> {
     try {
@@ -728,91 +715,6 @@ export class ScrapeService implements OnModuleInit {
       );
       return this.sources;
     }
-  }
-
-  /**
-   * Re-extração lazy: quando o stream de um episódio recebe 403 da CDN
-   * (token .mp4 expirado), refaz a extração HTTP pura da fonte mais saudável
-   * e persiste o NOVO videoUrl RAW em Episode.videoUrl. Em sucesso, invalida
-   * o cache de scrape do episódio e o semeia com o resultado fresco.
-   * Retorna a URL RAW atualizada, ou null se não houver fonte HTTP/extração falhar.
-   *
-   * Pressupõe `episode.embedUrl` guarda a URL da página do episódio na fonte
-   * (ex: https://animefire.io/animes/<slug>/<ep>).
-   */
-  async reextractEpisodeVideo(
-    animeSlug: string,
-    episodeNumber: number,
-    season: number = 1,
-  ): Promise<string | null> {
-    const anime = await this.prisma.anime.findUnique({
-      where: { slug: animeSlug },
-      select: { id: true },
-    });
-    if (!anime) return null;
-
-    const episode = await this.prisma.episode.findUnique({
-      where: {
-        animeId_season_number: {
-          animeId: anime.id,
-          season,
-          number: episodeNumber,
-        },
-      },
-      select: { id: true, embedUrl: true },
-    });
-    if (!episode || !episode.embedUrl) return null;
-
-    const source = await this.firstHttpSource(episode.embedUrl);
-    if (!source || !source.extractHttp) return null;
-
-    const t0 = Date.now();
-    let rawMp4: string | null;
-    try {
-      const result = await source.extractHttp({
-        episodeUrl: episode.embedUrl,
-        ua: UA_DESKTOP,
-      });
-      rawMp4 = result.videos[0] ?? null;
-    } catch (err) {
-      await this.recordFailure(
-        source.id,
-        this.failureKind(err instanceof Error ? err.message : String(err)),
-        err instanceof Error ? err.message : String(err),
-      );
-      this.metrics.recordReextract(source.id, false);
-      console.error(
-        `[REEXTRACT] falhou p/ ${sanitizeLog(animeSlug)}/${episodeNumber}:`,
-        sanitizeLog(err instanceof Error ? err.message : String(err)),
-      );
-      return null;
-    }
-    if (!rawMp4 || (await probeMediaUrlDead(rawMp4, true))) {
-      await this.recordFailure(
-        source.id,
-        'VALIDATION',
-        'URL de mídia ausente ou inválida',
-      );
-      this.metrics.recordReextract(source.id, false);
-      return null;
-    }
-
-    trustMediaHosts([rawMp4]);
-    await this.prisma.episode.update({
-      where: { id: episode.id },
-      data: { videoUrl: rawMp4 },
-    });
-
-    await this.recordSuccess(source.id, Date.now() - t0);
-    this.metrics.recordReextract(source.id, true, Date.now() - t0);
-    this.invalidateEpisode(episode.embedUrl);
-    this.seedCache(source.id, episode.embedUrl, rawMp4);
-
-    console.error(
-      `[REEXTRACT] atualizado ${sanitizeLog(animeSlug)}/${episodeNumber} ->`,
-      sanitizeLog(rawMp4.slice(0, 80) + '...'),
-    );
-    return rawMp4;
   }
 
   /**
@@ -1088,21 +990,6 @@ export class ScrapeService implements OnModuleInit {
         this.cache.delete(key);
       }
     }
-  }
-
-  /** Semeia o cache com um resultado recém re-extraído (evita re-scrape). */
-  private seedCache(
-    sourceId: string,
-    episodeUrl: string,
-    rawMp4: string,
-  ): void {
-    const now = Date.now();
-    this.cache.set(this.cacheKey(sourceId, episodeUrl), {
-      result: { videos: [rawMp4], iframes: [], cloudflare: false },
-      fetchedAt: now,
-      expiresAt: now + this.CACHE_TTL_MS,
-    });
-    this.evictIfNeeded();
   }
 
   /** Evita crescimento sem teto do cache (evicta o entry mais antigo). */

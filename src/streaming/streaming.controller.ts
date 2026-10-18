@@ -16,8 +16,7 @@ import {
   ApiBearerAuth,
 } from '@nestjs/swagger';
 import express from 'express';
-import { StreamingService } from '@/streaming/streaming.service';
-import { ExtractionJob } from '@/streaming/extraction-job.service';
+import { StreamingService, ExtractionJob } from '@/streaming/streaming.service';
 import { JwtAuthGuard } from '@/auth/jwt-auth.guard';
 import { ConfigService } from '@nestjs/config';
 import { Throttle } from '@nestjs/throttler';
