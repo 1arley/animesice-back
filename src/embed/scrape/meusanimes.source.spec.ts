@@ -321,4 +321,18 @@ describe('MeusanimesScrapeSource (cobertura ampliada)', () => {
     expect(result.iframes).toEqual(['https://iframe.test/p']);
     expect(result.cloudflare).toBe(false);
   });
+
+  it('templateUrls e resolveEpisodeUrls geram variantes de episódio e filme', async () => {
+    const urls = await source.resolveEpisodeUrls({
+      animeSlug: 'bleach-dublado-2',
+      episodeNumber: 5,
+      season: 2,
+    });
+    expect(urls).toEqual([
+      'https://meusanimes.blog/e/bleach-dublado-2-episodio-5/',
+      'https://meusanimes.blog/e/bleach-episodio-5/',
+      'https://meusanimes.blog/e/bleach-dublado-2/',
+      'https://meusanimes.blog/e/bleach/',
+    ]);
+  });
 });

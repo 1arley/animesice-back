@@ -28,6 +28,14 @@ export interface HttpExtractContext {
   audio?: AudioType;
 }
 
+/** Contexto p/ resolução de URLs candidatas de um episódio numa fonte. */
+export interface EpisodeUrlQuery {
+  animeSlug: string;
+  episodeNumber: number;
+  season?: number;
+  ua?: string;
+}
+
 /**
  * Adapter de extração por site. Cada fonte implementa seus seletores/extraction.
  * Reusa a infra Playwright — a pagina ja esta carregada quando extract() roda.
@@ -42,6 +50,17 @@ export interface ScrapeSource {
   readonly id: string;
   /** true se este adapter sabe extrair desta URL. */
   supports(url: string): boolean;
+  /**
+   * URLs candidatas rápidas (baseadas em template de slug) sem I/O de rede.
+   * Usado quando um consumidor quer apenas os templates (ex: fallback de embedUrl).
+   */
+  templateUrls?(query: EpisodeUrlQuery): string[];
+  /**
+   * Resolve as URLs candidatas da página do episódio nesta fonte em 2 passos:
+   * 1) Variantes de slug na URL template;
+   * 2) Fallback na listagem estática da página do anime quando o template falha.
+   */
+  resolveEpisodeUrls?(query: EpisodeUrlQuery): Promise<string[]>;
   /**
    * Extrai videos + iframes da pagina ja carregada (Playwright Page).
    * A deteção de Cloudflare e o carregamento sao responsabilidade do

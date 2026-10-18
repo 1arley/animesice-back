@@ -3,6 +3,7 @@ import type { Page } from 'playwright';
 import { fetchSafeRaw } from '@/common/ssrf';
 import { probeMediaUrlDead } from '@/common/media-probe';
 import type {
+  EpisodeUrlQuery,
   HttpExtractContext,
   ScrapeEpisodeResult,
   ScrapeSource,
@@ -125,6 +126,20 @@ export class TopanimesScrapeSource implements ScrapeSource {
 
   episodeUrl(animeSlug: string, episodeNumber: number): string {
     return `https://topanimes.net/episodio/${animeSlug}-episodio-${episodeNumber}/`;
+  }
+
+  templateUrls(query: EpisodeUrlQuery): string[] {
+    return this.slugVariants(query.animeSlug).map((slug) =>
+      this.episodeUrl(slug, query.episodeNumber),
+    );
+  }
+
+  async resolveEpisodeUrls(query: EpisodeUrlQuery): Promise<string[]> {
+    const resolved = await this.resolveEpisodeUrl(
+      query.animeSlug,
+      query.episodeNumber,
+    );
+    return resolved ? [resolved] : [];
   }
 
   /**

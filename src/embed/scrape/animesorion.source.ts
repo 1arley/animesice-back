@@ -3,6 +3,7 @@ import type { AudioType } from '@prisma/client';
 import type { Page } from 'playwright';
 import { fetchSafeRaw } from '@/common/ssrf';
 import type {
+  EpisodeUrlQuery,
   HttpExtractContext,
   ScrapeEpisodeResult,
   ScrapeSource,
@@ -93,6 +94,34 @@ export class AnimesorionScrapeSource implements ScrapeSource {
     host = KIT_HOSTS.animesorion!.host,
   ): string {
     return `${host}/episodios/${animeSlug}-${season}x${episodeNumber}/`;
+  }
+
+  templateUrls(query: EpisodeUrlQuery): string[] {
+    const season = query.season ?? 1;
+    const out: string[] = [];
+    for (const host of ['https://animesorion.cc', 'https://animexhd.xyz']) {
+      for (const slug of this.slugVariants(query.animeSlug)) {
+        out.push(this.episodeUrl(slug, query.episodeNumber, season, host));
+      }
+    }
+    return out;
+  }
+
+  async resolveEpisodeUrls(query: EpisodeUrlQuery): Promise<string[]> {
+    const season = query.season ?? 1;
+    const out: string[] = [];
+    for (const host of ['https://animesorion.cc', 'https://animexhd.xyz']) {
+      const resolved = await this.resolveEpisodeUrl(
+        query.animeSlug,
+        query.episodeNumber,
+        season,
+        host,
+      );
+      if (resolved && !out.includes(resolved)) {
+        out.push(resolved);
+      }
+    }
+    return out;
   }
 
   /**

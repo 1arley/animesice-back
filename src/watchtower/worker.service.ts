@@ -12,15 +12,11 @@
  */
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '@/prisma/prisma.service';
-import { probeMediaUrlDead } from '@/common/media-probe';
 import { JobsService, WatchtowerJobRow } from './jobs.service';
-import { Extractor } from './extractor.service';
-import { Validator } from './validator.service';
-import { Publisher } from './publisher.service';
+import { EpisodeResolution } from './episode-resolution.service';
 import { ReleaseMonitor } from './release-monitor.service';
 import { SeasonDiscovery } from './season-discovery.service';
 import { RepairWorker } from './repair-worker.service';
-import { HealthMonitor } from './health-monitor.service';
 import { CatalogScanner } from './catalog-scanner.service';
 import {
   ScheduleSync,
@@ -56,13 +52,10 @@ export class WorkerService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jobs: JobsService,
-    private readonly extractor: Extractor,
-    private readonly validator: Validator,
-    private readonly publisher: Publisher,
+    private readonly episodes: EpisodeResolution,
     private readonly release: ReleaseMonitor,
     private readonly season: SeasonDiscovery,
     private readonly repair: RepairWorker,
-    private readonly health: HealthMonitor,
     private readonly catalog: CatalogScanner,
     private readonly schedule: ScheduleSync,
   ) {}
@@ -167,194 +160,24 @@ export class WorkerService {
   }
 
   private async handleExtract(p: ExtractPayload): Promise<void> {
-    const anime = await this.prisma.anime.findUnique({
-      where: { id: p.animeId },
-      select: { id: true, slug: true, coverImage: true, audio: true },
-    });
-    if (!anime) throw new Error(`Anime ${p.animeId} não encontrado`);
-
-    const season = p.season ?? 1;
-    const { candidates } = await this.extractor.extract(
-      anime.slug,
-      p.episodeNumber,
-      season,
-      p.episodeUrl,
-      anime.audio,
-    );
-    if (candidates.length === 0) {
-      await this.markEpisodeBrokenIfAny(anime.id, season, p.episodeNumber);
-      throw new Error(
-        `Nenhuma fonte resolveu ${anime.slug}/s${season}/${p.episodeNumber}`,
-      );
-    }
-
-    const validSources = await this.validator.pickValidSources(
-      candidates,
-      anime.id,
-    );
-    const valid = validSources[0];
-    if (!valid) {
-      for (const c of candidates) {
-        await this.health.recordFailure(c.sourceId, {
-          kind: 'VALIDATION',
-          error: 'URL de mídia rejeitada pela validação',
-        });
-      }
-      // Marca episódio existente como quebrado p/ CHECK_RELEASES parar de
-      // re-enfileirar repetidamente (repair sweep controla a cadência).
-      await this.markEpisodeBrokenIfAny(anime.id, season, p.episodeNumber);
-      throw new Error(
-        `Validação falhou p/ ${anime.slug}/s${season}/${p.episodeNumber} (vídeos mortos)`,
-      );
-    }
-
-    const embedUrl =
-      valid.embedUrl ??
-      this.embedUrlForSource(
-        valid.sourceId,
-        anime.slug,
-        p.episodeNumber,
-        season,
-      );
-    await this.publisher.publish({
-      animeId: anime.id,
+    await this.episodes.resolveAndPublish({
+      animeId: p.animeId,
+      slug: p.slug,
       episodeNumber: p.episodeNumber,
-      season,
-      videoUrl: valid.videoUrl,
-      embedUrl,
-      sourceId: valid.sourceId,
-      sources: validSources.map((candidate) => ({
-        sourceId: candidate.sourceId,
-        pageUrl:
-          candidate.embedUrl ??
-          this.embedUrlForSource(
-            candidate.sourceId,
-            anime.slug,
-            p.episodeNumber,
-            season,
-          ),
-      })),
-      thumbnailUrl: valid.thumbnailUrl ?? anime.coverImage,
-      title: valid.title ?? `Episódio ${p.episodeNumber}`,
-      duration: valid.duration,
+      season: p.season ?? 1,
+      episodeUrl: p.episodeUrl,
+      mode: 'extract',
     });
   }
 
   private async handleRepair(p: RepairPayload): Promise<void> {
-    const season = p.season ?? 1;
-    const episode = await this.prisma.episode.findUnique({
-      where: {
-        animeId_season_number: {
-          animeId: p.animeId,
-          season,
-          number: p.episodeNumber,
-        },
-      },
-      select: { id: true, animeId: true, number: true, embedUrl: true },
-    });
-    if (!episode) {
-      await this.handleExtract({
-        animeId: p.animeId,
-        slug:
-          (
-            await this.prisma.anime.findUnique({
-              where: { id: p.animeId },
-              select: { slug: true },
-            })
-          )?.slug ?? '',
-        episodeNumber: p.episodeNumber,
-      });
-      return;
-    }
-
-    const anime = await this.prisma.anime.findUnique({
-      where: { id: p.animeId },
-      select: { id: true, slug: true, coverImage: true, audio: true },
-    });
-    if (!anime) throw new Error(`Anime ${p.animeId} não encontrado`);
-
-    // Probe p/ confirmar que realmente está morto antes de re-extrair
-    const current = await this.prisma.episode.findUnique({
-      where: { id: episode.id },
-      select: { videoUrl: true },
-    });
-    if (current?.videoUrl) {
-      const dead = await probeMediaUrlDead(current.videoUrl);
-      if (!dead) {
-        await this.prisma.episode.update({
-          where: { id: episode.id },
-          data: { videoBroken: false, videoCheckedAt: new Date() },
-        });
-        return;
-      }
-    }
-
-    await this.prisma.episode
-      .update({
-        where: { id: episode.id },
-        data: { videoBroken: true },
-      })
-      .catch(() => undefined);
-    await this.unpublishIfFullyBroken(anime.id);
-
-    const { candidates } =
-      p.rustFallbackUrl && p.rustFallbackSourceId
-        ? await this.extractor.extractExact(
-            p.rustFallbackSourceId,
-            p.rustFallbackUrl,
-            p.rustFallbackSourceId,
-            anime.audio,
-          )
-        : await this.extractor.extract(
-            anime.slug,
-            p.episodeNumber,
-            p.season ?? 1,
-            episode.embedUrl ?? undefined,
-            anime.audio,
-          );
-    if (candidates.length === 0) {
-      await this.unpublishIfFullyBroken(anime.id);
-      throw new Error(`Repair: sem fonte p/ ${anime.slug}/${p.episodeNumber}`);
-    }
-
-    const validSources = await this.validator.pickValidSources(
-      candidates,
-      anime.id,
-    );
-    const valid = validSources[0];
-    if (!valid)
-      throw new Error(
-        `Repair: validação falhou ${anime.slug}/${p.episodeNumber}`,
-      );
-
-    const embedUrl =
-      valid.embedUrl ??
-      this.embedUrlForSource(
-        valid.sourceId,
-        anime.slug,
-        p.episodeNumber,
-        p.season ?? 1,
-      );
-    await this.publisher.publish({
-      animeId: anime.id,
+    await this.episodes.resolveAndPublish({
+      animeId: p.animeId,
       episodeNumber: p.episodeNumber,
       season: p.season ?? 1,
-      videoUrl: valid.videoUrl,
-      embedUrl,
-      sourceId: valid.sourceId,
-      sources: validSources.map((candidate) => ({
-        sourceId: candidate.sourceId,
-        pageUrl:
-          candidate.embedUrl ??
-          this.embedUrlForSource(
-            candidate.sourceId,
-            anime.slug,
-            p.episodeNumber,
-            p.season ?? 1,
-          ),
-      })),
-      thumbnailUrl: valid.thumbnailUrl ?? anime.coverImage,
-      title: `Episódio ${p.episodeNumber}`,
+      rustFallbackUrl: p.rustFallbackUrl,
+      rustFallbackSourceId: p.rustFallbackSourceId,
+      mode: 'repair',
     });
   }
 
@@ -438,69 +261,5 @@ export class WorkerService {
     console.error(
       `[GAP_CHECK] ${gaps.length} animes com gaps, ${incomplete.filter((a) => a._count.episodes < (a.episodeCount ?? 0)).length} incompletos, ${enqueueInputs.length} jobs enfileirados`,
     );
-  }
-
-  private async markEpisodeBrokenIfAny(
-    animeId: string,
-    season: number,
-    episodeNumber: number,
-  ): Promise<void> {
-    await this.prisma.episode
-      .updateMany({
-        where: {
-          animeId,
-          season,
-          number: episodeNumber,
-          videoBroken: false,
-        },
-        data: { videoBroken: true, videoCheckedAt: new Date() },
-      })
-      .catch(() => undefined);
-    // Se todos os episódios do anime ficaram sem vídeo, despublica para não
-    // dar falsa esperança ao usuário. Volta sozinho quando um episódio for
-    // (re)publicado pelo publisher (auto-republish).
-    await this.unpublishIfFullyBroken(animeId);
-  }
-
-  private async unpublishIfFullyBroken(animeId: string): Promise<void> {
-    const anime = await this.prisma.anime.findUnique({
-      where: { id: animeId },
-      select: { id: true, published: true },
-    });
-    if (!anime || !anime.published) return;
-    // Episódio com videoUrl null/vazio também conta como quebrado.
-    const working = await this.prisma.episode.count({
-      where: {
-        animeId,
-        videoBroken: false,
-        videoUrl: { not: null },
-        NOT: { videoUrl: '' },
-      },
-    });
-    if (working > 0) return;
-    await this.prisma.anime
-      .update({
-        where: { id: animeId },
-        data: { published: false, catalogUnpublished: true },
-      })
-      .catch(() => undefined);
-  }
-
-  private embedUrlForSource(
-    sourceId: string,
-    slug: string,
-    ep: number,
-    _season: number = 1,
-  ): string {
-    switch (sourceId) {
-      case 'meusanimes':
-        return `https://meusanimes.blog/e/${slug}-episodio-${ep}/`;
-      case 'animefire':
-        return `https://animefire.io/animes/${slug}/${ep}`;
-      case 'animesonlinecc':
-        return `https://animesonlinecc.to/episodio/${slug}-episodio-${ep}/`;
-      default:
-        return '';
-    }
   }
 }

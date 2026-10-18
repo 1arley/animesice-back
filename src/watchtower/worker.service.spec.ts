@@ -1,9 +1,4 @@
 import { WorkerService } from '@/watchtower/worker.service';
-import { probeMediaUrlDead } from '@/common/media-probe';
-
-jest.mock('@/common/media-probe', () => ({
-  probeMediaUrlDead: jest.fn(),
-}));
 
 function makeMocks() {
   return {
@@ -19,31 +14,6 @@ function makeMocks() {
         }),
         findMany: jest.fn(async () => []),
       },
-      episode: {
-        findUnique: jest.fn(async (args: any) => {
-          // Segundo lookup por id (só videoUrl) simula vídeo morto p/ forçar re-extração.
-          if (args?.where?.id) {
-            return { id: 'ep3', videoUrl: null };
-          }
-          if (args?.where?.animeId_season_number?.number === 3) {
-            return {
-              id: 'ep3',
-              animeId: 'anime-1',
-              number: 3,
-              embedUrl: 'https://meusanimes.blog/e/solo-2-episodio-3/',
-            };
-          }
-          return {
-            id: 'ep1',
-            animeId: 'anime-1',
-            number: 1,
-            videoUrl: 'old.mp4',
-            embedUrl: 'https://meusanimes.blog/e/solo/',
-          };
-        }),
-        update: jest.fn(async () => undefined),
-        updateMany: jest.fn(async () => ({ count: 0 })),
-      },
       $queryRaw: jest.fn(async () => []),
     },
     jobs: {
@@ -52,32 +22,13 @@ function makeMocks() {
       enqueueMany: jest.fn(async (..._args: any[]) => undefined),
       reschedule: jest.fn(async () => true),
     },
-    extractor: {
-      extract: jest.fn(
-        async (
-          _slug: string,
-          _ep: number,
-          _season?: number,
-          _episodeUrl?: string,
-        ) => ({
-          candidates: [
-            {
-              videoUrl: 'new.mp4',
-              sourceId: 'meusanimes',
-              embedUrl: 'https://meusanimes.blog/e/solo/',
-            },
-          ],
-          triedSources: ['meusanimes'],
-        }),
-      ),
-    },
-    validator: {
-      pickValid: jest.fn(async (cands: any[]) => cands[0] ?? null),
-      pickValidSources: jest.fn(async (cands: any[]) => cands.slice(0, 2)),
-    },
-    publisher: {
-      publish: jest.fn(async () => undefined),
-      markAnimeComplete: jest.fn(async () => undefined),
+    episodes: {
+      resolveAndPublish: jest.fn(async () => ({
+        videoUrl: 'new.mp4',
+        sourceId: 'meusanimes',
+        embedUrl: 'https://meusanimes.blog/e/solo/',
+        status: 'published',
+      })),
     },
     release: {
       checkAll: jest.fn(async () => 0),
@@ -88,10 +39,6 @@ function makeMocks() {
     },
     repair: {
       sweep: jest.fn(async () => 0),
-    },
-    health: {
-      reviveOne: jest.fn(async () => null),
-      recordFailure: jest.fn(async () => undefined),
     },
     catalog: {
       scanAll: jest.fn(async () => ({ scanned: 0, enqueued: 0 })),
@@ -108,6 +55,19 @@ function makeMocks() {
 }
 
 let m = makeMocks();
+
+function makeWorker() {
+  return new WorkerService(
+    m.prisma as any,
+    m.jobs as any,
+    m.episodes as any,
+    m.release as any,
+    m.season as any,
+    m.repair as any,
+    m.catalog as any,
+    m.schedule as any,
+  );
+}
 
 function job(overrides: {
   id: string;
@@ -139,20 +99,8 @@ beforeEach(() => {
 });
 
 describe('WorkerService', () => {
-  it('process EXTRACT_EPISODE sucesso: extract → validate → publish → complete', async () => {
-    const worker = new WorkerService(
-      m.prisma as any,
-      m.jobs as any,
-      m.extractor as any,
-      m.validator as any,
-      m.publisher as any,
-      m.release as any,
-      m.season as any,
-      m.repair as any,
-      m.health as any,
-      m.catalog as any,
-      m.schedule as any,
-    );
+  it('process EXTRACT_EPISODE sucesso: delega para episodes.resolveAndPublish(mode=extract) e completa', async () => {
+    const worker = makeWorker();
     await worker.process(
       job({
         id: 'job-1',
@@ -161,51 +109,22 @@ describe('WorkerService', () => {
         payload: { animeId: 'anime-1', slug: 'solo', episodeNumber: 1 },
       }),
     );
-    expect(m.extractor.extract).toHaveBeenCalledWith(
-      'solo',
-      1,
-      1,
-      undefined,
-      undefined,
-    );
-    expect(m.validator.pickValidSources).toHaveBeenCalledWith(
-      expect.arrayContaining([
-        expect.objectContaining({ videoUrl: 'new.mp4' }),
-      ]),
-      'anime-1',
-    );
-    expect(m.publisher.publish).toHaveBeenCalledWith(
-      expect.objectContaining({
-        animeId: 'anime-1',
-        episodeNumber: 1,
-        videoUrl: 'new.mp4',
-        sourceId: 'meusanimes',
-        // embedUrl vem do candidato que produziu o vídeo (URL real do catálogo),
-        // não do template construído — preserva URLs de filmes (/e/<slug>/).
-        embedUrl: 'https://meusanimes.blog/e/solo/',
-      }),
-    );
+    expect(m.episodes.resolveAndPublish).toHaveBeenCalledWith({
+      animeId: 'anime-1',
+      slug: 'solo',
+      episodeNumber: 1,
+      season: 1,
+      episodeUrl: undefined,
+      mode: 'extract',
+    });
     expect(m.jobs.complete).toHaveBeenCalledWith('job-1', '');
   });
 
-  it('process EXTRACT_EPISODE falha quando extractor não acha fonte', async () => {
-    m.extractor.extract.mockResolvedValueOnce({
-      candidates: [],
-      triedSources: [],
-    });
-    const worker = new WorkerService(
-      m.prisma as any,
-      m.jobs as any,
-      m.extractor as any,
-      m.validator as any,
-      m.publisher as any,
-      m.release as any,
-      m.season as any,
-      m.repair as any,
-      m.health as any,
-      m.catalog as any,
-      m.schedule as any,
+  it('process EXTRACT_EPISODE falha quando episodes.resolveAndPublish rejeita', async () => {
+    m.episodes.resolveAndPublish.mockRejectedValueOnce(
+      new Error('Nenhuma fonte retornou vídeo p/ solo/s1/1'),
     );
+    const worker = makeWorker();
     await worker.process(
       job({
         id: 'job-2',
@@ -222,19 +141,7 @@ describe('WorkerService', () => {
   });
 
   it('process CHECK_RELEASES delega para release.checkAll', async () => {
-    const worker = new WorkerService(
-      m.prisma as any,
-      m.jobs as any,
-      m.extractor as any,
-      m.validator as any,
-      m.publisher as any,
-      m.release as any,
-      m.season as any,
-      m.repair as any,
-      m.health as any,
-      m.catalog as any,
-      m.schedule as any,
-    );
+    const worker = makeWorker();
     await worker.process(
       job({
         id: 'job-3',
@@ -248,19 +155,7 @@ describe('WorkerService', () => {
   });
 
   it('process DISCOVER_SEASON delega para season.discover', async () => {
-    const worker = new WorkerService(
-      m.prisma as any,
-      m.jobs as any,
-      m.extractor as any,
-      m.validator as any,
-      m.publisher as any,
-      m.release as any,
-      m.season as any,
-      m.repair as any,
-      m.health as any,
-      m.catalog as any,
-      m.schedule as any,
-    );
+    const worker = makeWorker();
     await worker.process(
       job({
         id: 'job-4',
@@ -273,19 +168,7 @@ describe('WorkerService', () => {
   });
 
   it('process tipo desconhecido marca fail', async () => {
-    const worker = new WorkerService(
-      m.prisma as any,
-      m.jobs as any,
-      m.extractor as any,
-      m.validator as any,
-      m.publisher as any,
-      m.release as any,
-      m.season as any,
-      m.repair as any,
-      m.health as any,
-      m.catalog as any,
-      m.schedule as any,
-    );
+    const worker = makeWorker();
     await worker.process(
       job({
         id: 'job-x',
@@ -301,20 +184,8 @@ describe('WorkerService', () => {
     );
   });
 
-  it('process BACKFILL_ANILIST delega para schedule.backfillAnilist', async () => {
-    const worker = new WorkerService(
-      m.prisma as any,
-      m.jobs as any,
-      m.extractor as any,
-      m.validator as any,
-      m.publisher as any,
-      m.release as any,
-      m.season as any,
-      m.repair as any,
-      m.health as any,
-      m.catalog as any,
-      m.schedule as any,
-    );
+  it('process BACKFILL_ANILIST delega para schedule.backfillAnilistPage e completa quando última página', async () => {
+    const worker = makeWorker();
     await worker.process(
       job({
         id: 'job-ba',
@@ -327,25 +198,54 @@ describe('WorkerService', () => {
     expect(m.jobs.complete).toHaveBeenCalledWith('job-ba', '');
   });
 
+  it('process BACKFILL_ANILIST faz reschedule quando há mais páginas e falha se perder lock', async () => {
+    m.schedule.backfillAnilistPage.mockResolvedValueOnce({
+      matched: 10,
+      nextAfterId: 'anime-99',
+    } as any);
+    const worker = makeWorker();
+    await worker.process(
+      job({
+        id: 'job-ba-cont',
+        type: 'BACKFILL_ANILIST',
+        dedupeKey: 'backfill-anilist',
+        payload: { afterId: 'anime-50' },
+      }),
+    );
+    expect(m.jobs.reschedule).toHaveBeenCalledWith(
+      'job-ba-cont',
+      '',
+      { afterId: 'anime-99' },
+      expect.any(Date),
+    );
+
+    m.schedule.backfillAnilistPage.mockResolvedValueOnce({
+      matched: 10,
+      nextAfterId: 'anime-100',
+    } as any);
+    m.jobs.reschedule.mockResolvedValueOnce(false);
+    await worker.process(
+      job({
+        id: 'job-ba-lost',
+        type: 'BACKFILL_ANILIST',
+        dedupeKey: 'backfill-anilist',
+        payload: {},
+      }),
+    );
+    expect(m.jobs.fail).toHaveBeenCalledWith(
+      'job-ba-lost',
+      '',
+      expect.stringContaining('reschedule do backfill falhou'),
+    );
+  });
+
   it('process SYNC_SCHEDULES delega para schedule.syncSchedules e completa quando página termina', async () => {
     m.schedule.syncSchedules.mockResolvedValueOnce({
       synced: 5,
       continued: false,
       nextAfterId: null,
     });
-    const worker = new WorkerService(
-      m.prisma as any,
-      m.jobs as any,
-      m.extractor as any,
-      m.validator as any,
-      m.publisher as any,
-      m.release as any,
-      m.season as any,
-      m.repair as any,
-      m.health as any,
-      m.catalog as any,
-      m.schedule as any,
-    );
+    const worker = makeWorker();
     await worker.process(
       job({
         id: 'job-ss',
@@ -365,19 +265,7 @@ describe('WorkerService', () => {
       continued: true,
       nextAfterId: 'anime-24',
     });
-    const worker = new WorkerService(
-      m.prisma as any,
-      m.jobs as any,
-      m.extractor as any,
-      m.validator as any,
-      m.publisher as any,
-      m.release as any,
-      m.season as any,
-      m.repair as any,
-      m.health as any,
-      m.catalog as any,
-      m.schedule as any,
-    );
+    const worker = makeWorker();
     await worker.process(
       job({
         id: 'job-ss-continued',
@@ -402,19 +290,7 @@ describe('WorkerService', () => {
       nextAfterId: 'anime-24',
     });
     m.jobs.reschedule.mockResolvedValueOnce(false);
-    const worker = new WorkerService(
-      m.prisma as any,
-      m.jobs as any,
-      m.extractor as any,
-      m.validator as any,
-      m.publisher as any,
-      m.release as any,
-      m.season as any,
-      m.repair as any,
-      m.health as any,
-      m.catalog as any,
-      m.schedule as any,
-    );
+    const worker = makeWorker();
     await worker.process(
       job({
         id: 'job-ss-lostlock',
@@ -431,86 +307,34 @@ describe('WorkerService', () => {
     expect(m.jobs.complete).not.toHaveBeenCalled();
   });
 
-  it('lançamento de erro em extract → jobs.fail', async () => {
-    m.extractor.extract.mockRejectedValueOnce(new Error('crash'));
-    const worker = new WorkerService(
-      m.prisma as any,
-      m.jobs as any,
-      m.extractor as any,
-      m.validator as any,
-      m.publisher as any,
-      m.release as any,
-      m.season as any,
-      m.repair as any,
-      m.health as any,
-      m.catalog as any,
-      m.schedule as any,
-    );
-    await worker.process(
-      job({
-        id: 'job-5',
-        type: 'EXTRACT_EPISODE',
-        dedupeKey: 'extract:anime-1:1',
-        payload: { animeId: 'anime-1', slug: 'solo', episodeNumber: 1 },
-      }),
-    );
-    expect(m.jobs.fail).toHaveBeenCalledWith('job-5', '', 'crash');
-  });
-
-  it('process REPAIR_EPISODE reextrai usando o embedUrl existente do episódio', async () => {
-    const worker = new WorkerService(
-      m.prisma as any,
-      m.jobs as any,
-      m.extractor as any,
-      m.validator as any,
-      m.publisher as any,
-      m.release as any,
-      m.season as any,
-      m.repair as any,
-      m.health as any,
-      m.catalog as any,
-      m.schedule as any,
-    );
+  it('process REPAIR_EPISODE delega para episodes.resolveAndPublish(mode=repair) repassando rustFallback', async () => {
+    const worker = makeWorker();
     await worker.process(
       job({
         id: 'job-repair',
         type: 'REPAIR_EPISODE',
         dedupeKey: 'repair:anime-1:1:3',
-        payload: { animeId: 'anime-1', episodeNumber: 3 },
+        payload: {
+          animeId: 'anime-1',
+          episodeNumber: 3,
+          rustFallbackUrl: 'https://animesonline.cloud/episodio/solo-3',
+          rustFallbackSourceId: 'animesonline',
+        },
       }),
     );
-    // O repair deve passar o embedUrl real do episódio (não o template por slug base)
-    expect(m.extractor.extract).toHaveBeenCalledWith(
-      'solo',
-      3,
-      1,
-      'https://meusanimes.blog/e/solo-2-episodio-3/',
-      undefined,
-    );
-    expect(m.publisher.publish).toHaveBeenCalledWith(
-      expect.objectContaining({
-        animeId: 'anime-1',
-        episodeNumber: 3,
-        videoUrl: 'new.mp4',
-      }),
-    );
+    expect(m.episodes.resolveAndPublish).toHaveBeenCalledWith({
+      animeId: 'anime-1',
+      episodeNumber: 3,
+      season: 1,
+      rustFallbackUrl: 'https://animesonline.cloud/episodio/solo-3',
+      rustFallbackSourceId: 'animesonline',
+      mode: 'repair',
+    });
     expect(m.jobs.complete).toHaveBeenCalledWith('job-repair', '');
   });
 
   it('process SYNC_AIRING delega para release.checkAll', async () => {
-    const worker = new WorkerService(
-      m.prisma as any,
-      m.jobs as any,
-      m.extractor as any,
-      m.validator as any,
-      m.publisher as any,
-      m.release as any,
-      m.season as any,
-      m.repair as any,
-      m.health as any,
-      m.catalog as any,
-      m.schedule as any,
-    );
+    const worker = makeWorker();
     await worker.process(
       job({
         id: 'job-sa',
@@ -524,19 +348,7 @@ describe('WorkerService', () => {
   });
 
   it('process SCAN_CATALOG com animeId+slug chama processScanCatalog', async () => {
-    const worker = new WorkerService(
-      m.prisma as any,
-      m.jobs as any,
-      m.extractor as any,
-      m.validator as any,
-      m.publisher as any,
-      m.release as any,
-      m.season as any,
-      m.repair as any,
-      m.health as any,
-      m.catalog as any,
-      m.schedule as any,
-    );
+    const worker = makeWorker();
     await worker.process(
       job({
         id: 'job-sc1',
@@ -553,19 +365,7 @@ describe('WorkerService', () => {
   });
 
   it('process SCAN_CATALOG sem payload chama scanAll', async () => {
-    const worker = new WorkerService(
-      m.prisma as any,
-      m.jobs as any,
-      m.extractor as any,
-      m.validator as any,
-      m.publisher as any,
-      m.release as any,
-      m.season as any,
-      m.repair as any,
-      m.health as any,
-      m.catalog as any,
-      m.schedule as any,
-    );
+    const worker = makeWorker();
     await worker.process(
       job({
         id: 'job-sc2',
@@ -598,19 +398,7 @@ describe('WorkerService', () => {
       { id: 'i3', slug: 'no-count', episodeCount: 0, _count: { episodes: 0 } },
     ]) as any;
     m.jobs.enqueueMany = jest.fn(async (..._args: any[]) => undefined);
-    const worker = new WorkerService(
-      m.prisma as any,
-      m.jobs as any,
-      m.extractor as any,
-      m.validator as any,
-      m.publisher as any,
-      m.release as any,
-      m.season as any,
-      m.repair as any,
-      m.health as any,
-      m.catalog as any,
-      m.schedule as any,
-    );
+    const worker = makeWorker();
     await worker.process(
       job({
         id: 'job-gap',
@@ -624,7 +412,6 @@ describe('WorkerService', () => {
       type: string;
       payload: { animeId: string };
     }>;
-    // gap g1 + incompleto i1
     expect(inputs).toHaveLength(2);
     expect(inputs[0]!.payload.animeId).toBe('g1');
     expect(inputs[1]!.payload.animeId).toBe('i1');
@@ -642,19 +429,7 @@ describe('WorkerService', () => {
       },
     ]) as any;
     m.jobs.enqueueMany = jest.fn(async (..._args: any[]) => undefined);
-    const worker = new WorkerService(
-      m.prisma as any,
-      m.jobs as any,
-      m.extractor as any,
-      m.validator as any,
-      m.publisher as any,
-      m.release as any,
-      m.season as any,
-      m.repair as any,
-      m.health as any,
-      m.catalog as any,
-      m.schedule as any,
-    );
+    const worker = makeWorker();
     await worker.process(
       job({
         id: 'job-gap2',
@@ -664,276 +439,5 @@ describe('WorkerService', () => {
       }),
     );
     expect(m.jobs.enqueueMany.mock.calls[0]![0]).toHaveLength(1);
-  });
-
-  it('process EXTRACT_EPISODE lança fail quando anime não existe', async () => {
-    m.prisma.anime.findUnique = jest.fn(async () => null) as any;
-    const worker = new WorkerService(
-      m.prisma as any,
-      m.jobs as any,
-      m.extractor as any,
-      m.validator as any,
-      m.publisher as any,
-      m.release as any,
-      m.season as any,
-      m.repair as any,
-      m.health as any,
-      m.catalog as any,
-      m.schedule as any,
-    );
-    await worker.process(
-      job({
-        id: 'job-noanime',
-        type: 'EXTRACT_EPISODE',
-        dedupeKey: 'extract:ghost:1',
-        payload: { animeId: 'ghost', slug: 'ghost', episodeNumber: 1 },
-      }),
-    );
-    expect(m.extractor.extract).not.toHaveBeenCalled();
-    expect(m.jobs.fail).toHaveBeenCalledWith(
-      'job-noanime',
-      '',
-      expect.stringContaining('não encontrado'),
-    );
-  });
-
-  it('process EXTRACT_EPISODE marca vídeo quebrado quando validação falha', async () => {
-    m.validator.pickValidSources = jest.fn(async () => []) as any;
-    const worker = new WorkerService(
-      m.prisma as any,
-      m.jobs as any,
-      m.extractor as any,
-      m.validator as any,
-      m.publisher as any,
-      m.release as any,
-      m.season as any,
-      m.repair as any,
-      m.health as any,
-      m.catalog as any,
-      m.schedule as any,
-    );
-    await worker.process(
-      job({
-        id: 'job-inv',
-        type: 'EXTRACT_EPISODE',
-        dedupeKey: 'extract:anime-1:1',
-        payload: { animeId: 'anime-1', slug: 'solo', episodeNumber: 1 },
-      }),
-    );
-    expect(m.health.recordFailure).toHaveBeenCalledWith(
-      'meusanimes',
-      expect.objectContaining({ kind: 'VALIDATION' }),
-    );
-    expect(m.prisma.episode.updateMany).toHaveBeenCalled();
-    expect(m.jobs.fail).toHaveBeenCalledWith(
-      'job-inv',
-      '',
-      expect.stringContaining('Validação falhou'),
-    );
-  });
-
-  it('process EXTRACT_EPISODE usa embedUrl template quando candidato não tem embedUrl', async () => {
-    m.extractor.extract.mockResolvedValueOnce({
-      candidates: [{ videoUrl: 'new.mp4', sourceId: 'animefire' }],
-      triedSources: ['animefire'],
-    } as any);
-    const worker = new WorkerService(
-      m.prisma as any,
-      m.jobs as any,
-      m.extractor as any,
-      m.validator as any,
-      m.publisher as any,
-      m.release as any,
-      m.season as any,
-      m.repair as any,
-      m.health as any,
-      m.catalog as any,
-      m.schedule as any,
-    );
-    await worker.process(
-      job({
-        id: 'job-embed',
-        type: 'EXTRACT_EPISODE',
-        dedupeKey: 'extract:anime-1:1',
-        payload: { animeId: 'anime-1', slug: 'solo', episodeNumber: 1 },
-      }),
-    );
-    expect(m.publisher.publish).toHaveBeenCalledWith(
-      expect.objectContaining({
-        embedUrl: 'https://animefire.io/animes/solo/1',
-        thumbnailUrl: 'cover.jpg',
-        title: 'Episódio 1',
-      }),
-    );
-    expect(m.jobs.complete).toHaveBeenCalledWith('job-embed', '');
-  });
-
-  it('process REPAIR_EPISODE reextrai como EXTRACT quando episódio não existe', async () => {
-    m.prisma.episode.findUnique = jest.fn(async () => null) as any;
-    const worker = new WorkerService(
-      m.prisma as any,
-      m.jobs as any,
-      m.extractor as any,
-      m.validator as any,
-      m.publisher as any,
-      m.release as any,
-      m.season as any,
-      m.repair as any,
-      m.health as any,
-      m.catalog as any,
-      m.schedule as any,
-    );
-    await worker.process(
-      job({
-        id: 'job-repair-miss',
-        type: 'REPAIR_EPISODE',
-        dedupeKey: 'repair:anime-1:1:9',
-        payload: { animeId: 'anime-1', episodeNumber: 9 },
-      }),
-    );
-    expect(m.extractor.extract).toHaveBeenCalledWith(
-      'solo',
-      9,
-      1,
-      undefined,
-      undefined,
-    );
-    expect(m.publisher.publish).toHaveBeenCalled();
-    expect(m.jobs.complete).toHaveBeenCalledWith('job-repair-miss', '');
-  });
-
-  it('process REPAIR_EPISODE lança fail quando anime não existe', async () => {
-    m.prisma.anime.findUnique = jest.fn(async () => null) as any;
-    const worker = new WorkerService(
-      m.prisma as any,
-      m.jobs as any,
-      m.extractor as any,
-      m.validator as any,
-      m.publisher as any,
-      m.release as any,
-      m.season as any,
-      m.repair as any,
-      m.health as any,
-      m.catalog as any,
-      m.schedule as any,
-    );
-    await worker.process(
-      job({
-        id: 'job-repair-noanime',
-        type: 'REPAIR_EPISODE',
-        dedupeKey: 'repair:anime-1:1:3',
-        payload: { animeId: 'anime-1', episodeNumber: 3 },
-      }),
-    );
-    expect(m.jobs.fail).toHaveBeenCalledWith(
-      'job-repair-noanime',
-      '',
-      expect.stringContaining('não encontrado'),
-    );
-  });
-
-  it('process REPAIR_EPISODE mantém vídeo vivo quando probe retorna false', async () => {
-    (probeMediaUrlDead as jest.Mock).mockResolvedValueOnce(false);
-    m.prisma.episode.findUnique = jest.fn(async (args: any) => {
-      if (args?.where?.id) return { id: 'ep1', videoUrl: 'alive.mp4' };
-      return {
-        id: 'ep1',
-        animeId: 'anime-1',
-        number: 1,
-        embedUrl: 'https://meusanimes.blog/e/solo/',
-      };
-    }) as any;
-    const worker = new WorkerService(
-      m.prisma as any,
-      m.jobs as any,
-      m.extractor as any,
-      m.validator as any,
-      m.publisher as any,
-      m.release as any,
-      m.season as any,
-      m.repair as any,
-      m.health as any,
-      m.catalog as any,
-      m.schedule as any,
-    );
-    await worker.process(
-      job({
-        id: 'job-repair-alive',
-        type: 'REPAIR_EPISODE',
-        dedupeKey: 'repair:anime-1:1:1',
-        payload: { animeId: 'anime-1', episodeNumber: 1 },
-      }),
-    );
-    expect(probeMediaUrlDead).toHaveBeenCalledWith('alive.mp4');
-    expect(m.prisma.episode.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ videoBroken: false }),
-      }),
-    );
-    expect(m.extractor.extract).not.toHaveBeenCalled();
-    expect(m.jobs.complete).toHaveBeenCalledWith('job-repair-alive', '');
-  });
-
-  it('process REPAIR_EPISODE lança fail quando extractor não acha fonte', async () => {
-    m.extractor.extract.mockResolvedValueOnce({
-      candidates: [],
-      triedSources: [],
-    });
-    const worker = new WorkerService(
-      m.prisma as any,
-      m.jobs as any,
-      m.extractor as any,
-      m.validator as any,
-      m.publisher as any,
-      m.release as any,
-      m.season as any,
-      m.repair as any,
-      m.health as any,
-      m.catalog as any,
-      m.schedule as any,
-    );
-    await worker.process(
-      job({
-        id: 'job-repair-nosrc',
-        type: 'REPAIR_EPISODE',
-        dedupeKey: 'repair:anime-1:1:3',
-        payload: { animeId: 'anime-1', episodeNumber: 3 },
-      }),
-    );
-    expect(m.jobs.fail).toHaveBeenCalledWith(
-      'job-repair-nosrc',
-      '',
-      expect.stringContaining('Repair: sem fonte'),
-    );
-  });
-
-  it('process REPAIR_EPISODE lança fail quando validação falha', async () => {
-    m.validator.pickValidSources = jest.fn(async () => []) as any;
-    const worker = new WorkerService(
-      m.prisma as any,
-      m.jobs as any,
-      m.extractor as any,
-      m.validator as any,
-      m.publisher as any,
-      m.release as any,
-      m.season as any,
-      m.repair as any,
-      m.health as any,
-      m.catalog as any,
-      m.schedule as any,
-    );
-    await worker.process(
-      job({
-        id: 'job-repair-inv',
-        type: 'REPAIR_EPISODE',
-        dedupeKey: 'repair:anime-1:1:3',
-        payload: { animeId: 'anime-1', episodeNumber: 3 },
-      }),
-    );
-    expect(m.jobs.fail).toHaveBeenCalledWith(
-      'job-repair-inv',
-      '',
-      expect.stringContaining('Repair: validação falhou'),
-    );
   });
 });

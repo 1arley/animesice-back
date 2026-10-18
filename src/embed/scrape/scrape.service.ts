@@ -11,7 +11,11 @@ import {
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { chromium } from 'playwright';
 import type { Page, BrowserContext, Browser } from 'playwright';
-import { ScrapeSource, ScrapeEpisodeResult } from './scrape-source.interface';
+import {
+  EpisodeUrlQuery,
+  ScrapeSource,
+  ScrapeEpisodeResult,
+} from './scrape-source.interface';
 import { MeusanimesScrapeSource } from './meusanimes.source';
 import { AnimesonlineScrapeSource } from './animesonline.source';
 import { TopanimesScrapeSource } from './topanimes.source';
@@ -793,6 +797,7 @@ export class ScrapeService implements OnModuleInit {
       return null;
     }
 
+    trustMediaHosts([rawMp4]);
     await this.prisma.episode.update({
       where: { id: episode.id },
       data: { videoUrl: rawMp4 },
@@ -811,306 +816,134 @@ export class ScrapeService implements OnModuleInit {
   }
 
   /**
-   * Constrói a URL de um episódio no meusanimes.blog a partir do slug do anime,
-   * número do episódio e temporada.
-   * Padrão: meusanimes.blog/e/<slug>-episodio-<n>/
-   *
-   * Post-split: o slug já codifica a temporada (ex: "kaguya-sama-love-is-war-2").
-   * O parâmetro season é mantido para compatibilidade mas NÃO é injetado no slug.
+   * Detecta o ID da fonte pelo host da URL da página do episódio.
    */
-  meusanimesEpisodeUrl(
-    animeSlug: string,
-    episodeNumber: number,
-    _seasonNumber: number = 1,
-  ): string {
-    return `https://meusanimes.blog/e/${animeSlug}-episodio-${episodeNumber}/`;
+  detectSourceId(episodeUrl: string): string | null {
+    const matched = this.sources.find((s) => s.supports(episodeUrl));
+    if (matched) return matched.id;
+    const lower = episodeUrl.toLowerCase();
+    if (/meusanimes\.blog|meusdoramas\.club/i.test(lower)) return 'meusanimes';
+    if (/animesonlinecc\.to|animesonline\.cloud/i.test(lower))
+      return 'animesonline';
+    if (/animesdigital\.org/i.test(lower)) return 'animesdigital';
+    if (/topanimes\.net/i.test(lower)) return 'topanimes';
+    if (/animesorion\.cc|animexhd\.xyz/i.test(lower)) return 'animesorion';
+    if (/animefire\.io/i.test(lower)) return 'animefire';
+    return null;
   }
 
   /**
-   * Tenta extrair vídeo de um episódio via meusanimes.blog (fallback quando
-   * animefire.io bloqueia o IP da VPS com Cloudflare WAF 403).
-   *
-   * Fluxo: GET meusanimes.blog/e/<slug>-episodio-<n>/ -> iframe servN.meusdoramas.club
-   * -> get-video.php -> token Blogger -> Playwright headless:false + Xvfb ->
-   * googlevideo.com/videoplayback (.mp4).
-   *
-   * Filmes/singles não usam o sufixo `-episodio-<n>` — a URL é
-   * meusanimes.blog/e/<slug>/ — então tenta candidatos em ordem até achar o
-   * que não retorne 404.
-   *
-   * Retorna a URL .mp4 RAW (sem wrap) ou null se falhar.
+   * Resolve as URLs candidatas de um episódio numa fonte específica (2 passos:
+   * variantes de slug no template + fallback na listagem estática da página do anime).
    */
-  async scrapeFromMeusanimes(
+  async resolveCandidateUrlsForSource(
+    sourceId: string,
     animeSlug: string,
     episodeNumber: number,
     season: number = 1,
-    audio?: AudioType,
-  ): Promise<string | null> {
-    if (await this.sourceDisabled('meusanimes')) {
-      dbg(
-        `[MEUSANIMES] fonte disabled (health), pulando ${animeSlug}/${episodeNumber}`,
-      );
-      return null;
-    }
-    const candidates = [
-      this.meusanimesEpisodeUrl(animeSlug, episodeNumber, season),
-      `https://meusanimes.blog/e/${animeSlug}/`,
-      `https://meusanimes.blog/e/${animeSlug}-episodio-${episodeNumber}/`,
-    ];
-
-    for (const episodeUrl of candidates) {
-      dbg(`[MEUSANIMES] try ${animeSlug}/${episodeNumber} -> ${episodeUrl}`);
+  ): Promise<string[]> {
+    if (await this.sourceDisabled(sourceId)) return [];
+    const source = this.sources.find((s) => s.id === sourceId);
+    if (!source) return [];
+    const query: EpisodeUrlQuery = {
+      animeSlug,
+      episodeNumber,
+      season,
+      ua: UA_DESKTOP,
+    };
+    if (typeof source.resolveEpisodeUrls === 'function') {
       try {
-        const result = await this.scrapeEpisodeVideo(
-          episodeUrl,
-          undefined,
-          false,
-          false,
-          audio,
-        );
-        const video = result.videos[0] ?? null;
-        if (video) {
-          dbg(
-            `[MEUSANIMES] OK ${animeSlug}/${episodeNumber}: ${video.slice(0, 80)}...`,
-          );
-          return video;
-        }
-        dbg(`[MEUSANIMES] no video returned ${animeSlug}/${episodeNumber}`);
-      } catch (err) {
-        dbg(
-          `[MEUSANIMES] candidate failed ${episodeUrl}: ${err instanceof Error ? err.message : String(err)}`,
-        );
+        return await source.resolveEpisodeUrls(query);
+      } catch {
+        return [];
       }
     }
-    return null;
-  }
-
-  /**
-   * Constrói a URL de um episódio no animefire.io a partir do slug do anime e
-   * número do episódio.
-   * Padrão: animefire.io/animes/<slug>/<n>
-   */
-  animefireEpisodeUrl(animeSlug: string, episodeNumber: number): string {
-    return `https://animefire.io/animes/${animeSlug}/${episodeNumber}`;
-  }
-
-  /**
-   * Tenta extrair vídeo de um episódio via animefire.io (fallback quando
-   * meusanimes.blog está fora do ar).
-   *
-   * Fluxo: GET animefire.io/animes/<slug>/<ep> -> data-video-src ->
-   * GET /video/<slug>?... -> JSON { data:[{ src:...mp4 }] }.
-   *
-   * Retorna a URL .mp4 RAW (sem wrap) ou null se falhar.
-   */
-  async scrapeFromAnimefire(
-    animeSlug: string,
-    episodeNumber: number,
-  ): Promise<string | null> {
-    // Fonte desabilitada (ex: 403 ao IP da VPS sem proxy residencial) => pula
-    // em vez de queimar slot de chromium/rede numa extração sabidamente morta.
-    if (await this.sourceDisabled('animefire')) {
-      dbg(
-        `[ANIMEFIRE] fonte disabled (health), pulando ${animeSlug}/${episodeNumber}`,
-      );
-      return null;
+    if (typeof source.templateUrls === 'function') {
+      return source.templateUrls(query);
     }
-    const episodeUrl = this.animefireEpisodeUrl(animeSlug, episodeNumber);
-    dbg(`[ANIMEFIRE] try ${animeSlug}/${episodeNumber} -> ${episodeUrl}`);
-    try {
-      const result = await this.scrapeEpisodeVideo(
-        episodeUrl,
-        undefined,
-        false,
-      );
-      const video = result.videos[0] ?? null;
-      if (video) {
-        dbg(
-          `[ANIMEFIRE] OK ${animeSlug}/${episodeNumber}: ${video.slice(0, 80)}...`,
-        );
-        return video;
-      }
-      dbg(`[ANIMEFIRE] no video returned ${animeSlug}/${episodeNumber}`);
-    } catch (err) {
-      dbg(
-        `[ANIMEFIRE] failed ${episodeUrl}: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-    return null;
+    return [];
   }
 
   /**
-   * Constrói a URL de um episódio no animesonline.cloud a partir do slug do
-   * anime e número do episódio.
-   * Padrão: animesonline.cloud/episodio/<slug>-episodio-<n>
-   *
-   * Nota: o animesonline.cloud é um WordPress próprio (slugs podem divergir
-   * dos do animefire/meusanimes). Esta URL é uma candidata; a extração real
-   * só acontece se a página existir (probe 404 descarta antes do fetch).
+   * Resolve as URLs candidatas em todas as fontes ativas ordenadas por saúde
+   * (`HealthMonitor.rankedSources`).
    */
-  animesonlineEpisodeUrl(animeSlug: string, episodeNumber: number): string {
-    return `https://animesonline.cloud/episodio/${animeSlug}-episodio-${episodeNumber}`;
-  }
-
-  /**
-   * Tenta extrair vídeo de um episódio via animesonline.cloud (pt-BR).
-   *
-   * O site renderiza os players server-side: a página do episódio traz
-   * <source src="...mp4"> (animeflix.blog) + iframe Blogger de reserva.
-   * Funciona de IPs de datacenter (sem Cloudflare challenge).
-   *
-   * Retorna a URL .mp4 RAW (sem wrap) ou null se falhar.
-   */
-  async scrapeFromAnimesonline(
-    animeSlug: string,
-    episodeNumber: number,
-    audio?: AudioType,
-  ): Promise<string | null> {
-    if (await this.sourceDisabled('animesonline')) return null;
-    const direct = await this.tryAnimesonlineUrl(
-      this.animesonlineEpisodeUrl(animeSlug, episodeNumber),
-      animeSlug,
-      episodeNumber,
-      audio,
-    );
-    if (direct) return direct;
-
-    // O slug do catálogo vem do meusanimes e não bate com o do animesonlinecc
-    // (`witch-watch-dublado` vs `witch-watch`) — resolve pela página do anime
-    // antes de devolver null (meusanimes caiu no Cloudflare challenge).
-    const resolved = await this.animesonline
-      .resolveEpisodeUrl(animeSlug, episodeNumber, UA_DESKTOP)
-      .catch(() => null);
-    if (!resolved) return null;
-    dbg(
-      `[ANIMESONLINE] slug resolvido ${animeSlug} -> ${resolved.slice(0, 120)}`,
-    );
-    return this.tryAnimesonlineUrl(resolved, animeSlug, episodeNumber, audio);
-  }
-
-  private async tryAnimesonlineUrl(
-    episodeUrl: string,
-    animeSlug: string,
-    episodeNumber: number,
-    audio?: AudioType,
-  ): Promise<string | null> {
-    dbg(`[ANIMESONLINE] try ${animeSlug}/${episodeNumber} -> ${episodeUrl}`);
-    try {
-      const result = await this.scrapeEpisodeVideo(
-        episodeUrl,
-        undefined,
-        false,
-        false,
-        audio,
-      );
-      const video = result.videos[0] ?? null;
-      if (video) {
-        dbg(
-          `[ANIMESONLINE] OK ${animeSlug}/${episodeNumber}: ${video.slice(0, 80)}...`,
-        );
-        return video;
-      }
-      dbg(`[ANIMESONLINE] no video returned ${animeSlug}/${episodeNumber}`);
-    } catch (err) {
-      dbg(
-        `[ANIMESONLINE] failed ${episodeUrl}: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-    return null;
-  }
-
-  /**
-   * Tenta extrair de topanimes.net (HTTP puro, sem browser). Usado como
-   * fallback quando meusanimes/animesonline falham — em 13/10/2026 ambos caíram
-   * em challenge Cloudflare para o IP da VPS e o topanimes continuou em 200.
-   */
-  async scrapeFromTopanimes(
-    animeSlug: string,
-    episodeNumber: number,
-    audio?: AudioType,
-  ): Promise<string | null> {
-    if (!this.topanimes) return null;
-    if (await this.sourceDisabled('topanimes')) return null;
-    const episodeUrl = await this.topanimes.resolveEpisodeUrl(
-      animeSlug,
-      episodeNumber,
-    );
-    if (!episodeUrl) {
-      dbg(`[TOPANIMES] sem página p/ ${animeSlug}/${episodeNumber}`);
-      return null;
-    }
-    dbg(`[TOPANIMES] try ${animeSlug}/${episodeNumber} -> ${episodeUrl}`);
-    try {
-      const result = await this.scrapeEpisodeVideo(
-        episodeUrl,
-        undefined,
-        false,
-        false,
-        audio,
-      );
-      const video = result.videos[0] ?? null;
-      if (video) {
-        dbg(
-          `[TOPANIMES] OK ${animeSlug}/${episodeNumber}: ${video.slice(0, 80)}...`,
-        );
-      } else {
-        dbg(`[TOPANIMES] no video returned ${animeSlug}/${episodeNumber}`);
-      }
-      return video;
-    } catch (err) {
-      dbg(
-        `[TOPANIMES] failed ${episodeUrl}: ${err instanceof Error ? err.message : String(err)}`,
-      );
-      return null;
-    }
-  }
-
-  /**
-   * Tenta extrair de animesorion.cc / animexhd.xyz (mesma rede, mesmo player).
-   * A cadeia termina em tokens Blogger, resolvidos em .mp4 via Playwright.
-   */
-  async scrapeFromAnimesorion(
+  async resolveHealthRankedCandidates(
     animeSlug: string,
     episodeNumber: number,
     season: number = 1,
-    audio?: AudioType,
-  ): Promise<string | null> {
-    if (!this.animesorion) return null;
-    if (await this.sourceDisabled('animesorion')) return null;
-    for (const host of ['https://animesorion.cc', 'https://animexhd.xyz']) {
-      const episodeUrl = await this.animesorion.resolveEpisodeUrl(
+    excludeSourceIds?: Iterable<string>,
+  ): Promise<Array<{ sourceId: string; urls: string[] }>> {
+    const excluded = new Set(excludeSourceIds ?? []);
+    const ordered = await this.healthOrderedSources();
+    const out: Array<{ sourceId: string; urls: string[] }> = [];
+    for (const source of ordered) {
+      if (excluded.has(source.id)) continue;
+      if (await this.sourceDisabled(source.id)) continue;
+      const urls = await this.resolveCandidateUrlsForSource(
+        source.id,
         animeSlug,
         episodeNumber,
         season,
-        host,
       );
-      if (!episodeUrl) {
-        dbg(
-          `[ANIMESORION] sem página ${host} p/ ${animeSlug}/${episodeNumber}`,
-        );
-        continue;
+      if (urls.length > 0) {
+        out.push({ sourceId: source.id, urls });
       }
-      dbg(`[ANIMESORION] try ${animeSlug}/${episodeNumber} -> ${episodeUrl}`);
-      try {
-        const result = await this.scrapeEpisodeVideo(
-          episodeUrl,
-          undefined,
-          false,
-          false,
-          audio,
-        );
-        const video = result.videos[0] ?? null;
-        if (video) {
-          dbg(
-            `[ANIMESORION] OK ${animeSlug}/${episodeNumber}: ${video.slice(0, 80)}...`,
-          );
-          return video;
-        }
-        dbg(`[ANIMESORION] no video returned ${animeSlug}/${episodeNumber}`);
-      } catch (err) {
+    }
+    return out;
+  }
+
+  /**
+   * Extrai a primeira mídia viva (.mp4/.m3u8) iterando as fontes ativas na
+   * ordem de saúde (`HealthMonitor.rankedSources`), usando a resolução em 2
+   * passos de cada adapter (`ScrapeSource.resolveEpisodeUrls`).
+   */
+  async scrapeEpisodeFromRankedSources(
+    animeSlug: string,
+    episodeNumber: number,
+    season: number = 1,
+    audio?: AudioType,
+    probeLive: (url: string) => Promise<boolean> = async (url) =>
+      !(await probeMediaUrlDead(url, true)),
+  ): Promise<{
+    videoUrl: string;
+    sourceId: string;
+    pageUrl: string;
+    playerTokens?: string[];
+  } | null> {
+    const groups = await this.resolveHealthRankedCandidates(
+      animeSlug,
+      episodeNumber,
+      season,
+    );
+    for (const group of groups) {
+      for (const pageUrl of group.urls) {
         dbg(
-          `[ANIMESORION] failed ${episodeUrl}: ${err instanceof Error ? err.message : String(err)}`,
+          `[SCRAPE] try ranked ${group.sourceId} ${animeSlug}/${episodeNumber} -> ${pageUrl}`,
         );
+        try {
+          const result = await this.scrapeEpisodeVideo(
+            pageUrl,
+            group.sourceId,
+            false,
+            false,
+            audio,
+          );
+          for (const video of result.videos) {
+            if (video && (await probeLive(video))) {
+              return {
+                videoUrl: video,
+                sourceId: group.sourceId,
+                pageUrl,
+                playerTokens: result.playerTokens,
+              };
+            }
+          }
+        } catch (err) {
+          dbg(
+            `[SCRAPE] ranked candidate failed ${group.sourceId} ${pageUrl}: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
       }
     }
     return null;

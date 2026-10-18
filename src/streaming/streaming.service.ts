@@ -19,6 +19,7 @@ import {
   shouldReextractMedia,
 } from '@/common/media-probe';
 import { refererForMediaUrl } from '@/common/url-utils';
+import { trustMediaHosts } from '@/common/trusted-media-hosts';
 import { Readable } from 'stream';
 import type { AudioType } from '@prisma/client';
 
@@ -419,7 +420,7 @@ export class StreamingService {
     this.scrapeInflight.set(key, inflight);
   }
 
-  /** Scrape real usando somente URLs reais persistidas por cada fonte. */
+  /** Scrape real usando URLs persistidas por fonte + fallback ranqueado por saúde. */
   private async doSingleScrape(
     episode: { id: string; embedUrl: string | null },
     animeSlug: string,
@@ -430,6 +431,8 @@ export class StreamingService {
   ): Promise<{ videoUrl: string | null; playerEmbed: string | null }> {
     let rawVideoUrl: string | null = null;
     let playerEmbed: string | null = null;
+    let winningSourceId: string | undefined;
+    let winningPageUrl: string | undefined;
 
     const mappedSources =
       (await this.prisma.episodeSource?.findMany({
@@ -470,6 +473,11 @@ export class StreamingService {
         for (const video of result.videos) {
           if (!(await probeMediaUrlDead(video, true))) {
             rawVideoUrl = video;
+            winningSourceId =
+              source.sourceId ??
+              this.scrapeService.detectSourceId?.(source.pageUrl) ??
+              undefined;
+            winningPageUrl = source.pageUrl;
             break;
           }
         }
@@ -490,74 +498,99 @@ export class StreamingService {
       }
     }
 
-    // Fallback para as fontes ativas. AnimeFire não possui adapter e acabava
-    // sendo enviado incorretamente ao scraper padrão de MeusAnimes.
-    if (!rawVideoUrl) {
-      for (const [label, run] of [
-        [
-          'topanimes',
-          () =>
-            this.scrapeService.scrapeFromTopanimes(
-              animeSlug,
-              episodeNumber,
-              audio,
-            ),
-        ],
-        [
-          'animesorion',
-          () =>
-            this.scrapeService.scrapeFromAnimesorion(
-              animeSlug,
-              episodeNumber,
-              season,
-              audio,
-            ),
-        ],
-        [
-          'animesonline',
-          () =>
-            this.scrapeService.scrapeFromAnimesonline(
-              animeSlug,
-              episodeNumber,
-              audio,
-            ),
-        ],
-        [
-          'meusanimes',
-          () =>
-            this.scrapeService.scrapeFromMeusanimes(
-              animeSlug,
-              episodeNumber,
-              season,
-              audio,
-            ),
-        ],
-      ] as const) {
-        try {
-          const candidate = await run();
-          if (candidate && !(await probeMediaUrlDead(candidate, true))) {
-            rawVideoUrl = candidate;
-            break;
-          }
-        } catch (err) {
-          dbg(
-            `[STREAM] fallback ${label} falhou: ${err instanceof Error ? err.message : String(err)}`,
+    if (
+      !rawVideoUrl &&
+      typeof this.scrapeService.scrapeEpisodeFromRankedSources === 'function'
+    ) {
+      try {
+        const fallback =
+          await this.scrapeService.scrapeEpisodeFromRankedSources(
+            animeSlug,
+            episodeNumber,
+            season,
+            audio,
+            async (url) => !(await probeMediaUrlDead(url, true)),
           );
+        if (fallback?.videoUrl) {
+          rawVideoUrl = fallback.videoUrl;
+          winningSourceId = fallback.sourceId;
+          winningPageUrl = fallback.pageUrl;
         }
+      } catch (err) {
+        dbg(
+          `[STREAM] fallback ranqueado falhou: ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
     }
 
-    // Persiste RAW (sem wrap) p/ próximas chamadas.
     if (rawVideoUrl && persist) {
-      await this.prisma.episode
-        .update({
-          where: { id: episode.id },
-          data: { videoUrl: rawVideoUrl },
+      await this.persistPlayerResolvedEpisode(
+        episode.id,
+        rawVideoUrl,
+        winningSourceId,
+        winningPageUrl,
+        audio,
+      );
+    }
+
+    return { videoUrl: rawVideoUrl, playerEmbed };
+  }
+
+  private async persistPlayerResolvedEpisode(
+    episodeId: string,
+    rawVideoUrl: string,
+    sourceId?: string,
+    pageUrl?: string,
+    audio?: AudioType,
+  ): Promise<void> {
+    trustMediaHosts([rawVideoUrl]);
+    await this.prisma.episode
+      .update({
+        where: { id: episodeId },
+        data: { videoUrl: rawVideoUrl },
+      })
+      .catch(() => undefined);
+
+    if (sourceId && pageUrl && this.prisma.episodeSource) {
+      await this.prisma.episodeSource
+        .upsert({
+          where: {
+            episodeId_sourceId: {
+              episodeId,
+              sourceId,
+            },
+          },
+          update: {
+            pageUrl,
+            ...(audio ? { audio } : {}),
+            verifiedAt: new Date(),
+            lastError: null,
+          },
+          create: {
+            episodeId,
+            sourceId,
+            pageUrl,
+            audio: audio ?? 'LEGENDADO',
+            verifiedAt: new Date(),
+          },
         })
         .catch(() => undefined);
     }
 
-    return { videoUrl: rawVideoUrl, playerEmbed };
+    await this.prisma.anime
+      ?.updateMany?.({
+        where: {
+          episodes: { some: { id: episodeId } },
+          published: false,
+        },
+        data: {
+          published: true,
+          catalogUnpublished: false,
+          catalogAbsentChecks: 0,
+          catalogAbsenceCheckedAt: null,
+        },
+      })
+      .catch(() => undefined);
   }
 
   /**
@@ -1008,6 +1041,7 @@ export class StreamingService {
       // Single-flight: N viewers com 403 compartilham UMA re-extração (o
       // scraper é caro e concorrencia-limitado).
       const key = `${animeSlug}:${season}:${episodeNumber}`;
+      let fallbackSource: { sourceId: string; pageUrl: string } | null = null;
       let inflight = this.reextractInflight.get(key);
       if (!inflight) {
         inflight = (async () => {
@@ -1017,22 +1051,27 @@ export class StreamingService {
             episodeNumber,
             season,
           );
-          // Fallback meusanimes.
-          if (!fresh) {
-            fresh = await this.scrapeService.scrapeFromMeusanimes(
-              animeSlug,
-              episodeNumber,
-              season,
-            );
-            if (fresh && (await probeMediaUrlDead(fresh, true))) fresh = null;
-          }
-          // Fallback animesonline.cloud.
-          if (!fresh) {
-            fresh = await this.scrapeService.scrapeFromAnimesonline(
-              animeSlug,
-              episodeNumber,
-            );
-            if (fresh && (await probeMediaUrlDead(fresh, true))) fresh = null;
+          if (
+            !fresh &&
+            typeof this.scrapeService.scrapeEpisodeFromRankedSources ===
+              'function'
+          ) {
+            const fallback = await this.scrapeService
+              .scrapeEpisodeFromRankedSources(
+                animeSlug,
+                episodeNumber,
+                season,
+                undefined,
+                async (url) => !(await probeMediaUrlDead(url, true)),
+              )
+              .catch(() => null);
+            if (fallback?.videoUrl) {
+              fresh = fallback.videoUrl;
+              fallbackSource = {
+                sourceId: fallback.sourceId,
+                pageUrl: fallback.pageUrl,
+              };
+            }
           }
           return fresh;
         })().finally(() => {
@@ -1050,9 +1089,16 @@ export class StreamingService {
           freshOrigin,
         );
         if (result.status === 200 || result.status === 206) {
-          await this.prisma.episode
-            .update({ where: { id: episodeId }, data: { videoUrl: fresh } })
-            .catch(() => undefined);
+          const resolvedFallback = fallbackSource as {
+            sourceId: string;
+            pageUrl: string;
+          } | null;
+          await this.persistPlayerResolvedEpisode(
+            episodeId,
+            fresh,
+            resolvedFallback?.sourceId,
+            resolvedFallback?.pageUrl,
+          );
         }
       }
     }

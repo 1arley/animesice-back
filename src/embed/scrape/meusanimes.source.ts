@@ -6,6 +6,7 @@ import {
   ScrapeSource,
   ScrapeEpisodeResult,
   HttpExtractContext,
+  EpisodeUrlQuery,
 } from './scrape-source.interface';
 import {
   keepVideoUrls,
@@ -51,6 +52,30 @@ export class MeusanimesScrapeSource implements ScrapeSource {
 
   supports(url: string): boolean {
     return /meusanimes\.blog|meusdoramas\.club/i.test(url);
+  }
+
+  slugVariants(animeSlug: string): string[] {
+    const stripped = animeSlug.replace(/-(?:dublado|legendado)(?:-\d+)?$/i, '');
+    return [animeSlug, stripped].filter(
+      (slug, i, all) => !!slug && all.indexOf(slug) === i,
+    );
+  }
+
+  templateUrls(query: EpisodeUrlQuery): string[] {
+    const out: string[] = [];
+    for (const slug of this.slugVariants(query.animeSlug)) {
+      out.push(
+        `https://meusanimes.blog/e/${slug}-episodio-${query.episodeNumber}/`,
+      );
+    }
+    for (const slug of this.slugVariants(query.animeSlug)) {
+      out.push(`https://meusanimes.blog/e/${slug}/`);
+    }
+    return [...new Set(out)];
+  }
+
+  resolveEpisodeUrls(query: EpisodeUrlQuery): Promise<string[]> {
+    return Promise.resolve(this.templateUrls(query));
   }
 
   async extractHttp(ctx: HttpExtractContext): Promise<ScrapeEpisodeResult> {

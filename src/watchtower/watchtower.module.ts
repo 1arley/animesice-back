@@ -11,10 +11,7 @@ import { NotificationModule } from '@/notification/notification.module';
 import { JobsService } from './jobs.service';
 import { AniListClient } from './anilist-client.service';
 import { HealthMonitor } from './health-monitor.service';
-import { SourceDiscovery } from './source-discovery.service';
-import { Validator } from './validator.service';
-import { Publisher } from './publisher.service';
-import { Extractor } from './extractor.service';
+import { EpisodeResolution } from './episode-resolution.service';
 import { ReleaseMonitor } from './release-monitor.service';
 import { SeasonDiscovery } from './season-discovery.service';
 import { RepairWorker } from './repair-worker.service';
@@ -32,10 +29,7 @@ import { WatchtowerController } from './watchtower.controller';
     JobsService,
     AniListClient,
     HealthMonitor,
-    SourceDiscovery,
-    Validator,
-    Publisher,
-    Extractor,
+    EpisodeResolution,
     ReleaseMonitor,
     SeasonDiscovery,
     RepairWorker,
@@ -45,6 +39,6 @@ import { WatchtowerController } from './watchtower.controller';
     ScheduleSync,
     AdultCatalogSyncService,
   ],
-  exports: [JobsService, HealthMonitor, ReleaseMonitor],
+  exports: [JobsService, HealthMonitor, ReleaseMonitor, EpisodeResolution],
 })
 export class WatchtowerModule {}

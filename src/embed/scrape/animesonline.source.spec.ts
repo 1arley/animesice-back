@@ -338,5 +338,34 @@ describe('AnimesonlineScrapeSource', () => {
         source.resolveEpisodeUrl('witch-watch-dublado', 3, UA),
       ).resolves.toBeNull();
     });
+
+    it('templateUrls e resolveEpisodeUrls combinam templates e URL resolvida da listagem', async () => {
+      jest
+        .spyOn(source, 'resolveEpisodeUrl')
+        .mockResolvedValueOnce(
+          'https://animesonlinecc.to/episodio/witch-watch-episodio-3/',
+        );
+      const urls = await source.resolveEpisodeUrls({
+        animeSlug: 'witch-watch-dublado',
+        episodeNumber: 3,
+      });
+      expect(urls).toEqual([
+        'https://animesonline.cloud/episodio/witch-watch-dublado-episodio-3',
+        'https://animesonline.cloud/episodio/witch-watch-episodio-3',
+        'https://animesonlinecc.to/episodio/witch-watch-episodio-3/',
+      ]);
+
+      jest
+        .spyOn(source, 'resolveEpisodeUrl')
+        .mockRejectedValueOnce(new Error('net down'));
+      const fallbackOnly = await source.resolveEpisodeUrls({
+        animeSlug: 'witch-watch',
+        episodeNumber: 1,
+        ua: UA,
+      });
+      expect(fallbackOnly).toEqual([
+        'https://animesonline.cloud/episodio/witch-watch-episodio-1',
+      ]);
+    });
   });
 });

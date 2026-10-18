@@ -9,9 +9,10 @@
  *
  * Reusa probeMediaUrlDead (common/media-probe).
  */
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { PrismaService } from '@/prisma/prisma.service';
 import { probeMediaUrlDead, signedExpiryDead } from '@/common/media-probe';
+import { EpisodeResolution } from './episode-resolution.service';
 import { JobsService } from './jobs.service';
 import { extractJobKey, JOB_TYPE, PRIORITY } from './watchtower.types';
 
@@ -46,6 +47,7 @@ export class RepairWorker {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jobs: JobsService,
+    @Optional() private readonly episodes?: EpisodeResolution,
   ) {}
 
   async sweep(slugFilter?: string): Promise<number> {
@@ -294,6 +296,10 @@ export class RepairWorker {
   }
 
   private async unpublishIfFullyBroken(animeId: string): Promise<void> {
+    if (this.episodes) {
+      await this.episodes.unpublishIfFullyBroken(animeId);
+      return;
+    }
     const anime = await this.prisma.anime.findUnique({
       where: { id: animeId },
       select: { id: true, published: true },

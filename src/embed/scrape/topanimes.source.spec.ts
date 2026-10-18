@@ -426,4 +426,32 @@ describe('TopanimesScrapeSource', () => {
       source.extractHttp({ episodeUrl: EPISODE_URL, ua: UA }),
     ).rejects.toThrow(/falha crua em string/);
   });
+
+  it('templateUrls e resolveEpisodeUrls delegam para variantes e resolveEpisodeUrl', async () => {
+    const templates = source.templateUrls({
+      animeSlug: 'bleach-dublado-2',
+      episodeNumber: 3,
+    });
+    expect(templates).toContain(
+      'https://topanimes.net/episodio/bleach-episodio-3/',
+    );
+
+    jest
+      .spyOn(source, 'resolveEpisodeUrl')
+      .mockResolvedValueOnce('https://topanimes.net/episodio/bleach-3/');
+    await expect(
+      source.resolveEpisodeUrls({
+        animeSlug: 'bleach',
+        episodeNumber: 3,
+      }),
+    ).resolves.toEqual(['https://topanimes.net/episodio/bleach-3/']);
+
+    jest.spyOn(source, 'resolveEpisodeUrl').mockResolvedValueOnce(null);
+    await expect(
+      source.resolveEpisodeUrls({
+        animeSlug: 'bleach',
+        episodeNumber: 3,
+      }),
+    ).resolves.toEqual([]);
+  });
 });

@@ -476,4 +476,24 @@ describe('AnimesorionScrapeSource', () => {
       source.extractHttp({ episodeUrl: EPISODE_URL, ua: 'ua' }),
     ).rejects.toThrow(/animesorion/);
   });
+
+  it('templateUrls e resolveEpisodeUrls geram candidatos nos dois hosts', async () => {
+    const templates = source.templateUrls({
+      animeSlug: 'bleach-dublado-2',
+      episodeNumber: 4,
+      season: 2,
+    });
+    expect(templates).toContain('https://animesorion.cc/episodios/bleach-2x4/');
+    expect(templates).toContain('https://animexhd.xyz/episodios/bleach-2x4/');
+
+    jest
+      .spyOn(source, 'resolveEpisodeUrl')
+      .mockResolvedValueOnce('https://animesorion.cc/episodios/bleach-1x4/')
+      .mockResolvedValueOnce(null);
+    const resolved = await source.resolveEpisodeUrls({
+      animeSlug: 'bleach',
+      episodeNumber: 4,
+    });
+    expect(resolved).toEqual(['https://animesorion.cc/episodios/bleach-1x4/']);
+  });
 });

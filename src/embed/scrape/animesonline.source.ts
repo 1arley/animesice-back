@@ -4,6 +4,7 @@ import { fetchSafeRaw } from '@/common/ssrf';
 import { probeMediaUrlDead } from '@/common/media-probe';
 import { runRustScraper } from './rust-scraper';
 import type {
+  EpisodeUrlQuery,
   HttpExtractContext,
   ScrapeEpisodeResult,
   ScrapeSource,
@@ -25,6 +26,9 @@ const IFRAME_SRC_RE = /<iframe[^>]+src=["']([^"']+)["']/gi;
 
 /** Teto de probes de liveness por página (evita ~5s × N candidatas mortas). */
 const MAX_PROBES = 4;
+
+const DEFAULT_UA =
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
 /**
  * Adapter animesonline.cloud — WordPress pt-BR da rede "AnimesOnline".
@@ -55,6 +59,26 @@ export class AnimesonlineScrapeSource implements ScrapeSource {
     );
   }
 
+  templateUrls(query: EpisodeUrlQuery): string[] {
+    return this.slugVariants(query.animeSlug).map(
+      (slug) =>
+        `https://animesonline.cloud/episodio/${slug}-episodio-${query.episodeNumber}`,
+    );
+  }
+
+  async resolveEpisodeUrls(query: EpisodeUrlQuery): Promise<string[]> {
+    const urls = [...this.templateUrls(query)];
+    const resolved = await this.resolveEpisodeUrl(
+      query.animeSlug,
+      query.episodeNumber,
+      query.ua ?? DEFAULT_UA,
+    ).catch(() => null);
+    if (resolved && !urls.includes(resolved)) {
+      urls.push(resolved);
+    }
+    return urls;
+  }
+
   /**
    * Resolve a URL do episódio no animesonlinecc.to a partir do slug local.
    *
@@ -66,7 +90,7 @@ export class AnimesonlineScrapeSource implements ScrapeSource {
   async resolveEpisodeUrl(
     animeSlug: string,
     episodeNumber: number,
-    ua: string,
+    ua: string = DEFAULT_UA,
   ): Promise<string | null> {
     for (const slug of this.slugVariants(animeSlug)) {
       const hit = await this.episodeLinkFromAnimePage(slug, episodeNumber, ua);
@@ -105,7 +129,7 @@ export class AnimesonlineScrapeSource implements ScrapeSource {
   private slugVariants(animeSlug: string): string[] {
     return [
       animeSlug,
-      animeSlug.replace(/-(?:dublado|legendado)$/i, ''),
+      animeSlug.replace(/-(?:dublado|legendado)(?:-\d+)?$/i, ''),
     ].filter((slug, i, all) => slug && all.indexOf(slug) === i);
   }
 
