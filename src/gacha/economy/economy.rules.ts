@@ -146,6 +146,12 @@ export function dateFromDayKey(value: string): Date {
   return new Date(`${value}T12:00:00.000Z`);
 }
 
+/// Início do dia de America/Sao_Paulo em UTC. O fuso é -3 fixo (horário de
+/// verão abolido em 2019): meia-noite local = 03:00Z.
+export function dayStart(date = new Date()): Date {
+  return new Date(`${dayKey(date)}T03:00:00.000Z`);
+}
+
 export function inactiveEventIds(
   value: unknown,
   field: 'cardIds' | 'skinIds' | 'cardBackKeys',

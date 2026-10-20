@@ -153,6 +153,7 @@ model User {
   ratings                   Rating[]
   favorites                 Favorite[]
   watchHistories            WatchHistory[]
+  watchRewards              WatchReward[]
   notifications             Notification[]
   commentLikes              CommentLike[]
   rooms                     Room[]
@@ -428,6 +429,7 @@ model Episode {
   comments        Comment[]
   streamingTokens StreamingToken[]
   watchHistories  WatchHistory[]
+  watchRewards    WatchReward[]
   sources         EpisodeSource[]
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
@@ -874,6 +876,26 @@ model WatchtowerSourceHealth {
   capacityFailures     Int       @default(0)
 
   @@index([disabled])
+}
+
+/// Rastro de dosagem de Cristais por tempo assistido — um registro por
+/// usuário+episódio. Drip por segundo consumido e bônus de episódio completo.
+model WatchReward {
+  userId             String
+  episodeId          String
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  episode            Episode  @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  /// Segundos de reprodução contínua aceitos pelo servidor (sem seeks).
+  paidSeconds        Int      @default(0)
+  /// Cristais já creditados por este episódio (drip) — evita re-pagamento.
+  credited           Int      @default(0)
+  /// Bônus de episódio completo já tentado neste registro.
+  completedRewarded  Boolean  @default(false)
+  /// Âncora antifraude: delta de progresso só vale até o delta de relógio.
+  lastProgress       Int      @default(0)
+  lastAt             DateTime? @db.Timestamptz(6)
+
+  @@id([userId, episodeId])
 }
 
 /// Auditoria de ações administrativas - rastreia acessos a dados sensíveis
@@ -1724,6 +1746,7 @@ enum CrystalEventType {
   FEATURED
   COLLECTION
   CHARGEBACK
+  WATCH
 }
 
 model CrystalCode {

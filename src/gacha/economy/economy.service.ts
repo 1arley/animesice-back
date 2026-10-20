@@ -19,6 +19,7 @@ import {
   BoxTier,
   dateFromDayKey,
   dayKey,
+  dayStart,
   PrizeCategory,
   PrizeQuality,
   prizeAmount,
@@ -796,6 +797,17 @@ export class EconomyService {
       dailyClaimedToday: !!(await this.prisma.gachaDailyClaim.findUnique({
         where: { userId_day: { userId, day: dateFromDayKey(dayKey()) } },
       })),
+      watchEarnedToday:
+        (
+          await this.prisma.crystalEvent.aggregate({
+            where: {
+              userId,
+              type: 'WATCH',
+              createdAt: { gte: dayStart() },
+            },
+            _sum: { delta: true },
+          })
+        )._sum.delta ?? 0,
     };
   }
 
