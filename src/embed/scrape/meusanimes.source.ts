@@ -17,7 +17,26 @@ import {
 } from './extract';
 
 /**
+ * Lista por página do catálogo pode ter centenas de links; limita o stampede
+ * na fila de extração.
+ */
+const LISTING_MAX_CANDIDATES = 8;
+
+/** Comprimento do prefixo comum (case-sensitive) entre duas strings. */
+function commonPrefixLength(a: string, b: string): number {
+  const n = Math.min(a.length, b.length);
+  let i = 0;
+  while (i < n && a[i] === b[i]) i++;
+  return i;
+}
+
+/**
  * Adapter meusanimes.blog / servN.meusdoramas.club (players "Meus Doramas").
+ *
+ * Candidatas em 2 passos (`resolveEpisodeUrls`): variantes de slug no template
+ * `-episodio-<n>` + fallback na listagem estática do catálogo `/a/<base>/`
+ * (a URL real usa segmento de temporada `<base>-<s>-episodio-<n>` e, em alguns
+ * títulos, o slug do link tem outro nome que o da própria página).
  *
  * Cadeia de extração HTTP pura:
  *   1. Página do episódio (meusanimes.blog/e/<anime>-episodio-<n>/) traz
@@ -74,8 +93,76 @@ export class MeusanimesScrapeSource implements ScrapeSource {
     return [...new Set(out)];
   }
 
-  resolveEpisodeUrls(query: EpisodeUrlQuery): Promise<string[]> {
-    return Promise.resolve(this.templateUrls(query));
+  async resolveEpisodeUrls(query: EpisodeUrlQuery): Promise<string[]> {
+    const urls = [...this.templateUrls(query)];
+    for (const hit of await this.episodeLinksFromAnimePages(
+      query.animeSlug,
+      query.episodeNumber,
+      query.ua ?? this.UA,
+    )) {
+      if (!urls.includes(hit)) urls.push(hit);
+    }
+    return urls;
+  }
+
+  /**
+   * Fallback pela listagem estática do catálogo (/a/<slug>/).
+   *
+   * POR QUE: o template `-episodio-<n>` não cobre as URLs reais da fonte — ela
+   * usa segmento de temporada (`<base>-1-episodio-<n>`) e o slug do link pode
+   * ser outro nome que o da própria página (`that-time-i-got-reincarnated...`
+   * sob /a/tensei-shitara-slime-datta-ken/). A listagem traz links de episódio
+   * em HTML estático, então resolve por lá em vez de depender de slug adivinhado.
+   *
+   * Percorre as variantes de slug em ordem; a primeira que tiver episódios do
+   * número alvo já basta. Candidatos correspondentes são mantidos e ordenados
+   * por prefixo comum (URL mais parecida primeiro; temporada errada 404 e o
+   * pipeline pula — o custo de escanear é 1 request).
+   */
+  private async episodeLinksFromAnimePages(
+    animeSlug: string,
+    episodeNumber: number,
+    ua: string,
+  ): Promise<string[]> {
+    for (const slug of this.listingSlugVariants(animeSlug)) {
+      let html: string;
+      try {
+        html = await this.get(`https://meusanimes.blog/a/${slug}/`, ua);
+      } catch {
+        continue;
+      }
+      const hits = new Set<string>();
+      for (const m of html.matchAll(
+        /https:\/\/meusanimes\.blog\/e\/[^\s"'#?<>]+-episodio-(\d+)\/?/gi,
+      )) {
+        if (Number(m[1]) === episodeNumber) hits.add(m[0]);
+      }
+      if (hits.size === 0) continue;
+      const needle = `${animeSlug}-episodio-${episodeNumber}`;
+      const target = `${slug}-episodio-${episodeNumber}`;
+      // shortcut: ordenação por prefixo é heurística, só prioriza latência
+      // (candidato errado 404 e o pipeline tenta o próximo); sem matching de
+      // temporada exato — se virar gargalo, casar `^/e/<slug>-(\d+)-episodio-`.
+      const rank = (url: string) =>
+        Math.max(
+          commonPrefixLength(url, target),
+          commonPrefixLength(url, needle),
+        );
+      return [...hits]
+        .sort((a, b) => rank(b) - rank(a))
+        .slice(0, LISTING_MAX_CANDIDATES);
+    }
+    return [];
+  }
+
+  /** Slug em ordem de tentativa p/ página do catálogo: como está, sem o número final (temporada) e sem dublado/legendado+temporada. */
+  private listingSlugVariants(animeSlug: string): string[] {
+    const noSeason = animeSlug.replace(/-\d+$/i, '');
+    return [
+      animeSlug,
+      noSeason,
+      noSeason.replace(/-(?:dublado|legendado)$/i, ''),
+    ].filter((slug, i, all) => slug && all.indexOf(slug) === i);
   }
 
   async extractHttp(ctx: HttpExtractContext): Promise<ScrapeEpisodeResult> {
