@@ -1478,14 +1478,15 @@ describe('GachaService', () => {
         ).rejects.toBeInstanceOf(ConflictException);
       });
 
-      it('409 quando a carta não pôde ser posta em escrow', async () => {
+      it('permite várias propostas sem prender a carta em escrow', async () => {
         mockTradeOwners();
-        // Escrow parcial: só uma das duas cartas estava ACTIVE.
-        mockPrisma.userCard.updateMany.mockResolvedValue({ count: 1 });
+        mockPrisma.privacySettings.findUnique.mockResolvedValue(null);
+        mockPrisma.gachaTrade.create.mockResolvedValue(tradeRow());
 
         await expect(
           service.createTrade('u1', 'oc1', 'rc1'),
-        ).rejects.toBeInstanceOf(ConflictException);
+        ).resolves.toMatchObject({ status: 'PENDING' });
+        expect(mockPrisma.userCard.updateMany).not.toHaveBeenCalled();
       });
 
       it('409 ao estourar limite de propostas enviadas', async () => {
@@ -1510,11 +1511,11 @@ describe('GachaService', () => {
         ).rejects.toBeInstanceOf(ConflictException);
       });
 
-      it('409 quando unique de carta pendente falha em corrida (P2002)', async () => {
+      it('409 quando proposta perde conflito de serialização (P2034)', async () => {
         mockTradeOwners();
         mockPrisma.gachaTrade.create.mockRejectedValue(
           new Prisma.PrismaClientKnownRequestError('dup', {
-            code: 'P2002',
+            code: 'P2034',
             clientVersion: '7.0.0',
           }),
         );
@@ -1587,12 +1588,12 @@ describe('GachaService', () => {
 
         // WHERE exige posse E escrow: prova que a carta estava presa por esta troca.
         expect(mockPrisma.userCard.updateMany).toHaveBeenCalledWith({
-          where: { id: { in: ['oc1'] }, userId: 'u1', status: 'ESCROW' },
-          data: { userId: 'u2', status: 'ACTIVE' },
+          where: { id: { in: ['oc1'] }, userId: 'u1', status: 'ACTIVE' },
+          data: { userId: 'u2' },
         });
         expect(mockPrisma.userCard.updateMany).toHaveBeenCalledWith({
-          where: { id: { in: ['rc1'] }, userId: 'u2', status: 'ESCROW' },
-          data: { userId: 'u1', status: 'ACTIVE' },
+          where: { id: { in: ['rc1'] }, userId: 'u2', status: 'ACTIVE' },
+          data: { userId: 'u1' },
         });
         expect(mockPrisma.user.updateMany).toHaveBeenCalledWith(
           expect.objectContaining({

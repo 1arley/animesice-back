@@ -1373,6 +1373,7 @@ export class GachaService {
             OR: [
               { offeredUserCardId: userCardId },
               { requestedUserCardId: userCardId },
+              { cards: { some: { userCardId } } },
             ],
           },
           select: { id: true },
@@ -1442,6 +1443,20 @@ export class GachaService {
         });
         if (!card) {
           throw new NotFoundException('Carta não encontrada.');
+        }
+        const pendingTrade = await tx.gachaTrade.findFirst({
+          where: {
+            status: 'PENDING',
+            OR: [
+              { offeredUserCardId: userCardId },
+              { requestedUserCardId: userCardId },
+              { cards: { some: { userCardId } } },
+            ],
+          },
+          select: { id: true },
+        });
+        if (pendingTrade) {
+          throw new BadRequestException('Carta envolvida em troca pendente.');
         }
         if (card.value <= card.rankedValue) {
           throw new BadRequestException('Nenhum ganho de pontos para aplicar.');
@@ -1697,6 +1712,7 @@ export class GachaService {
             OR: [
               { offeredUserCardId: userCardId },
               { requestedUserCardId: userCardId },
+              { cards: { some: { userCardId } } },
             ],
           },
           select: { id: true },
@@ -1771,6 +1787,7 @@ export class GachaService {
             OR: [
               { offeredUserCardId: userCardId },
               { requestedUserCardId: userCardId },
+              { cards: { some: { userCardId } } },
             ],
           },
           select: { id: true },
@@ -4303,13 +4320,6 @@ export class GachaService {
       throw new BadRequestException(
         'As cartas pedidas precisam ser de outra pessoa.',
       );
-    // ESCROW = carta presa por troca pendente: é conflito (409), não pedido
-    // inválido — o frontend recarrega em vez de tratar como erro de formulário.
-    if (cards.some((c) => c.status === 'ESCROW')) {
-      throw new ConflictException(
-        'Uma dessas cartas já está numa troca pendente.',
-      );
-    }
     if (cards.some((c) => c.status && c.status !== 'ACTIVE'))
       throw new BadRequestException('Uma carta não está disponível.');
     const targetUserId = requested[0]!.userId;
@@ -4416,17 +4426,6 @@ export class GachaService {
         'Uma dessas cartas está anunciada no mercado.',
       );
     }
-    // O escrow é o estado, não o índice: o UPDATE só alcança cartas ACTIVE,
-    // então count === length prova que TODAS estavam livres agora.
-    const held = await tx.userCard.updateMany({
-      where: { id: { in: prepared.orderedCardIds }, status: 'ACTIVE' },
-      data: { status: 'ESCROW' },
-    });
-    if (held.count !== prepared.orderedCardIds.length) {
-      throw new ConflictException(
-        'Uma dessas cartas não está mais disponível.',
-      );
-    }
     if (crystalsOffered > 0) {
       await this.crystalAccounting.reserve(tx, userId, crystalsOffered);
     }
@@ -4450,7 +4449,7 @@ export class GachaService {
         parentTradeId,
         cards: {
           create: [...prepared.offeredRows, ...prepared.requestedRows].map(
-            (row) => ({ ...row, escrowed: true }),
+            (row) => ({ ...row, escrowed: false }),
           ),
         },
       },
@@ -4521,10 +4520,8 @@ export class GachaService {
       return fmtTrade(trade);
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError) {
-        // P2002 = índice parcial GachaTradeCard_userCardId_escrowed_key (outra
-        // troca pegou a carta entre a checagem e agora); P2034 = conflito de
-        // serialização. Ambos viram 409 para o frontend recarregar.
-        if (e.code === 'P2002' || e.code === 'P2034') {
+        // P2034 = conflito de serialização entre propostas simultâneas.
+        if (e.code === 'P2034') {
           throw new ConflictException(
             'Uma dessas cartas acabou de entrar numa troca pendente.',
           );
@@ -4714,9 +4711,36 @@ export class GachaService {
         if (Date.now() >= found.expiresAt.getTime()) {
           throw new ConflictException('Troca expirada.');
         }
+        const offeredIds = found.cards?.length
+          ? found.cards
+              .filter((c) => c.side === 'OFFERED')
+              .map((c) => c.userCardId)
+          : [found.offeredUserCardId];
+        const requestedIds = found.cards?.length
+          ? found.cards
+              .filter((c) => c.side === 'REQUESTED')
+              .map((c) => c.userCardId)
+          : [found.requestedUserCardId];
+        const tradedCardIds = [...offeredIds, ...requestedIds];
+        const overlappingTrades = await tx.gachaTrade.findMany({
+          where: {
+            id: { not: tradeId },
+            status: 'PENDING',
+            OR: [
+              { offeredUserCardId: { in: tradedCardIds } },
+              { requestedUserCardId: { in: tradedCardIds } },
+              { cards: { some: { userCardId: { in: tradedCardIds } } } },
+            ],
+          },
+          select: { id: true, offeredUserId: true, requestedUserId: true },
+        });
         await this.crystalAccounting.lockWallets(tx, [
           found.offeredUserId,
           found.requestedUserId,
+          ...overlappingTrades.flatMap((trade) => [
+            trade.offeredUserId,
+            trade.requestedUserId,
+          ]),
         ]);
         const accepted = await tx.gachaTrade.updateMany({
           where: { id: tradeId, status: 'PENDING' },
@@ -4771,16 +4795,6 @@ export class GachaService {
           );
         }
 
-        const offeredIds = found.cards?.length
-          ? found.cards
-              .filter((c) => c.side === 'OFFERED')
-              .map((c) => c.userCardId)
-          : [found.offeredUserCardId];
-        const requestedIds = found.cards?.length
-          ? found.cards
-              .filter((c) => c.side === 'REQUESTED')
-              .map((c) => c.userCardId)
-          : [found.requestedUserCardId];
         const owners = await tx.userCard.findMany({
           where: { id: { in: [...offeredIds, ...requestedIds] } },
           select: { id: true, userId: true, cardId: true },
@@ -4814,23 +4828,22 @@ export class GachaService {
           data: { featuredUserCardId: null, featuredSettledAt: null },
         });
 
-        // userId E status ESCROW no WHERE: prova posse e impede aceitar sobre
-        // escrow alheio — quem não é dono nunca põe a carta em escrow.
+        // Conferir dono e estado ativo evita transferir cartas de outra operação.
         const offered = await tx.userCard.updateMany({
           where: {
             id: { in: offeredIds },
             userId: found.offeredUserId,
-            status: 'ESCROW',
+            status: 'ACTIVE',
           },
-          data: { userId: found.requestedUserId, status: 'ACTIVE' },
+          data: { userId: found.requestedUserId },
         });
         const requested = await tx.userCard.updateMany({
           where: {
             id: { in: requestedIds },
             userId: found.requestedUserId,
-            status: 'ESCROW',
+            status: 'ACTIVE',
           },
-          data: { userId: found.offeredUserId, status: 'ACTIVE' },
+          data: { userId: found.offeredUserId },
         });
         if (
           offered.count !== offeredIds.length ||
@@ -4844,6 +4857,16 @@ export class GachaService {
           where: { tradeId, escrowed: true },
           data: { escrowed: false },
         });
+        for (const { id } of overlappingTrades) {
+          await releaseTrade(
+            tx,
+            this.crystalAccounting,
+            id,
+            'CANCELLED',
+            'CARD_TRADED',
+            userId,
+          );
+        }
         await tx.gachaCardDiscovery.createMany({
           data: [
             ...offeredIds.map((id) => ({

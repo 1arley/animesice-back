@@ -10,8 +10,8 @@ import { CrystalAccountingService } from '@/gacha/crystal-accounting.service';
  */
 
 /**
- * Fecha uma troca PENDING e devolve tudo que ela segurava: reserva de
- * Cristais e escrow das cartas. Compartilhado por decline/cancel/expire/
+ * Fecha uma troca PENDING e devolve os Cristais reservados e qualquer escrow
+ * legado de cartas. Compartilhado por decline/cancel/expire/
  * contraproposta/bloqueio de carta. Idempotente via closed.count !== 1 — e,
  * por isso, sai ANTES de liberar: release não é idempotente.
  */

@@ -1284,8 +1284,8 @@ model GachaBypass {
 }
 
 /// Troca entre dois usuários (1:1 ou lote até 5 por lado), com Cristais
-/// opcionais. Cartas e Cristais ficam em escrow enquanto PENDING; aceitação é
-/// aplicada numa única transação (swap de UserCard.userId + consume/credit).
+/// opcionais. Cristais ficam reservados enquanto PENDING; cartas podem estar
+/// em várias propostas, e a aceitação cancela as concorrentes antes do swap.
 /// Vale por 48h após criada; contraproposta vale 7 dias.
 model GachaTrade {
   id                  String           @id @default(uuid())
@@ -1318,9 +1318,6 @@ model GachaTrade {
   offeredUserCard   UserCard @relation("TradeOffered", fields: [offeredUserCardId], references: [id], onDelete: Cascade)
   requestedUserCard UserCard @relation("TradeRequested", fields: [requestedUserCardId], references: [id], onDelete: Cascade)
 
-  // Cada carta participa de no máximo UMA troca PENDING (defesa no banco).
-  @@unique([offeredUserCardId], where: raw("status = 'PENDING'"))
-  @@unique([requestedUserCardId], where: raw("status = 'PENDING'"))
   @@index([offeredUserId, status])
   @@index([requestedUserId, status])
   @@index([status, expiresAt])
@@ -1333,8 +1330,8 @@ model GachaTradeCard {
   side       GachaTradeCardSide
   position   Int
   snapshot   Json
-  /// true enquanto a carta está em escrow por esta troca. Uma carta só pode
-  /// estar em escrow por UMA troca por vez (índice parcial abaixo).
+  /// Compatibilidade com registros antigos; propostas novas não põem cartas
+  /// em escrow.
   escrowed   Boolean            @default(false)
   trade      GachaTrade         @relation(fields: [tradeId], references: [id], onDelete: Cascade)
   userCard   UserCard           @relation(fields: [userCardId], references: [id], onDelete: Restrict)
