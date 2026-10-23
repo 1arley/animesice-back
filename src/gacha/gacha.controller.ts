@@ -321,7 +321,11 @@ export class GachaController {
     summary: 'Reroll de condition/foil (10% do value, pode piorar)',
   })
   reroll(@Req() req: AuthenticatedRequest, @Body() dto: RerollGachaCardDto) {
-    return this.gachaService.reroll(req.user.id, dto.userCardId);
+    return this.gachaService.reroll(
+      req.user.id,
+      dto.userCardId,
+      dto.useProtection === true,
+    );
   }
 
   @Post('apply-ranking')

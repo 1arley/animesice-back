@@ -41,6 +41,16 @@ import {
 
 type Tx = Prisma.TransactionClient;
 
+// Fragmentos e itens de pedra (decisão laya-loot-items-20261023).
+// PROTECAO e item completo consumivel; os demais entram como fragmentos.
+const ITEM_FIELD = {
+  TITANITA: 'titanitaShards',
+  TITANITA_SOMBRIA: 'titanitaSombriaShards',
+  DRACONICA: 'draconicaShards',
+  SOMBRIA_DRACONICA: 'sombriaDraconicaShards',
+  PROTECAO: 'protecao',
+} as const;
+
 const BOX_FIELD: Record<BoxTier, 'commonBoxes' | 'rareBoxes' | 'premiumBoxes'> =
   {
     COMMON: 'commonBoxes',
@@ -207,7 +217,7 @@ export class EconomyService {
     private readonly gachaConfig: GachaConfigService,
   ) {}
 
-  private async currentVersion(tx: Tx) {
+  async currentVersion(tx: Tx) {
     const version = await tx.gachaEconomyVersion.findFirst({
       where: { activeFrom: { lte: new Date() } },
       orderBy: [{ activeFrom: 'desc' }, { version: 'desc' }],
@@ -2444,6 +2454,19 @@ export class EconomyService {
         update: { [field]: { increment: amount } },
       });
       return { amount, data: { category, amount } };
+    }
+    if (category === 'ITEM') {
+      const kind = weightedPick(config.item_kind_weights[tier]);
+      // PROTECAO concede 1 uso por drop independentemente da qualidade.
+      const quantity =
+        kind === 'PROTECAO' ? 1 : config.item_qty_per_quality[quality];
+      const field = ITEM_FIELD[kind];
+      await tx.gachaInventory.upsert({
+        where: { userId },
+        create: { userId, [field]: quantity },
+        update: { [field]: { increment: quantity } },
+      });
+      return { amount: quantity, data: { category, kind, quantity } };
     }
     if (category === 'RARE_BOX') {
       await tx.gachaInventory.upsert({

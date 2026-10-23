@@ -4,6 +4,7 @@ import { ConflictException } from '@nestjs/common';
 import { CrystalAccountingService } from '@/gacha/crystal-accounting.service';
 import { GachaConfigService } from '@/gacha/gacha-config.service';
 import { GachaService } from '@/gacha/gacha.service';
+import { EconomyService } from '@/gacha/economy/economy.service';
 import { NotificationService } from '@/notification/notification.service';
 import { PrismaService } from '@/prisma/prisma.service';
 
@@ -30,6 +31,7 @@ async function main() {
       config,
       accounting,
       new NotificationService(prisma),
+      new EconomyService(prisma, new CrystalAccountingService(), config),
     );
     const users = await Promise.all(
       ['alice', 'bob', 'carol'].map((name) =>

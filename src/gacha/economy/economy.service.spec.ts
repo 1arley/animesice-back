@@ -107,6 +107,34 @@ describe('EconomyService safeguards', () => {
 
   afterEach(() => jest.restoreAllMocks());
 
+  it('grants item shards with quality quantity and records the kind', async () => {
+    const random = jest.spyOn(Math, 'random');
+    // Ordem dos sorteios: categoria -> qualidade -> (prizeAmount consome um
+    // Math.random do default mesmo sem usar) -> tipo.
+    random.mockReturnValueOnce(0.99); // categoria: ITEM
+    random.mockReturnValueOnce(0.01); // qualidade: BASIC -> 1 fragmento
+    random.mockReturnValueOnce(0.5); // consumido por prizeAmount (default)
+    random.mockReturnValueOnce(0.05); // tipo: TITANITA (faixa 0..0.6)
+
+    const result = await service.openBox('u1', 'COMMON');
+
+    expect(result.reward).toEqual({
+      category: 'ITEM',
+      kind: 'TITANITA',
+      quantity: 1,
+    });
+    expect(db.gachaInventory.upsert).toHaveBeenCalledWith({
+      where: { userId: 'u1' },
+      create: { userId: 'u1', titanitaShards: 1 },
+      update: { titanitaShards: { increment: 1 } },
+    });
+    expect(result.opening.reward).toEqual({
+      category: 'ITEM',
+      kind: 'TITANITA',
+      quantity: 1,
+    });
+  });
+
   it('uses published weights and prices and records exactly that version', async () => {
     db.gachaEconomyVersion.findFirst.mockResolvedValue({
       id: 'version-9',
@@ -151,7 +179,8 @@ describe('EconomyService safeguards', () => {
   });
 
   it('grants a key and rare box together from a common box', async () => {
-    jest.spyOn(Math, 'random').mockReturnValue(0.97);
+    // Faixa KEY_RARE_BOX após diluição ITEM: (96..100)/104 = 0.9231..0.9615.
+    jest.spyOn(Math, 'random').mockReturnValue(0.94);
 
     const result = await service.openBox('u1', 'COMMON');
 

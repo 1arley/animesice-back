@@ -35,7 +35,9 @@ describe('economy rules', () => {
       Object.values(CATEGORY_WEIGHTS).map((weights) =>
         Object.values(weights).reduce((sum, weight) => sum + weight, 0),
       ),
-    ).toEqual([100, 100, 100]);
+      // ITEM entra por peso relativo (Q14-B): totais 104/106/115, não somados
+      // a 100; as categorias antigas são diluídas proporcionalmente.
+    ).toEqual([104, 106, 115]);
     expect(CATEGORY_WEIGHTS.COMMON).toMatchObject({
       CRYSTAL: 35,
       SPIN_RESET: 15,
@@ -43,6 +45,7 @@ describe('economy rules', () => {
       RARE_BOX: 10,
       KEY_RARE_BOX: 4,
       KEY_PREMIUM_BOX: 1,
+      ITEM: 4,
     });
     expect(CATEGORY_WEIGHTS.RARE).toMatchObject({
       SPIN_RESET: 20,
@@ -50,6 +53,7 @@ describe('economy rules', () => {
       SKIN: 30,
       CARD_BACK: 12,
       KEY_PREMIUM_BOX: 4,
+      ITEM: 6,
     });
     expect(CATEGORY_WEIGHTS.PREMIUM).toMatchObject({
       SPIN_RESET: 25,
@@ -57,6 +61,7 @@ describe('economy rules', () => {
       SKIN: 25,
       CARD_BACK: 10,
       CRYSTAL: 5,
+      ITEM: 15,
     });
   });
 

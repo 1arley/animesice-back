@@ -11,6 +11,7 @@ export const PRIZE_CATEGORIES = [
   'RARE_BOX',
   'KEY_RARE_BOX',
   'KEY_PREMIUM_BOX',
+  'ITEM',
 ] as const;
 export type PrizeCategory = (typeof PRIZE_CATEGORIES)[number];
 
@@ -45,6 +46,7 @@ export const CATEGORY_WEIGHTS: Record<
     RARE_BOX: 10,
     KEY_RARE_BOX: 4,
     KEY_PREMIUM_BOX: 1,
+    ITEM: 4,
   },
   RARE: {
     CRYSTAL: 9,
@@ -56,6 +58,7 @@ export const CATEGORY_WEIGHTS: Record<
     RARE_BOX: 0,
     KEY_RARE_BOX: 0,
     KEY_PREMIUM_BOX: 4,
+    ITEM: 6,
   },
   PREMIUM: {
     CRYSTAL: 5,
@@ -67,6 +70,7 @@ export const CATEGORY_WEIGHTS: Record<
     RARE_BOX: 0,
     KEY_RARE_BOX: 0,
     KEY_PREMIUM_BOX: 0,
+    ITEM: 15,
   },
 };
 
@@ -93,6 +97,15 @@ export function prizeQuality(
       : weights[tier];
   return weightedPick(selectedWeights, random);
 }
+
+export const ITEM_KINDS = [
+  'TITANITA',
+  'TITANITA_SOMBRIA',
+  'DRACONICA',
+  'SOMBRIA_DRACONICA',
+  'PROTECAO',
+] as const;
+export type ItemKind = (typeof ITEM_KINDS)[number];
 
 export const CARD_FLOOR: Record<string, number> = {
   COMUM: 500,

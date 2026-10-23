@@ -5,6 +5,8 @@ import {
   CATEGORY_WEIGHTS,
   QUALITY_WEIGHTS,
   CARD_FLOOR,
+  ITEM_KINDS,
+  type BoxTier,
 } from './economy.rules';
 import { GACHA_FOILS } from '@/gacha/gacha.constants';
 import type { GachaFoil, GachaTier } from '@/gacha/gacha.constants';
@@ -45,6 +47,56 @@ export const ECONOMY_DEFAULTS = {
   market_tax_pct: 0.1,
   official_price_markup: 1.35,
   spins_per_hour: 5,
+  // Q14 (decision record laya-loot-items-20261023): fonte de fragmentos/itens
+  // nas caixas. Snapshot legado sem essas chaves herda os defaults de lançamento
+  // explicitamente (mergeWeightRows + spread), afetando somente operações novas.
+  item_kind_weights: {
+    COMMON: {
+      TITANITA: 60,
+      TITANITA_SOMBRIA: 30,
+      DRACONICA: 0,
+      SOMBRIA_DRACONICA: 0,
+      PROTECAO: 10,
+    },
+    RARE: {
+      TITANITA: 45,
+      TITANITA_SOMBRIA: 35,
+      DRACONICA: 0,
+      SOMBRIA_DRACONICA: 0,
+      PROTECAO: 20,
+    },
+    PREMIUM: {
+      TITANITA: 10,
+      TITANITA_SOMBRIA: 20,
+      DRACONICA: 30,
+      SOMBRIA_DRACONICA: 35,
+      PROTECAO: 5,
+    },
+  },
+  item_qty_per_quality: { BASIC: 1, RARE: 2, EPIC: 3, LEGENDARY: 5 },
+  item_recipes: {
+    TITANITA: 3,
+    TITANITA_SOMBRIA: 5,
+    DRACONICA: 5,
+    SOMBRIA_DRACONICA: 7,
+  },
+  item_shop_price: {
+    TITANITA: 500,
+    TITANITA_SOMBRIA: 1500,
+    DRACONICA: 6500,
+    SOMBRIA_DRACONICA: 0,
+    PROTECAO: 400,
+  },
+  item_convert_value: {
+    TITANITA: 250,
+    TITANITA_SOMBRIA: 750,
+    DRACONICA: 3250,
+    SOMBRIA_DRACONICA: 4500,
+    PROTECAO: 0,
+  },
+  item_condition_anchor: { PLAYED: 0.465, EX: 0.265, NM: 0.11, MINT: 0.035 },
+  reroll_mint_clamp: 0.071,
+  reroll_protection_mint_block: true,
   tier_weights: {
     COMUM: 55,
     INCOMUM: 25,
@@ -62,7 +114,13 @@ function mergeWeightRows<T extends Record<string, Record<string, number>>>(
   defaults: T,
   saved: unknown,
 ): T {
-  if (saved === undefined) return defaults;
+  if (saved === undefined) {
+    // Clone: o caller pode sobrescrever (ITEM legado = 0) sem tocar os
+    // defaults compartilhados entre chamadas.
+    return Object.fromEntries(
+      Object.entries(defaults).map(([tier, row]) => [tier, { ...row }]),
+    ) as T;
+  }
   if (!saved || typeof saved !== 'object' || Array.isArray(saved))
     return saved as T;
   const savedRows = saved as Record<string, unknown>;
@@ -99,13 +157,31 @@ export function economyConfig(snapshot: Prisma.JsonValue): EconomyConfig {
   }
   // Older versions inherit documented launch defaults for newly added keys.
   const merged = { ...ECONOMY_DEFAULTS, ...snapshot };
+  // Política legado: snapshot publicado antes da seção de itens (sem a chave
+  // item_kind_weights) fica 0 no peso ITEM — mesma distribuição histórica.
+  // Habilitar itens exige publicar nova versão no admin.
+  const legacySnapshot = !('item_kind_weights' in snapshot);
   merged.box_category_weights = mergeWeightRows(
     ECONOMY_DEFAULTS.box_category_weights,
     snapshot.box_category_weights,
   );
+  if (legacySnapshot) {
+    for (const tier of Object.keys(merged.box_category_weights) as BoxTier[]) {
+      merged.box_category_weights[tier] = {
+        ...merged.box_category_weights[tier],
+        ITEM: 0,
+      };
+    }
+  }
   merged.box_quality_weights = mergeWeightRows(
     ECONOMY_DEFAULTS.box_quality_weights,
     snapshot.box_quality_weights,
+  );
+  // Peso 0 mantém desativado explicitamente; ausente herda o default do
+  // snapshot novo (política de espalhamento de lançamento, como foil_weights).
+  merged.item_kind_weights = mergeWeightRows(
+    ECONOMY_DEFAULTS.item_kind_weights,
+    snapshot.item_kind_weights,
   );
   for (const key of ['foil_weights', 'foil_mult'] as const) {
     const saved = snapshot[key];
@@ -135,6 +211,7 @@ export function economyConfig(snapshot: Prisma.JsonValue): EconomyConfig {
   const validate = (value: unknown, expected: unknown): boolean => {
     if (typeof expected === 'number')
       return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+    if (typeof expected === 'boolean') return typeof value === 'boolean';
     if (!value || typeof value !== 'object' || Array.isArray(value))
       return false;
     const actual = value as Record<string, unknown>;
@@ -163,6 +240,7 @@ export function economyConfig(snapshot: Prisma.JsonValue): EconomyConfig {
     merged.tier_weights,
     ...Object.values(merged.box_category_weights),
     ...Object.values(merged.box_quality_weights),
+    ...Object.values(merged.item_kind_weights),
   ];
   if (
     weights.some(
@@ -176,5 +254,29 @@ export function economyConfig(snapshot: Prisma.JsonValue): EconomyConfig {
     0
   )
     throw new ConflictException('Cartas Premium precisam de qualidade épica+.');
+  // Q7: clamp precisa ficar fora da faixa MINT (<= 0.07), senão o reroll
+  // cruza para MINT.
+  if (!(merged.reroll_mint_clamp > 0.07))
+    throw new ConflictException('Trava MINT de reroll inválida.');
+  for (const quantity of Object.values(merged.item_qty_per_quality)) {
+    if (!Number.isInteger(quantity) || quantity < 1)
+      throw new ConflictException('Quantidade de fragmentos inválida.');
+  }
+  for (const recipe of Object.values(merged.item_recipes)) {
+    if (!Number.isInteger(recipe) || recipe < 1)
+      throw new ConflictException('Receitas de itens inválidas.');
+  }
+  for (const anchor of Object.values(merged.item_condition_anchor)) {
+    if (anchor < 0 || anchor >= 1)
+      throw new ConflictException('Âncoras de condition inválidas.');
+  }
+  for (const kind of ITEM_KINDS) {
+    const shop = merged.item_shop_price[kind];
+    const convert = merged.item_convert_value[kind];
+    if (shop > 0 && shop <= convert)
+      throw new ConflictException(
+        'Preço de loja deve exceder a conversão do fragmento.',
+      );
+  }
   return merged;
 }

@@ -1427,13 +1427,22 @@ model GachaDailyBonus {
 }
 
 model GachaInventory {
-  userId       String @id
-  commonBoxes  Int    @default(0)
-  rareBoxes    Int    @default(0)
-  premiumBoxes Int    @default(0)
-  keys         Int    @default(0)
-  spinResets   Int    @default(0)
-  user         User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId                  String @id
+  commonBoxes             Int    @default(0)
+  rareBoxes               Int    @default(0)
+  premiumBoxes            Int    @default(0)
+  keys                    Int    @default(0)
+  spinResets              Int    @default(0)
+  titanitaShards          Int    @default(0)
+  titanitaSombriaShards   Int    @default(0)
+  draconicaShards         Int    @default(0)
+  sombriaDraconicaShards  Int    @default(0)
+  titanitaItems           Int    @default(0)
+  titanitaSombriaItems    Int    @default(0)
+  draconicaItems          Int    @default(0)
+  sombriaDraconicaItems   Int    @default(0)
+  protecao                Int    @default(0)
+  user                    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model GachaDailyClaim {
@@ -1695,6 +1704,7 @@ enum GachaPrizeCategory {
   RARE_BOX
   KEY_RARE_BOX
   KEY_PREMIUM_BOX
+  ITEM
 }
 
 enum GachaPrizeQuality {

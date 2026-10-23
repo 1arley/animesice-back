@@ -91,6 +91,7 @@ async function main() {
     config,
     accounting,
     new NotificationService(prisma),
+    new EconomyService(prisma, new CrystalAccountingService(), config),
   );
   const ids: string[] = [];
   const cardIds: string[] = [];

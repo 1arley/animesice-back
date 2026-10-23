@@ -14,6 +14,11 @@ import {
 } from '@/gacha/gacha.service';
 import { PrismaService } from '@/prisma/prisma.service';
 import { GachaConfigService } from '@/gacha/gacha-config.service';
+import { EconomyService } from '@/gacha/economy/economy.service';
+import {
+  economyConfig,
+  ECONOMY_DEFAULTS,
+} from '@/gacha/economy/economy.config';
 import { CrystalAccountingService } from '@/gacha/crystal-accounting.service';
 import { NotificationService } from '@/notification/notification.service';
 import { createTransactionAwarePrismaMock } from '@test/gacha/transaction-prisma.mock';
@@ -253,6 +258,11 @@ describe('GachaService', () => {
       deleteMany: jest.fn(),
     },
     gachaOfficialOffer: { deleteMany: jest.fn() },
+    gachaInventory: {
+      findUnique: jest.fn(),
+      upsert: jest.fn(),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+    },
     userGachaSkin: {
       findUnique: jest.fn(),
       findFirst: jest.fn(),
@@ -300,9 +310,17 @@ describe('GachaService', () => {
     mockPrisma.gachaClaimLock.upsert.mockResolvedValue({});
   }
 
+  const economyMock = {
+    currentVersion: jest.fn(),
+  };
+
   beforeEach(async () => {
     jest.resetAllMocks();
     prismaMocks.reset();
+    economyMock.currentVersion.mockResolvedValue({
+      version: { id: 'v1', version: 1 },
+      config: economyConfig(ECONOMY_DEFAULTS),
+    });
     mockPrisma.user.updateMany.mockResolvedValue({ count: 1 });
     mockPrisma.user.update.mockResolvedValue({});
     mockPrisma.user.findUnique.mockResolvedValue({
@@ -336,6 +354,7 @@ describe('GachaService', () => {
         CrystalAccountingService,
         { provide: PrismaService, useValue: prismaMocks.root },
         { provide: GachaConfigService, useValue: mockConfig },
+        { provide: EconomyService, useValue: economyMock },
         // Notificações de troca saem FORA da transação: NotificationService
         // usa o client root, e o mock rejeita root dentro de tx interativa.
         { provide: NotificationService, useValue: { create: jest.fn() } },
@@ -2031,6 +2050,151 @@ describe('GachaService', () => {
         BadRequestException,
       );
       expect(mockPrisma.userCard.update).not.toHaveBeenCalled();
+    });
+
+    it('proteção rejeita carta MINT antes de consumir reserva ou cobrar', async () => {
+      mockPrisma.userCard.findFirst.mockResolvedValue({
+        id: 'p1',
+        condition: 0.07,
+        foil: 'NORMAL',
+        edition: 42,
+        value: 100,
+        card: cardComum,
+      });
+      mockPrisma.gachaTrade.findFirst.mockResolvedValue(null);
+      mockPrisma.gachaListing.findFirst.mockResolvedValue(null);
+      mockPrisma.gachaInventory.updateMany.mockResolvedValue({ count: 1 });
+
+      await expect(service.reroll('u1', 'p1', true)).rejects.toThrow('MINT');
+      expect(mockPrisma.gachaInventory.updateMany).not.toHaveBeenCalled();
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('proteção rejeita sem reserva antes de cobrar', async () => {
+      mockPrisma.userCard.findFirst.mockResolvedValue({
+        id: 'p1',
+        condition: 0.5,
+        foil: 'NORMAL',
+        edition: 42,
+        value: 100,
+        card: cardComum,
+      });
+      mockPrisma.gachaTrade.findFirst.mockResolvedValue(null);
+      mockPrisma.gachaListing.findFirst.mockResolvedValue(null);
+      mockPrisma.gachaInventory.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(service.reroll('u1', 'p1', true)).rejects.toThrow(
+        'Proteção insuficiente.',
+      );
+      expect(mockPrisma.user.update).not.toHaveBeenCalled();
+      expect(mockPrisma.userCard.update).not.toHaveBeenCalled();
+    });
+
+    it('proteção mantém resultado pior e consome proteção + custo', async () => {
+      const random = jest.spyOn(Math, 'random').mockReturnValue(0.5);
+      mockPrisma.userCard.findFirst.mockResolvedValue({
+        id: 'p1',
+        condition: 0.071, // NM (conditionMult 2)
+        foil: 'NORMAL',
+        edition: 42,
+        value: 100,
+        card: cardComum,
+      });
+      mockPrisma.gachaTrade.findFirst.mockResolvedValue(null);
+      mockPrisma.gachaListing.findFirst.mockResolvedValue(null);
+      mockPrisma.gachaInventory.updateMany.mockResolvedValue({ count: 1 });
+
+      try {
+        const pull = await service.reroll('u1', 'p1', true);
+        expect(pull.id).toBe('p1');
+        expect(mockPrisma.userCard.update).not.toHaveBeenCalled();
+        expect(mockPrisma.gachaInventory.updateMany).toHaveBeenCalledWith({
+          where: { userId: 'u1', protecao: { gt: 0 } },
+          data: { protecao: { decrement: 1 } },
+        });
+        expect(mockPrisma.user.update).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              crystalBalance: { decrement: 75 },
+            }),
+          }),
+        );
+      } finally {
+        random.mockRestore();
+      }
+    });
+
+    it('proteção aplica resultado melhor (clamp NM) e consume proteção', async () => {
+      const random = jest.spyOn(Math, 'random').mockReturnValue(0.01);
+      mockPrisma.userCard.findFirst.mockResolvedValue({
+        id: 'p1',
+        condition: 0.5, // PLAYED (conditionMult 1.2)
+        foil: 'NORMAL',
+        edition: 42,
+        value: 100,
+        card: cardComum,
+      });
+      mockPrisma.gachaTrade.findFirst.mockResolvedValue(null);
+      mockPrisma.gachaListing.findFirst.mockResolvedValue(null);
+      mockPrisma.gachaInventory.updateMany.mockResolvedValue({ count: 1 });
+      mockPrisma.userCard.update.mockResolvedValue({
+        id: 'p1',
+        condition: 0.071,
+        foil: 'NORMAL',
+        edition: 42,
+        value: 750,
+        card: cardComum,
+      });
+
+      try {
+        const pull = await service.reroll('u1', 'p1', true);
+        expect(pull.condition).toBe(0.071);
+        expect(mockPrisma.userCard.update).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              condition: 0.071,
+              foil: 'NORMAL',
+            }),
+          }),
+        );
+        expect(mockPrisma.gachaInventory.updateMany).toHaveBeenCalledTimes(1);
+      } finally {
+        random.mockRestore();
+      }
+    });
+
+    it('reroll sem proteção em carta MINT permitido e travado no clamp', async () => {
+      const random = jest.spyOn(Math, 'random').mockReturnValue(0.01);
+      mockPrisma.userCard.findFirst.mockResolvedValue({
+        id: 'p1',
+        condition: 0.07, // MINT (conditionMult 3)
+        foil: 'NORMAL',
+        edition: 42,
+        value: 100,
+        card: cardComum,
+      });
+      mockPrisma.gachaTrade.findFirst.mockResolvedValue(null);
+      mockPrisma.gachaListing.findFirst.mockResolvedValue(null);
+      mockPrisma.userCard.update.mockResolvedValue({
+        id: 'p1',
+        condition: 0.071,
+        foil: 'NORMAL',
+        edition: 42,
+        value: 750,
+        card: cardComum,
+      });
+
+      try {
+        await service.reroll('u1', 'p1');
+        expect(mockPrisma.gachaInventory.updateMany).not.toHaveBeenCalled();
+        expect(mockPrisma.userCard.update).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({ condition: 0.071 }),
+          }),
+        );
+      } finally {
+        random.mockRestore();
+      }
     });
 
     it('queima carta, credita payout do tier e preserva registro como BURNED', async () => {

@@ -24,6 +24,7 @@ async function main() {
       new GachaConfigService(prisma),
       accounting,
       new NotificationService(prisma),
+      new EconomyService(prisma, accounting, new GachaConfigService(prisma)),
     );
     const economy = new EconomyService(
       prisma,
