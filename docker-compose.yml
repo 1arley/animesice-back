@@ -8,6 +8,10 @@ services:
     container_name: nestjs-app
     restart: unless-stopped
     user: "root"
+    # Limites de hardware no dev local (produção é docker-compose.prod.yml,
+    # na VPS — não tocar).
+    mem_limit: 1536m
+    cpus: 1.5
     ports:
       - '${PORT:-3000}:3000'
     env_file:

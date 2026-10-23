@@ -4,6 +4,9 @@ services:
   animesice-db-test:
     image: postgres:15
     container_name: animesice-db-test-postgres
+    # Limites de hardware: só Postgres de teste, sem roubar CPU/RAM do host.
+    mem_limit: 512m
+    cpus: 1.0
     env_file: .env.test
     ports:
       - "5433:5432"
