@@ -1,3 +1,18 @@
+# [1.56.0](https://github.com/1arley/animesice-back/compare/v1.55.0...v1.56.0) (2026-10-24)
+
+
+### Bug Fixes
+
+* **deps:** align Nest adapter and secure runtime ([d557ef2](https://github.com/1arley/animesice-back/commit/d557ef23ae76d26d5aa2e261cc25080e45feddcf))
+* **gacha:** validate economy config before write ([c01d557](https://github.com/1arley/animesice-back/commit/c01d55783b79d0298a2ee032b0925bf7219dc52b))
+* **gacha:** validate economy config candidates ([751bd40](https://github.com/1arley/animesice-back/commit/751bd4096bf2cc84294152e41dc560cb2d6e5888))
+
+
+### Features
+
+* **gacha:** add idempotent item operations ([1a9f6f4](https://github.com/1arley/animesice-back/commit/1a9f6f4aec335bfb122c00cc25650a8a6f20c04b))
+* **gacha:** add loot box item drops and reroll protection ([26f84d4](https://github.com/1arley/animesice-back/commit/26f84d4bfaccf911d92385d8009e71d311aca8d4))
+
 # [1.55.0](https://github.com/1arley/animesice-back/compare/v1.54.0...v1.55.0) (2026-10-20)
 
 
