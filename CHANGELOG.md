@@ -1,3 +1,10 @@
+# [1.57.0](https://github.com/1arley/animesice-back/compare/v1.56.0...v1.57.0) (2026-10-24)
+
+
+### Features
+
+* **gacha:** add item shop availability config and migration ([6fb018d](https://github.com/1arley/animesice-back/commit/6fb018dffabb491cbee602dc526489188500df8d))
+
 # [1.56.0](https://github.com/1arley/animesice-back/compare/v1.55.0...v1.56.0) (2026-10-24)
 
 
