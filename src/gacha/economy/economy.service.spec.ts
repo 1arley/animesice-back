@@ -45,6 +45,7 @@ describe('EconomyService safeguards', () => {
         'gachaCardBack',
         'gachaConfig',
         'gachaEconomyVersion',
+        'gachaItemOperation',
         'gachaInventory',
         'gachaRetention',
         'gachaOpening',
@@ -55,6 +56,7 @@ describe('EconomyService safeguards', () => {
         'crystalEvent',
         'gachaMarketSale',
         'gachaMarketOffer',
+        'gachaMarketOfferCard',
         'gachaAdminChange',
         'gachaTrade',
         'gachaOfficialOffer',
@@ -133,6 +135,80 @@ describe('EconomyService safeguards', () => {
       kind: 'TITANITA',
       quantity: 1,
     });
+  });
+
+  it('crafts the configured quantity of fragments idempotently', async () => {
+    await service.craftItem('u1', {
+      operationId: 'd59383e4-6f57-42fa-ad8c-c5d65a2746cb',
+      kind: 'TITANITA',
+      quantity: 2,
+    });
+
+    expect(db.gachaInventory.updateMany).toHaveBeenNthCalledWith(1, {
+      where: { userId: 'u1', titanitaShards: { gte: 6 } },
+      data: { titanitaShards: { decrement: 6 } },
+    });
+    expect(db.gachaInventory.updateMany).toHaveBeenNthCalledWith(2, {
+      where: { userId: 'u1', titanitaItems: { lte: 2_147_483_645 } },
+      data: { titanitaItems: { increment: 2 } },
+    });
+    expect(db.gachaItemOperation.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          kind: 'CRAFT',
+          operationId: 'd59383e4-6f57-42fa-ad8c-c5d65a2746cb',
+          economyVersion: 2,
+        }),
+      }),
+    );
+  });
+
+  it('replays a completed item operation without consuming inventory again', async () => {
+    db.gachaItemOperation.findUnique.mockResolvedValue({
+      kind: 'CRAFT',
+      payload: { kind: 'TITANITA', quantity: 1 },
+      result: { kind: 'TITANITA', quantity: 1 },
+    });
+
+    await expect(
+      service.craftItem('u1', {
+        operationId: 'd59383e4-6f57-42fa-ad8c-c5d65a2746cb',
+        kind: 'TITANITA',
+        quantity: 1,
+      }),
+    ).resolves.toEqual({ kind: 'TITANITA', quantity: 1 });
+    expect(db.gachaInventory.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('rejects converting protection instead of crediting crystals', async () => {
+    await expect(
+      service.convertItem('u1', {
+        operationId: 'd59383e4-6f57-42fa-ad8c-c5d65a2746cb',
+        kind: 'PROTECAO',
+        quantity: 1,
+      }),
+    ).rejects.toThrow('Proteção não pode ser convertida.');
+    expect(db.user.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('rejects using a common stone on a special foil without consuming it', async () => {
+    db.userCard.findFirst.mockResolvedValue({
+      id: 'card-copy',
+      condition: 0.5,
+      foil: 'HOLO',
+      edition: 1,
+      valueOverride: null,
+      card: { rarity: 'COMUM' },
+    });
+
+    await expect(
+      service.useItem('u1', {
+        operationId: 'd59383e4-6f57-42fa-ad8c-c5d65a2746cb',
+        kind: 'TITANITA',
+        userCardId: 'card-copy',
+      }),
+    ).rejects.toThrow('Esta pedra não pode melhorar essa carta.');
+    expect(db.gachaInventory.updateMany).not.toHaveBeenCalled();
   });
 
   it('uses published weights and prices and records exactly that version', async () => {

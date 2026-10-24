@@ -11,6 +11,8 @@ import {
 import { GACHA_FOILS } from '@/gacha/gacha.constants';
 import type { GachaFoil, GachaTier } from '@/gacha/gacha.constants';
 
+const MAX_DATABASE_INT = 2_147_483_647;
+
 export const ECONOMY_DEFAULTS = {
   key_price: 1500,
   box_prices: BOX_PRICE,
@@ -47,6 +49,7 @@ export const ECONOMY_DEFAULTS = {
   market_tax_pct: 0.1,
   official_price_markup: 1.35,
   spins_per_hour: 5,
+  reroll_cost_pct: 0.15,
   // Q14 (decision record laya-loot-items-20261023): fonte de fragmentos/itens
   // nas caixas. Snapshot legado sem essas chaves herda os defaults de lançamento
   // explicitamente (mergeWeightRows + spread), afetando somente operações novas.
@@ -79,6 +82,28 @@ export const ECONOMY_DEFAULTS = {
     TITANITA_SOMBRIA: 5,
     DRACONICA: 5,
     SOMBRIA_DRACONICA: 7,
+  },
+  item_eligibility: {
+    TITANITA: {
+      foils: ['NORMAL'],
+      sourceConditions: ['POOR', 'PLAYED', 'EX'],
+      maxCondition: 'NM',
+    },
+    TITANITA_SOMBRIA: {
+      foils: ['HOLO', 'GOLD', 'INK', 'PRISM'],
+      sourceConditions: ['POOR', 'PLAYED', 'EX'],
+      maxCondition: 'NM',
+    },
+    DRACONICA: {
+      foils: ['NORMAL'],
+      sourceConditions: ['NM'],
+      maxCondition: 'MINT',
+    },
+    SOMBRIA_DRACONICA: {
+      foils: ['HOLO', 'GOLD', 'INK', 'PRISM'],
+      sourceConditions: ['NM'],
+      maxCondition: 'MINT',
+    },
   },
   item_shop_price: {
     TITANITA: 500,
@@ -151,6 +176,35 @@ function mergeWeightRows<T extends Record<string, Record<string, number>>>(
   ) as T;
 }
 
+function mergeItemEligibility(
+  saved: unknown,
+): EconomyConfig['item_eligibility'] {
+  if (saved === undefined) return ECONOMY_DEFAULTS.item_eligibility;
+  if (!saved || typeof saved !== 'object' || Array.isArray(saved))
+    return saved as EconomyConfig['item_eligibility'];
+  const value = saved as Record<string, unknown>;
+  return Object.fromEntries(
+    Object.entries(ECONOMY_DEFAULTS.item_eligibility).map(
+      ([kind, defaults]) => {
+        if (!(kind in value)) return [kind, defaults];
+        const rule = value[kind];
+        if (!rule || typeof rule !== 'object' || Array.isArray(rule))
+          return [kind, rule];
+        const partial = rule as Record<string, unknown>;
+        return [
+          kind,
+          Object.fromEntries(
+            Object.entries(defaults).map(([field, fallback]) => [
+              field,
+              field in partial ? partial[field] : fallback,
+            ]),
+          ),
+        ];
+      },
+    ),
+  ) as EconomyConfig['item_eligibility'];
+}
+
 export function economyConfig(snapshot: Prisma.JsonValue): EconomyConfig {
   if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) {
     throw new ConflictException('Versão econômica inválida.');
@@ -183,6 +237,7 @@ export function economyConfig(snapshot: Prisma.JsonValue): EconomyConfig {
     ECONOMY_DEFAULTS.item_kind_weights,
     snapshot.item_kind_weights,
   );
+  merged.item_eligibility = mergeItemEligibility(snapshot.item_eligibility);
   for (const key of ['foil_weights', 'foil_mult'] as const) {
     const saved = snapshot[key];
     if (!saved || typeof saved !== 'object' || Array.isArray(saved)) continue;
@@ -212,6 +267,12 @@ export function economyConfig(snapshot: Prisma.JsonValue): EconomyConfig {
     if (typeof expected === 'number')
       return typeof value === 'number' && Number.isFinite(value) && value >= 0;
     if (typeof expected === 'boolean') return typeof value === 'boolean';
+    if (typeof expected === 'string') return typeof value === 'string';
+    if (Array.isArray(expected))
+      return (
+        Array.isArray(value) &&
+        value.every((item) => typeof item === typeof expected[0])
+      );
     if (!value || typeof value !== 'object' || Array.isArray(value))
       return false;
     const actual = value as Record<string, unknown>;
@@ -232,7 +293,9 @@ export function economyConfig(snapshot: Prisma.JsonValue): EconomyConfig {
   if (
     merged.market_tax_pct > 1 ||
     merged.official_price_markup <= 0 ||
-    merged.listing_ttl_ms <= 0
+    merged.listing_ttl_ms <= 0 ||
+    merged.reroll_cost_pct <= 0 ||
+    merged.reroll_cost_pct > 1
   )
     throw new ConflictException('Limites econômicos inválidos.');
   const weights = [
@@ -256,23 +319,72 @@ export function economyConfig(snapshot: Prisma.JsonValue): EconomyConfig {
     throw new ConflictException('Cartas Premium precisam de qualidade épica+.');
   // Q7: clamp precisa ficar fora da faixa MINT (<= 0.07), senão o reroll
   // cruza para MINT.
-  if (!(merged.reroll_mint_clamp > 0.07))
+  if (!(merged.reroll_mint_clamp > 0.07 && merged.reroll_mint_clamp <= 1))
     throw new ConflictException('Trava MINT de reroll inválida.');
+  for (const kind of Object.keys(merged.item_eligibility) as Array<
+    keyof typeof merged.item_eligibility
+  >) {
+    const rule = merged.item_eligibility[kind];
+    const labels = ['POOR', 'PLAYED', 'EX', 'NM', 'MINT'];
+    const maxRank = labels.indexOf(rule.maxCondition);
+    if (
+      rule.foils.length === 0 ||
+      rule.sourceConditions.length === 0 ||
+      rule.foils.some(
+        (foil) => !(GACHA_FOILS as readonly string[]).includes(foil),
+      ) ||
+      rule.sourceConditions.some(
+        (condition) =>
+          !['MINT', 'NM', 'EX', 'PLAYED', 'POOR'].includes(condition),
+      ) ||
+      new Set(rule.foils).size !== rule.foils.length ||
+      new Set(rule.sourceConditions).size !== rule.sourceConditions.length ||
+      maxRank < 0 ||
+      rule.sourceConditions.some((condition) => {
+        const nextRank = labels.indexOf(condition) + 1;
+        return nextRank <= 0 || nextRank > maxRank;
+      })
+    )
+      throw new ConflictException('Elegibilidade de pedra inválida.');
+  }
   for (const quantity of Object.values(merged.item_qty_per_quality)) {
-    if (!Number.isInteger(quantity) || quantity < 1)
+    if (
+      !Number.isSafeInteger(quantity) ||
+      quantity < 1 ||
+      quantity > MAX_DATABASE_INT
+    )
       throw new ConflictException('Quantidade de fragmentos inválida.');
   }
   for (const recipe of Object.values(merged.item_recipes)) {
-    if (!Number.isInteger(recipe) || recipe < 1)
+    if (
+      !Number.isSafeInteger(recipe) ||
+      recipe < 1 ||
+      recipe > Math.floor(MAX_DATABASE_INT / 100)
+    )
       throw new ConflictException('Receitas de itens inválidas.');
   }
-  for (const anchor of Object.values(merged.item_condition_anchor)) {
-    if (anchor < 0 || anchor >= 1)
-      throw new ConflictException('Âncoras de condition inválidas.');
-  }
+  const anchors = merged.item_condition_anchor;
+  if (
+    !(anchors.PLAYED > 0.38 && anchors.PLAYED <= 0.55) ||
+    !(anchors.EX > 0.15 && anchors.EX <= 0.38) ||
+    !(anchors.NM > 0.07 && anchors.NM <= 0.15) ||
+    !(anchors.MINT >= 0 && anchors.MINT <= 0.07)
+  )
+    throw new ConflictException('Âncoras de condition inválidas.');
   for (const kind of ITEM_KINDS) {
     const shop = merged.item_shop_price[kind];
     const convert = merged.item_convert_value[kind];
+    if (
+      !Number.isSafeInteger(shop) ||
+      !Number.isSafeInteger(convert) ||
+      shop < 0 ||
+      shop > Math.floor(MAX_DATABASE_INT / 100) ||
+      convert < 0 ||
+      convert > Math.floor(MAX_DATABASE_INT / 100)
+    )
+      throw new ConflictException('Preços de itens precisam ser inteiros.');
+    if (kind === 'PROTECAO' && convert !== 0)
+      throw new ConflictException('Proteção não pode ser convertida.');
     if (shop > 0 && shop <= convert)
       throw new ConflictException(
         'Preço de loja deve exceder a conversão do fragmento.',

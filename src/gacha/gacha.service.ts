@@ -30,6 +30,7 @@ import {
 } from '@/gacha/gacha.constants';
 import { GachaConfigService } from '@/gacha/gacha-config.service';
 import { EconomyService } from '@/gacha/economy/economy.service';
+import type { EconomyConfig } from '@/gacha/economy/economy.config';
 import {
   dateFromDayKey,
   dayKey,
@@ -242,6 +243,14 @@ const presentPull = (pull: Pull) => {
     },
   };
 };
+
+type RerollResult = Omit<ReturnType<typeof presentPull>, 'obtainedAt'> & {
+  obtainedAt: string;
+};
+const presentReroll = (pull: Pull): RerollResult => ({
+  ...presentPull(pull),
+  obtainedAt: pull.obtainedAt.toISOString(),
+});
 
 const fmtTrade = (t: TradeRow) => ({
   ...t,
@@ -1358,113 +1367,149 @@ export class GachaService {
     );
   }
 
-  async reroll(userId: string, userCardId: string, useProtection = false) {
+  async reroll(
+    userId: string,
+    userCardId: string,
+    useProtection = false,
+    operationId?: string,
+  ): Promise<RerollResult> {
+    const protection = useProtection === true;
+    const payload = { userCardId, useProtection: protection };
+    if (operationId) {
+      const replay = await this.economy.replayOperation(
+        userId,
+        operationId,
+        'REROLL',
+        payload,
+      );
+      if (replay !== null) return replay as RerollResult;
+    }
     await this.expirePendingTrades();
-    const pull = await this.prisma.$transaction(
-      async (tx) => {
-        const card = await tx.userCard.findFirst({
-          where: { id: userCardId, userId, status: 'ACTIVE' },
-          select: PULL_SELECT,
-        });
-        if (!card) {
-          throw new NotFoundException('Carta não encontrada.');
-        }
-        const pendingTrade = await tx.gachaTrade.findFirst({
-          where: {
-            status: 'PENDING',
-            OR: [
-              { offeredUserCardId: userCardId },
-              { requestedUserCardId: userCardId },
-              { cards: { some: { userCardId } } },
-            ],
-          },
-          select: { id: true },
-        });
-        if (pendingTrade) {
-          throw new BadRequestException('Carta envolvida em troca pendente.');
-        }
-        const listing = await tx.gachaListing.findFirst({
-          where: {
-            userCardId,
-            status: 'ACTIVE',
-            expiresAt: { gt: new Date() },
-          },
-          select: { id: true },
-        });
-        if (listing)
-          throw new BadRequestException(
-            'Cancele o anúncio antes de rerrolar a carta.',
-          );
-        const economy = (await this.economy.currentVersion(tx)).config;
-        if (useProtection) {
-          // Q15 (laya-loot-items-20261023): carta MINT só piora no reroll,
-          // então proteção rejeitada na API antes de qualquer cobrança.
-          if (economy.reroll_protection_mint_block && card.condition <= 0.07)
-            throw new BadRequestException(
-              'Proteção de reroll não se aplica a cartas MINT.',
-            );
-          const consumed = await tx.gachaInventory.updateMany({
-            where: { userId, protecao: { gt: 0 } },
-            data: { protecao: { decrement: 1 } },
-          });
-          if (consumed.count === 0)
-            throw new BadRequestException('Proteção insuficiente.');
-        }
-        const cost = Math.max(
-          1,
-          Math.round(
-            this.config.cardFloors[card.card.rarity as GachaTier] *
-              this.config.rerollCostPct,
-          ),
-        );
-        await this.changeCrystals(
-          tx,
-          userId,
-          -cost,
-          'SPEND',
+
+    const perform = async (
+      tx: Prisma.TransactionClient,
+      economy: EconomyConfig,
+    ) => {
+      const card = await tx.userCard.findFirst({
+        where: { id: userCardId, userId, status: 'ACTIVE' },
+        select: PULL_SELECT,
+      });
+      if (!card) {
+        throw new NotFoundException('Carta não encontrada.');
+      }
+      const pendingTrade = await tx.gachaTrade.findFirst({
+        where: {
+          status: 'PENDING',
+          OR: [
+            { offeredUserCardId: userCardId },
+            { requestedUserCardId: userCardId },
+            { cards: { some: { userCardId } } },
+          ],
+        },
+        select: { id: true },
+      });
+      if (pendingTrade) {
+        throw new BadRequestException('Carta envolvida em troca pendente.');
+      }
+      const listing = await tx.gachaListing.findFirst({
+        where: {
           userCardId,
-          `Reroll ${card.card.name} #${card.edition}`,
+          status: 'ACTIVE',
+          expiresAt: { gt: new Date() },
+        },
+        select: { id: true },
+      });
+      if (listing)
+        throw new BadRequestException(
+          'Cancele o anúncio antes de rerrolar a carta.',
         );
-        // Q7: reroll nunca cruza para MINT (rótulo MINT = condition <= 0.07 em
-        // gacha.constants.conditionLabel): roll na faixa MINT vira o clamp.
-        const roll = Math.random();
-        const condition = roll <= 0.07 ? economy.reroll_mint_clamp : roll;
-        const foil = pickWeighted(this.config.foilWeights);
-        const newValue = cardValue(
+      if (protection) {
+        // Q15 (laya-loot-items-20261023): carta MINT só piora no reroll,
+        // então proteção rejeitada na API antes de qualquer cobrança.
+        if (economy.reroll_protection_mint_block && card.condition <= 0.07)
+          throw new BadRequestException(
+            'Proteção de reroll não se aplica a cartas MINT.',
+          );
+      }
+      const cost = Math.max(
+        1,
+        Math.round(
+          economy.card_floors[card.card.rarity as GachaTier]! *
+            economy.reroll_cost_pct,
+        ),
+      );
+      await this.changeCrystals(
+        tx,
+        userId,
+        -cost,
+        'SPEND',
+        userCardId,
+        `Reroll ${card.card.name} #${card.edition}`,
+      );
+      if (protection) {
+        const consumed = await tx.gachaInventory.updateMany({
+          where: { userId, protecao: { gt: 0 } },
+          data: { protecao: { decrement: 1 } },
+        });
+        if (consumed.count === 0)
+          throw new BadRequestException('Proteção insuficiente.');
+      }
+      // Q7: reroll nunca cruza para MINT (rótulo MINT = condition <= 0.07 em
+      // gacha.constants.conditionLabel): roll na faixa MINT vira o clamp.
+      const roll = Math.random();
+      const condition = roll <= 0.07 ? economy.reroll_mint_clamp : roll;
+      const foil = pickWeighted(economy.foil_weights);
+      const newValue = cardValue(
+        card.card.rarity as GachaTier,
+        condition,
+        foil,
+        card.edition,
+        economy.base_value,
+        economy.foil_mult,
+      );
+      if (protection) {
+        // Q1: comparação do resultado inteiro por valor (mult do cardValue);
+        // empate consome e mantém o resultado original — no mesmo rótulo
+        // conditionMult/foilMult são iguais, logo piora numérica empata.
+        const oldValue = cardValue(
           card.card.rarity as GachaTier,
+          card.condition,
+          card.foil as GachaFoil,
+          card.edition,
+          economy.base_value,
+          economy.foil_mult,
+        );
+        if (newValue <= oldValue) return presentReroll(card);
+      }
+      const updated = await tx.userCard.update({
+        where: { id: userCardId },
+        data: {
           condition,
           foil,
-          card.edition,
-          this.config.baseValue,
-          this.config.foilMult,
-        );
-        if (useProtection) {
-          // Q1: comparação do resultado inteiro por valor (mult do cardValue);
-          // empate consome e mantém o resultado original — no mesmo rótulo
-          // conditionMult/foilMult são iguais, logo piora numérica empata.
-          const oldValue = cardValue(
-            card.card.rarity as GachaTier,
-            card.condition,
-            card.foil as GachaFoil,
-            card.edition,
-            this.config.baseValue,
-            this.config.foilMult,
-          );
-          if (newValue <= oldValue) return card;
-        }
-        return tx.userCard.update({
-          where: { id: userCardId },
-          data: {
-            condition,
-            foil,
-            value: card.valueOverride ?? newValue,
-          },
-          select: PULL_SELECT,
-        });
+          value: card.valueOverride ?? newValue,
+        },
+        select: PULL_SELECT,
+      });
+      return presentReroll(updated);
+    };
+
+    if (operationId)
+      return (await this.economy.runOperation(
+        userId,
+        operationId,
+        'REROLL',
+        payload,
+        perform,
+      )) as RerollResult;
+
+    return this.prisma.$transaction(
+      async (tx) => {
+        const { config } = await this.economy.currentVersion(tx);
+        const result = await perform(tx, config);
+        return result;
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     );
-    return presentPull(pull);
   }
 
   async applyRanking(userId: string, userCardId: string) {
@@ -2270,6 +2315,14 @@ export class GachaService {
         totalPages: Math.ceil(total / safeLimit),
       },
     };
+  }
+
+  async ownedCollectionCard(userId: string, userCardId: string) {
+    const card = await this.prisma.userCard.findFirst({
+      where: { id: userCardId, userId, status: 'ACTIVE' },
+      select: PULL_SELECT,
+    });
+    return { card: card ? presentPull(card) : null };
   }
 
   /** True se o dono possui pelo menos uma cópia de cada carta do set do anime. */

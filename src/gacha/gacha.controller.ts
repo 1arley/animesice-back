@@ -325,6 +325,7 @@ export class GachaController {
       req.user.id,
       dto.userCardId,
       dto.useProtection === true,
+      dto.operationId,
     );
   }
 
@@ -523,6 +524,17 @@ export class GachaController {
       rarity,
       foil,
     );
+  }
+
+  @Get('collection/:cardId')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Carta ativa da coleção do usuário autenticado' })
+  ownedCollectionCard(
+    @Req() req: AuthenticatedRequest,
+    @Param('cardId', ParseUUIDPipe) cardId: string,
+  ) {
+    return this.gachaService.ownedCollectionCard(req.user.id, cardId);
   }
 
   @Get('featured')

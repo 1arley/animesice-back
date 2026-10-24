@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsEnum,
   IsInt,
@@ -13,10 +13,11 @@ import {
   ArrayMinSize,
   ArrayMaxSize,
   MaxLength,
+  IsUUID,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { BOX_TIERS } from './economy.rules';
-import type { BoxTier } from './economy.rules';
+import { BOX_TIERS, ITEM_KINDS } from './economy.rules';
+import type { BoxTier, ItemKind } from './economy.rules';
 
 export class BuyBoxDto {
   @ApiProperty({ enum: BOX_TIERS })
@@ -25,6 +26,40 @@ export class BuyBoxDto {
 }
 
 export class OpenBoxDto extends BuyBoxDto {}
+
+export class ItemOperationDto {
+  @ApiProperty({ format: 'uuid' })
+  @IsUUID()
+  operationId!: string;
+}
+
+export class BuyItemDto extends ItemOperationDto {
+  @ApiProperty({ enum: ITEM_KINDS })
+  @IsEnum(ITEM_KINDS)
+  kind!: ItemKind;
+
+  @ApiPropertyOptional({ minimum: 1, maximum: 100 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  quantity = 1;
+}
+
+export class ConvertItemDto extends BuyItemDto {}
+
+export class CraftItemDto extends BuyItemDto {}
+
+export class UseItemDto extends ItemOperationDto {
+  @ApiProperty({ enum: ITEM_KINDS.filter((kind) => kind !== 'PROTECAO') })
+  @IsEnum(ITEM_KINDS.filter((kind) => kind !== 'PROTECAO'))
+  kind!: Exclude<ItemKind, 'PROTECAO'>;
+
+  @ApiProperty({ format: 'uuid' })
+  @IsUUID()
+  userCardId!: string;
+}
 
 export class TradeUpCardsDto {
   @ApiProperty({ type: [String], minItems: 4, maxItems: 4, uniqueItems: true })

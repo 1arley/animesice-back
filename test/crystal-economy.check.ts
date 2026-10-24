@@ -5,7 +5,11 @@ import type { Server } from 'node:http';
 import { Client } from 'pg';
 import request from 'supertest';
 import { Test } from '@nestjs/testing';
-import { ExecutionContext, UnauthorizedException } from '@nestjs/common';
+import {
+  ExecutionContext,
+  UnauthorizedException,
+  ValidationPipe,
+} from '@nestjs/common';
 import { Role } from '@prisma/client';
 import { JwtAuthGuard } from '@/auth/jwt-auth.guard';
 import { AuthenticatedRequest } from '@/common/interfaces/request.interface';
@@ -75,6 +79,76 @@ async function checkMigration() {
   }
 }
 
+async function withRerollBarrier<T>(
+  operationId: string,
+  run: () => Promise<T>,
+) {
+  const client = new Client({ connectionString: process.env.DATABASE_URL });
+  const suffix = randomUUID().replaceAll('-', '');
+  const sequence = `reroll_barrier_${suffix}`;
+  const functionName = `reroll_barrier_${suffix}`;
+  const trigger = `reroll_barrier_${suffix}`;
+  await client.connect();
+  try {
+    await client.query(`CREATE SEQUENCE public."${sequence}"`);
+    await client.query(`
+      CREATE FUNCTION public."${functionName}"()
+      RETURNS trigger LANGUAGE plpgsql AS $$
+      DECLARE
+        arrival BIGINT;
+        started_at TIMESTAMPTZ := clock_timestamp();
+      BEGIN
+        IF TG_OP = 'INSERT' AND NEW."operationId" = '${operationId}' THEN
+          arrival := nextval('public."${sequence}"');
+          WHILE arrival = 1 AND
+            (SELECT last_value FROM public."${sequence}") < 2 LOOP
+            IF clock_timestamp() - started_at > interval '3 seconds' THEN
+              RAISE EXCEPTION 'reroll concurrency barrier timed out';
+            END IF;
+            PERFORM pg_sleep(0.01);
+          END LOOP;
+        END IF;
+        RETURN NEW;
+      END;
+      $$
+    `);
+    await client.query(`
+      CREATE TRIGGER "${trigger}"
+      BEFORE INSERT ON public."GachaItemOperation"
+      FOR EACH ROW EXECUTE FUNCTION public."${functionName}"()
+    `);
+    return await run();
+  } finally {
+    try {
+      await client.query(
+        `DROP TRIGGER IF EXISTS "${trigger}" ON public."GachaItemOperation"`,
+      );
+    } finally {
+      try {
+        await client.query(
+          `DROP FUNCTION IF EXISTS public."${functionName}"()`,
+        );
+      } finally {
+        try {
+          await client.query(`DROP SEQUENCE IF EXISTS public."${sequence}"`);
+        } finally {
+          await client.end();
+        }
+      }
+    }
+  }
+}
+
+async function withRandom<T>(value: number, run: () => Promise<T>) {
+  const original = Math.random;
+  Math.random = () => value;
+  try {
+    return await run();
+  } finally {
+    Math.random = original;
+  }
+}
+
 async function main() {
   const url = new URL(process.env.DATABASE_URL!);
   assert.equal(url.hostname, 'localhost');
@@ -86,12 +160,13 @@ async function main() {
   const config = new GachaConfigService(prisma);
   await config.refresh();
   const accounting = new CrystalAccountingService();
+  const economy = new EconomyService(prisma, accounting, config);
   const service = new GachaService(
     prisma,
     config,
     accounting,
     new NotificationService(prisma),
-    new EconomyService(prisma, new CrystalAccountingService(), config),
+    economy,
   );
   const ids: string[] = [];
   const cardIds: string[] = [];
@@ -124,6 +199,14 @@ async function main() {
     .compile();
   const app = module.createNestApplication();
   app.setGlobalPrefix('api');
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+      transformOptions: { enableImplicitConversion: true },
+    }),
+  );
   await app.init();
   const server = app.getHttpServer() as Server;
   try {
@@ -218,9 +301,45 @@ async function main() {
     assert.equal((await service.status(buyer)).pointsBalance, 101);
     assert.equal((await service.status(seller)).pointsBalance, 0);
     // Reroll = round(cardFloors.COMUM 500 * 0.15) = 75.
-    const rerolled = await service.reroll(buyer, owned.id);
+    const rerollOperationId = randomUUID();
+    const beforeReroll = (await wallet(buyer)).balance;
+    const rerollRequests = await withRerollBarrier(rerollOperationId, () =>
+      Promise.all(
+        Array.from({ length: 2 }, () =>
+          request(server)
+            .post('/api/gacha/reroll')
+            .set('x-test-user', buyer)
+            .send({ userCardId: owned.id, operationId: rerollOperationId }),
+        ),
+      ),
+    );
+    assert.deepEqual(
+      rerollRequests.map((response) => response.status),
+      [201, 201],
+    );
+    const [rerollFirst, rerollSecond] = rerollRequests;
+    assert.ok(rerollFirst);
+    assert.ok(rerollSecond);
+    assert.deepEqual(rerollFirst.body, rerollSecond.body);
+    const rerolled = rerollFirst.body;
+    assert.equal((await wallet(buyer)).balance, beforeReroll - 75);
     assert.equal((await wallet(buyer)).balance, 525);
     assert.equal((await service.status(buyer)).pointsBalance, rerolled.value);
+    const currentRerollCard = await request(server)
+      .get(`/api/gacha/collection/${owned.id}`)
+      .set('x-test-user', buyer)
+      .expect(200);
+    assert.equal(currentRerollCard.body.card.condition, rerolled.condition);
+    await request(server)
+      .post('/api/gacha/reroll')
+      .set('x-test-user', buyer)
+      .send({
+        userCardId: owned.id,
+        operationId: rerollOperationId,
+        useProtection: true,
+      })
+      .expect(409);
+
     await service.adjustCrystals(buyer, 1500, 'Cosmetic test');
     await service.buyCosmetic(buyer, 'FRAME_AURORA');
     assert.equal((await wallet(buyer)).balance, 525);
@@ -279,6 +398,33 @@ async function main() {
       (await wallet(seller)).balance,
       beforeMint + Math.floor(minted.value / 2),
     );
+    await prisma.userCard.update({
+      where: { id: minted.id },
+      data: { condition: 0.5 },
+    });
+    await prisma.gachaInventory.upsert({
+      where: { userId: seller },
+      create: { userId: seller },
+      update: { protecao: 0 },
+    });
+    const beforeProtectedFailure = (await wallet(seller)).balance;
+    const failedOperationId = randomUUID();
+    await request(server)
+      .post('/api/gacha/reroll')
+      .set('x-test-user', seller)
+      .send({
+        userCardId: minted.id,
+        operationId: failedOperationId,
+        useProtection: true,
+      })
+      .expect(400);
+    assert.equal((await wallet(seller)).balance, beforeProtectedFailure);
+    assert.equal(
+      await prisma.gachaItemOperation.count({
+        where: { userId: seller, operationId: failedOperationId },
+      }),
+      0,
+    );
     const beforeTrade = await Promise.all(ids.map(wallet));
     const trade = await service.createTrade(
       buyer,
@@ -289,6 +435,206 @@ async function main() {
     );
     await service.acceptTrade(seller, trade.id);
     assert.deepEqual(await Promise.all(ids.map(wallet)), beforeTrade);
+    await request(server)
+      .get(`/api/gacha/collection/${owned.id}`)
+      .set('x-test-user', buyer)
+      .expect(200)
+      .expect(({ body }) => assert.equal(body.card, null));
+    const transferredCard = await request(server)
+      .get(`/api/gacha/collection/${owned.id}`)
+      .set('x-test-user', seller)
+      .expect(200);
+    assert.equal(transferredCard.body.card.id, owned.id);
+    const replayAfterTransfer = await request(server)
+      .post('/api/gacha/reroll')
+      .set('x-test-user', buyer)
+      .send({
+        userCardId: owned.id,
+        useProtection: false,
+        operationId: rerollOperationId,
+      })
+      .expect(201);
+    assert.deepEqual(replayAfterTransfer.body, rerolled);
+
+    const rollbackCard = await prisma.userCard.create({
+      data: {
+        userId: buyer,
+        cardId: card.id,
+        condition: 0.5,
+        foil: 'NORMAL',
+        edition: 2,
+        value: 101,
+        rankedValue: 101,
+      },
+    });
+    await prisma.gachaInventory.upsert({
+      where: { userId: buyer },
+      create: { userId: buyer, protecao: 1 },
+      update: { protecao: 1 },
+    });
+    const rollbackOperationId = randomUUID();
+    const beforeInvalidRequests = (await wallet(buyer)).balance;
+    await request(server)
+      .post('/api/gacha/reroll')
+      .set('x-test-user', buyer)
+      .send({ userCardId: rollbackCard.id, operationId: 'not-a-uuid' })
+      .expect(400);
+    for (const useProtection of ['true', 'false', 0, 1, null]) {
+      await request(server)
+        .post('/api/gacha/reroll')
+        .set('x-test-user', buyer)
+        .send({
+          userCardId: rollbackCard.id,
+          operationId: randomUUID(),
+          useProtection,
+        })
+        .expect(400);
+    }
+    assert.equal((await wallet(buyer)).balance, beforeInvalidRequests);
+    const failureSuffix = randomUUID().replaceAll('-', '');
+    const failureFunction = `fail_reroll_${failureSuffix}`;
+    const failureTrigger = `fail_reroll_${failureSuffix}`;
+    const failureClient = new Client({
+      connectionString: process.env.DATABASE_URL,
+    });
+    await failureClient.connect();
+    try {
+      await failureClient.query(`
+        CREATE FUNCTION public."${failureFunction}"()
+        RETURNS trigger LANGUAGE plpgsql AS $$
+        BEGIN
+          IF NEW."operationId" = '${rollbackOperationId}' THEN
+            RAISE EXCEPTION 'intentional reroll rollback check';
+          END IF;
+          RETURN NEW;
+        END;
+        $$
+      `);
+      await failureClient.query(`
+        CREATE TRIGGER "${failureTrigger}"
+        BEFORE UPDATE ON public."GachaItemOperation"
+        FOR EACH ROW EXECUTE FUNCTION public."${failureFunction}"()
+      `);
+      const beforeRollbackBalance = (await wallet(buyer)).balance;
+      const beforeRollbackCard = await prisma.userCard.findUniqueOrThrow({
+        where: { id: rollbackCard.id },
+        select: { condition: true, foil: true },
+      });
+      const beforeRollbackEvents = await prisma.crystalEvent.count({
+        where: { userId: buyer, type: 'SPEND', refId: rollbackCard.id },
+      });
+      await withRandom(0.01, () =>
+        request(server)
+          .post('/api/gacha/reroll')
+          .set('x-test-user', buyer)
+          .send({
+            userCardId: rollbackCard.id,
+            useProtection: true,
+            operationId: rollbackOperationId,
+          })
+          .expect(500),
+      );
+      assert.equal((await wallet(buyer)).balance, beforeRollbackBalance);
+      assert.equal(
+        (
+          await prisma.gachaInventory.findUniqueOrThrow({
+            where: { userId: buyer },
+          })
+        ).protecao,
+        1,
+      );
+      assert.deepEqual(
+        await prisma.userCard.findUniqueOrThrow({
+          where: { id: rollbackCard.id },
+          select: { condition: true, foil: true },
+        }),
+        beforeRollbackCard,
+      );
+      assert.equal(
+        await prisma.crystalEvent.count({
+          where: { userId: buyer, type: 'SPEND', refId: rollbackCard.id },
+        }),
+        beforeRollbackEvents,
+      );
+      assert.equal(
+        await prisma.gachaItemOperation.count({
+          where: { userId: buyer, operationId: rollbackOperationId },
+        }),
+        0,
+      );
+    } finally {
+      await failureClient.query(
+        `DROP TRIGGER IF EXISTS "${failureTrigger}" ON public."GachaItemOperation"`,
+      );
+      await failureClient.query(
+        `DROP FUNCTION IF EXISTS public."${failureFunction}"()`,
+      );
+      await failureClient.end();
+    }
+    const protectionOperationId = randomUUID();
+    const { config: protectionConfig } = await prisma.$transaction((tx) =>
+      economy.currentVersion(tx),
+    );
+    const bestFoil = Object.entries(protectionConfig.foil_mult).reduce(
+      (best, entry) => (entry[1] > best[1] ? entry : best),
+    )[0];
+    const protectedCard = await prisma.userCard.create({
+      data: {
+        userId: buyer,
+        cardId: card.id,
+        condition: 0.071,
+        foil: bestFoil,
+        edition: 3,
+        value: 101,
+        rankedValue: 101,
+      },
+    });
+    const beforeProtectedReroll = (await wallet(buyer)).balance;
+    const protectedRerolls = await withRandom(0.99, () =>
+      withRerollBarrier(protectionOperationId, () =>
+        Promise.all(
+          Array.from({ length: 2 }, () =>
+            request(server)
+              .post('/api/gacha/reroll')
+              .set('x-test-user', buyer)
+              .send({
+                userCardId: protectedCard.id,
+                useProtection: true,
+                operationId: protectionOperationId,
+              }),
+          ),
+        ),
+      ),
+    );
+    assert.deepEqual(
+      protectedRerolls.map((response) => response.status),
+      [201, 201],
+    );
+    const [protectedFirst, protectedSecond] = protectedRerolls;
+    assert.ok(protectedFirst);
+    assert.ok(protectedSecond);
+    assert.deepEqual(protectedFirst.body, protectedSecond.body);
+    assert.equal(protectedFirst.body.condition, 0.071);
+    assert.equal(protectedFirst.body.foil, bestFoil);
+    assert.equal((await wallet(buyer)).balance, beforeProtectedReroll - 75);
+    assert.equal(
+      (
+        await prisma.gachaInventory.findUniqueOrThrow({
+          where: { userId: buyer },
+        })
+      ).protecao,
+      0,
+    );
+    const protectedReplay = await request(server)
+      .post('/api/gacha/reroll')
+      .set('x-test-user', buyer)
+      .send({
+        userCardId: protectedCard.id,
+        useProtection: true,
+        operationId: protectionOperationId,
+      })
+      .expect(201);
+    assert.deepEqual(protectedReplay.body, protectedFirst.body);
 
     for (const id of ids) {
       const user = await prisma.user.findUniqueOrThrow({ where: { id } });

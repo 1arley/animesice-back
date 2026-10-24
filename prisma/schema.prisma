@@ -208,6 +208,7 @@ model User {
   equippedGachaSkin         GachaSkin?                 @relation("EquippedGachaSkin", fields: [equippedGachaSkinId], references: [id], onDelete: SetNull)
   nextGachaSkinSpinAt       DateTime?                  @db.Timestamptz(6)
   gachaInventory            GachaInventory?
+  gachaItemOperations      GachaItemOperation[]
   gachaRetention            GachaRetention?
   gachaDailyClaims          GachaDailyClaim[]
   gachaOpeningDays          GachaOpeningDay[]
@@ -1443,6 +1444,21 @@ model GachaInventory {
   sombriaDraconicaItems   Int    @default(0)
   protecao                Int    @default(0)
   user                    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model GachaItemOperation {
+  id             String   @id @default(uuid())
+  userId         String
+  operationId    String
+  kind           String
+  payload        Json
+  result         Json
+  economyVersion Int
+  createdAt      DateTime @default(now()) @db.Timestamptz(6)
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, operationId])
+  @@index([createdAt])
 }
 
 model GachaDailyClaim {

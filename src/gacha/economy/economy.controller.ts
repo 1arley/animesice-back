@@ -17,10 +17,13 @@ import { RolesGuard } from '@/auth/roles.guard';
 import type { AuthenticatedRequest } from '@/common/interfaces/request.interface';
 import {
   BuyBoxDto,
+  BuyItemDto,
+  ConvertItemDto,
   CreateBuyOrderDto,
   CreateMarketOfferDto,
   CreateCardListingDto,
   CreateSkinListingDto,
+  CraftItemDto,
   OpenBoxDto,
   MarketQueryDto,
   MarketHistoryDto,
@@ -28,6 +31,7 @@ import {
   EconomyAdminReasonDto,
   TradeUpCardsDto,
   TradeUpSkinsDto,
+  UseItemDto,
 } from './economy.dto';
 import { EconomyService } from './economy.service';
 
@@ -146,6 +150,26 @@ export class EconomyController {
   @Post('spin-reset')
   useSpinReset(@Req() req: AuthenticatedRequest) {
     return this.economy.useSpinReset(req.user.id);
+  }
+
+  @Post('items/buy')
+  buyItem(@Req() req: AuthenticatedRequest, @Body() dto: BuyItemDto) {
+    return this.economy.buyItem(req.user.id, dto);
+  }
+
+  @Post('items/convert')
+  convertItem(@Req() req: AuthenticatedRequest, @Body() dto: ConvertItemDto) {
+    return this.economy.convertItem(req.user.id, dto);
+  }
+
+  @Post('items/craft')
+  craftItem(@Req() req: AuthenticatedRequest, @Body() dto: CraftItemDto) {
+    return this.economy.craftItem(req.user.id, dto);
+  }
+
+  @Post('items/use')
+  useItem(@Req() req: AuthenticatedRequest, @Body() dto: UseItemDto) {
+    return this.economy.useItem(req.user.id, dto);
   }
 
   @Post('market/orders')

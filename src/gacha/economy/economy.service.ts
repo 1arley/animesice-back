@@ -12,7 +12,11 @@ import { releaseTradesForCard } from '@/gacha/trade-escrow';
 import { PrismaService } from '@/prisma/prisma.service';
 import { CrystalAccountingService } from '@/gacha/crystal-accounting.service';
 import { GachaConfigService } from '@/gacha/gacha-config.service';
-import { cardValue, GACHA_FOILS } from '@/gacha/gacha.constants';
+import {
+  cardValue,
+  conditionLabel,
+  GACHA_FOILS,
+} from '@/gacha/gacha.constants';
 import type { GachaFoil, GachaTier } from '@/gacha/gacha.constants';
 import { GACHA_TIERS } from '@/gacha/gacha-config.service';
 import {
@@ -28,6 +32,10 @@ import {
 } from './economy.rules';
 import {
   CreateBuyOrderDto,
+  BuyItemDto,
+  ConvertItemDto,
+  CraftItemDto,
+  UseItemDto,
   CreateMarketOfferDto,
   MarketQueryDto,
   EconomicEventDto,
@@ -49,6 +57,13 @@ const ITEM_FIELD = {
   DRACONICA: 'draconicaShards',
   SOMBRIA_DRACONICA: 'sombriaDraconicaShards',
   PROTECAO: 'protecao',
+} as const;
+
+const ITEM_CRAFTED_FIELD = {
+  TITANITA: 'titanitaItems',
+  TITANITA_SOMBRIA: 'titanitaSombriaItems',
+  DRACONICA: 'draconicaItems',
+  SOMBRIA_DRACONICA: 'sombriaDraconicaItems',
 } as const;
 
 const BOX_FIELD: Record<BoxTier, 'commonBoxes' | 'rareBoxes' | 'premiumBoxes'> =
@@ -782,7 +797,7 @@ export class EconomyService {
 
   async inventory(userId: string) {
     await this.expireMarket();
-    const [user, inventory, retention] = await Promise.all([
+    const [user, inventory, retention, { config }] = await Promise.all([
       this.prisma.user.findUniqueOrThrow({
         where: { id: userId },
         select: { crystalBalance: true, crystalReserved: true },
@@ -797,6 +812,7 @@ export class EconomyService {
         create: { userId },
         update: {},
       }),
+      this.prisma.$transaction((tx) => this.currentVersion(tx)),
     ]);
     return {
       ...inventory,
@@ -804,6 +820,18 @@ export class EconomyService {
       balance: user.crystalBalance,
       reserved: user.crystalReserved,
       available: user.crystalBalance - user.crystalReserved,
+      itemConfig: {
+        item_shop_price: config.item_shop_price,
+        item_convert_value: config.item_convert_value,
+        item_recipes: config.item_recipes,
+        item_eligibility: config.item_eligibility,
+        item_condition_anchor: config.item_condition_anchor,
+        card_floors: config.card_floors,
+        base_value: config.base_value,
+        foil_mult: config.foil_mult,
+        reroll_cost_pct: config.reroll_cost_pct,
+        reroll_protection_mint_block: config.reroll_protection_mint_block,
+      },
       dailyClaimedToday: !!(await this.prisma.gachaDailyClaim.findUnique({
         where: { userId_day: { userId, day: dateFromDayKey(dayKey()) } },
       })),
@@ -1108,6 +1136,235 @@ export class EconomyService {
       });
       return { inventory, price: config.key_price };
     });
+  }
+
+  buyItem(userId: string, dto: BuyItemDto) {
+    return this.runOperation(
+      userId,
+      dto.operationId,
+      'BUY',
+      { kind: dto.kind, quantity: dto.quantity },
+      async (tx, config) => {
+        await this.assertEconomyEnabled(tx, userId);
+        const unitPrice = config.item_shop_price[dto.kind];
+        if (unitPrice <= 0)
+          throw new BadRequestException(
+            'Este item não está disponível na loja.',
+          );
+        const price = unitPrice * dto.quantity;
+        const field = ITEM_FIELD[dto.kind];
+        await this.spend(
+          tx,
+          userId,
+          price,
+          `Compra de ${dto.kind}`,
+          `economy-v1:item:${dto.operationId}`,
+        );
+        await this.lockItemInventory(tx, userId);
+        const credited = await tx.gachaInventory.updateMany({
+          where: {
+            userId,
+            [field]: { lte: 2_147_483_647 - dto.quantity },
+          },
+          data: { [field]: { increment: dto.quantity } },
+        });
+        if (credited.count !== 1)
+          throw new BadRequestException('Limite de inventário atingido.');
+        const inventory = await tx.gachaInventory.findUniqueOrThrow({
+          where: { userId },
+        });
+        return { inventory, price, unitPrice };
+      },
+    );
+  }
+
+  convertItem(userId: string, dto: ConvertItemDto) {
+    return this.runOperation(
+      userId,
+      dto.operationId,
+      'CONVERT',
+      { kind: dto.kind, quantity: dto.quantity },
+      async (tx, config) => {
+        await this.assertEconomyEnabled(tx, userId);
+        if (dto.kind === 'PROTECAO')
+          throw new BadRequestException('Proteção não pode ser convertida.');
+        const field = ITEM_FIELD[dto.kind];
+        const value = config.item_convert_value[dto.kind];
+        if (value <= 0)
+          throw new BadRequestException(
+            'Este fragmento não pode ser convertido.',
+          );
+        const crystals = value * dto.quantity;
+        await this.credit(
+          tx,
+          userId,
+          crystals,
+          'SALE',
+          `economy-v1:item:${dto.operationId}`,
+          `Conversão de ${dto.quantity} fragmento(s) ${dto.kind}`,
+        );
+        await this.lockItemInventory(tx, userId);
+        const consumed = await tx.gachaInventory.updateMany({
+          where: { userId, [field]: { gte: dto.quantity } },
+          data: { [field]: { decrement: dto.quantity } },
+        });
+        if (consumed.count !== 1)
+          throw new BadRequestException('Fragmentos insuficientes.');
+        return { kind: dto.kind, quantity: dto.quantity, crystals };
+      },
+    );
+  }
+
+  craftItem(userId: string, dto: CraftItemDto) {
+    return this.runOperation(
+      userId,
+      dto.operationId,
+      'CRAFT',
+      { kind: dto.kind, quantity: dto.quantity },
+      async (tx, config) => {
+        await this.assertEconomyEnabled(tx, userId);
+        await this.lockItemInventory(tx, userId);
+        if (dto.kind === 'PROTECAO')
+          throw new BadRequestException(
+            'Proteção não é fabricada com fragmentos.',
+          );
+        const recipe = config.item_recipes[dto.kind];
+        const shards = recipe * dto.quantity;
+        const shardField = ITEM_FIELD[dto.kind];
+        const itemField = ITEM_CRAFTED_FIELD[dto.kind];
+        const consumed = await tx.gachaInventory.updateMany({
+          where: { userId, [shardField]: { gte: shards } },
+          data: { [shardField]: { decrement: shards } },
+        });
+        if (consumed.count !== 1)
+          throw new BadRequestException(
+            'Fragmentos insuficientes para fabricar.',
+          );
+        const credited = await tx.gachaInventory.updateMany({
+          where: {
+            userId,
+            [itemField]: { lte: 2_147_483_647 - dto.quantity },
+          },
+          data: { [itemField]: { increment: dto.quantity } },
+        });
+        if (credited.count !== 1)
+          throw new BadRequestException('Limite de inventário atingido.');
+        const inventory = await tx.gachaInventory.findUniqueOrThrow({
+          where: { userId },
+        });
+        return { inventory, kind: dto.kind, quantity: dto.quantity, shards };
+      },
+    );
+  }
+
+  useItem(userId: string, dto: UseItemDto) {
+    return this.runOperation(
+      userId,
+      dto.operationId,
+      'USE',
+      { kind: dto.kind, userCardId: dto.userCardId },
+      async (tx, config) => {
+        await this.assertEconomyEnabled(tx, userId);
+        await this.lockItemInventory(tx, userId);
+        await tx.$queryRaw`SELECT "id" FROM "UserCard" WHERE "id" = ${dto.userCardId} AND "userId" = ${userId} FOR UPDATE`;
+        const card = await tx.userCard.findFirst({
+          where: { id: dto.userCardId, userId, status: 'ACTIVE' },
+          select: {
+            id: true,
+            condition: true,
+            foil: true,
+            edition: true,
+            valueOverride: true,
+            card: { select: { rarity: true } },
+          },
+        });
+        if (!card) throw new NotFoundException('Carta não encontrada.');
+        const pendingTrade = await tx.gachaTrade.findFirst({
+          where: {
+            status: 'PENDING',
+            OR: [
+              { offeredUserCardId: dto.userCardId },
+              { requestedUserCardId: dto.userCardId },
+              { cards: { some: { userCardId: dto.userCardId } } },
+            ],
+          },
+          select: { id: true },
+        });
+        if (pendingTrade)
+          throw new ConflictException('Carta envolvida em troca pendente.');
+        const now = new Date();
+        const [listing, offer] = await Promise.all([
+          tx.gachaListing.findFirst({
+            where: {
+              userCardId: dto.userCardId,
+              status: 'ACTIVE',
+              expiresAt: { gt: now },
+            },
+            select: { id: true },
+          }),
+          tx.gachaMarketOfferCard.findFirst({
+            where: {
+              userCardId: dto.userCardId,
+              offer: { status: 'PENDING', expiresAt: { gt: now } },
+            },
+            select: { offerId: true },
+          }),
+        ]);
+        if (listing || offer)
+          throw new ConflictException(
+            'Remova a carta do mercado antes de melhorá-la.',
+          );
+
+        const rule = config.item_eligibility[dto.kind];
+        const currentLabel = conditionLabel(card.condition);
+        const labels = ['POOR', 'PLAYED', 'EX', 'NM', 'MINT'];
+        const nextLabel = labels[labels.indexOf(currentLabel) + 1];
+        if (
+          !rule.foils.includes(card.foil) ||
+          !rule.sourceConditions.includes(currentLabel) ||
+          !nextLabel ||
+          labels.indexOf(nextLabel) > labels.indexOf(rule.maxCondition)
+        )
+          throw new BadRequestException(
+            'Esta pedra não pode melhorar essa carta.',
+          );
+        const condition =
+          config.item_condition_anchor[
+            nextLabel as keyof typeof config.item_condition_anchor
+          ];
+        if (condition === undefined)
+          throw new ConflictException(
+            'Âncora de condition ausente para a melhoria.',
+          );
+        const itemField = ITEM_CRAFTED_FIELD[dto.kind];
+        const consumed = await tx.gachaInventory.updateMany({
+          where: { userId, [itemField]: { gte: 1 } },
+          data: { [itemField]: { decrement: 1 } },
+        });
+        if (consumed.count !== 1)
+          throw new BadRequestException('Item insuficiente.');
+        const value =
+          card.valueOverride ??
+          cardValue(
+            card.card.rarity as GachaTier,
+            condition,
+            card.foil as GachaFoil,
+            card.edition,
+            config.base_value,
+            config.foil_mult,
+          );
+        await tx.userCard.update({
+          where: { id: dto.userCardId },
+          data: { condition, value },
+        });
+        return {
+          userCardId: card.id,
+          condition,
+          conditionLabel: nextLabel,
+          value,
+        };
+      },
+    );
   }
 
   buyBox(userId: string, tier: BoxTier) {
@@ -3286,6 +3543,127 @@ export class EconomyService {
     if (condition <= 0.38) return 'EX';
     if (condition <= 0.55) return 'PLAYED';
     return 'POOR';
+  }
+
+  async replayOperation(
+    userId: string,
+    operationId: string,
+    kind: string,
+    payload: Record<string, string | number | boolean>,
+  ): Promise<Prisma.JsonValue | null> {
+    const stored = await this.prisma.gachaItemOperation.findUnique({
+      where: { userId_operationId: { userId, operationId } },
+      select: { kind: true, payload: true, result: true },
+    });
+    if (!stored) return null;
+    if (!this.operationMatches(stored, kind, payload))
+      throw new ConflictException('ID de operação já usado com outros dados.');
+    return stored.result;
+  }
+
+  async runOperation(
+    userId: string,
+    operationId: string,
+    kind: string,
+    payload: Record<string, string | number | boolean>,
+    action: (tx: Tx, config: EconomyConfig) => Promise<unknown>,
+  ): Promise<Prisma.JsonValue> {
+    const replay = await this.replayOperation(
+      userId,
+      operationId,
+      kind,
+      payload,
+    );
+    if (replay !== null) return replay;
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        return await this.prisma.$transaction(
+          async (tx) => {
+            const stored = await tx.gachaItemOperation.findUnique({
+              where: { userId_operationId: { userId, operationId } },
+              select: { kind: true, payload: true, result: true },
+            });
+            if (stored) {
+              if (!this.operationMatches(stored, kind, payload))
+                throw new ConflictException(
+                  'ID de operação já usado com outros dados.',
+                );
+              return stored.result;
+            }
+            const { version, config } = await this.currentVersion(tx);
+            await tx.gachaItemOperation.create({
+              data: {
+                userId,
+                operationId,
+                kind,
+                payload: payload,
+                result: { pending: true },
+                economyVersion: version.version,
+              },
+            });
+            const result = await action(tx, config);
+            const serialized = JSON.parse(
+              JSON.stringify(result),
+            ) as Prisma.InputJsonValue;
+            await tx.gachaItemOperation.update({
+              where: { userId_operationId: { userId, operationId } },
+              data: { result: serialized },
+            });
+            return serialized as Prisma.JsonValue;
+          },
+          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+        );
+      } catch (error) {
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          (error.code === 'P2002' || error.code === 'P2034')
+        ) {
+          const result = await this.replayOperation(
+            userId,
+            operationId,
+            kind,
+            payload,
+          );
+          if (result !== null) return result;
+          if (error.code === 'P2034' && attempt === 0) continue;
+        }
+        throw error;
+      }
+    }
+    throw new ConflictException(
+      'Conflito ao processar o item; tente novamente.',
+    );
+  }
+
+  private operationMatches(
+    stored: { kind: string; payload: Prisma.JsonValue },
+    kind: string,
+    payload: Record<string, string | number | boolean>,
+  ) {
+    if (
+      stored.kind !== kind ||
+      !stored.payload ||
+      typeof stored.payload !== 'object' ||
+      Array.isArray(stored.payload)
+    )
+      return false;
+    const storedFields = Object.entries(stored.payload).sort(([a], [b]) =>
+      a.localeCompare(b),
+    );
+    const requestedFields = Object.entries(payload).sort(([a], [b]) =>
+      a.localeCompare(b),
+    );
+    return JSON.stringify(storedFields) === JSON.stringify(requestedFields);
+  }
+
+  private async lockItemInventory(tx: Tx, userId: string) {
+    await tx.gachaInventory.upsert({
+      where: { userId },
+      create: { userId },
+      update: {},
+    });
+    await tx.$queryRaw`SELECT "userId" FROM "GachaInventory" WHERE "userId" = ${userId} FOR UPDATE`;
   }
 
   private weekStart(): Date {

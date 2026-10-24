@@ -18,6 +18,7 @@ import {
   Max,
   Min,
 } from 'class-validator';
+import { Transform } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateGachaSkinDto {
@@ -192,11 +193,20 @@ export class RerollGachaCardDto {
   @IsNotEmpty()
   userCardId!: string;
 
+  @ApiPropertyOptional({ format: 'uuid' })
+  @ValidateIf((_, value) => value !== undefined)
+  @IsUUID()
+  operationId?: string;
+
   @ApiPropertyOptional({
     description:
       'Consome 1 proteção de reroll do inventário: o novo resultado só é aplicado se melhorar o valor da carta.',
   })
-  @IsOptional()
+  @Transform(({ obj, key }) => {
+    const raw = (obj as Record<string, unknown>)[key];
+    return raw === undefined || typeof raw === 'boolean' ? raw : null;
+  })
+  @ValidateIf((_, value) => value !== undefined)
   @IsBoolean()
   useProtection?: boolean;
 }

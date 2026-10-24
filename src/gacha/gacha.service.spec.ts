@@ -2070,7 +2070,7 @@ describe('GachaService', () => {
       expect(mockPrisma.user.update).not.toHaveBeenCalled();
     });
 
-    it('proteção rejeita sem reserva antes de cobrar', async () => {
+    it('rejeita quando não há proteção', async () => {
       mockPrisma.userCard.findFirst.mockResolvedValue({
         id: 'p1',
         condition: 0.5,
@@ -2081,12 +2081,19 @@ describe('GachaService', () => {
       });
       mockPrisma.gachaTrade.findFirst.mockResolvedValue(null);
       mockPrisma.gachaListing.findFirst.mockResolvedValue(null);
+      mockPrisma.user.findUnique.mockResolvedValue({
+        crystalBalance: 1_000,
+        crystalReserved: 0,
+      });
       mockPrisma.gachaInventory.updateMany.mockResolvedValue({ count: 0 });
 
       await expect(service.reroll('u1', 'p1', true)).rejects.toThrow(
         'Proteção insuficiente.',
       );
-      expect(mockPrisma.user.update).not.toHaveBeenCalled();
+      expect(mockPrisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'u1' },
+        data: { crystalBalance: { decrement: 75 } },
+      });
       expect(mockPrisma.userCard.update).not.toHaveBeenCalled();
     });
 
@@ -2098,6 +2105,7 @@ describe('GachaService', () => {
         foil: 'NORMAL',
         edition: 42,
         value: 100,
+        obtainedAt: new Date(),
         card: cardComum,
       });
       mockPrisma.gachaTrade.findFirst.mockResolvedValue(null);
@@ -2143,6 +2151,7 @@ describe('GachaService', () => {
         foil: 'NORMAL',
         edition: 42,
         value: 750,
+        obtainedAt: new Date(),
         card: cardComum,
       });
 
@@ -2181,6 +2190,7 @@ describe('GachaService', () => {
         foil: 'NORMAL',
         edition: 42,
         value: 750,
+        obtainedAt: new Date(),
         card: cardComum,
       });
 
