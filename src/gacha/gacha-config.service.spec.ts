@@ -1,4 +1,5 @@
 import { ConflictException } from '@nestjs/common';
+import { ECONOMY_DEFAULTS } from './economy/economy.config';
 import { GachaConfigService } from './gacha-config.service';
 
 type Row = {
@@ -20,8 +21,14 @@ const rows: Row[] = [
   { key: 'daily_bonus', value: 777, label: 'Bônus diário', group: 'economia' },
   {
     key: 'tier_weights',
-    value: { COMUM: 55, GALACTICA: 0.1 },
+    value: { ...ECONOMY_DEFAULTS.tier_weights, COMUM: 55, GALACTICA: 0.1 },
     label: 'Pesos',
+    group: 'rates',
+  },
+  {
+    key: 'box_category_weights',
+    value: ECONOMY_DEFAULTS.box_category_weights,
+    label: 'Pesos das caixas',
     group: 'rates',
   },
   {
@@ -64,7 +71,7 @@ describe('GachaConfigService', () => {
     await service.onModuleInit();
     expect(db.gachaConfig.findMany).toHaveBeenCalledTimes(1);
     expect(service.dailyBonus).toBe(777);
-    expect(service.tierWeights).toEqual({ COMUM: 55, GALACTICA: 0.1 });
+    expect(service.tierWeights).toEqual(rows[1].value);
     expect(service.spinsPerHour).toBe(5);
   });
 
@@ -108,7 +115,7 @@ describe('GachaConfigService', () => {
     expect(service.dailyBonus).toBe(999);
   });
 
-  it('rejects invalid box category weights before persisting a snapshot', async () => {
+  it('rejects invalid box category weights before updating config', async () => {
     await expect(
       service.update(
         'box_category_weights',
