@@ -1,7 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '@/prisma/prisma.service';
-import { economyConfig } from '@/gacha/economy/economy.config';
+import { assertItemShopSources } from '@/gacha/economy/economy.config';
 
 export type GachaTier =
   'COMUM' | 'INCOMUM' | 'RARA' | 'EPICA' | 'LENDARIA' | 'MITICA' | 'GALACTICA';
@@ -70,7 +70,7 @@ export class GachaConfigService implements OnModuleInit {
         ...Object.fromEntries(current.map((item) => [item.key, item.value])),
         [key]: value,
       };
-      economyConfig(candidate);
+      assertItemShopSources(candidate);
 
       const row = await tx.gachaConfig.update({
         where: { key },
@@ -80,9 +80,10 @@ export class GachaConfigService implements OnModuleInit {
         tx.gachaConfig.findMany(),
         tx.gachaEconomyVersion.aggregate({ _max: { version: true } }),
       ]);
-      economyConfig(
-        Object.fromEntries(config.map((item) => [item.key, item.value])),
+      const snapshot = Object.fromEntries(
+        config.map((item) => [item.key, item.value]),
       );
+      assertItemShopSources(snapshot);
       await tx.gachaEconomyVersion.create({
         data: {
           version: (latest._max.version ?? 0) + 1,

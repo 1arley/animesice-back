@@ -28,6 +28,7 @@ import {
   PrizeQuality,
   prizeAmount,
   prizeQuality,
+  ITEM_KINDS,
   weightedPick,
 } from './economy.rules';
 import {
@@ -43,6 +44,8 @@ import {
 } from './economy.dto';
 import {
   economyConfig,
+  assertItemShopSources,
+  hasItemLootSource,
   EconomyConfig,
   ECONOMY_DEFAULTS,
 } from './economy.config';
@@ -303,6 +306,8 @@ export class EconomyService {
       dailyBonus: config.daily_bonus,
       categories: config.box_category_weights,
       qualities: config.box_quality_weights,
+      itemKindWeights: config.item_kind_weights,
+      itemQtyPerQuality: config.item_qty_per_quality,
       foilWeights: config.foil_weights,
       // Raridade e pity saem de GachaConfig, a mesma fonte que o sorteio usa
       // (GachaService -> config.tierWeights/pityWeights/pityDays). Sem isso a
@@ -605,14 +610,16 @@ export class EconomyService {
           tx.gachaConfig.findMany(),
           tx.gachaEconomyVersion.aggregate({ _max: { version: true } }),
         ]);
+        const snapshot = Object.fromEntries(
+          rows.map((row) => [row.key, row.value]),
+        );
+        assertItemShopSources(snapshot);
         return tx.gachaEconomyVersion.create({
           data: {
             version: (latest._max.version ?? 0) + 1,
             authorId: adminId,
             reason,
-            snapshot: Object.fromEntries(
-              rows.map((row) => [row.key, row.value]),
-            ),
+            snapshot,
           },
         });
       },
@@ -822,6 +829,10 @@ export class EconomyService {
       available: user.crystalBalance - user.crystalReserved,
       itemConfig: {
         item_shop_price: config.item_shop_price,
+        item_shop_enabled: config.item_shop_enabled,
+        item_drop_available: Object.fromEntries(
+          ITEM_KINDS.map((kind) => [kind, hasItemLootSource(config, kind)]),
+        ),
         item_convert_value: config.item_convert_value,
         item_recipes: config.item_recipes,
         item_eligibility: config.item_eligibility,
@@ -1147,7 +1158,7 @@ export class EconomyService {
       async (tx, config) => {
         await this.assertEconomyEnabled(tx, userId);
         const unitPrice = config.item_shop_price[dto.kind];
-        if (unitPrice <= 0)
+        if (!config.item_shop_enabled[dto.kind] || unitPrice <= 0)
           throw new BadRequestException(
             'Este item não está disponível na loja.',
           );

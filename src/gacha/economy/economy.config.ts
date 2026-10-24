@@ -5,6 +5,7 @@ import {
   QUALITY_WEIGHTS,
   CARD_FLOOR,
   ITEM_KINDS,
+  type ItemKind,
   type BoxTier,
 } from './economy.rules';
 import { GACHA_FOILS } from '@/gacha/gacha.constants';
@@ -111,6 +112,14 @@ export const ECONOMY_DEFAULTS = {
     SOMBRIA_DRACONICA: 0,
     PROTECAO: 400,
   },
+  // Separate availability from price so the purchase experiment is reversible.
+  item_shop_enabled: {
+    TITANITA: true,
+    TITANITA_SOMBRIA: true,
+    DRACONICA: true,
+    SOMBRIA_DRACONICA: true,
+    PROTECAO: true,
+  },
   item_convert_value: {
     TITANITA: 250,
     TITANITA_SOMBRIA: 750,
@@ -133,6 +142,34 @@ export const ECONOMY_DEFAULTS = {
 };
 
 export type EconomyConfig = typeof ECONOMY_DEFAULTS;
+
+export function hasItemLootSource(config: EconomyConfig, kind: ItemKind) {
+  return (Object.keys(config.box_category_weights) as BoxTier[]).some(
+    (tier) =>
+      config.box_category_weights[tier].ITEM > 0 &&
+      config.item_kind_weights[tier][kind] > 0 &&
+      Object.entries(config.box_quality_weights[tier]).some(
+        ([quality, weight]) =>
+          weight > 0 &&
+          (kind === 'PROTECAO' ||
+            (config.item_qty_per_quality[
+              quality as keyof typeof config.item_qty_per_quality
+            ] ?? 0) > 0),
+      ),
+  );
+}
+
+export function assertItemShopSources(snapshot: unknown) {
+  const config = economyConfig(snapshot);
+  for (const kind of ITEM_KINDS) {
+    if (!config.item_shop_enabled[kind] && !hasItemLootSource(config, kind)) {
+      throw new ConflictException(
+        `Não é possível desativar a loja de ${kind}: não há uma fonte ativa em loot boxes.`,
+      );
+    }
+  }
+  return config;
+}
 
 function mergeWeightRows<T extends Record<string, Record<string, number>>>(
   defaults: T,
