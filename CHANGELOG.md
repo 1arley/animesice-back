@@ -1,3 +1,12 @@
+# [1.55.0](https://github.com/1arley/animesice-back/compare/v1.54.0...v1.55.0) (2026-10-20)
+
+
+### Features
+
+* **gacha:** allow parallel card trade proposals ([9db9ab6](https://github.com/1arley/animesice-back/commit/9db9ab62fa21128b15c5e7fa713fccdf8a8b2a4e))
+* **gacha:** credit crystals for watch time ([c003611](https://github.com/1arley/animesice-back/commit/c003611d99e5f31e08cb0fb4ee4f05b448143bc8))
+* **scrape:** resolve meusanimes episodes from the catalog listing ([1fbfe71](https://github.com/1arley/animesice-back/commit/1fbfe71c271e073db392329a5ea96d2d046eea50))
+
 # [1.54.0](https://github.com/1arley/animesice-back/compare/v1.53.2...v1.54.0) (2026-10-18)
 
 
