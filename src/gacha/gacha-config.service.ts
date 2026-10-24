@@ -66,10 +66,10 @@ export class GachaConfigService implements OnModuleInit {
   ) {
     const updated = await this.prisma.$transaction(async (tx) => {
       const current = await tx.gachaConfig.findMany();
-      const candidate = Object.fromEntries(
-        current.map((item) => [item.key, item.value]),
-      );
-      candidate[key] = value;
+      const candidate = {
+        ...Object.fromEntries(current.map((item) => [item.key, item.value])),
+        [key]: value,
+      };
       economyConfig(candidate);
 
       const row = await tx.gachaConfig.update({

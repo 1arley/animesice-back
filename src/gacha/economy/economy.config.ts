@@ -1,5 +1,4 @@
 import { ConflictException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
 import {
   BOX_PRICE,
   CATEGORY_WEIGHTS,
@@ -205,19 +204,20 @@ function mergeItemEligibility(
   ) as EconomyConfig['item_eligibility'];
 }
 
-export function economyConfig(snapshot: Prisma.JsonValue): EconomyConfig {
+export function economyConfig(snapshot: unknown): EconomyConfig {
   if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) {
     throw new ConflictException('Versão econômica inválida.');
   }
+  const input = snapshot as Record<string, unknown>;
   // Older versions inherit documented launch defaults for newly added keys.
-  const merged = { ...ECONOMY_DEFAULTS, ...snapshot };
+  const merged = { ...ECONOMY_DEFAULTS, ...input };
   // Política legado: snapshot publicado antes da seção de itens (sem a chave
   // item_kind_weights) fica 0 no peso ITEM — mesma distribuição histórica.
   // Habilitar itens exige publicar nova versão no admin.
-  const legacySnapshot = !('item_kind_weights' in snapshot);
+  const legacySnapshot = !('item_kind_weights' in input);
   merged.box_category_weights = mergeWeightRows(
     ECONOMY_DEFAULTS.box_category_weights,
-    snapshot.box_category_weights,
+    input.box_category_weights,
   );
   if (legacySnapshot) {
     for (const tier of Object.keys(merged.box_category_weights) as BoxTier[]) {
@@ -229,17 +229,17 @@ export function economyConfig(snapshot: Prisma.JsonValue): EconomyConfig {
   }
   merged.box_quality_weights = mergeWeightRows(
     ECONOMY_DEFAULTS.box_quality_weights,
-    snapshot.box_quality_weights,
+    input.box_quality_weights,
   );
   // Peso 0 mantém desativado explicitamente; ausente herda o default do
   // snapshot novo (política de espalhamento de lançamento, como foil_weights).
   merged.item_kind_weights = mergeWeightRows(
     ECONOMY_DEFAULTS.item_kind_weights,
-    snapshot.item_kind_weights,
+    input.item_kind_weights,
   );
-  merged.item_eligibility = mergeItemEligibility(snapshot.item_eligibility);
+  merged.item_eligibility = mergeItemEligibility(input.item_eligibility);
   for (const key of ['foil_weights', 'foil_mult'] as const) {
-    const saved = snapshot[key];
+    const saved = input[key];
     if (!saved || typeof saved !== 'object' || Array.isArray(saved)) continue;
     // Snapshot e imutavel: foil que saiu do enum (NEGATIVE) continua la para
     // sempre. Sem o filtro ele ainda entra em pickWeighted e cunha carta que a

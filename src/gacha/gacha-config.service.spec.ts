@@ -71,7 +71,7 @@ describe('GachaConfigService', () => {
     await service.onModuleInit();
     expect(db.gachaConfig.findMany).toHaveBeenCalledTimes(1);
     expect(service.dailyBonus).toBe(777);
-    expect(service.tierWeights).toEqual(rows[1].value);
+    expect(service.tierWeights).toEqual(ECONOMY_DEFAULTS.tier_weights);
     expect(service.spinsPerHour).toBe(5);
   });
 
