@@ -109,6 +109,21 @@ describe('EconomyService safeguards', () => {
 
   afterEach(() => jest.restoreAllMocks());
 
+  it('returns the actual card rarity with a box reward', async () => {
+    db.gachaRetention.upsert.mockResolvedValue({ loyaltyRarePlusReady: true });
+    db.card.findMany.mockResolvedValue([{ id: 'card-1', name: 'Carta' }]);
+    db.card.update.mockResolvedValue({ editionCounter: 1, rarity: 'INCOMUM' });
+    db.userCard.create.mockResolvedValue({ id: 'copy-1' });
+    jest.spyOn(Math, 'random').mockReturnValueOnce(0).mockReturnValueOnce(0.5);
+
+    const result = await service.openBox('u1', 'COMMON');
+
+    expect(result.reward).toMatchObject({
+      category: 'CARD',
+      rarity: 'INCOMUM',
+    });
+  });
+
   it('grants item shards with quality quantity and records the kind', async () => {
     const random = jest.spyOn(Math, 'random');
     // Ordem dos sorteios: categoria -> qualidade -> (prizeAmount consome um
@@ -284,7 +299,13 @@ describe('EconomyService safeguards', () => {
 
     const result = await service.openBox('u1', 'PREMIUM');
 
-    expect(result.reward).toMatchObject({ category: 'SKIN', skins: [{}, {}] });
+    expect(result.reward).toMatchObject({
+      category: 'SKIN',
+      skins: [
+        expect.objectContaining({ rarity: expect.any(String) }),
+        expect.objectContaining({ rarity: expect.any(String) }),
+      ],
+    });
     expect(result.opening).toMatchObject({ category: 'SKIN', amount: 2 });
     expect(db.userGachaSkin.create).toHaveBeenCalledTimes(2);
   });

@@ -2785,7 +2785,7 @@ export class EconomyService {
         rarity: { in: QUALITY_TIERS[quality] },
         id: { notIn: await this.inactiveEventItems(tx, 'cardIds') },
       },
-      select: { id: true, name: true },
+      select: { id: true, name: true, imageHidden: true },
     });
     const cardSeed = this.seededRandom(`mint-card:${userId}:${Date.now()}`);
     const card = candidates[Math.floor(cardSeed * candidates.length)];
@@ -2826,7 +2826,8 @@ export class EconomyService {
     return {
       userCardId: copy.id,
       cardId: card.id,
-      name: card.name,
+      name: card.imageHidden ? '???' : card.name,
+      rarity: counter.rarity,
       foil,
       condition,
     };
@@ -2860,7 +2861,12 @@ export class EconomyService {
         rarity: quality === 'BASIC' ? 'COMMON' : quality,
       },
     });
-    return { userSkinId: copy.id, skinId: skin.id, name: skin.name };
+    return {
+      userSkinId: copy.id,
+      skinId: skin.id,
+      name: skin.name,
+      rarity: quality === 'BASIC' ? 'COMMON' : quality,
+    };
   }
 
   private async grantCardBack(tx: Tx, userId: string, quality: PrizeQuality) {
@@ -2889,7 +2895,11 @@ export class EconomyService {
         where: { id: userId },
         data: { gachaCosmetics: { push: item.key } },
       });
-      return { key: item.key, name: item.name };
+      return {
+        key: item.key,
+        name: item.name,
+        rarity: quality === 'BASIC' ? 'COMMON' : quality,
+      };
     }
     const duplicates = await tx.gachaCardBack.findMany({
       where: {
