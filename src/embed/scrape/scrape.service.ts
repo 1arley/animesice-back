@@ -39,8 +39,11 @@ const TRACKED_SOURCE_IDS = [...SOURCE_IDS, ...OPTIONAL_SOURCE_IDS] as const;
 import { ensureXvfb } from './xvfb.helper';
 import { refererForMediaUrlWithFallback } from '@/common/url-utils';
 import {
+  MEDIA_HOST_TRUST_TTL_MS,
   replaceTrustedMediaHosts,
   trustMediaHosts,
+  trustMediaHost,
+  trustedMediaHostCount,
 } from '@/common/trusted-media-hosts';
 import { playwrightProxy } from '@/common/outbound-proxy';
 import type { AudioType } from '@prisma/client';
@@ -193,12 +196,33 @@ export class ScrapeService implements OnModuleInit {
   @Cron(CronExpression.EVERY_HOUR)
   async refreshTrustedMediaHosts(): Promise<void> {
     try {
-      const rows = await this.prisma.$queryRaw<{ host: string | null }[]>`
-        SELECT DISTINCT substring("videoUrl" from '^https?://([^/]+)') AS host
+      const rows = await this.prisma.$queryRaw<
+        { host: string | null; mediaHostVerifiedAt: Date | null }[]
+      >`
+        SELECT DISTINCT substring("videoUrl" from '^https?://([^/]+)') AS host,
+          NULL::timestamptz AS "mediaHostVerifiedAt"
         FROM "Episode"
         WHERE "videoUrl" IS NOT NULL
+        UNION
+        SELECT "mediaHost" AS host, "mediaHostVerifiedAt"
+        FROM "EpisodeSource"
+        WHERE "mediaHost" IS NOT NULL
+          AND "mediaHostVerifiedAt" > now() - interval '24 hours'
       `;
-      const count = replaceTrustedMediaHosts(rows.map((r) => r.host ?? ''));
+      replaceTrustedMediaHosts(
+        rows
+          .filter((row) => row.mediaHostVerifiedAt === null)
+          .map((row) => row.host ?? ''),
+      );
+      for (const row of rows) {
+        if (row.host && row.mediaHostVerifiedAt) {
+          trustMediaHost(
+            row.host,
+            row.mediaHostVerifiedAt.getTime() + MEDIA_HOST_TRUST_TTL_MS,
+          );
+        }
+      }
+      const count = trustedMediaHostCount();
       if (count > 0) {
         dbg(`[SCRAPE] hosts de mídia confiáveis (do banco): ${count}`);
       }
@@ -314,6 +338,12 @@ export class ScrapeService implements OnModuleInit {
       ? this.sources.find((candidate) => candidate.id === sourceId)
       : this.sources.find((candidate) => candidate.supports(pageUrl));
     return source ? this.sourceDisabled(source.id) : false;
+  }
+
+  supportsSource(sourceId: string, pageUrl: string): boolean {
+    return this.sources.some(
+      (source) => source.id === sourceId && source.supports(pageUrl),
+    );
   }
 
   /**
@@ -952,16 +982,19 @@ export class ScrapeService implements OnModuleInit {
     return CLOUDFLARE_MARKERS.some((m) => title.includes(m));
   }
 
-  /** Aplica o wrap do proxy de mídia sobre um resultado RAW (cache ou fetch). */
-  private wrapResult(
+  /** Aplica o wrap do proxy só depois de revalidar hosts dinâmicos. */
+  private async wrapResult(
     result: ScrapeEpisodeResult,
     episodeUrl: string,
     wrap: boolean,
-  ): ScrapeEpisodeResult {
-    // Todo retorno de extração passa por aqui (cache hit, stale e miss), então
-    // é o ponto único onde o host do CDN passa a ser confiável para o proxy
-    // de mídia. A URL já foi probeada antes de chegar aqui.
-    trustMediaHosts(result.videos);
+  ): Promise<ScrapeEpisodeResult> {
+    if (wrap) {
+      const liveVideos: string[] = [];
+      for (const video of result.videos) {
+        if (!(await probeMediaUrlDead(video, true))) liveVideos.push(video);
+      }
+      trustMediaHosts(liveVideos, Date.now() + MEDIA_HOST_TRUST_TTL_MS);
+    }
 
     return {
       videos: wrap

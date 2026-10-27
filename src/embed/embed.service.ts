@@ -293,11 +293,11 @@ export class EmbedService {
     reqHeaders?: Record<string, string | string[] | undefined>,
     sourceOrigin?: string,
   ): Promise<ProxyMediaResult> {
-    const validated = this.normalizeUrl(raw);
+    const validated = this.normalizeUrl(raw, false, true);
     // Preferencia: origem do site fonte (Referer valido p/ anti-hotlinking);
     // fallback p/ origem da midia (caso de mp4 publica sem anti-hotlinking).
     const refOrigin = sourceOrigin
-      ? this.normalizeUrl(sourceOrigin).replace(/\/$/, '')
+      ? this.normalizeUrl(sourceOrigin, false, true).replace(/\/$/, '')
       : this.originOf(validated);
 
     const upstreamHeaders: Record<string, string> = {
@@ -330,6 +330,7 @@ export class EmbedService {
         validated,
         { headers: upstreamHeaders },
         this.MEDIA_FETCH_TIMEOUT_MS,
+        true,
       ));
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
@@ -533,6 +534,7 @@ export class EmbedService {
     url: string,
     init: RequestInit,
     timeoutMs: number,
+    allowTrustedMediaHost = false,
   ): Promise<SafeFetchResult> {
     let current = url;
 
@@ -541,7 +543,11 @@ export class EmbedService {
       // a82.filevideo1.com). Confiança por procedência: o 1º hop já passou na
       // allowlist (host extraído/probeado pelo scraper), os hops seguintes
       // herdam isso — isBlockedHostname (SSRF) continua em TODOS os hops.
-      const normalized = this.normalizeUrl(current, i > 0);
+      const normalized = this.normalizeUrl(
+        current,
+        i > 0 && allowTrustedMediaHost,
+        allowTrustedMediaHost,
+      );
       const resolution = await resolveSafeUrl(normalized);
       const dispatcher = pinnedDispatcher(resolution);
 
@@ -588,12 +594,19 @@ export class EmbedService {
    * Valida scheme (http/https), rejeita javascript:, e bloqueia
    * destinos que apontem p/ loopback/link-local/metadata (SSRF).
    */
-  private validateAndNormalizeUrl(raw: string): string {
-    return this.normalizeUrl(raw);
+  private validateAndNormalizeUrl(
+    raw: string,
+    allowTrustedMediaHost = false,
+  ): string {
+    return this.normalizeUrl(raw, false, allowTrustedMediaHost);
   }
 
   /** Normaliza/valida URL — exposto p/ controller reusar no proxy de mídia. */
-  normalizeUrl(raw: string, skipHostCheck = false): string {
+  normalizeUrl(
+    raw: string,
+    skipHostCheck = false,
+    allowTrustedMediaHost = false,
+  ): string {
     if (!raw || typeof raw !== 'string') {
       throw new BadRequestException('URL ausente ou inválida.');
     }
@@ -643,7 +656,7 @@ export class EmbedService {
 
     // skipHostCheck: hops de redirect herdam a confiança do hop 0 (que já
     // passou na allowlist). isBlockedHostname (SSRF) acima roda em todos.
-    if (!skipHostCheck && !this.isHostAllowed(host)) {
+    if (!skipHostCheck && !this.isHostAllowed(host, allowTrustedMediaHost)) {
       throw new BadRequestException('Host de destino não permitido.');
     }
 
@@ -665,8 +678,8 @@ export class EmbedService {
    * A checagem de hostname bloqueado (IP privado/link-local) vem ANTES, em
    * validateAndNormalizeUrl, e não é afetada por esta exceção.
    */
-  private isHostAllowed(host: string): boolean {
-    if (isTrustedMediaHost(host)) return true;
+  private isHostAllowed(host: string, allowTrustedMediaHost: boolean): boolean {
+    if (allowTrustedMediaHost && isTrustedMediaHost(host)) return true;
     if (this.allowedOutboundHosts.length === 0) return false;
 
     return this.allowedOutboundHosts.some(

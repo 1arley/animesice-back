@@ -110,6 +110,7 @@ export class StreamingController {
     @Query('jobId') jobId: string | undefined,
     @Req() req: express.Request,
     @Res() res: express.Response,
+    @Query('sourceId') sourceId?: string,
   ) {
     const episodeNumber = EPISODE_NUM_RE.test(episodeSlug)
       ? parseInt(episodeSlug, 10)
@@ -162,12 +163,15 @@ export class StreamingController {
         episodeNumber,
         1,
         refresh === '1' || refresh === 'true',
+        sourceId,
       );
       if (asyncResult) {
         res.status(HttpStatus.ACCEPTED).json({
           jobId: asyncResult.jobId,
           status: 'pending',
           message: 'Extraindo vídeo... Tente novamente em alguns segundos.',
+          availableSources: asyncResult.availableSources,
+          selectedSourceId: asyncResult.selectedSourceId,
         });
         return;
       }
@@ -239,6 +243,7 @@ export class StreamingController {
     @Query('refresh') refresh: string | undefined,
     @Req() req: express.Request,
     @Res() res: express.Response,
+    @Query('sourceId') sourceId?: string,
   ) {
     const episodeNumber = EPISODE_NUM_RE.test(episodeSlug)
       ? parseInt(episodeSlug, 10)
@@ -253,6 +258,7 @@ export class StreamingController {
       episodeNumber,
       1,
       refresh === '1' || refresh === 'true',
+      sourceId,
     );
     if (pending) {
       res.status(HttpStatus.ACCEPTED).json(pending);

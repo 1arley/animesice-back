@@ -593,6 +593,7 @@ describe('StreamingController', () => {
         1,
         1,
         true,
+        undefined,
       );
       expect(res.status).toHaveBeenCalledWith(202);
       expect(res.json).toHaveBeenCalledWith(
@@ -620,6 +621,7 @@ describe('StreamingController', () => {
         1,
         1,
         false,
+        undefined,
       );
       expect(mockStreamingService.getSource).toHaveBeenCalledWith(
         'solo',

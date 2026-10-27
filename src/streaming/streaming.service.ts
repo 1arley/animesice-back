@@ -17,7 +17,11 @@ import {
   shouldReextractMedia,
 } from '@/common/media-probe';
 import { refererForMediaUrl } from '@/common/url-utils';
-import { trustMediaHosts } from '@/common/trusted-media-hosts';
+import {
+  MEDIA_HOST_TRUST_TTL_MS,
+  trustMediaHost,
+  trustMediaHosts,
+} from '@/common/trusted-media-hosts';
 import { Readable } from 'stream';
 import type { AudioType } from '@prisma/client';
 
@@ -53,6 +57,12 @@ export interface ExtractionJob {
   createdAt: number;
   completedAt: number | null;
   lockedUntil?: number | null;
+  sourceId?: string | null;
+}
+
+export interface AvailableStreamSource {
+  id: string;
+  label: string;
 }
 
 type JobListener = (job: ExtractionJob) => void;
@@ -85,6 +95,8 @@ export interface StreamSourceResponse {
   reextracted: boolean;
   /** poster opcional do episódio. */
   thumbnailUrl: string | null;
+  availableSources: AvailableStreamSource[];
+  selectedSourceId: string | null;
 }
 
 @Injectable()
@@ -291,6 +303,8 @@ export class StreamingService implements OnModuleDestroy {
     playerEmbed: string | null;
     reextracted: boolean;
     apiOriginBackend: string;
+    availableSources?: AvailableStreamSource[];
+    selectedSourceId?: string | null;
   }): StreamSourceResponse {
     const {
       animeSlug,
@@ -301,6 +315,8 @@ export class StreamingService implements OnModuleDestroy {
       playerEmbed,
       reextracted,
       apiOriginBackend,
+      availableSources = [],
+      selectedSourceId = null,
     } = params;
     const base = apiOriginBackend.replace(/\/$/, '');
     const apiPrefix = process.env.API_PREFIX || 'api';
@@ -319,6 +335,8 @@ export class StreamingService implements OnModuleDestroy {
         embedUrl: embedSrc,
         reextracted,
         thumbnailUrl,
+        availableSources,
+        selectedSourceId,
       };
     }
 
@@ -331,7 +349,40 @@ export class StreamingService implements OnModuleDestroy {
       embedUrl: episodeEmbedUrl,
       reextracted,
       thumbnailUrl,
+      availableSources,
+      selectedSourceId,
     };
+  }
+
+  private async getAvailableSources(
+    episodeId: string,
+    audio: AudioType,
+  ): Promise<AvailableStreamSource[]> {
+    const rows = await this.prisma.episodeSource.findMany({
+      where: { episodeId, audio, verifiedAt: { not: null }, lastError: null },
+      select: { sourceId: true, pageUrl: true },
+      orderBy: { sourceId: 'asc' },
+    });
+    const labels: Record<string, string> = {
+      animesdigital: 'Animes Digital',
+      animesonline: 'Animes Online',
+      animesorion: 'Animes Orion',
+      meusanimes: 'Meus Animes',
+      topanimes: 'Top Animes',
+    };
+    const supported = rows.filter(({ sourceId, pageUrl }) =>
+      this.scrapeService.supportsSource(sourceId, pageUrl),
+    );
+    const available = await Promise.all(
+      supported.map(async ({ sourceId, pageUrl }) =>
+        (await this.scrapeService.isSourceDisabled(sourceId, pageUrl))
+          ? null
+          : { id: sourceId, label: labels[sourceId] ?? sourceId },
+      ),
+    );
+    return available.filter(
+      (source): source is AvailableStreamSource => source !== null,
+    );
   }
 
   /**
@@ -378,7 +429,6 @@ export class StreamingService implements OnModuleDestroy {
     if (!episode) {
       throw new NotFoundException('Episódio não encontrado.');
     }
-
     if (!episode.videoUrl) {
       throw new NotFoundException('Vídeo não disponível para este episódio.');
     }
@@ -598,6 +648,7 @@ export class StreamingService implements OnModuleDestroy {
     season: number,
     persist = true,
     audio?: AudioType,
+    selectedSourceId?: string,
   ): Promise<ScrapeOutcome> {
     let rawVideoUrl: string | null = null;
     let playerEmbed: string | null = null;
@@ -606,12 +657,18 @@ export class StreamingService implements OnModuleDestroy {
 
     const mappedSources =
       (await this.prisma.episodeSource?.findMany({
-        where: { episodeId: episode.id },
+        where: {
+          episodeId: episode.id,
+          ...(selectedSourceId ? { sourceId: selectedSourceId } : {}),
+          ...(selectedSourceId && audio
+            ? { audio, verifiedAt: { not: null }, lastError: null }
+            : {}),
+        },
         select: { sourceId: true, pageUrl: true },
         orderBy: { verifiedAt: 'desc' },
       })) ?? [];
     const sourceUrls = [
-      ...(episode.embedUrl
+      ...(!selectedSourceId && episode.embedUrl
         ? [{ sourceId: undefined, pageUrl: episode.embedUrl }]
         : []),
       ...mappedSources,
@@ -621,6 +678,12 @@ export class StreamingService implements OnModuleDestroy {
     );
 
     for (const source of sourceUrls) {
+      if (
+        selectedSourceId &&
+        !this.scrapeService.supportsSource(selectedSourceId, source.pageUrl)
+      ) {
+        continue;
+      }
       if (
         await this.scrapeService.isSourceDisabled(
           source.sourceId,
@@ -669,6 +732,7 @@ export class StreamingService implements OnModuleDestroy {
     }
 
     if (
+      !selectedSourceId &&
       !rawVideoUrl &&
       typeof this.scrapeService.scrapeEpisodeFromRankedSources === 'function'
     ) {
@@ -693,14 +757,17 @@ export class StreamingService implements OnModuleDestroy {
       }
     }
 
-    if (rawVideoUrl && persist) {
-      await this.persistPlayerResolvedEpisode(
+    if (rawVideoUrl && persist && !selectedSourceId) {
+      const episodeSaved = await this.persistPlayerResolvedEpisode(
         episode.id,
         rawVideoUrl,
         winningSourceId,
         winningPageUrl,
         audio,
       );
+      if (!episodeSaved) {
+        trustMediaHost(rawVideoUrl, Date.now() + MEDIA_HOST_TRUST_TTL_MS);
+      }
     }
 
     return {
@@ -723,55 +790,70 @@ export class StreamingService implements OnModuleDestroy {
       episodeSource?: PrismaService['episodeSource'];
       anime?: PrismaService['anime'];
     } = this.prisma,
-  ): Promise<void> {
-    trustMediaHosts([rawVideoUrl]);
-    await db.episode
-      ?.update({
-        where: { id: episodeId },
-        data: { videoUrl: rawVideoUrl },
-      })
-      .catch(() => undefined);
+    insideTransaction = false,
+  ): Promise<boolean> {
+    let episodeSaved = false;
+    if (db.episode) {
+      if (insideTransaction) {
+        await db.episode.update({
+          where: { id: episodeId },
+          data: { videoUrl: rawVideoUrl },
+        });
+        episodeSaved = true;
+      } else {
+        episodeSaved = await db.episode
+          .update({
+            where: { id: episodeId },
+            data: { videoUrl: rawVideoUrl },
+          })
+          .then(() => true)
+          .catch(() => false);
+      }
+    }
+    if (episodeSaved && !insideTransaction) trustMediaHosts([rawVideoUrl]);
 
     if (sourceId && pageUrl && db.episodeSource) {
-      await db.episodeSource
-        .upsert({
-          where: {
-            episodeId_sourceId: {
-              episodeId,
-              sourceId,
-            },
-          },
-          update: {
-            pageUrl,
-            ...(audio ? { audio } : {}),
-            verifiedAt: new Date(),
-            lastError: null,
-          },
-          create: {
+      const upsert = db.episodeSource.upsert({
+        where: {
+          episodeId_sourceId: {
             episodeId,
             sourceId,
-            pageUrl,
-            audio: audio ?? 'LEGENDADO',
-            verifiedAt: new Date(),
           },
-        })
-        .catch(() => undefined);
+        },
+        update: {
+          pageUrl,
+          ...(audio ? { audio } : {}),
+          verifiedAt: new Date(),
+          lastError: null,
+        },
+        create: {
+          episodeId,
+          sourceId,
+          pageUrl,
+          audio: audio ?? 'LEGENDADO',
+          verifiedAt: new Date(),
+        },
+      });
+      if (insideTransaction) await upsert;
+      else await upsert.catch(() => undefined);
     }
 
-    await db.anime
-      ?.updateMany?.({
-        where: {
-          episodes: { some: { id: episodeId } },
-          published: false,
-        },
-        data: {
-          published: true,
-          catalogUnpublished: false,
-          catalogAbsentChecks: 0,
-          catalogAbsenceCheckedAt: null,
-        },
-      })
-      .catch(() => undefined);
+    const publishUpdate = db.anime?.updateMany?.({
+      where: {
+        episodes: { some: { id: episodeId } },
+        published: false,
+      },
+      data: {
+        published: true,
+        catalogUnpublished: false,
+        catalogAbsentChecks: 0,
+        catalogAbsenceCheckedAt: null,
+      },
+    });
+    if (insideTransaction) await publishUpdate;
+    else await publishUpdate?.catch(() => undefined);
+
+    return episodeSaved;
   }
 
   /**
@@ -823,6 +905,10 @@ export class StreamingService implements OnModuleDestroy {
     if (!episode) {
       throw new NotFoundException('Episódio não encontrado.');
     }
+    const availableSources = await this.getAvailableSources(
+      episode.id,
+      anime.audio,
+    );
 
     const isCatalogUnpublished =
       anime.published === false && anime.catalogUnpublished === true;
@@ -863,6 +949,7 @@ export class StreamingService implements OnModuleDestroy {
       playerEmbed,
       reextracted,
       apiOriginBackend,
+      availableSources,
     });
   }
 
@@ -878,7 +965,12 @@ export class StreamingService implements OnModuleDestroy {
     episodeNumber: number,
     season: number = 1,
     forceRefresh = false,
-  ): Promise<{ jobId: string } | null> {
+    selectedSourceId?: string,
+  ): Promise<{
+    jobId: string;
+    availableSources: AvailableStreamSource[];
+    selectedSourceId: string | null;
+  } | null> {
     const anime = await this.prisma.anime.findUnique({
       where: { slug: animeSlug },
       select: {
@@ -911,12 +1003,26 @@ export class StreamingService implements OnModuleDestroy {
     });
     if (!episode) throw new NotFoundException('Episódio não encontrado.');
 
+    const availableSources = await this.getAvailableSources(
+      episode.id,
+      anime.audio,
+    );
+    if (
+      selectedSourceId &&
+      !availableSources.some((source) => source.id === selectedSourceId)
+    ) {
+      throw new NotFoundException(
+        'Servidor indisponível para este episódio e áudio.',
+      );
+    }
+
     const isCatalogUnpublished =
       anime.published === false && anime.catalogUnpublished === true;
 
     const rawVideoUrl = this.unwrapStoredVideoUrl(episode.videoUrl);
 
     if (
+      !selectedSourceId &&
       !forceRefresh &&
       !isCatalogUnpublished &&
       rawVideoUrl &&
@@ -932,12 +1038,17 @@ export class StreamingService implements OnModuleDestroy {
       season,
       { id: episode.id, embedUrl: episode.embedUrl },
       anime.audio,
+      selectedSourceId,
     );
 
     dbg(
       `[STREAM] async extraction started: job=${job.id} anime=${animeSlug} ep=${episodeNumber}`,
     );
-    return { jobId: job.id };
+    return {
+      jobId: job.id,
+      availableSources,
+      selectedSourceId: selectedSourceId ?? null,
+    };
   }
 
   async getJob(id: string): Promise<ExtractionJob | undefined> {
@@ -951,12 +1062,14 @@ export class StreamingService implements OnModuleDestroy {
     animeSlug: string,
     episodeNumber: number,
     season: number,
+    sourceId?: string,
   ): Promise<ExtractionJob | undefined> {
     const job = await this.prisma.streamExtractionJob.findFirst({
       where: {
         animeSlug,
         episodeNumber,
         season,
+        sourceId: sourceId ?? null,
         status: { in: ['pending', 'processing'] },
       },
     });
@@ -969,18 +1082,26 @@ export class StreamingService implements OnModuleDestroy {
     season: number,
     episode?: { id: string; embedUrl: string | null },
     audio?: AudioType,
+    sourceId?: string,
   ): Promise<ExtractionJob> {
-    const activeKey = `${animeSlug}:s${season}:ep${episodeNumber}`;
+    const activeKey = `${animeSlug}:s${season}:ep${episodeNumber}${sourceId ? `:source:${sourceId}` : ''}`;
     let job = await this.findActiveJobByEpisode(
       animeSlug,
       episodeNumber,
       season,
+      sourceId,
     );
     if (!job) {
       try {
         job = this.toExtractionJob(
           await this.prisma.streamExtractionJob.create({
-            data: { activeKey, animeSlug, episodeNumber, season },
+            data: {
+              activeKey,
+              animeSlug,
+              episodeNumber,
+              season,
+              sourceId: sourceId ?? null,
+            },
           }),
         );
       } catch (error) {
@@ -989,6 +1110,7 @@ export class StreamingService implements OnModuleDestroy {
           animeSlug,
           episodeNumber,
           season,
+          sourceId,
         );
         if (!job) throw error;
       }
@@ -1087,6 +1209,7 @@ export class StreamingService implements OnModuleDestroy {
         job.season,
         false,
         audio,
+        job.sourceId ?? undefined,
       );
       await this.finishExtractionJob(
         job.id,
@@ -1116,7 +1239,7 @@ export class StreamingService implements OnModuleDestroy {
     outcome: ScrapeOutcome | null,
     error: string | null,
   ): Promise<void> {
-    const row = await this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.streamExtractionJob.updateMany({
         where: { id, status: 'processing', lockedBy: lockId },
         data: {
@@ -1137,7 +1260,41 @@ export class StreamingService implements OnModuleDestroy {
       });
       if (!finished) return null;
 
-      if (status === 'completed' && outcome?.videoUrl) {
+      let mediaTrust: { host: string; expiresAt: number | null } | null = null;
+      if (status === 'completed' && outcome?.videoUrl && finished.sourceId) {
+        const mediaUrl = new URL(outcome.videoUrl);
+        if (
+          ['http:', 'https:'].includes(mediaUrl.protocol) &&
+          episodeId &&
+          outcome.pageUrl &&
+          outcome.sourceId === finished.sourceId &&
+          outcome.audio
+        ) {
+          const verifiedAt = new Date();
+          const saved = await tx.episodeSource.updateMany({
+            where: {
+              episodeId,
+              sourceId: finished.sourceId,
+              pageUrl: outcome.pageUrl,
+              audio: outcome.audio,
+              verifiedAt: { not: null },
+              lastError: null,
+            },
+            data: {
+              mediaHost: mediaUrl.hostname,
+              mediaHostVerifiedAt: verifiedAt,
+            },
+          });
+          if (saved.count) {
+            mediaTrust = {
+              host: mediaUrl.hostname,
+              expiresAt: verifiedAt.getTime() + MEDIA_HOST_TRUST_TTL_MS,
+            };
+          }
+        }
+      }
+
+      if (status === 'completed' && outcome?.videoUrl && !finished.sourceId) {
         let targetEpisodeId = episodeId;
         if (!targetEpisodeId) {
           const anime = await tx.anime.findUnique({
@@ -1159,22 +1316,37 @@ export class StreamingService implements OnModuleDestroy {
           targetEpisodeId = ep?.id ?? null;
         }
         if (targetEpisodeId) {
-          await this.persistPlayerResolvedEpisode(
+          const episodeSaved = await this.persistPlayerResolvedEpisode(
             targetEpisodeId,
             outcome.videoUrl,
             outcome.sourceId,
             outcome.pageUrl,
             outcome.audio,
             tx,
+            true,
           );
+          mediaTrust = {
+            host: new URL(outcome.videoUrl).hostname,
+            expiresAt: episodeSaved
+              ? null
+              : Date.now() + MEDIA_HOST_TRUST_TTL_MS,
+          };
         } else {
-          trustMediaHosts([outcome.videoUrl]);
+          mediaTrust = {
+            host: new URL(outcome.videoUrl).hostname,
+            expiresAt: Date.now() + MEDIA_HOST_TRUST_TTL_MS,
+          };
         }
       }
 
-      return finished;
+      return { finished, mediaTrust };
     });
-    if (row) this.notifyJobListeners(this.toExtractionJob(row));
+    if (result) {
+      if (result.mediaTrust) {
+        trustMediaHost(result.mediaTrust.host, result.mediaTrust.expiresAt);
+      }
+      this.notifyJobListeners(this.toExtractionJob(result.finished));
+    }
   }
 
   private toExtractionJob(job: {
@@ -1189,6 +1361,7 @@ export class StreamingService implements OnModuleDestroy {
     createdAt: Date;
     completedAt: Date | null;
     lockedUntil: Date | null;
+    sourceId: string | null;
   }): ExtractionJob {
     return {
       id: job.id,
@@ -1204,6 +1377,7 @@ export class StreamingService implements OnModuleDestroy {
       createdAt: job.createdAt.getTime(),
       completedAt: job.completedAt?.getTime() ?? null,
       lockedUntil: job.lockedUntil?.getTime() ?? null,
+      sourceId: job.sourceId,
     };
   }
 
@@ -1275,13 +1449,16 @@ export class StreamingService implements OnModuleDestroy {
       animeSlug: string;
       episodeNumber: number;
       season: number;
+      createdAt: number;
+      completedAt: number | null;
+      sourceId?: string | null;
       result: { videoUrl: string | null; playerEmbed: string | null } | null;
     },
     apiOriginBackend: string,
   ): Promise<StreamSourceResponse> {
     const anime = await this.prisma.anime.findUnique({
       where: { slug: job.animeSlug },
-      select: { id: true, slug: true },
+      select: { id: true, slug: true, audio: true },
     });
     if (!anime) throw new NotFoundException('Anime não encontrado.');
 
@@ -1307,7 +1484,31 @@ export class StreamingService implements OnModuleDestroy {
     const playerEmbed = job.result!.playerEmbed;
 
     if (rawVideoUrl) {
-      trustMediaHosts([rawVideoUrl]);
+      if (job.sourceId) {
+        const mediaHost = new URL(rawVideoUrl).hostname;
+        const mapping = await this.prisma.episodeSource.findUnique({
+          where: {
+            episodeId_sourceId: {
+              episodeId: episode.id,
+              sourceId: job.sourceId,
+            },
+          },
+          select: { mediaHost: true, mediaHostVerifiedAt: true },
+        });
+        if (mapping?.mediaHost === mediaHost && mapping.mediaHostVerifiedAt) {
+          trustMediaHost(
+            mediaHost,
+            mapping.mediaHostVerifiedAt.getTime() + MEDIA_HOST_TRUST_TTL_MS,
+          );
+        }
+      } else {
+        trustMediaHost(
+          rawVideoUrl,
+          episode.videoUrl === rawVideoUrl
+            ? null
+            : (job.completedAt ?? job.createdAt) + MEDIA_HOST_TRUST_TTL_MS,
+        );
+      }
     }
 
     return this.formatStreamSourceResponse({
@@ -1319,6 +1520,8 @@ export class StreamingService implements OnModuleDestroy {
       playerEmbed,
       reextracted: true,
       apiOriginBackend,
+      availableSources: await this.getAvailableSources(episode.id, anime.audio),
+      selectedSourceId: job.sourceId ?? null,
     });
   }
 

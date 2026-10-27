@@ -32,6 +32,7 @@ function makeMocks() {
     episodeSource: {
       findMany: jest.fn().mockResolvedValue([]),
       upsert: jest.fn().mockResolvedValue({}),
+      updateMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     streamingToken: {
       deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
@@ -97,7 +98,10 @@ function makeMocks() {
   const embedService = { proxyMedia: jest.fn() };
   const scrapeService = {
     scrapeEpisodeVideo: jest.fn().mockResolvedValue({ videos: [] }),
-    isSourceDisabled: jest.fn(async () => false),
+    isSourceDisabled: jest.fn(
+      async (_sourceId?: string, _pageUrl?: string) => false,
+    ),
+    supportsSource: jest.fn((_sourceId: string, _pageUrl: string) => true),
     detectSourceId: jest.fn(() => null),
     scrapeEpisodeFromRankedSources: jest.fn().mockResolvedValue(null),
   };
@@ -1118,6 +1122,8 @@ describe('StreamingService.getSource', () => {
 
   it('doSingleScrape engole erro de DB no update', async () => {
     const { prisma, scrapeService, svc } = makeMocks();
+    const trustSpy = jest.spyOn(trustedMediaHosts, 'trustMediaHosts');
+    const temporaryTrustSpy = jest.spyOn(trustedMediaHosts, 'trustMediaHost');
     prisma.anime.findUnique.mockResolvedValue({
       id: 'a1',
       slug: 'anime-db-error',
@@ -1142,6 +1148,13 @@ describe('StreamingService.getSource', () => {
     );
     expect(result.rawVideoUrl).toBe('https://cdn.example.com/v.mp4');
     expect(result.reextracted).toBe(true);
+    expect(trustSpy).not.toHaveBeenCalled();
+    expect(temporaryTrustSpy).toHaveBeenCalledWith(
+      'https://cdn.example.com/v.mp4',
+      expect.any(Number),
+    );
+    trustSpy.mockRestore();
+    temporaryTrustSpy.mockRestore();
   });
 
   it('mantém 404 quando a fonte persistida e o fallback ranqueado falham', async () => {
@@ -1226,9 +1239,236 @@ describe('StreamingService.getSourceAsync & Job Lease Lifecycle', () => {
   );
   afterEach(() => jest.restoreAllMocks());
 
+  it('isola uma fonte escolhida e não substitui o vídeo padrão do episódio', async () => {
+    const { prisma, scrapeService, jobRows, svc } = makeMocks();
+    const trustSpy = jest.spyOn(trustedMediaHosts, 'trustMediaHost');
+    const pageUrl = 'https://animesonline.cloud/solo/episodio-1';
+    prisma.anime.findUnique.mockResolvedValue({
+      id: 'a1',
+      slug: 'anime',
+      audio: 'DUBLADO',
+      published: true,
+    });
+    prisma.episode.findUnique.mockResolvedValue({
+      id: 'ep-1',
+      number: 1,
+      videoUrl: 'https://cdn.default/video.mp4',
+      embedUrl: 'https://meusanimes.blog/e/anime-1/',
+      thumbnailUrl: null,
+    });
+    prisma.episodeSource.findMany.mockResolvedValue([
+      {
+        sourceId: 'animesonline',
+        pageUrl,
+        audio: 'DUBLADO',
+        verifiedAt: new Date(),
+        lastError: null,
+      },
+    ]);
+    scrapeService.scrapeEpisodeVideo.mockResolvedValue({
+      videos: ['https://cdn.manual/video.mp4'],
+    });
+
+    const submitted = await svc.getSourceAsync(
+      'anime',
+      1,
+      1,
+      false,
+      'animesonline',
+    );
+    await flush();
+
+    expect(submitted?.availableSources).toEqual([
+      { id: 'animesonline', label: 'Animes Online' },
+    ]);
+    expect([...jobRows.values()][0]).toMatchObject({
+      sourceId: 'animesonline',
+    });
+    expect(scrapeService.scrapeEpisodeVideo).toHaveBeenCalledWith(
+      pageUrl,
+      'animesonline',
+      false,
+      true,
+      'DUBLADO',
+    );
+    expect(scrapeService.scrapeEpisodeFromRankedSources).not.toHaveBeenCalled();
+    expect(prisma.episode.update).not.toHaveBeenCalled();
+    expect(prisma.episodeSource.upsert).not.toHaveBeenCalled();
+    expect(prisma.episodeSource.updateMany).toHaveBeenCalledWith({
+      where: {
+        episodeId: 'ep-1',
+        sourceId: 'animesonline',
+        pageUrl,
+        audio: 'DUBLADO',
+        verifiedAt: { not: null },
+        lastError: null,
+      },
+      data: {
+        mediaHost: 'cdn.manual',
+        mediaHostVerifiedAt: expect.any(Date),
+      },
+    });
+    expect(trustSpy).toHaveBeenCalledWith('cdn.manual', expect.any(Number));
+  });
+
+  it('não confia no host quando o job perdeu o lease antes do commit', async () => {
+    const { prisma, jobRows, svc } = makeMocks();
+    const trustSpy = jest.spyOn(trustedMediaHosts, 'trustMediaHost');
+    jobRows.set('job-1', {
+      id: 'job-1',
+      status: 'processing',
+      lockedBy: 'new-worker',
+    });
+
+    await svc['finishExtractionJob'](
+      'job-1',
+      'old-worker',
+      'completed',
+      'ep-1',
+      {
+        videoUrl: 'https://cdn.manual/video.mp4',
+        playerEmbed: null,
+        sourceId: 'animesonline',
+        pageUrl: 'https://animesonline.cloud/ep-1',
+        audio: 'DUBLADO',
+      },
+      null,
+    );
+
+    expect(prisma.episodeSource.updateMany).not.toHaveBeenCalled();
+    expect(trustSpy).not.toHaveBeenCalled();
+  });
+
+  it('só confia no host depois do commit do job', async () => {
+    const { prisma, jobRows, svc } = makeMocks();
+    const trustSpy = jest.spyOn(trustedMediaHosts, 'trustMediaHost');
+    jobRows.set('job-1', {
+      id: 'job-1',
+      status: 'processing',
+      lockedBy: 'worker-1',
+      sourceId: 'animesonline',
+    });
+    prisma.$transaction.mockImplementationOnce(async (work) => {
+      await work(prisma);
+      throw new Error('commit failed');
+    });
+
+    await expect(
+      svc['finishExtractionJob'](
+        'job-1',
+        'worker-1',
+        'completed',
+        'ep-1',
+        {
+          videoUrl: 'https://cdn.manual/video.mp4',
+          playerEmbed: null,
+          sourceId: 'animesonline',
+          pageUrl: 'https://animesonline.cloud/ep-1',
+          audio: 'DUBLADO',
+        },
+        null,
+      ),
+    ).rejects.toThrow('commit failed');
+
+    expect(prisma.episodeSource.updateMany).toHaveBeenCalled();
+    expect(trustSpy).not.toHaveBeenCalled();
+  });
+
+  it('não confia no host automático antes de confirmar a transação', async () => {
+    const { prisma, jobRows, svc } = makeMocks();
+    const trustSpy = jest.spyOn(trustedMediaHosts, 'trustMediaHost');
+    jobRows.set('job-1', {
+      id: 'job-1',
+      status: 'processing',
+      lockedBy: 'worker-1',
+      sourceId: null,
+    });
+    prisma.$transaction.mockImplementationOnce(async (work) => {
+      await work(prisma);
+      throw new Error('commit failed');
+    });
+
+    await expect(
+      svc['finishExtractionJob'](
+        'job-1',
+        'worker-1',
+        'completed',
+        'ep-1',
+        { videoUrl: 'https://cdn.default/video.mp4', playerEmbed: null },
+        null,
+      ),
+    ).rejects.toThrow('commit failed');
+
+    expect(prisma.episode.update).toHaveBeenCalled();
+    expect(trustSpy).not.toHaveBeenCalled();
+  });
+
+  it('não anuncia fontes desabilitadas nem fontes incompatíveis com o áudio', async () => {
+    const { prisma, scrapeService, svc } = makeMocks();
+    prisma.anime.findUnique.mockResolvedValue({
+      id: 'a1',
+      slug: 'anime',
+      audio: 'DUBLADO',
+      published: true,
+    });
+    prisma.episode.findUnique.mockResolvedValue({
+      id: 'ep-1',
+      number: 1,
+      videoUrl: 'https://cdn.default/video.mp4',
+      embedUrl: null,
+      thumbnailUrl: null,
+    });
+    prisma.episodeSource.findMany.mockResolvedValue([
+      {
+        sourceId: 'disabled',
+        pageUrl: 'https://disabled.example/e1',
+        audio: 'DUBLADO',
+      },
+    ]);
+    scrapeService.isSourceDisabled.mockImplementation(
+      async (sourceId?: string) => sourceId === 'disabled',
+    );
+
+    const result = await svc.getSourceAsync('anime', 1, 1, true);
+
+    expect(result?.availableSources).toEqual([]);
+    expect(prisma.episodeSource.findMany).toHaveBeenCalledWith({
+      where: {
+        episodeId: 'ep-1',
+        audio: 'DUBLADO',
+        verifiedAt: { not: null },
+        lastError: null,
+      },
+      select: { sourceId: true, pageUrl: true },
+      orderBy: { sourceId: 'asc' },
+    });
+  });
+
+  it('rejeita uma fonte ausente da lista verificada antes de criar job', async () => {
+    const { prisma, svc, jobRows } = makeMocks();
+    prisma.anime.findUnique.mockResolvedValue({
+      id: 'a1',
+      slug: 'anime',
+      audio: 'DUBLADO',
+      published: true,
+    });
+    prisma.episode.findUnique.mockResolvedValue({
+      id: 'ep-1',
+      number: 1,
+      videoUrl: null,
+      embedUrl: null,
+      thumbnailUrl: null,
+    });
+
+    await expect(
+      svc.getSourceAsync('anime', 1, 1, false, 'unknown'),
+    ).rejects.toThrow('Servidor indisponível');
+    expect(jobRows.size).toBe(0);
+  });
+
   it('executa extração assíncrona e persiste Episode, EpisodeSource, TrustedMediaHosts e republica anime', async () => {
     const { prisma, scrapeService, svc } = makeMocks();
-    const trustSpy = jest.spyOn(trustedMediaHosts, 'trustMediaHosts');
+    const trustSpy = jest.spyOn(trustedMediaHosts, 'trustMediaHost');
     prisma.anime.findUnique.mockResolvedValue({
       id: 'a1',
       slug: 'anime',
@@ -1259,7 +1499,7 @@ describe('StreamingService.getSourceAsync & Job Lease Lifecycle', () => {
       true,
       'DUBLADO',
     );
-    expect(trustSpy).toHaveBeenCalledWith(['https://cdn.example/video.mp4']);
+    expect(trustSpy).toHaveBeenCalledWith('cdn.example', null);
     expect(prisma.episode.update).toHaveBeenCalledWith({
       where: { id: 'ep-1' },
       data: { videoUrl: 'https://cdn.example/video.mp4' },
@@ -1538,9 +1778,10 @@ describe('StreamingService.getSourceAsync & Job Lease Lifecycle', () => {
 });
 
 describe('StreamingService.buildSourceResponseFromJob', () => {
-  it('monta a resposta de stream a partir de um job concluído e registra trustMediaHosts', async () => {
+  it('usa confiança temporária com expiração baseada na conclusão do job', async () => {
     const { prisma, svc } = makeMocks();
-    const trustSpy = jest.spyOn(trustedMediaHosts, 'trustMediaHosts');
+    const trustSpy = jest.spyOn(trustedMediaHosts, 'trustMediaHost');
+    const completedAt = Date.now() - 60_000;
     prisma.anime.findUnique.mockResolvedValue({ id: 'a1', slug: 'anime' });
     prisma.episode.findUnique.mockResolvedValue({
       id: 'ep-1',
@@ -1561,15 +1802,18 @@ describe('StreamingService.buildSourceResponseFromJob', () => {
           playerEmbed: null,
         },
         error: null,
-        createdAt: Date.now(),
-        completedAt: Date.now(),
+        createdAt: completedAt - 60_000,
+        completedAt,
       },
       'https://api.test',
     );
 
     expect(result.src).toContain('/api/embed/media?url=');
     expect(result.rawVideoUrl).toBe('https://cdn.example/video.mp4');
-    expect(trustSpy).toHaveBeenCalledWith(['https://cdn.example/video.mp4']);
+    expect(trustSpy).toHaveBeenCalledWith(
+      'https://cdn.example/video.mp4',
+      completedAt + trustedMediaHosts.MEDIA_HOST_TRUST_TTL_MS,
+    );
     trustSpy.mockRestore();
   });
 });

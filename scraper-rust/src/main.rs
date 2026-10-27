@@ -33,6 +33,8 @@ fn host_allowed(host: &str) -> bool {
         || host == "video.meusdoramas.club"
         || host == "animesonline.cloud"
         || host.ends_with(".animesonline.cloud")
+        || host == "animesonlinecc.to"
+        || host.ends_with(".animesonlinecc.to")
         || host == "animesdigital.org"
         || host.ends_with(".animesdigital.org")
 }
@@ -120,7 +122,8 @@ fn parse_animesonline(html: &str) -> Output {
 }
 
 fn extract_animesonline(client: &Client, episode: Url, ua: &str) -> Result<Output, String> {
-    let html = get(client, episode, ua, Some("https://animesonline.cloud/"))?;
+    let referer = format!("{}/", episode.origin().ascii_serialization());
+    let html = get(client, episode, ua, Some(&referer))?;
     // ponytail: sem probe de liveness por candidata (o adapter TS probe antes de devolver).
     // streaming.service probe antes de servir, entao candidata morta cai la. Teto: 4 candidatas
     // sem filtro. Mover o probe para ca se taxa de URL morta incomodar.
@@ -245,7 +248,11 @@ fn extract(input: Input) -> Result<Output, String> {
     let host = episode.host_str().unwrap_or_default().to_string();
     if host == "meusanimes.blog" || host.ends_with(".meusdoramas.club") {
         extract_meusanimes(&client, episode, &input.ua)
-    } else if host == "animesonline.cloud" || host.ends_with(".animesonline.cloud") {
+    } else if host == "animesonline.cloud"
+        || host.ends_with(".animesonline.cloud")
+        || host == "animesonlinecc.to"
+        || host.ends_with(".animesonlinecc.to")
+    {
         extract_animesonline(&client, episode, &input.ua)
     } else if host == "animesdigital.org" || host.ends_with(".animesdigital.org") {
         extract_animesdigital(&client, episode, &input.ua)
@@ -304,6 +311,7 @@ mod tests {
     #[test]
     fn host_allowed_cobre_as_fontes_ativas_e_recusa_animefire() {
         assert!(host_allowed("animesonline.cloud"));
+        assert!(host_allowed("animesonlinecc.to"));
         assert!(host_allowed("animesdigital.org"));
         assert!(host_allowed("serv1.meusdoramas.club"));
         assert!(!host_allowed("animefire.io"));

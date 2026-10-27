@@ -46,6 +46,16 @@ describe('trusted-media-hosts', () => {
     expect(trustedMediaHostCount()).toBe(2);
   });
 
+  it('remove a confiança temporária quando expira', () => {
+    const now = Date.now();
+    trustMediaHost('cdn.example', now + 60_000);
+    jest.spyOn(Date, 'now').mockReturnValue(now + 60_000);
+
+    expect(isTrustedMediaHost('cdn.example')).toBe(false);
+    expect(trustedMediaHostCount()).toBe(0);
+    jest.restoreAllMocks();
+  });
+
   it('replaceTrustedMediaHosts substitui o conjunto inteiro', () => {
     trustMediaHost('antigo.com');
     const total = replaceTrustedMediaHosts(['novo.com', 'outro.com']);

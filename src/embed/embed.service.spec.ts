@@ -119,8 +119,25 @@ describe('EmbedService (proxy HTML/mídia + anti-SSRF)', () => {
       expect(
         service.normalizeUrl(
           'https://media-limit-xr8a2.peliculaplay.com/a/b.m3u8',
+          false,
+          true,
         ),
       ).toBe('https://media-limit-xr8a2.peliculaplay.com/a/b.m3u8');
+    });
+
+    it('usa host dinâmico em mídia, mas não no proxy HTML', async () => {
+      const mediaUrl = 'https://cdn-dinamico.example/video.mp4';
+      trustMediaHost('cdn-dinamico.example', Date.now() + 60_000);
+      (global.fetch as jest.Mock).mockResolvedValue(
+        new Response(Buffer.from('video'), { status: 200 }),
+      );
+
+      await expect(service.proxyHtml(mediaUrl)).rejects.toThrow(
+        'Host de destino não permitido',
+      );
+      const media = await service.proxyMedia(mediaUrl);
+      expect(media.status).toBe(200);
+      media.body.destroy();
     });
 
     it('continua bloqueando host que ninguém validou', () => {
@@ -312,6 +329,39 @@ describe('EmbedService (proxy HTML/mídia + anti-SSRF)', () => {
     await expect(
       service.proxyHtml('https://animefire.io/page'),
     ).rejects.toThrow(/Destino bloqueado/);
+  });
+
+  it('proxy HTML exige allowlist também no destino do redirect', async () => {
+    (global.fetch as jest.Mock).mockResolvedValue(
+      new Response(null, {
+        status: 302,
+        headers: { location: 'https://fora-da-allowlist.example/page' },
+      }),
+    );
+
+    await expect(
+      service.proxyHtml('https://animefire.io/page'),
+    ).rejects.toThrow('Host de destino não permitido');
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('revalida DNS de cada redirect de mídia mesmo para host confiável', async () => {
+    trustMediaHost('cdn-dinamico.example');
+    mockedLookup
+      .mockResolvedValueOnce([{ address: PUBLIC_IP }])
+      .mockResolvedValueOnce([{ address: '10.0.0.1' }]);
+    (global.fetch as jest.Mock).mockResolvedValue(
+      new Response(null, {
+        status: 302,
+        headers: { location: 'https://outro-cdn.example/video.mp4' },
+      }),
+    );
+
+    await expect(
+      service.proxyMedia('https://cdn-dinamico.example/video.mp4'),
+    ).rejects.toThrow(/Destino bloqueado/);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(mockedLookup).toHaveBeenCalledTimes(2);
   });
 
   it('segue redirect para host fora da allowlist herdando confiança do hop 0', async () => {

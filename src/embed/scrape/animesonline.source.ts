@@ -26,15 +26,18 @@ const IFRAME_SRC_RE = /<iframe[^>]+src=["']([^"']+)["']/gi;
 
 /** Teto de probes de liveness por página (evita ~5s × N candidatas mortas). */
 const MAX_PROBES = 4;
+const SOURCE_HOSTS = ['animesonlinecc.to', 'animesonline.cloud'] as const;
+const MAX_SEARCH_CANDIDATES = 4;
 
 const DEFAULT_UA =
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
 /**
- * Adapter animesonline.cloud — WordPress pt-BR da rede "AnimesOnline".
+ * Adapter animesonline.cloud / animesonlinecc.to — WordPress pt-BR da rede
+ * "AnimesOnline".
  *
- * Validado na VPS em 28/09/2026: homepage/anime/página de episódio em HTTP 200
- * sem challenge Cloudflare (0,4–2,4s), e o HTML do episódio já traz o vídeo
+ * A disponibilidade varia entre .cloud e .cc por origem; testar os dois
+ * preserva links antigos e acompanha migrações parciais. O HTML traz o vídeo
  * server-side — ex. ao-no-hako ep 23:
  *   <video><source src="https://animeflix.blog/Animes/.../23.mp4">
  *   <iframe src="https://www.blogger.com/video.g?token=...">   (servidor SD)
@@ -60,9 +63,11 @@ export class AnimesonlineScrapeSource implements ScrapeSource {
   }
 
   templateUrls(query: EpisodeUrlQuery): string[] {
-    return this.slugVariants(query.animeSlug).map(
-      (slug) =>
-        `https://animesonline.cloud/episodio/${slug}-episodio-${query.episodeNumber}`,
+    return SOURCE_HOSTS.flatMap((host) =>
+      this.slugVariants(query.animeSlug).map(
+        (slug) =>
+          `https://${host}/episodio/${slug}-episodio-${query.episodeNumber}/`,
+      ),
     );
   }
 
@@ -80,7 +85,7 @@ export class AnimesonlineScrapeSource implements ScrapeSource {
   }
 
   /**
-   * Resolve a URL do episódio no animesonlinecc.to a partir do slug local.
+   * Resolve a URL do episódio nos hosts da rede a partir do slug local.
    *
    * POR QUE: o catálogo foi populado do meusanimes.blog (slug `witch-watch-dublado`)
    * e o animesonlinecc usa outro slug (`witch-watch`); a URL montada direto
@@ -92,34 +97,57 @@ export class AnimesonlineScrapeSource implements ScrapeSource {
     episodeNumber: number,
     ua: string = DEFAULT_UA,
   ): Promise<string | null> {
-    for (const slug of this.slugVariants(animeSlug)) {
-      const hit = await this.episodeLinkFromAnimePage(slug, episodeNumber, ua);
-      if (hit) return hit;
+    for (const host of SOURCE_HOSTS) {
+      for (const slug of this.slugVariants(animeSlug)) {
+        const hit = await this.episodeLinkFromAnimePage(
+          host,
+          slug,
+          episodeNumber,
+          ua,
+        );
+        if (hit) return hit;
+      }
     }
 
     // Slug adivinhado falhou: a fonte usa outro nome (`kaguya-sama-love-is-war`
     // -> `kaguya-sama-wa-kokurasetai-...`). A busca por prefixo do slug acha o
     // anime, e a página do candidato confirma se o episódio existe.
-    for (const term of this.searchTerms(animeSlug)) {
-      let html: string;
-      try {
-        html = await this.get(
-          `https://animesonlinecc.to/?post_type=eps&s=${encodeURIComponent(term)}`,
-          ua,
-        );
-      } catch {
-        continue;
-      }
-      for (const [, candidate] of html.matchAll(
-        /https:\/\/animesonlinecc\.to\/anime\/([^/"?]+)/g,
-      )) {
-        if (!candidate || candidate === 'anime') continue;
-        const hit = await this.episodeLinkFromAnimePage(
-          candidate,
-          episodeNumber,
-          ua,
-        );
-        if (hit) return hit;
+    for (const host of SOURCE_HOSTS) {
+      const checkedCandidates = new Set<string>();
+      for (const term of this.searchTerms(animeSlug)) {
+        let html: string;
+        try {
+          html = await this.get(
+            `https://${host}/?post_type=eps&s=${encodeURIComponent(term)}`,
+            ua,
+          );
+        } catch {
+          continue;
+        }
+        for (const [, candidateHost, candidate] of html.matchAll(
+          /https?:\/\/(?:www\.)?(animesonlinecc\.to|animesonline\.cloud)\/anime\/([^/"?]+)/g,
+        )) {
+          if (candidateHost !== host || !candidate || candidate === 'anime')
+            continue;
+          if (
+            !term
+              .split(' ')
+              .every((word) => candidate.split('-').includes(word))
+          )
+            continue;
+          const key = `${candidateHost}/${candidate}`;
+          if (checkedCandidates.has(key)) continue;
+          if (checkedCandidates.size >= MAX_SEARCH_CANDIDATES) break;
+          checkedCandidates.add(key);
+          const hit = await this.episodeLinkFromAnimePage(
+            host,
+            candidate,
+            episodeNumber,
+            ua,
+          );
+          if (hit) return hit;
+        }
+        if (checkedCandidates.size >= MAX_SEARCH_CANDIDATES) break;
       }
     }
     return null;
@@ -152,22 +180,42 @@ export class AnimesonlineScrapeSource implements ScrapeSource {
   }
 
   private async episodeLinkFromAnimePage(
+    host: (typeof SOURCE_HOSTS)[number],
     slug: string,
     episodeNumber: number,
     ua: string,
   ): Promise<string | null> {
     let html: string;
     try {
-      html = await this.get(`https://animesonlinecc.to/anime/${slug}/`, ua);
+      html = await this.get(`https://${host}/anime/${slug}/`, ua);
     } catch {
       return null;
     }
-    const hit = [
-      ...html.matchAll(
-        /https:\/\/animesonlinecc\.to\/episodio\/[^"]*?-episodio-(\d+)\/?/gi,
-      ),
-    ].find((m) => Number(m[1]) === episodeNumber);
-    return hit?.[0] ?? null;
+    for (const [, href] of html.matchAll(/\bhref=["']([^"']+)["']/gi)) {
+      if (!href) continue;
+      try {
+        const url = new URL(this.decodeHtml(href), `https://${host}/`);
+        if (
+          !['http:', 'https:'].includes(url.protocol) ||
+          url.username !== '' ||
+          url.password !== '' ||
+          !SOURCE_HOSTS.some(
+            (sourceHost) =>
+              url.hostname === sourceHost ||
+              url.hostname === `www.${sourceHost}`,
+          )
+        ) {
+          continue;
+        }
+        const match = url.pathname.match(
+          /\/episodio\/[^/]+-episodio-(\d+)\/?$/i,
+        );
+        if (match && Number(match[1]) === episodeNumber) return url.href;
+      } catch {
+        continue;
+      }
+    }
+    return null;
   }
 
   async extractHttp(ctx: HttpExtractContext): Promise<ScrapeEpisodeResult> {
@@ -254,7 +302,7 @@ export class AnimesonlineScrapeSource implements ScrapeSource {
             'accept-language': 'pt-BR,pt;q=0.9',
             accept:
               'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8',
-            referer: 'https://animesonline.cloud/',
+            referer: `${new URL(url).origin}/`,
           },
         },
         15_000,

@@ -2,13 +2,14 @@
 
 ## Rotas
 
-| Rota | Auth | Função |
-|------|------|--------|
-| `GET /stream/source?anime=&episode=` | Pública | Resolve `videoUrl`, re-extrai da fonte se faltar, devolve `src` do proxy |
-| `GET /stream/token?anime=&episode=` | JWT | Gera token IP-bound (legado, exige login) |
-| `GET /stream/video?token=&expires=&ip=` | — | Proxy de vídeo via token (legado) |
-| `GET /embed/media?url=&referer=` | — | Proxy de mídia: injeta Referer/Origin/UA, stream Range 206 |
-| `GET /embed/proxy?url=` | — | Proxy de HTML (remove XFO/CSP p/ iframe) |
+| Rota                                                 | Auth    | Função                                                                                   |
+| ---------------------------------------------------- | ------- | ---------------------------------------------------------------------------------------- |
+| `GET /stream/source?anime=&episode=`                 | Pública | Resolve `videoUrl`, re-extrai da fonte se faltar, devolve `src` do proxy                 |
+| `GET /stream/source/async?anime=&episode=&sourceId=` | Pública | Lista fontes verificadas; `sourceId` opcional força uma delas sem alterar o vídeo padrão |
+| `GET /stream/token?anime=&episode=`                  | JWT     | Gera token IP-bound (legado, exige login)                                                |
+| `GET /stream/video?token=&expires=&ip=`              | —       | Proxy de vídeo via token (legado)                                                        |
+| `GET /embed/media?url=&referer=`                     | —       | Proxy de mídia: injeta Referer/Origin/UA, stream Range 206                               |
+| `GET /embed/proxy?url=`                              | —       | Proxy de HTML (remove XFO/CSP p/ iframe)                                                 |
 
 ## `/stream/source` (recomendado)
 
@@ -16,6 +17,11 @@
 2. Se vazio mas `embedUrl` aponta pra fonte com `extractHttp` → re-extrai mp4, persiste.
 3. Devolve `{ src }` = `/api/embed/media?url=<mp4>&referer=<fonte>`.
 4. Browser `<video src={src}>` → proxy busca CDN com anti-hotlinking → pipe Range.
+
+O retorno também inclui `availableSources` (fontes verificadas para o áudio do
+anime) e `selectedSourceId`. Sem seleção, o player usa o modo automático. Com
+`sourceId`, a extração fica isolada nesse adapter; jobs e cache não compartilham
+o resultado automático, e a URL escolhida não substitui `Episode.videoUrl`.
 
 Sem login, sem token client-side.
 

@@ -1650,8 +1650,11 @@ describe('ScrapeService (cobertura de recuperação)', () => {
     it('refreshTrustedMediaHosts carrega os hosts do Episode.videoUrl', async () => {
       const prisma = makePrisma();
       prisma.$queryRaw = jest.fn(async () => [
-        { host: 'media-limit-xr8a2.peliculaplay.com' },
-        { host: 'data-limit-c.solo-latino.com' },
+        {
+          host: 'media-limit-xr8a2.peliculaplay.com',
+          mediaHostVerifiedAt: null,
+        },
+        { host: 'data-limit-c.solo-latino.com', mediaHostVerifiedAt: null },
       ]);
       const svc = new ScrapeService(
         makeSource('meusanimes', ['meusanimes.io']) as any,
@@ -1668,6 +1671,30 @@ describe('ScrapeService (cobertura de recuperação)', () => {
         true,
       );
       expect(isTrustedMediaHost('data-limit-c.solo-latino.com')).toBe(true);
+    });
+
+    it('restaura a confiança temporária sem renovar seu vencimento', async () => {
+      const verifiedAt = new Date();
+      const prisma = makePrisma();
+      prisma.$queryRaw = jest.fn(async () => [
+        { host: 'cdn-manual.example', mediaHostVerifiedAt: verifiedAt },
+      ]);
+      const svc = new ScrapeService(
+        makeSource('meusanimes', ['meusanimes.io']) as any,
+        makeSource('animesonline', ['animesonline.cloud']) as any,
+        prisma as any,
+        makeHealth() as any,
+        makeMetrics() as any,
+        { acquireContext: jest.fn() } as any,
+      );
+
+      await svc.refreshTrustedMediaHosts();
+      expect(isTrustedMediaHost('cdn-manual.example')).toBe(true);
+
+      jest.useFakeTimers();
+      jest.setSystemTime(verifiedAt.getTime() + 24 * 60 * 60_000);
+      expect(isTrustedMediaHost('cdn-manual.example')).toBe(false);
+      jest.useRealTimers();
     });
 
     it('refreshTrustedMediaHosts engole falha do banco', async () => {
@@ -1689,7 +1716,9 @@ describe('ScrapeService (cobertura de recuperação)', () => {
 
     it('onModuleInit aquece sem bloquear', () => {
       const prisma = makePrisma();
-      prisma.$queryRaw = jest.fn(async () => [{ host: 'a.com' }]);
+      prisma.$queryRaw = jest.fn(async () => [
+        { host: 'a.com', mediaHostVerifiedAt: null },
+      ]);
       const svc = new ScrapeService(
         makeSource('meusanimes', ['meusanimes.io']) as any,
         makeSource('animesonline', ['animesonline.cloud']) as any,
@@ -1723,7 +1752,7 @@ describe('ScrapeService (cobertura de recuperação)', () => {
       await svc.scrapeEpisodeVideo(
         'https://meusanimes.io/a/cdn-trust',
         undefined,
-        false,
+        true,
       );
 
       // makeSource devolve https://cdn.meusanimes.test/v.mp4: o host tem de ficar

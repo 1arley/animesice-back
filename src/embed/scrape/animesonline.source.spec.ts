@@ -339,20 +339,22 @@ describe('AnimesonlineScrapeSource', () => {
       ).resolves.toBeNull();
     });
 
-    it('templateUrls e resolveEpisodeUrls combinam templates e URL resolvida da listagem', async () => {
+    it('combina os templates com uma URL resolvida fora deles', async () => {
       jest
         .spyOn(source, 'resolveEpisodeUrl')
         .mockResolvedValueOnce(
-          'https://animesonlinecc.to/episodio/witch-watch-episodio-3/',
+          'https://animesonlinecc.to/episodio/witch-watch-episodio-extra-3/',
         );
       const urls = await source.resolveEpisodeUrls({
         animeSlug: 'witch-watch-dublado',
         episodeNumber: 3,
       });
       expect(urls).toEqual([
-        'https://animesonline.cloud/episodio/witch-watch-dublado-episodio-3',
-        'https://animesonline.cloud/episodio/witch-watch-episodio-3',
+        'https://animesonlinecc.to/episodio/witch-watch-dublado-episodio-3/',
         'https://animesonlinecc.to/episodio/witch-watch-episodio-3/',
+        'https://animesonline.cloud/episodio/witch-watch-dublado-episodio-3/',
+        'https://animesonline.cloud/episodio/witch-watch-episodio-3/',
+        'https://animesonlinecc.to/episodio/witch-watch-episodio-extra-3/',
       ]);
 
       jest
@@ -364,7 +366,28 @@ describe('AnimesonlineScrapeSource', () => {
         ua: UA,
       });
       expect(fallbackOnly).toEqual([
-        'https://animesonline.cloud/episodio/witch-watch-episodio-1',
+        'https://animesonlinecc.to/episodio/witch-watch-episodio-1/',
+        'https://animesonline.cloud/episodio/witch-watch-episodio-1/',
+      ]);
+    });
+
+    it('não duplica URL resolvida que já está nos templates', async () => {
+      jest
+        .spyOn(source, 'resolveEpisodeUrl')
+        .mockResolvedValueOnce(
+          'https://animesonlinecc.to/episodio/witch-watch-episodio-3/',
+        );
+
+      await expect(
+        source.resolveEpisodeUrls({
+          animeSlug: 'witch-watch-dublado',
+          episodeNumber: 3,
+        }),
+      ).resolves.toEqual([
+        'https://animesonlinecc.to/episodio/witch-watch-dublado-episodio-3/',
+        'https://animesonlinecc.to/episodio/witch-watch-episodio-3/',
+        'https://animesonline.cloud/episodio/witch-watch-dublado-episodio-3/',
+        'https://animesonline.cloud/episodio/witch-watch-episodio-3/',
       ]);
     });
   });

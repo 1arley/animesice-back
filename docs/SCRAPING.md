@@ -5,7 +5,7 @@
 | Adapter | Host | HTTP puro | Playwright |
 |---------|------|-----------|------------|
 | `meusanimes.source.ts` | meusanimes.blog | ✅ `extractHttp` | fallback Chromium (tokens Blogger) |
-| `animesonline.source.ts` | animesonline.cloud | ✅ `extractHttp` | fallback genérico |
+| `animesonline.source.ts` | animesonlinecc.to, animesonline.cloud | ✅ `extractHttp` | fallback genérico |
 | `animesdigital.source.ts` | animesdigital.org | ✅ `extractHttp` | fallback genérico |
 
 ## Scraper Rust (binário único)
@@ -16,7 +16,7 @@
 | Fonte | Host reconhecido | Env | Modo |
 |-------|------------------|-----|------|
 | meusanimes | `meusanimes.blog`, `*.meusdoramas.club` | `MEUSANIMES_RUST_BIN` | `MEUSANIMES_RUST_MODE` |
-| animesonline | `animesonline.cloud`, subdomínios | `ANIMESONLINE_RUST_BIN` | `ANIMESONLINE_RUST_MODE` |
+| animesonline | `animesonlinecc.to`, `animesonline.cloud` e subdomínios | `ANIMESONLINE_RUST_BIN` | `ANIMESONLINE_RUST_MODE` |
 | animesdigital | `animesdigital.org`, subdomínios | `ANIMESDIGITAL_RUST_BIN` | `ANIMESDIGITAL_RUST_MODE` |
 
 `MODE=primary` (default) usa o Rust quando ele devolve resultado; vazio, erro ou
@@ -31,16 +31,20 @@ candidatas e quem valida é o `streaming.service`, que probe antes de servir.
 
 Check local do binário: `cd scraper-rust && cargo test`.
 
-Hosts bloqueados para IP de datacenter (medido na VPS em 28/09/2026): `animefire.io`
-e `animesonlinecc.to` → 403 Cloudflare WAF; `animesonline.lat` responde 200 mas não
-tem servidores para os animes do catálogo.
+`animesonlinecc.to` retornou 403 na VPS em 28/09/2026. Em 27/10/2026, a amostra
+local encontrou `.cloud` com episódio em HTTP 200 e o caminho equivalente em `.cc`
+com 404; disponibilidade varia por origem. O adapter tenta os dois hosts, mantendo
+o `.cc` primeiro para links já persistidos. HTTP 200 não confirma que o vídeo toca.
+`animefire.io` segue inativo; `animesonline.lat` responde 200 mas não tem servidores
+para os animes do catálogo.
 
 ## animesonline
 
-`animesonline.cloud` validado na VPS em 28/09/2026: páginas em HTTP 200 sem
-challenge (0,2–2,4s), com o player renderizado server-side. Padrão de episódio:
-`/episodio/<slug>-episodio-<n>` (sem barra final). Slugs do WordPress próprio podem
-divergir dos do meusanimes — a URL é candidata; probe 404 descarta antes do fetch.
+Os hosts `.cloud` e `.cc` são tentados para a mesma variante de slug, nessa ordem.
+As medições variaram entre a VPS e o ambiente local, então HTTP 404 de um host não
+encerra a busca. Padrão de episódio: `/episodio/<slug>-episodio-<n>` (barra final
+opcional). Slugs do WordPress podem divergir dos do meusanimes; o resolver procura
+os links na página do anime e confirma o número exato do episódio.
 
 Sem browser no caminho feliz: 1 fetch + até 4 probes de liveness.
 

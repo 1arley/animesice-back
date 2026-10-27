@@ -462,20 +462,23 @@ model AnimeSource {
 }
 
 model EpisodeSource {
-  id          String    @id @default(uuid())
-  episodeId   String
-  episode     Episode   @relation(fields: [episodeId], references: [id], onDelete: Cascade)
-  sourceId    String
-  pageUrl     String
-  externalKey String?
-  audio       AudioType
-  verifiedAt  DateTime?
-  lastError   String?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id                  String    @id @default(uuid())
+  episodeId           String
+  episode             Episode   @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  sourceId            String
+  pageUrl             String
+  externalKey         String?
+  audio               AudioType
+  verifiedAt          DateTime?
+  lastError           String?
+  mediaHost           String?
+  mediaHostVerifiedAt DateTime?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
   @@unique([episodeId, sourceId])
   @@index([sourceId, externalKey])
+  @@index([mediaHostVerifiedAt])
 }
 
 model Genre {
@@ -840,6 +843,7 @@ model StreamExtractionJob {
   animeSlug     String
   episodeNumber Int
   season        Int
+  sourceId      String?
   status        String    @default("pending")
   videoUrl      String?
   playerEmbed   String?

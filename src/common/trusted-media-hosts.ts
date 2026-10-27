@@ -18,8 +18,10 @@
  * interno escolhido por ele.
  */
 
-/** host (lowercase, sem porta) -> true. */
-const trustedHosts = new Set<string>();
+export const MEDIA_HOST_TRUST_TTL_MS = 24 * 60 * 60_000;
+
+/** host (lowercase, sem porta) -> expiry timestamp, or null for durable trust. */
+const trustedHosts = new Map<string, number | null>();
 
 function normalize(input: string): string | null {
   const raw = input.trim().toLowerCase();
@@ -34,23 +36,48 @@ function normalize(input: string): string | null {
 }
 
 /** Registra o host de uma URL de mídia que o scraper acabou de validar. */
-export function trustMediaHost(urlOrHost: string): void {
+export function trustMediaHost(
+  urlOrHost: string,
+  expiresAt?: Date | number | null,
+): void {
   const host = normalize(urlOrHost);
-  if (host) trustedHosts.add(host);
+  if (!host) return;
+  const expiry =
+    expiresAt instanceof Date ? expiresAt.getTime() : (expiresAt ?? null);
+  const current = trustedHosts.get(host);
+  if (
+    current === null ||
+    (expiry !== null && (!Number.isFinite(expiry) || expiry <= Date.now()))
+  ) {
+    return;
+  }
+  if (expiry === null || current === undefined || expiry > current) {
+    trustedHosts.set(host, expiry);
+  }
 }
 
 /** Registra vários de uma vez (uma extração pode trazer várias qualidades). */
-export function trustMediaHosts(urls: Iterable<string>): void {
-  for (const url of urls) trustMediaHost(url);
+export function trustMediaHosts(
+  urls: Iterable<string>,
+  expiresAt?: Date | number | null,
+): void {
+  for (const url of urls) trustMediaHost(url, expiresAt);
 }
 
 export function isTrustedMediaHost(host: string): boolean {
   const normalized = normalize(host);
-  return normalized !== null && trustedHosts.has(normalized);
+  if (normalized === null || !trustedHosts.has(normalized)) return false;
+  const expiry = trustedHosts.get(normalized);
+  if (expiry !== null && expiry !== undefined && expiry <= Date.now()) {
+    trustedHosts.delete(normalized);
+    return false;
+  }
+  return true;
 }
 
 /** Quantidade de hosts confiáveis (métrica/diagnóstico). */
 export function trustedMediaHostCount(): number {
+  for (const host of trustedHosts.keys()) isTrustedMediaHost(host);
   return trustedHosts.size;
 }
 

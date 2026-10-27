@@ -27,6 +27,7 @@ const RUST_PAGE_HOSTS: &[&str] = &[
     "meusanimes.blog",
     "meusdoramas.club",
     "animesonline.cloud",
+    "animesonlinecc.to",
     "animesdigital.org",
 ];
 
@@ -226,6 +227,7 @@ fn source_matches_host(source_id: &str, url: &str) -> bool {
         ("meusanimes", "meusanimes.blog") => true,
         ("meusanimes", host) if host.ends_with(".meusdoramas.club") => true,
         ("animesonline", "animesonline.cloud") => true,
+        ("animesonline", "animesonlinecc.to") => true,
         ("animesdigital", "animesdigital.org") => true,
         _ => false,
     }
