@@ -1,3 +1,15 @@
+# [1.58.0](https://github.com/1arley/animesice-back/compare/v1.57.0...v1.58.0) (2026-10-27)
+
+
+### Bug Fixes
+
+* **embed:** preserve trailing slash in incvideo1 CDN URLs and allow redirect hops to inherit trust ([ffd32c3](https://github.com/1arley/animesice-back/commit/ffd32c3d6f99b40dc1a711971090df935f485320))
+
+
+### Features
+
+* **gacha:** include details in box rewards ([c452cdc](https://github.com/1arley/animesice-back/commit/c452cdc2acccd45a4b24b9bd0e7d4cc577cd9c1d))
+
 # [1.57.0](https://github.com/1arley/animesice-back/compare/v1.56.0...v1.57.0) (2026-10-24)
 
 
