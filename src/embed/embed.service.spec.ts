@@ -314,6 +314,29 @@ describe('EmbedService (proxy HTML/mídia + anti-SSRF)', () => {
     ).rejects.toThrow(/Destino bloqueado/);
   });
 
+  it('segue redirect para host fora da allowlist herdando confiança do hop 0', async () => {
+    // CDN rotativa: get_file (host permitido) redireciona p/ subdomínio novo
+    // (filevideo1.com) que não está em EMBED_ALLOWED_HOSTS nem no banco.
+    mockedLookup.mockResolvedValue([{ address: PUBLIC_IP }]);
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce(
+        new Response(null, {
+          status: 302,
+          headers: { location: 'https://a82.filevideo1.com/video.mp4' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response('video', {
+          status: 200,
+          headers: { 'content-type': 'video/mp4' },
+        }),
+      );
+    const res = await service.proxyMedia(
+      'https://cdn.animefire.io/get_file/x.mp4',
+    );
+    expect(res.status).toBe(200);
+  });
+
   it('aborta após o limite de redirecionamentos', async () => {
     (global.fetch as jest.Mock).mockResolvedValue(
       new Response(null, {

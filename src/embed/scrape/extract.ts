@@ -14,7 +14,8 @@ export function keepVideoUrls(urls: string[]): string[] {
   return urls.filter(
     (u) =>
       !isNoVideoUrl(u) &&
-      (/\.mp4($|\?|#)/i.test(u) || /\.m3u8($|\?|#)/i.test(u)),
+      // Barra final faz parte da URL (CDN incvideo1 responde 404 sem ela).
+      (/\.mp4($|\/|\?|#)/i.test(u) || /\.m3u8($|\/|\?|#)/i.test(u)),
   );
 }
 

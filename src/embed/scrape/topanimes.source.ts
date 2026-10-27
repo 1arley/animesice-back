@@ -30,8 +30,12 @@ const PLAYER_HOST_RE =
 const EMBED_RE =
   /https?:\/\/(?:www\.)?(csst|fsst|incvideo1)\.online\/embed\/(\d+)/gi;
 
-/** `file:"[360p]https://...360p.mp4/,[720p]https://...720p.mp4/,[1080p]..."`. */
-const EMBED_FILE_RE = /\[(\d{3,4})p\](https?:\/\/[^\s"',[\]]+\.mp4)/gi;
+/**
+ * `file:"[360p]https://...360p.mp4/,[720p]https://...720p.mp4/,[1080p]..."`.
+ * A barra final é OBRIGATÓRIA p/ a CDN (get_file responde 404 sem ela,
+ * 302→206 com ela) — o grupo captura `...mp4/` inteiro, não só até `.mp4`.
+ */
+const EMBED_FILE_RE = /\[(\d{3,4})p\](https?:\/\/[^\s"',[\]]+?\.mp4\/?)/gi;
 
 /**
  * Espelhos que só entregam a mídia com browser de verdade (headed). Medido em
@@ -331,7 +335,9 @@ export class TopanimesScrapeSource implements ScrapeSource {
     for (const [, label, url] of html.matchAll(EMBED_FILE_RE)) {
       const resolution = Number(label);
       if (!byResolution.has(resolution))
-        byResolution.set(resolution, url!.replace(/\/$/, ''));
+        // CDN do player exige a barra final: sem ela o get_file responde 404
+        // (302→206 com barra). Nunca normalizar removendo-a.
+        byResolution.set(resolution, url!);
     }
     const candidates = [...byResolution.entries()]
       .sort((a, b) => b[0] - a[0])

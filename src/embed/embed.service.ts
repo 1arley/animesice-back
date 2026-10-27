@@ -537,7 +537,11 @@ export class EmbedService {
     let current = url;
 
     for (let i = 0; i <= MAX_REDIRECTS; i++) {
-      const normalized = this.normalizeUrl(current);
+      // Redirects da CDN rotativa apontam p/ hosts novos (incvideo1.online ->
+      // a82.filevideo1.com). Confiança por procedência: o 1º hop já passou na
+      // allowlist (host extraído/probeado pelo scraper), os hops seguintes
+      // herdam isso — isBlockedHostname (SSRF) continua em TODOS os hops.
+      const normalized = this.normalizeUrl(current, i > 0);
       const resolution = await resolveSafeUrl(normalized);
       const dispatcher = pinnedDispatcher(resolution);
 
@@ -588,8 +592,8 @@ export class EmbedService {
     return this.normalizeUrl(raw);
   }
 
-  /** Normaliza/valida URL — exposto p/ controller reusar no proxy de midia. */
-  normalizeUrl(raw: string): string {
+  /** Normaliza/valida URL — exposto p/ controller reusar no proxy de mídia. */
+  normalizeUrl(raw: string, skipHostCheck = false): string {
     if (!raw || typeof raw !== 'string') {
       throw new BadRequestException('URL ausente ou inválida.');
     }
@@ -637,7 +641,9 @@ export class EmbedService {
       throw new BadRequestException(BLOCKED_MESSAGE);
     }
 
-    if (!this.isHostAllowed(host)) {
+    // skipHostCheck: hops de redirect herdam a confiança do hop 0 (que já
+    // passou na allowlist). isBlockedHostname (SSRF) acima roda em todos.
+    if (!skipHostCheck && !this.isHostAllowed(host)) {
       throw new BadRequestException('Host de destino não permitido.');
     }
 

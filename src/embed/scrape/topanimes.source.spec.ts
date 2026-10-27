@@ -264,9 +264,9 @@ describe('TopanimesScrapeSource', () => {
     });
 
     expect(result.videos).toEqual([
-      'https://www.incvideo1.online/get_file/9/ccc/847000/847846/847846.mp4',
-      'https://www.incvideo1.online/get_file/9/bbb/847000/847846/847846_720p.mp4',
-      'https://www.incvideo1.online/get_file/9/aaa/847000/847846/847846_360p.mp4',
+      'https://www.incvideo1.online/get_file/9/ccc/847000/847846/847846.mp4/',
+      'https://www.incvideo1.online/get_file/9/bbb/847000/847846/847846_720p.mp4/',
+      'https://www.incvideo1.online/get_file/9/aaa/847000/847846/847846_360p.mp4/',
     ]);
     expect(result.cloudflare).toBe(false);
   });
@@ -286,8 +286,8 @@ describe('TopanimesScrapeSource', () => {
     });
 
     expect(result.videos).toEqual([
-      'https://www.incvideo1.online/get_file/9/ccc/847000/847846/847846.mp4',
-      'https://www.incvideo1.online/get_file/9/bbb/847000/847846/847846_720p.mp4',
+      'https://www.incvideo1.online/get_file/9/ccc/847000/847846/847846.mp4/',
+      'https://www.incvideo1.online/get_file/9/bbb/847000/847846/847846_720p.mp4/',
     ]);
   });
 
