@@ -1,3 +1,10 @@
+# [1.59.0](https://github.com/1arley/animesice-back/compare/v1.58.0...v1.59.0) (2026-10-27)
+
+
+### Features
+
+* **streaming:** add source selection and persisted media host trust ([135d19c](https://github.com/1arley/animesice-back/commit/135d19c564fa1afdaea9a7f95375e8874c5aca92))
+
 # [1.58.0](https://github.com/1arley/animesice-back/compare/v1.57.0...v1.58.0) (2026-10-27)
 
 
