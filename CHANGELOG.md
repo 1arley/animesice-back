@@ -1,3 +1,10 @@
+# [1.60.0](https://github.com/1arley/animesice-back/compare/v1.59.0...v1.60.0) (2026-10-28)
+
+
+### Features
+
+* **gacha:** conceder carta com qualidade e foil escolhidos ([394a47f](https://github.com/1arley/animesice-back/commit/394a47f238d409058bcc7067bcc84a59e45472c5))
+
 # [1.59.0](https://github.com/1arley/animesice-back/compare/v1.58.0...v1.59.0) (2026-10-27)
 
 
