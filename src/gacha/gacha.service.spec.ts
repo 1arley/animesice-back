@@ -364,6 +364,81 @@ describe('GachaService', () => {
     service = module.get<GachaService>(GachaService);
   });
 
+  describe('adminGrantUserCard', () => {
+    const grantedCard = {
+      id: 'w1',
+      rarity: 'EPICA',
+      editionCounter: 3,
+    };
+
+    beforeEach(() => {
+      mockPrisma.card.update.mockResolvedValue({ editionCounter: 4 });
+      mockPrisma.userCard.create.mockResolvedValue({
+        id: 'p1',
+        card: { ...cardComum, name: 'Card Sorteada' },
+        foil: 'GOLD',
+        value: 1_000,
+      });
+    });
+
+    it('concede a carta com o foil escolhido pelo admin', async () => {
+      mockPrisma.card.findUnique.mockResolvedValue(grantedCard);
+
+      await service.adminGrantUserCard('u1', 'w1', { foil: 'GOLD' });
+
+      expect(mockPrisma.userCard.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ cardId: 'w1', foil: 'GOLD' }),
+        }),
+      );
+    });
+
+    it('sorteia apenas cartas ativas da qualidade pedida', async () => {
+      mockPrisma.card.count.mockResolvedValue(7);
+      mockPrisma.card.findMany.mockResolvedValue([grantedCard]);
+
+      await service.adminGrantUserCard('u1', undefined, {
+        random: true,
+        rarity: 'EPICA',
+      });
+
+      expect(mockPrisma.card.count).toHaveBeenCalledWith({
+        where: { status: 'ACTIVE', rarity: 'EPICA' },
+      });
+      expect(mockPrisma.card.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { status: 'ACTIVE', rarity: 'EPICA' },
+          take: 1,
+        }),
+      );
+    });
+
+    it('sem carta nem sorteio, recusa a concessão', async () => {
+      await expect(
+        service.adminGrantUserCard('u1', undefined, { random: false }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('rejeita foil e qualidade fora do enum', async () => {
+      mockPrisma.card.findUnique.mockResolvedValue(grantedCard);
+
+      await expect(
+        service.adminGrantUserCard('u1', 'w1', { foil: 'HOLOGRAFICA' }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      await expect(
+        service.adminGrantUserCard('u1', 'w1', { rarity: 'SUPER' }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('rejeita carta cuja qualidade difere da pedida', async () => {
+      mockPrisma.card.findUnique.mockResolvedValue(grantedCard);
+
+      await expect(
+        service.adminGrantUserCard('u1', 'w1', { rarity: 'COMUM' }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+  });
+
   describe('adminDeleteSkin', () => {
     it('removes pending offers and the unused skin in one serializable transaction', async () => {
       const operations: string[] = [];

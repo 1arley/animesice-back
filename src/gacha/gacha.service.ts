@@ -4196,15 +4196,47 @@ export class GachaService {
       }));
   }
 
-  async adminGrantUserCard(userId: string, cardId: string) {
-    const card = await this.prisma.card.findUnique({
-      where: { id: cardId },
-      select: { id: true, rarity: true, editionCounter: true },
-    });
+  async adminGrantUserCard(
+    userId: string,
+    cardId?: string,
+    options: { rarity?: string; foil?: string; random?: boolean } = {},
+  ) {
+    if (!cardId && !options.random) {
+      throw new BadRequestException(
+        'Informe a carta ou peça um sorteio (random: true).',
+      );
+    }
+    // Qualidade e foil sao escolha do admin: valida no limite (string do body).
+    const rarity = options.rarity as GachaTier | undefined;
+    if (
+      options.rarity &&
+      !(GACHA_TIERS as readonly string[]).includes(options.rarity)
+    ) {
+      throw new BadRequestException('Qualidade inválida.');
+    }
+    const foil = options.foil as GachaFoil | undefined;
+    if (
+      options.foil &&
+      !(GACHA_FOILS as readonly string[]).includes(options.foil)
+    ) {
+      throw new BadRequestException('Foil inválido.');
+    }
+
+    const card = cardId
+      ? await this.prisma.card.findUnique({
+          where: { id: cardId },
+          select: { id: true, rarity: true, editionCounter: true },
+        })
+      : await this.pickRandomGrantCard(rarity);
     if (!card) throw new NotFoundException('Carta não encontrada.');
+    if (rarity && card.rarity !== rarity) {
+      throw new BadRequestException(
+        'A carta escolhida não é da qualidade selecionada.',
+      );
+    }
 
     const condition = Math.random();
-    const foil = pickWeighted(this.config.foilWeights);
+    const chosenFoil = foil ?? pickWeighted(this.config.foilWeights);
     return this.prisma.$transaction(async (tx) => {
       const counter = await tx.card.update({
         where: { id: card.id },
@@ -4217,12 +4249,12 @@ export class GachaService {
           originalUserId: userId,
           cardId: card.id,
           condition,
-          foil,
+          foil: chosenFoil,
           edition: counter.editionCounter,
           value: cardValue(
             card.rarity as GachaTier,
             condition,
-            foil,
+            chosenFoil,
             counter.editionCounter,
             this.config.baseValue as Record<GachaTier, number>,
             this.config.foilMult as Record<GachaFoil, number>,
@@ -4230,7 +4262,7 @@ export class GachaService {
           rankedValue: cardValue(
             card.rarity as GachaTier,
             condition,
-            foil,
+            chosenFoil,
             counter.editionCounter,
             this.config.baseValue as Record<GachaTier, number>,
             this.config.foilMult as Record<GachaFoil, number>,
@@ -4239,6 +4271,35 @@ export class GachaService {
         select: PULL_SELECT,
       });
     });
+  }
+
+  /**
+   * Sorteia uma carta ativa do pool. Com `rarity`, só entra no sorteio quem é
+   * da qualidade pedida; sem ela, qualquer carta ativa entra. O offset aleatorio
+   * evita carregar o pool inteiro so para escolher uma linha.
+   */
+  private async pickRandomGrantCard(rarity?: GachaTier) {
+    const where: Prisma.CardWhereInput = {
+      status: 'ACTIVE',
+      ...(rarity ? { rarity } : {}),
+    };
+    const total = await this.prisma.card.count({ where });
+    if (total === 0) {
+      throw new NotFoundException(
+        rarity
+          ? 'Nenhuma carta ativa com essa qualidade.'
+          : 'Nenhuma carta ativa no pool.',
+      );
+    }
+    const skip = Math.floor(Math.random() * total);
+    const [card] = await this.prisma.card.findMany({
+      where,
+      select: { id: true, rarity: true, editionCounter: true },
+      orderBy: { id: 'asc' },
+      skip,
+      take: 1,
+    });
+    return card;
   }
 
   adminDeleteUserCard(id: string) {

@@ -292,6 +292,7 @@ describe('GachaController', () => {
       expect(m.gachaService.adminGrantUserCard).toHaveBeenCalledWith(
         'u1',
         'c1',
+        { rarity: undefined, foil: undefined, random: undefined },
       );
       expect(m.gachaService.adminDeleteUserCard).toHaveBeenCalledWith('p1');
       expect(m.gachaService.adminResetRoll).toHaveBeenCalledWith('u1');

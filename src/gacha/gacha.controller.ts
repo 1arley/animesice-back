@@ -1180,9 +1180,19 @@ export class GachaController {
   @Audit('GRANT_GACHA_CARD', 'UserCard')
   adminGrantUserCard(
     @Param('userId') userId: string,
-    @Body() body: { cardId: string },
+    @Body()
+    body: {
+      cardId?: string;
+      rarity?: string;
+      foil?: string;
+      random?: boolean;
+    },
   ) {
-    return this.gachaService.adminGrantUserCard(userId, body.cardId);
+    return this.gachaService.adminGrantUserCard(userId, body.cardId, {
+      rarity: body.rarity,
+      foil: body.foil,
+      random: body.random,
+    });
   }
 
   @Delete('admin/user-cards/:id')

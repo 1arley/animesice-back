@@ -8,6 +8,7 @@ export default tseslint.config(
   {
     ignores: [
       'eslint.config.mjs',
+      '.agents/**',
       'dist/',
       'coverage/',
       'commitlint.config.js',
