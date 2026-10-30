@@ -1,3 +1,10 @@
+## [1.61.1](https://github.com/1arley/animesice-back/compare/v1.61.0...v1.61.1) (2026-10-30)
+
+
+### Bug Fixes
+
+* **gacha:** use computed card value for reroll cost instead of stale stored value ([f1a6b99](https://github.com/1arley/animesice-back/commit/f1a6b997c66c12e52f3ca1f74bd650889bc7ddb7))
+
 # [1.61.0](https://github.com/1arley/animesice-back/compare/v1.60.0...v1.61.0) (2026-10-30)
 
 
