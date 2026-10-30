@@ -2054,8 +2054,8 @@ describe('GachaService', () => {
         condition: 0.11,
         foil: 'INK',
         edition: 42,
-        value: 7_200,
-        valueOverride: 7_200,
+        value: 960,
+        valueOverride: 960,
         obtainedAt: new Date(),
         user: { id: 'u1', name: 'U', userName: 'u', avatar: null },
         card: { ...cardComum, rarity: 'LENDARIA', anime: null },
@@ -2093,11 +2093,11 @@ describe('GachaService', () => {
 
       expect(mockPrisma.user.update).toHaveBeenCalledWith({
         where: { id: 'u1' },
-        data: { crystalBalance: { decrement: 8_280 } },
+        data: { crystalBalance: { decrement: 1_104 } },
       });
       expect(mockPrisma.crystalEvent.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ delta: -8_280, type: 'SPEND' }),
+          data: expect.objectContaining({ delta: -1_104, type: 'SPEND' }),
         }),
       );
       expect(pull.conditionLabel).toBeDefined();
@@ -2150,7 +2150,7 @@ describe('GachaService', () => {
       mockPrisma.userCard.findFirst.mockResolvedValue({
         id: 'p1',
         condition: 0.5,
-        foil: 'NORMAL',
+        foil: 'INK',
         edition: 42,
         value: 100,
         card: cardComum,
@@ -2168,7 +2168,7 @@ describe('GachaService', () => {
       );
       expect(mockPrisma.user.update).toHaveBeenCalledWith({
         where: { id: 'u1' },
-        data: { crystalBalance: { decrement: 115 } },
+        data: { crystalBalance: { decrement: 138 } },
       });
       expect(mockPrisma.userCard.update).not.toHaveBeenCalled();
     });
@@ -2178,7 +2178,7 @@ describe('GachaService', () => {
       mockPrisma.userCard.findFirst.mockResolvedValue({
         id: 'p1',
         condition: 0.071, // NM (conditionMult 2)
-        foil: 'NORMAL',
+        foil: 'INK',
         edition: 42,
         value: 100,
         obtainedAt: new Date(),
@@ -2199,7 +2199,7 @@ describe('GachaService', () => {
         expect(mockPrisma.user.update).toHaveBeenCalledWith(
           expect.objectContaining({
             data: expect.objectContaining({
-              crystalBalance: { decrement: 115 },
+              crystalBalance: { decrement: 230 },
             }),
           }),
         );
