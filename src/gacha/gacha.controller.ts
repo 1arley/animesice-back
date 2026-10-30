@@ -1185,6 +1185,7 @@ export class GachaController {
       cardId?: string;
       rarity?: string;
       foil?: string;
+      condition?: string;
       random?: boolean;
     },
   ) {
@@ -1192,6 +1193,7 @@ export class GachaController {
       rarity: body.rarity,
       foil: body.foil,
       random: body.random,
+      ...(body.condition ? { condition: body.condition } : {}),
     });
   }
 
