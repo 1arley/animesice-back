@@ -1,3 +1,16 @@
+# [1.61.0](https://github.com/1arley/animesice-back/compare/v1.60.0...v1.61.0) (2026-10-30)
+
+
+### Bug Fixes
+
+* **gacha:** reroll cost is now 15% above card value instead of 15% of tier floor ([6dac3b9](https://github.com/1arley/animesice-back/commit/6dac3b932b1c6d16d17220e05fc2141f64970cd9))
+* **gacha:** satisfy tsc strictness for adminGrantUserCard condition lookup ([f5b8ac2](https://github.com/1arley/animesice-back/commit/f5b8ac27dc7621476ba3df8ba8f5d7c4877aa506))
+
+
+### Features
+
+* **gacha:** allow admin grant to specify card condition ([be45782](https://github.com/1arley/animesice-back/commit/be4578273e9d4adabe91b5e2e2dde48e98f0c729))
+
 # [1.60.0](https://github.com/1arley/animesice-back/compare/v1.59.0...v1.60.0) (2026-10-28)
 
 
