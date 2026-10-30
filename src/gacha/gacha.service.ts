@@ -1432,11 +1432,8 @@ export class GachaService {
           );
       }
       const cost = Math.max(
-        1,
-        Math.round(
-          economy.card_floors[card.card.rarity as GachaTier]! *
-            economy.reroll_cost_pct,
-        ),
+        card.value + 1,
+        Math.round(card.value * (1 + economy.reroll_cost_pct)),
       );
       await this.changeCrystals(
         tx,

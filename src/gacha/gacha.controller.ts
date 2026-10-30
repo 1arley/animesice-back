@@ -318,7 +318,7 @@ export class GachaController {
   @UseGuards(JwtAuthGuard, VerifiedGuard)
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({
-    summary: 'Reroll de condition/foil (10% do value, pode piorar)',
+    summary: 'Reroll de condition/foil (custa acima do valor, pode piorar)',
   })
   reroll(@Req() req: AuthenticatedRequest, @Body() dto: RerollGachaCardDto) {
     return this.gachaService.reroll(

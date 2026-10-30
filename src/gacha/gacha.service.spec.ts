@@ -2048,16 +2048,17 @@ describe('GachaService', () => {
       expect(mockPrisma.user.update).not.toHaveBeenCalled();
     });
 
-    it('reroll cobra 15% do piso do tier, troca condition/foil e reprecifica', async () => {
+    it('reroll cobra 15% acima do valor atual, troca condition/foil e reprecifica', async () => {
       const owned = {
         id: 'p1',
-        condition: 0.5,
-        foil: 'NORMAL',
+        condition: 0.11,
+        foil: 'INK',
         edition: 42,
-        value: 100,
+        value: 7_200,
+        valueOverride: 7_200,
         obtainedAt: new Date(),
         user: { id: 'u1', name: 'U', userName: 'u', avatar: null },
-        card: { ...cardComum, anime: null },
+        card: { ...cardComum, rarity: 'LENDARIA', anime: null },
       };
       owned.card.anime = null;
       mockPrisma.userCard.findFirst.mockResolvedValue(owned);
@@ -2092,11 +2093,11 @@ describe('GachaService', () => {
 
       expect(mockPrisma.user.update).toHaveBeenCalledWith({
         where: { id: 'u1' },
-        data: { crystalBalance: { decrement: 75 } },
+        data: { crystalBalance: { decrement: 8_280 } },
       });
       expect(mockPrisma.crystalEvent.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ delta: -75, type: 'SPEND' }),
+          data: expect.objectContaining({ delta: -8_280, type: 'SPEND' }),
         }),
       );
       expect(pull.conditionLabel).toBeDefined();
@@ -2167,7 +2168,7 @@ describe('GachaService', () => {
       );
       expect(mockPrisma.user.update).toHaveBeenCalledWith({
         where: { id: 'u1' },
-        data: { crystalBalance: { decrement: 75 } },
+        data: { crystalBalance: { decrement: 115 } },
       });
       expect(mockPrisma.userCard.update).not.toHaveBeenCalled();
     });
@@ -2198,7 +2199,7 @@ describe('GachaService', () => {
         expect(mockPrisma.user.update).toHaveBeenCalledWith(
           expect.objectContaining({
             data: expect.objectContaining({
-              crystalBalance: { decrement: 75 },
+              crystalBalance: { decrement: 115 },
             }),
           }),
         );
