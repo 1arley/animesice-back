@@ -4196,7 +4196,12 @@ export class GachaService {
   async adminGrantUserCard(
     userId: string,
     cardId?: string,
-    options: { rarity?: string; foil?: string; random?: boolean } = {},
+    options: {
+      rarity?: string;
+      foil?: string;
+      condition?: string;
+      random?: boolean;
+    } = {},
   ) {
     if (!cardId && !options.random) {
       throw new BadRequestException(
@@ -4218,6 +4223,19 @@ export class GachaService {
     ) {
       throw new BadRequestException('Foil inválido.');
     }
+    const conditionValues = {
+      POOR: 0.775,
+      PLAYED: 0.465,
+      EX: 0.265,
+      NM: 0.11,
+      MINT: 0.035,
+    } as const;
+    if (
+      options.condition &&
+      !Object.hasOwn(conditionValues, options.condition)
+    ) {
+      throw new BadRequestException('Condition inválida.');
+    }
 
     const card = cardId
       ? await this.prisma.card.findUnique({
@@ -4232,7 +4250,9 @@ export class GachaService {
       );
     }
 
-    const condition = Math.random();
+    const condition = options.condition
+      ? conditionValues[options.condition as keyof typeof conditionValues]
+      : Math.random();
     const chosenFoil = foil ?? pickWeighted(this.config.foilWeights);
     return this.prisma.$transaction(async (tx) => {
       const counter = await tx.card.update({
