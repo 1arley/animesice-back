@@ -1431,9 +1431,19 @@ export class GachaService {
             'Proteção de reroll não se aplica a cartas MINT.',
           );
       }
+      const currentValue =
+        card.valueOverride ??
+        cardValue(
+          card.card.rarity as GachaTier,
+          card.condition,
+          card.foil as GachaFoil,
+          card.edition,
+          economy.base_value,
+          economy.foil_mult,
+        );
       const cost = Math.max(
-        card.value + 1,
-        Math.round(card.value * (1 + economy.reroll_cost_pct)),
+        currentValue + 1,
+        Math.round(currentValue * (1 + economy.reroll_cost_pct)),
       );
       await this.changeCrystals(
         tx,

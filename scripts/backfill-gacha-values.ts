@@ -65,6 +65,16 @@ async function main() {
       c.condition,
       c.foil as GachaFoil,
       c.edition,
+      {
+        COMUM: 10,
+        INCOMUM: 25,
+        RARA: 60,
+        EPICA: 150,
+        LENDARIA: 400,
+        MITICA: 800,
+        GALACTICA: 1600,
+      },
+      { NORMAL: 1, HOLO: 3, GOLD: 10, INK: 10, PRISM: 5 },
     );
     if (expected === c.value) continue;
     if (changed.length < args.limit) {
