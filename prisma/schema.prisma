@@ -1447,6 +1447,14 @@ model GachaInventory {
   draconicaItems          Int    @default(0)
   sombriaDraconicaItems   Int    @default(0)
   protecao                Int    @default(0)
+  holoShards             Int    @default(0)
+  goldShards             Int    @default(0)
+  inkShards              Int    @default(0)
+  prismShards            Int    @default(0)
+  holoGems               Int    @default(0)
+  goldGems               Int    @default(0)
+  inkGems                Int    @default(0)
+  prismGems              Int    @default(0)
   user                    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 

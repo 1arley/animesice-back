@@ -24,6 +24,8 @@ import {
   GachaFoil,
   GachaTier,
   cardValue,
+  burnFragments,
+  FOIL_INVENTORY_FIELDS,
   conditionLabel,
   isEpicTier,
   pickWeighted,
@@ -1780,12 +1782,35 @@ export class GachaService {
     await this.expirePendingTrades();
     return this.prisma.$transaction(
       async (tx) => {
+        await tx.gachaInventory.upsert({
+          where: { userId },
+          create: { userId },
+          update: {},
+        });
+        try {
+          await tx.$queryRaw`SELECT "userId" FROM "GachaInventory" WHERE "userId" = ${userId} FOR UPDATE`;
+          await tx.$queryRaw`SELECT "id" FROM "UserCard" WHERE "id" = ${userCardId} AND "userId" = ${userId} FOR UPDATE`;
+        } catch (error) {
+          if (
+            error instanceof Prisma.PrismaClientKnownRequestError &&
+            (error.code === 'P2034' ||
+              (error.code === 'P2010' &&
+                error.message.includes('could not serialize access')))
+          ) {
+            throw new ConflictException(
+              'Conflito concorrente; tente novamente.',
+            );
+          }
+          throw error;
+        }
         const card = await tx.userCard.findFirst({
           where: { id: userCardId, userId, status: 'ACTIVE' },
           select: {
             id: true,
             value: true,
             edition: true,
+            condition: true,
+            foil: true,
             card: { select: { name: true, rarity: true } },
           },
         });
@@ -1831,6 +1856,16 @@ export class GachaService {
         }
 
         const payout = this.config.burnPayout[card.card.rarity as GachaTier];
+        let fragments: ReturnType<typeof burnFragments>;
+        try {
+          fragments = burnFragments(
+            card.condition,
+            card.card.rarity,
+            card.foil,
+          );
+        } catch {
+          throw new BadRequestException('Foil ou raridade inválida na carta.');
+        }
         await this.changeCrystals(
           tx,
           userId,
@@ -1839,6 +1874,18 @@ export class GachaService {
           userCardId,
           `Queima ${card.card.name} #${card.edition}`,
         );
+        if (fragments) {
+          const field = FOIL_INVENTORY_FIELDS[fragments.foil].shards;
+          const credited = await tx.gachaInventory.updateMany({
+            where: {
+              userId,
+              [field]: { lte: 2_147_483_647 - fragments.quantity },
+            },
+            data: { [field]: { increment: fragments.quantity } },
+          });
+          if (!credited.count)
+            throw new ConflictException('Limite de fragmentos atingido.');
+        }
         const burned = await tx.userCard.updateMany({
           where: { id: userCardId, userId, status: 'ACTIVE' },
           data: { status: 'BURNED' },
@@ -1846,7 +1893,7 @@ export class GachaService {
         if (burned.count !== 1) {
           throw new ConflictException('Carta não está mais disponível.');
         }
-        return { burned: userCardId, payout };
+        return { burned: userCardId, payout, fragments };
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     );

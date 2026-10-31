@@ -19,6 +19,18 @@ import { Type } from 'class-transformer';
 import { BOX_TIERS, ITEM_KINDS } from './economy.rules';
 import type { BoxTier, ItemKind } from './economy.rules';
 
+export class CraftFoilGemDto {
+  @ApiProperty({ enum: ['HOLO', 'GOLD', 'INK', 'PRISM'] })
+  @IsEnum(['HOLO', 'GOLD', 'INK', 'PRISM'])
+  foil!: 'HOLO' | 'GOLD' | 'INK' | 'PRISM';
+}
+
+export class ApplyFoilGemDto extends CraftFoilGemDto {
+  @ApiProperty({ format: 'uuid' })
+  @IsUUID()
+  userCardId!: string;
+}
+
 export class BuyBoxDto {
   @ApiProperty({ enum: BOX_TIERS })
   @IsEnum(BOX_TIERS)

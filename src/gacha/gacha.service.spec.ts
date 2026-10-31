@@ -344,6 +344,7 @@ describe('GachaService', () => {
     mockPrisma.gachaTrade.updateMany.mockResolvedValue({ count: 1 });
     mockPrisma.gachaTradeCard.updateMany.mockResolvedValue({ count: 1 });
     mockPrisma.userCard.updateMany.mockResolvedValue({ count: 1 });
+    mockPrisma.gachaInventory.updateMany.mockResolvedValue({ count: 1 });
     mockPrisma.gachaClaimLock.findUnique.mockResolvedValue(null);
     mockPrisma.card.update.mockResolvedValue({ editionCounter: 1 });
     mockPrisma.userCard.aggregate.mockResolvedValue({ _sum: { value: 0 } });
@@ -2288,6 +2289,8 @@ describe('GachaService', () => {
         id: 'p1',
         value: 100,
         edition: 3,
+        condition: 0.8,
+        foil: 'NORMAL',
         card: { name: 'Card Comum', rarity: 'COMUM' },
       });
       mockPrisma.gachaTrade.findFirst.mockResolvedValue(null);
@@ -2299,6 +2302,7 @@ describe('GachaService', () => {
       await expect(service.burn('u1', 'p1')).resolves.toEqual({
         burned: 'p1',
         payout: 100,
+        fragments: null,
       });
       expect(mockPrisma.userCard.updateMany).toHaveBeenCalledWith({
         where: { id: 'p1', userId: 'u1', status: 'ACTIVE' },
@@ -2320,6 +2324,8 @@ describe('GachaService', () => {
         id: 'p1',
         value: 100,
         edition: 3,
+        condition: 0.8,
+        foil: 'NORMAL',
         card: { name: 'Card Comum', rarity: 'COMUM' },
       });
       mockPrisma.gachaTrade.findFirst.mockResolvedValue(null);
@@ -2337,6 +2343,8 @@ describe('GachaService', () => {
         id: 'p1',
         value: 1,
         edition: 3,
+        condition: 0.8,
+        foil: 'NORMAL',
         card: { name: 'Card Comum', rarity: 'COMUM' },
       });
       mockPrisma.gachaTrade.findFirst.mockResolvedValue(null);
@@ -2348,6 +2356,36 @@ describe('GachaService', () => {
       expect(mockPrisma.user.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
           data: { crystalBalance: { increment: 100 } },
+        }),
+      );
+    });
+
+    it.each([
+      ['COMUM', 100],
+      ['INCOMUM', 150],
+      ['RARA', 250],
+      ['EPICA', 500],
+      ['LENDARIA', 1000],
+      ['MITICA', 1800],
+      ['GALACTICA', 3000],
+    ] as const)('preserva payout de Crystal %s', async (rarity, payout) => {
+      mockPrisma.userCard.findFirst.mockResolvedValue({
+        id: 'p1',
+        value: 1,
+        edition: 12,
+        condition: 0.05,
+        foil: 'NORMAL',
+        card: { name: 'Card', rarity },
+      });
+      mockPrisma.gachaTrade.findFirst.mockResolvedValue(null);
+      mockPrisma.gachaListing.findFirst.mockResolvedValue(null);
+      mockPrisma.user.findFirst.mockResolvedValue(null);
+      mockPrisma.crystalEvent.create.mockResolvedValue({});
+
+      await expect(service.burn('u1', 'p1')).resolves.toMatchObject({ payout });
+      expect(mockPrisma.crystalEvent.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ delta: payout, type: 'BURN' }),
         }),
       );
     });

@@ -32,6 +32,8 @@ import {
   TradeUpCardsDto,
   TradeUpSkinsDto,
   UseItemDto,
+  CraftFoilGemDto,
+  ApplyFoilGemDto,
 } from './economy.dto';
 import { EconomyService } from './economy.service';
 
@@ -110,6 +112,16 @@ export class EconomyController {
   @Get()
   inventory(@Req() req: AuthenticatedRequest) {
     return this.economy.inventory(req.user.id);
+  }
+
+  @Post('gems/craft')
+  craftFoilGem(@Req() req: AuthenticatedRequest, @Body() dto: CraftFoilGemDto) {
+    return this.economy.craftFoilGem(req.user.id, dto.foil);
+  }
+
+  @Post('gems/apply')
+  applyFoilGem(@Req() req: AuthenticatedRequest, @Body() dto: ApplyFoilGemDto) {
+    return this.economy.applyFoilGem(req.user.id, dto.userCardId, dto.foil);
   }
 
   @Post('trade-up/cards')

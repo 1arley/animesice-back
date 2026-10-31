@@ -16,6 +16,8 @@ import {
   cardValue,
   conditionLabel,
   GACHA_FOILS,
+  FOIL_INVENTORY_FIELDS,
+  GEM_FRAGMENT_RECIPE,
 } from '@/gacha/gacha.constants';
 import type { GachaFoil, GachaTier } from '@/gacha/gacha.constants';
 import { GACHA_TIERS } from '@/gacha/gacha-config.service';
@@ -858,6 +860,128 @@ export class EconomyService {
           })
         )._sum.delta ?? 0,
     };
+  }
+
+  async craftFoilGem(userId: string, foil: keyof typeof FOIL_INVENTORY_FIELDS) {
+    const { shards, gems } = FOIL_INVENTORY_FIELDS[foil];
+    return this.withSerializableConflict(() =>
+      this.prisma.$transaction(
+        async (tx) => {
+          await this.lockItemInventory(tx, userId);
+          const crafted = await tx.gachaInventory.updateMany({
+            where: {
+              userId,
+              [shards]: { gte: GEM_FRAGMENT_RECIPE },
+              [gems]: { lt: 2_147_483_647 },
+            },
+            data: {
+              [shards]: { decrement: GEM_FRAGMENT_RECIPE },
+              [gems]: { increment: 1 },
+            },
+          });
+          if (!crafted.count)
+            throw new BadRequestException(
+              'Fragmentos insuficientes para craftar a gema.',
+            );
+          return tx.gachaInventory.findUniqueOrThrow({ where: { userId } });
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      ),
+    );
+  }
+
+  async applyFoilGem(
+    userId: string,
+    userCardId: string,
+    foil: keyof typeof FOIL_INVENTORY_FIELDS,
+  ) {
+    const { gems } = FOIL_INVENTORY_FIELDS[foil];
+    return this.withSerializableConflict(() =>
+      this.prisma.$transaction(
+        async (tx) => {
+          await this.lockItemInventory(tx, userId);
+          await tx.$queryRaw`SELECT "id" FROM "UserCard" WHERE "id" = ${userCardId} AND "userId" = ${userId} FOR UPDATE`;
+          const card = await tx.userCard.findFirst({
+            where: { id: userCardId, userId, status: 'ACTIVE' },
+            select: {
+              id: true,
+              condition: true,
+              foil: true,
+              edition: true,
+              valueOverride: true,
+              card: { select: { rarity: true } },
+            },
+          });
+          if (!card) throw new NotFoundException('Carta não encontrada.');
+          if (card.foil !== 'NORMAL')
+            throw new BadRequestException(
+              `A carta já possui foil ${card.foil}.`,
+            );
+
+          const pendingTrade = await tx.gachaTrade.findFirst({
+            where: {
+              status: 'PENDING',
+              OR: [
+                { offeredUserCardId: userCardId },
+                { requestedUserCardId: userCardId },
+                { cards: { some: { userCardId } } },
+              ],
+            },
+            select: { id: true },
+          });
+          if (pendingTrade)
+            throw new ConflictException('Carta envolvida em troca pendente.');
+          const now = new Date();
+          const [listing, offer] = await Promise.all([
+            tx.gachaListing.findFirst({
+              where: {
+                userCardId,
+                status: 'ACTIVE',
+                expiresAt: { gt: now },
+              },
+              select: { id: true },
+            }),
+            tx.gachaMarketOfferCard.findFirst({
+              where: {
+                userCardId,
+                offer: { status: 'PENDING', expiresAt: { gt: now } },
+              },
+              select: { offerId: true },
+            }),
+          ]);
+          if (listing || offer)
+            throw new ConflictException(
+              'Remova a carta do mercado antes de aplicar a gema.',
+            );
+
+          const config = (await this.currentVersion(tx)).config;
+          const value =
+            card.valueOverride ??
+            cardValue(
+              card.card.rarity as GachaTier,
+              card.condition,
+              foil,
+              card.edition,
+              config.base_value,
+              config.foil_mult,
+            );
+          const updated = await tx.userCard.updateMany({
+            where: { id: userCardId, userId, status: 'ACTIVE', foil: 'NORMAL' },
+            data: { foil, value },
+          });
+          if (!updated.count)
+            throw new ConflictException('A carta não está mais disponível.');
+          const consumed = await tx.gachaInventory.updateMany({
+            where: { userId, [gems]: { gt: 0 } },
+            data: { [gems]: { decrement: 1 } },
+          });
+          if (!consumed.count)
+            throw new BadRequestException('Gema insuficiente.');
+          return tx.userCard.findUniqueOrThrow({ where: { id: userCardId } });
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      ),
+    );
   }
 
   tradeUpCards(userId: string, copyIds: string[]) {
@@ -3685,6 +3809,22 @@ export class EconomyService {
       update: {},
     });
     await tx.$queryRaw`SELECT "userId" FROM "GachaInventory" WHERE "userId" = ${userId} FOR UPDATE`;
+  }
+
+  private async withSerializableConflict<T>(operation: () => Promise<T>) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        (error.code === 'P2034' ||
+          (error.code === 'P2010' &&
+            error.message.includes('could not serialize access')))
+      ) {
+        throw new ConflictException('Conflito concorrente; tente novamente.');
+      }
+      throw error;
+    }
   }
 
   private weekStart(): Date {
