@@ -697,6 +697,64 @@ describe('GachaService', () => {
         NotFoundException,
       );
     });
+
+    it('bônus de 5% anexa fragmento ao preview (Titanita primeiro)', async () => {
+      freshAccount();
+      stockOnly('COMUM');
+      mockPrisma.card.findFirst.mockResolvedValue(cardComum);
+      mockPrisma.gachaSpin.create.mockImplementation((args: { data: object }) =>
+        Promise.resolve({
+          id: 's3',
+          slot: 0,
+          hour: new Date(),
+          claimedAt: null,
+          expiresAt: new Date(Date.now() + 3_600_000),
+          createdAt: new Date(),
+          card: cardComum,
+          ...args.data,
+        }),
+      );
+      // 0.0499 < 0.05 dispara o bônus; o mesmo valor dita o pick (Titanita).
+      const randomSpy = jest.spyOn(Math, 'random').mockReturnValue(0.0499);
+
+      try {
+        const preview = await service.spin('u1');
+        expect(preview.bonusShard).toBe('TITANITA');
+        expect(mockPrisma.gachaSpin.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({ bonusShard: 'TITANITA' }),
+          }),
+        );
+      } finally {
+        randomSpy.mockRestore();
+      }
+    });
+
+    it('95% dos previews nascem sem fragmento bônus', async () => {
+      freshAccount();
+      stockOnly('COMUM');
+      mockPrisma.card.findFirst.mockResolvedValue(cardComum);
+      mockPrisma.gachaSpin.create.mockImplementation((args: { data: object }) =>
+        Promise.resolve({
+          id: 's4',
+          slot: 0,
+          hour: new Date(),
+          claimedAt: null,
+          expiresAt: new Date(Date.now() + 3_600_000),
+          createdAt: new Date(),
+          card: cardComum,
+          ...args.data,
+        }),
+      );
+      const randomSpy = jest.spyOn(Math, 'random').mockReturnValue(0.2);
+
+      try {
+        const preview = await service.spin('u1');
+        expect(preview.bonusShard).toBeNull();
+      } finally {
+        randomSpy.mockRestore();
+      }
+    });
   });
 
   describe('claim', () => {
@@ -733,6 +791,28 @@ describe('GachaService', () => {
         }),
       );
       expect(mockPrisma.post.create).not.toHaveBeenCalled();
+    });
+
+    it('claim com fragmento bônus credita 1 fragmento na coluna do kind', async () => {
+      mockPrisma.gachaSpin.findFirst.mockResolvedValue({
+        ...previewComum,
+        bonusShard: 'DRACONICA',
+      });
+      mockClaimCreate();
+
+      const pull = await service.claim('u1', 's1');
+
+      expect(pull.bonusShard).toBe('DRACONICA');
+      expect(mockPrisma.userCard.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ bonusShard: 'DRACONICA' }),
+        }),
+      );
+      expect(mockPrisma.gachaInventory.upsert).toHaveBeenCalledWith({
+        where: { userId: 'u1' },
+        create: { userId: 'u1', draconicaShards: 1 },
+        update: { draconicaShards: { increment: 1 } },
+      });
     });
 
     it('credita metade do valor da carta em Crystal no claim)', async () => {

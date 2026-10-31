@@ -1136,6 +1136,9 @@ model UserCard {
   value          Int
   rankedValue    Int
   valueOverride  Int?
+  /// Fragmento bônus que veio junto do giro (null = nenhum); carrega o selo
+  /// visual da carta no front.
+  bonusShard     String?
   status         UserCardStatus @default(ACTIVE)
   obtainedAt     DateTime       @default(now())
 
@@ -1259,6 +1262,8 @@ model GachaSpin {
   condition Float
   foil      String    @default("NORMAL")
   value     Int
+  /// Fragmento bônus decidido no giro (null = sem bônus). Concedido só no claim.
+  bonusShard String?
   claimedAt DateTime? @db.Timestamptz(6)
   expiresAt DateTime  @db.Timestamptz(6)
   createdAt DateTime  @default(now()) @db.Timestamptz(6)
