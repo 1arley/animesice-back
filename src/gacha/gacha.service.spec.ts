@@ -653,7 +653,12 @@ describe('GachaService', () => {
       freshAccount();
       stockOnly('COMUM');
       mockPrisma.card.findFirst.mockResolvedValue(cardComum);
-      mockPrisma.gachaSpin.create.mockRejectedValue({ code: 'P2002' });
+      mockPrisma.gachaSpin.create.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('duplicate spin slot', {
+          code: 'P2002',
+          clientVersion: '7.0.0',
+        }),
+      );
 
       await expect(service.spin('u1')).rejects.toBeInstanceOf(
         ForbiddenException,

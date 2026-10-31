@@ -898,7 +898,12 @@ export class GachaService {
           pityDue: pity.pityDue,
         };
       } catch (error) {
-        if ((error as { code?: string }).code !== 'P2002') throw error;
+        if (
+          !(error instanceof Prisma.PrismaClientKnownRequestError) ||
+          error.code !== 'P2002'
+        ) {
+          throw error;
+        }
       }
     }
     throw new ForbiddenException(
