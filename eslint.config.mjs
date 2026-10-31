@@ -21,7 +21,7 @@ export default tseslint.config(
       '.releaserc.mjs',
       'prisma.config.ts',
       'prisma/**/*.ts',
-      'scripts/**/*.ts',
+      'scripts/**',
       'test/**/*.js',
     ],
   },
