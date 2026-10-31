@@ -855,4 +855,131 @@ describe('CatalogScanner', () => {
       );
     });
   });
+  describe('topanimes', () => {
+    const TOP_HTML = `
+      <ul class='episodios'>
+        <li class='mark-1'>
+          <div class='numerando'>1 - 1</div>
+          <div class='episodiotitle'>
+            <a href='https://topanimes.net/episodio/avatar-seven-havens-episodio-1/'>Episódio 1</a>
+          </div>
+        </li>
+        <li class='mark-2'>
+          <div class='numerando'>1 - 2</div>
+          <div class='episodiotitle'>
+            <a href='https://topanimes.net/episodio/avatar-seven-havens-episodio-2/'>Episódio 2</a>
+          </div>
+        </li>
+      </ul>
+    `;
+
+    it('usa o topanimes quando meusanimes e animesdigital não têm a obra', async () => {
+      m.prisma.animeSource.findUnique.mockImplementation(
+        (args: { where: { animeId_sourceId: { sourceId: string } } }) =>
+          args.where.animeId_sourceId.sourceId === 'topanimes'
+            ? Promise.resolve({ externalKey: 'avatar-seven-havens' })
+            : Promise.resolve(null),
+      );
+      global.fetch = jest.fn().mockImplementation((url: string) => {
+        const html = url.includes('topanimes.net') ? TOP_HTML : '<html></html>';
+        return Promise.resolve({ ok: true, text: () => Promise.resolve(html) });
+      });
+
+      const scan = await scanner.scanAnimeResolved('avatar-seven-havens', 'a1');
+      expect(scan.sourceId).toBe('topanimes');
+      expect(scan.sourceSlug).toBe('avatar-seven-havens');
+      expect(scan.entries).toHaveLength(2);
+      expect(scan.entries[0]).toEqual({
+        season: 1,
+        episode: 1,
+        url: 'https://topanimes.net/episodio/avatar-seven-havens-episodio-1/',
+      });
+    });
+
+    it('não consulta topanimes sem mapeamento gravado', async () => {
+      const fetchMock = jest.fn().mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve('<html></html>'),
+      });
+      global.fetch = fetchMock;
+
+      const scan = await scanner.scanAnimeResolved('avatar-seven-havens', 'a1');
+      expect(scan.sourceId).not.toBe('topanimes');
+      expect(
+        fetchMock.mock.calls.filter((calls) =>
+          String(calls[0]).includes('topanimes.net'),
+        ),
+      ).toHaveLength(0);
+    });
+
+    it('persiste o AnimeSource com a URL do catálogo do topanimes', async () => {
+      jest.spyOn(scanner, 'scanAnimeResolved' as any).mockResolvedValue({
+        sourceId: 'topanimes',
+        sourceSlug: 'avatar-seven-havens',
+        entries: [
+          {
+            season: 1,
+            episode: 1,
+            url: 'https://topanimes.net/episodio/avatar-seven-havens-episodio-1/',
+          },
+        ],
+      });
+      m.prisma.anime.findUnique.mockResolvedValue({
+        id: 'a1',
+        slug: 'avatar-seven-havens',
+        title: 'Avatar: Os Sete Refúgios',
+        synopsis: '',
+        coverImage: null,
+        bannerImage: null,
+        ageRating: 'A14',
+        status: 'LANCAMENTO',
+        audio: 'LEGENDADO',
+        format: 'TV',
+        year: 2026,
+        season: 'FALL',
+        studios: [],
+        themes: [],
+        alternativeTitles: [],
+        published: true,
+      });
+      m.prisma.episode.findMany.mockResolvedValue([]);
+
+      await scanner.processScanCatalog('a1', 'avatar-seven-havens');
+      expect(m.prisma.animeSource.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            animeId_sourceId: { animeId: 'a1', sourceId: 'topanimes' },
+          },
+          update: expect.objectContaining({
+            externalUrl: 'https://topanimes.net/animes/avatar-seven-havens/',
+            externalKey: 'avatar-seven-havens',
+          }),
+        }),
+      );
+      expect(m.jobs.enqueue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          payload: expect.objectContaining({
+            episodeUrl:
+              'https://topanimes.net/episodio/avatar-seven-havens-episodio-1/',
+          }),
+        }),
+      );
+    });
+
+    it('reescaneia animes com mapeamento no topanimes mesmo completos', async () => {
+      m.prisma.anime.findMany.mockResolvedValue([
+        {
+          id: 'a1',
+          slug: 'avatar-seven-havens',
+          title: 'Avatar: Os Sete Refúgios',
+          episodeCount: 13,
+          _count: { episodes: 13 },
+          sourceMappings: [{ sourceId: 'topanimes' }],
+        },
+      ]);
+
+      const result = await scanner.scanAll(false);
+      expect(result).toEqual({ scanned: 1, enqueued: 1 });
+    });
+  });
 });

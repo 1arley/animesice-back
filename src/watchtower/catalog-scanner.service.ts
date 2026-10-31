@@ -3,6 +3,7 @@ import { PrismaService } from '@/prisma/prisma.service';
 import { JobsService } from './jobs.service';
 import { extractJobKey, JOB_TYPE, PRIORITY } from './watchtower.types';
 import { audioTypeFromTitle } from '@/common/anime-audio';
+import { parseTopanimesCatalog } from '@/embed/scrape/topanimes.catalog';
 
 const UA =
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
@@ -45,6 +46,13 @@ const EMPTY_SCAN: CatalogScan = {
   definitiveMissing: false,
 };
 
+/** URL do catálogo de cada fonte — a mesma que o scanner consultou. */
+const CATALOG_URLS: Record<string, (slug: string) => string> = {
+  meusanimes: (slug) => `https://meusanimes.blog/a/${slug}/`,
+  animesdigital: (slug) => `https://animesdigital.org/anime/a/${slug}`,
+  topanimes: (slug) => `https://topanimes.net/animes/${slug}/`,
+};
+
 @Injectable()
 export class CatalogScanner implements OnModuleInit {
   constructor(
@@ -64,9 +72,10 @@ export class CatalogScanner implements OnModuleInit {
    * as fontes publicam o mesmo número. O AnimesDigital complementa catálogos
    * já mapeados com episódios exclusivos.
    *
-   * Ordem: meusanimes (base) -> animesdigital (fallback/complemento). Fontes
-   * sem URL derivável por slug (animesdigital usa post-ID do WordPress) só
-   * entram pelo caminho de descoberta de catálogo, nunca por template.
+   * Ordem: meusanimes (base) -> animesdigital (fallback/complemento) ->
+   * topanimes (fallback: fonte de obras que as duas outras não publicam).
+   * Fontes sem URL derivável por slug (animesdigital usa post-ID do WordPress)
+   * só entram pelo caminho de descoberta de catálogo, nunca por template.
    */
   async scanAnimeResolved(
     animeSlug: string,
@@ -111,7 +120,11 @@ export class CatalogScanner implements OnModuleInit {
       return meusanimes;
     }
     const animesdigital = await this.scanAnimesdigital(animeSlug, animeId);
-    return { ...animesdigital, definitiveMissing: false };
+    if (animesdigital.entries.length > 0) {
+      return { ...animesdigital, definitiveMissing: false };
+    }
+    const topanimes = await this.scanTopanimes(animeId);
+    return { ...topanimes, definitiveMissing: false };
   }
 
   /** Compatibilidade: só as entradas (sem metadados da fonte). */
@@ -227,6 +240,84 @@ export class CatalogScanner implements OnModuleInit {
           ...EMPTY_SCAN,
           definitiveMissing: false,
         };
+  }
+
+  /**
+   * Escaneia o catálogo do topanimes.net (/animes/<slug>/) — só para animes com
+   * mapeamento gravado (AnimeSource sourceId='topanimes'). Sem isso, cada scan
+   * de catálogo seria 1 GET extra por anime numa fonte de terceiro; com o
+   * mapeamento, o custo é 1 GET por obra mapeada.
+   */
+  private async scanTopanimes(animeId?: string): Promise<CatalogScan> {
+    const mapping = animeId
+      ? await Promise.resolve(
+          this.prisma.animeSource?.findUnique({
+            where: {
+              animeId_sourceId: { animeId, sourceId: 'topanimes' },
+            },
+            select: { externalKey: true },
+          }),
+        ).catch(() => null)
+      : null;
+    const sourceSlug = mapping?.externalKey?.trim();
+    if (!sourceSlug) return { ...EMPTY_SCAN, definitiveMissing: false };
+
+    const result = await this.tryScanTopanimes(sourceSlug);
+    if (result.entries.length === 0) {
+      return { ...EMPTY_SCAN, definitiveMissing: false };
+    }
+    return {
+      sourceId: 'topanimes',
+      sourceSlug,
+      entries: result.entries,
+      definitiveMissing: false,
+    };
+  }
+
+  /** Baixa a página /animes/<slug>/ do topanimes e extrai os episódios. */
+  private async tryScanTopanimes(slug: string): Promise<CatalogResponse> {
+    const url = `https://topanimes.net/animes/${slug}/`;
+    console.error(`[CATALOG] scanning ${url}`);
+
+    const html = await this.fetchCatalogHtml(url);
+    if (!html) return { ...EMPTY_RESPONSE, definitiveMissing: false };
+
+    const entries = parseTopanimesCatalog(html).episodes.map((episode) => ({
+      season: episode.season,
+      episode: episode.episode,
+      url: episode.url,
+    }));
+    console.error(
+      `[CATALOG] topanimes ${slug}: ${entries.length} episódios encontrados`,
+    );
+    return { entries, definitiveMissing: false };
+  }
+
+  /** GET de HTML com timeout; null quando a fonte não respondeu. */
+  private async fetchCatalogHtml(url: string): Promise<string | null> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20_000);
+    try {
+      const res = await fetch(url, {
+        headers: {
+          'user-agent': UA,
+          accept: 'text/html,application/xhtml+xml',
+          'accept-language': 'pt-BR,pt;q=0.9',
+        },
+        redirect: 'follow',
+        signal: controller.signal,
+      });
+      if (!res.ok) return null;
+      return await res.text();
+    } catch (err) {
+      console.error(
+        `[CATALOG] fetch falhou p/ ${url}:`,
+        err instanceof Error ? err.message : String(err),
+      );
+      return null;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   /** Resolve MeusAnimes identity via its own search, never by slug rewriting. */
@@ -449,7 +540,9 @@ export class CatalogScanner implements OnModuleInit {
           select: { episodes: true },
         },
         sourceMappings: {
-          where: { sourceId: { in: ['meusanimes', 'animesdigital'] } },
+          where: {
+            sourceId: { in: ['meusanimes', 'animesdigital', 'topanimes'] },
+          },
           select: { sourceId: true },
         },
         catalogUnpublished: true,
@@ -466,6 +559,7 @@ export class CatalogScanner implements OnModuleInit {
         (anime.sourceMappings ?? []).some(
           (mapping) =>
             mapping.sourceId === 'meusanimes' ||
+            mapping.sourceId === 'topanimes' ||
             (mapping.sourceId === 'animesdigital' &&
               process.env.ANIMESDIGITAL_ENABLED === 'true'),
         ) || anime.catalogUnpublished;
@@ -578,9 +672,8 @@ export class CatalogScanner implements OnModuleInit {
     const seriesSlug = scan.sourceSlug || slug;
     const externalKey = seriesSlug;
     const externalUrl =
-      sourceId === 'animesdigital'
-        ? `https://animesdigital.org/anime/a/${seriesSlug}`
-        : `https://meusanimes.blog/a/${seriesSlug}/`;
+      CATALOG_URLS[sourceId]?.(seriesSlug) ??
+      `https://meusanimes.blog/a/${seriesSlug}/`;
     await this.prisma.animeSource
       ?.upsert({
         where: { animeId_sourceId: { animeId, sourceId } },
