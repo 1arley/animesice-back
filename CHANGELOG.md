@@ -1,3 +1,10 @@
+## [1.63.1](https://github.com/1arley/animesice-back/compare/v1.63.0...v1.63.1) (2026-10-31)
+
+
+### Bug Fixes
+
+* **deps:** bump rustls to 0.23.46 ([febba6d](https://github.com/1arley/animesice-back/commit/febba6d3f46c2e01a8a8fc87128461c8f1e2757b))
+
 # [1.63.0](https://github.com/1arley/animesice-back/compare/v1.62.0...v1.63.0) (2026-10-31)
 
 
