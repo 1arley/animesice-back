@@ -343,7 +343,7 @@ export class GachaController {
   @Post('burn')
   @UseGuards(JwtAuthGuard, VerifiedGuard)
   @ApiBearerAuth('JWT-auth')
-  @ApiOperation({ summary: 'Queima carta e devolve 40% do valor em Crystal' })
+  @ApiOperation({ summary: 'Queima carta e devolve Crystal por raridade' })
   burn(@Req() req: AuthenticatedRequest, @Body() dto: BurnGachaCardDto) {
     return this.gachaService.burn(req.user.id, dto.userCardId);
   }

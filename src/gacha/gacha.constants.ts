@@ -12,7 +12,51 @@ export type GachaTier = (typeof GACHA_TIERS)[number];
 export const GACHA_FOILS = ['NORMAL', 'HOLO', 'GOLD', 'INK', 'PRISM'] as const;
 export type GachaFoil = (typeof GACHA_FOILS)[number];
 
-export function conditionLabel(condition: number): string {
+export const BURN_CONDITION_FRAGMENTS = {
+  POOR: 1,
+  PLAYED: 2,
+  EX: 3,
+  NM: 4,
+  MINT: 5,
+} as const;
+
+export const BURN_RARITY_FRAGMENT_BONUS: Record<GachaTier, number> = {
+  COMUM: 0,
+  INCOMUM: 1,
+  RARA: 2,
+  EPICA: 3,
+  LENDARIA: 4,
+  MITICA: 5,
+  GALACTICA: 6,
+};
+
+export const MAX_BURN_FRAGMENTS = 9;
+export const GEM_FRAGMENT_RECIPE = 20;
+export type CardCondition = keyof typeof BURN_CONDITION_FRAGMENTS;
+
+export const FOIL_INVENTORY_FIELDS = {
+  HOLO: { shards: 'holoShards', gems: 'holoGems' },
+  GOLD: { shards: 'goldShards', gems: 'goldGems' },
+  INK: { shards: 'inkShards', gems: 'inkGems' },
+  PRISM: { shards: 'prismShards', gems: 'prismGems' },
+} as const;
+
+export function burnFragments(condition: number, rarity: string, foil: string) {
+  if (foil === 'NORMAL') return null;
+  if (!Object.hasOwn(FOIL_INVENTORY_FIELDS, foil)) {
+    throw new Error(`Foil inválido em carta: ${foil}`);
+  }
+  const base = BURN_CONDITION_FRAGMENTS[conditionLabel(condition)];
+  const bonus = BURN_RARITY_FRAGMENT_BONUS[rarity as GachaTier];
+  if (bonus === undefined)
+    throw new Error(`Raridade inválida em carta: ${rarity}`);
+  return {
+    foil: foil as Exclude<GachaFoil, 'NORMAL'>,
+    quantity: Math.min(MAX_BURN_FRAGMENTS, base + bonus),
+  };
+}
+
+export function conditionLabel(condition: number): CardCondition {
   if (condition <= 0.07) return 'MINT';
   if (condition <= 0.15) return 'NM';
   if (condition <= 0.38) return 'EX';

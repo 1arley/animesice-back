@@ -8,6 +8,7 @@ import {
 
 describe('GachaController (e2e)', () => {
   let userId: string;
+  let otherUserId: string | undefined;
   let cookie: string;
   let accessToken: string;
 
@@ -45,6 +46,10 @@ describe('GachaController (e2e)', () => {
 
   afterEach(async () => {
     const prisma = getPrismaService();
+    if (otherUserId) {
+      await prisma.user.delete({ where: { id: otherUserId } });
+      otherUserId = undefined;
+    }
     await prisma.gachaSpin.deleteMany({ where: { userId } });
     await prisma.userCard.deleteMany({ where: { userId } });
     await prisma.user.delete({ where: { id: userId } });
@@ -173,5 +178,322 @@ describe('GachaController (e2e)', () => {
     await expect(
       getPrismaService().userCard.count({ where: { userId } }),
     ).resolves.toBe(1);
+  });
+
+  it('crafta fragmentos do mesmo foil uma única vez sob concorrência', async () => {
+    const prisma = getPrismaService();
+    await prisma.gachaInventory.upsert({
+      where: { userId },
+      create: { userId, holoShards: 20, goldShards: 19 },
+      update: { holoShards: 20, goldShards: 19 },
+    });
+    const results = await Promise.all(
+      [1, 2].map(() =>
+        request(getHttpServer())
+          .post('/gacha/economy/gems/craft')
+          .set('Cookie', cookie)
+          .send({ foil: 'HOLO' }),
+      ),
+    );
+    expect(results.filter((result) => result.status === 201)).toHaveLength(1);
+    expect(results.filter((result) => result.status >= 400)).toHaveLength(1);
+    const inventory = await prisma.gachaInventory.findUniqueOrThrow({
+      where: { userId },
+    });
+    expect(inventory.holoShards).toBe(0);
+    expect(inventory.holoGems).toBe(1);
+    expect(inventory.goldShards).toBe(19);
+
+    await request(getHttpServer())
+      .post('/gacha/economy/gems/craft')
+      .set('Cookie', cookie)
+      .send({ foil: 'GOLD' })
+      .expect(400);
+    expect(
+      (await prisma.gachaInventory.findUniqueOrThrow({ where: { userId } }))
+        .goldGems,
+    ).toBe(0);
+
+    await prisma.gachaInventory.update({
+      where: { userId },
+      data: { holoShards: 20, holoGems: 2_147_483_647 },
+    });
+    await request(getHttpServer())
+      .post('/gacha/economy/gems/craft')
+      .set('Cookie', cookie)
+      .send({ foil: 'HOLO' })
+      .expect(400);
+    const afterOverflow = await prisma.gachaInventory.findUniqueOrThrow({
+      where: { userId },
+    });
+    expect(afterOverflow.holoShards).toBe(20);
+    expect(afterOverflow.holoGems).toBe(2_147_483_647);
+  });
+
+  it('aplica gema apenas em carta NORMAL própria e reverte foil se faltar gema', async () => {
+    const prisma = getPrismaService();
+    const card = await prisma.card.findFirstOrThrow({
+      where: { name: 'Gacha Card' },
+    });
+    const owned = await prisma.userCard.create({
+      data: {
+        userId,
+        cardId: card.id,
+        condition: 0.05,
+        edition: 1,
+        value: 100,
+        rankedValue: 100,
+      },
+    });
+    await prisma.gachaInventory.upsert({
+      where: { userId },
+      create: { userId, holoGems: 1 },
+      update: { holoGems: 1 },
+    });
+    const foils = [
+      ['HOLO', 'holoGems'],
+      ['GOLD', 'goldGems'],
+      ['INK', 'inkGems'],
+      ['PRISM', 'prismGems'],
+    ] as const;
+    for (const [foil, gemField] of foils) {
+      await prisma.userCard.update({
+        where: { id: owned.id },
+        data: { foil: 'NORMAL' },
+      });
+      await prisma.gachaInventory.update({
+        where: { userId },
+        data: { [gemField]: 1 },
+      });
+      await request(getHttpServer())
+        .post('/gacha/economy/gems/apply')
+        .set('Cookie', cookie)
+        .send({ foil, userCardId: owned.id })
+        .expect(201);
+      expect(
+        (await prisma.userCard.findUniqueOrThrow({ where: { id: owned.id } }))
+          .foil,
+      ).toBe(foil);
+      expect(
+        (await prisma.gachaInventory.findUniqueOrThrow({ where: { userId } }))[
+          gemField
+        ],
+      ).toBe(0);
+    }
+
+    await request(getHttpServer())
+      .post('/gacha/economy/gems/apply')
+      .set('Cookie', cookie)
+      .send({ foil: 'HOLO', userCardId: owned.id })
+      .expect(400);
+    expect(
+      (await prisma.userCard.findUniqueOrThrow({ where: { id: owned.id } }))
+        .foil,
+    ).toBe('PRISM');
+
+    await prisma.userCard.update({
+      where: { id: owned.id },
+      data: { foil: 'NORMAL' },
+    });
+    await request(getHttpServer())
+      .post('/gacha/economy/gems/apply')
+      .set('Cookie', cookie)
+      .send({ foil: 'GOLD', userCardId: owned.id })
+      .expect(400);
+    expect(
+      (await prisma.userCard.findUniqueOrThrow({ where: { id: owned.id } }))
+        .foil,
+    ).toBe('NORMAL');
+  });
+
+  it('não altera carta nem gemas ao tentar aplicar em carta de outro usuário', async () => {
+    const prisma = getPrismaService();
+    const other = await createTestUser(
+      `gacha-other-${Date.now()}@example.com`,
+      'Password123!',
+      'Other Gacha User',
+      Role.USER,
+      true,
+    );
+    otherUserId = other.id;
+    const card = await prisma.card.findFirstOrThrow({
+      where: { name: 'Gacha Card' },
+    });
+    const foreign = await prisma.userCard.create({
+      data: {
+        userId: other.id,
+        cardId: card.id,
+        condition: 0.05,
+        edition: 1,
+        value: 100,
+        rankedValue: 100,
+      },
+    });
+    await prisma.gachaInventory.upsert({
+      where: { userId },
+      create: { userId, holoGems: 1 },
+      update: { holoGems: 1 },
+    });
+    await request(getHttpServer())
+      .post('/gacha/economy/gems/apply')
+      .set('Cookie', cookie)
+      .send({ foil: 'HOLO', userCardId: foreign.id })
+      .expect(404);
+    expect(
+      (await prisma.userCard.findUniqueOrThrow({ where: { id: foreign.id } }))
+        .foil,
+    ).toBe('NORMAL');
+    expect(
+      (await prisma.gachaInventory.findUniqueOrThrow({ where: { userId } }))
+        .holoGems,
+    ).toBe(1);
+  });
+
+  it('aplica uma única gema em duas requisições simultâneas', async () => {
+    const prisma = getPrismaService();
+    const card = await prisma.card.findFirstOrThrow({
+      where: { name: 'Gacha Card' },
+    });
+    const owned = await prisma.userCard.create({
+      data: {
+        userId,
+        cardId: card.id,
+        condition: 0.2,
+        edition: 1,
+        value: 100,
+        rankedValue: 100,
+      },
+    });
+    await prisma.gachaInventory.upsert({
+      where: { userId },
+      create: { userId, goldGems: 1 },
+      update: { goldGems: 1 },
+    });
+    const results = await Promise.all(
+      [1, 2].map(() =>
+        request(getHttpServer())
+          .post('/gacha/economy/gems/apply')
+          .set('Cookie', cookie)
+          .send({ foil: 'GOLD', userCardId: owned.id }),
+      ),
+    );
+    expect(results.filter((result) => result.status === 201)).toHaveLength(1);
+    expect(results.filter((result) => result.status >= 400)).toHaveLength(1);
+    expect(
+      (await prisma.userCard.findUniqueOrThrow({ where: { id: owned.id } }))
+        .foil,
+    ).toBe('GOLD');
+    expect(
+      (await prisma.gachaInventory.findUniqueOrThrow({ where: { userId } }))
+        .goldGems,
+    ).toBe(0);
+  });
+
+  it('serializa burn e aplicação concorrentes sobre a mesma carta', async () => {
+    const prisma = getPrismaService();
+    const card = await prisma.card.findFirstOrThrow({
+      where: { name: 'Gacha Card' },
+    });
+    const owned = await prisma.userCard.create({
+      data: {
+        userId,
+        cardId: card.id,
+        condition: 0.8,
+        edition: 1,
+        value: 100,
+        rankedValue: 100,
+      },
+    });
+    await prisma.gachaInventory.upsert({
+      where: { userId },
+      create: { userId, holoGems: 1 },
+      update: { holoGems: 1 },
+    });
+    const [applied, burned] = await Promise.all([
+      request(getHttpServer())
+        .post('/gacha/economy/gems/apply')
+        .set('Cookie', cookie)
+        .send({ foil: 'HOLO', userCardId: owned.id }),
+      request(getHttpServer())
+        .post('/gacha/burn')
+        .set('Cookie', cookie)
+        .send({ userCardId: owned.id }),
+    ]);
+    expect([200, 201, 400, 404, 409]).toContain(applied.status);
+    expect([200, 201, 400, 404, 409]).toContain(burned.status);
+    const [finalCard, inventory, user] = await Promise.all([
+      prisma.userCard.findUniqueOrThrow({ where: { id: owned.id } }),
+      prisma.gachaInventory.findUniqueOrThrow({ where: { userId } }),
+      prisma.user.findUniqueOrThrow({
+        where: { id: userId },
+        select: { crystalBalance: true },
+      }),
+    ]);
+    if (burned.status === 201) {
+      expect(finalCard.status).toBe('BURNED');
+      expect(user.crystalBalance).toBe(100);
+      expect(inventory.holoShards).toBe(applied.status === 201 ? 1 : 0);
+      expect(inventory.holoGems).toBe(applied.status === 201 ? 0 : 1);
+    } else {
+      if (applied.status === 201) {
+        expect(finalCard.status).toBe('ACTIVE');
+        expect(finalCard.foil).toBe('HOLO');
+        expect(inventory.holoGems).toBe(0);
+      } else {
+        expect(applied.status).toBe(409);
+        expect(finalCard.status).toBe('ACTIVE');
+        expect(finalCard.foil).toBe('NORMAL');
+        expect(inventory.holoGems).toBe(1);
+      }
+      expect(user.crystalBalance).toBe(0);
+    }
+  });
+
+  it('reverte o crédito de Crystal e o burn se o saldo de fragmentos estourar', async () => {
+    const prisma = getPrismaService();
+    const card = await prisma.card.findFirstOrThrow({
+      where: { name: 'Gacha Card' },
+    });
+    await prisma.card.update({
+      where: { id: card.id },
+      data: { rarity: 'COMUM' },
+    });
+    const owned = await prisma.userCard.create({
+      data: {
+        userId,
+        cardId: card.id,
+        condition: 0.8,
+        foil: 'HOLO',
+        edition: 1,
+        value: 100,
+        rankedValue: 100,
+      },
+    });
+    await prisma.gachaInventory.upsert({
+      where: { userId },
+      create: { userId, holoShards: 2_147_483_647 },
+      update: { holoShards: 2_147_483_647 },
+    });
+    const before = await prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      select: { crystalBalance: true },
+    });
+    await request(getHttpServer())
+      .post('/gacha/burn')
+      .set('Cookie', cookie)
+      .send({ userCardId: owned.id })
+      .expect(409);
+    expect(
+      (
+        await prisma.user.findUniqueOrThrow({
+          where: { id: userId },
+          select: { crystalBalance: true },
+        })
+      ).crystalBalance,
+    ).toBe(before.crystalBalance);
+    expect(
+      (await prisma.userCard.findUniqueOrThrow({ where: { id: owned.id } }))
+        .status,
+    ).toBe('ACTIVE');
   });
 });
