@@ -1,3 +1,15 @@
+# [1.64.0](https://github.com/1arley/animesice-back/compare/v1.63.1...v1.64.0) (2026-10-31)
+
+
+### Bug Fixes
+
+* **gacha:** narrow spin slot conflict handling ([93e2058](https://github.com/1arley/animesice-back/commit/93e2058c693072e5ff802a5aa04e042a70e6d7de))
+
+
+### Features
+
+* **ci:** replace commit-based PR description with LLM-generated title and body ([c1a3abb](https://github.com/1arley/animesice-back/commit/c1a3abbc639426547a8e2ed6c7b3bf7e678afa39))
+
 ## [1.63.1](https://github.com/1arley/animesice-back/compare/v1.63.0...v1.63.1) (2026-10-31)
 
 
