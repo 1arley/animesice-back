@@ -66,3 +66,29 @@ export function pickWeighted<T extends string>(
 export function isEpicTier(tier: string): boolean {
   return GACHA_TIERS.indexOf(tier as GachaTier) >= GACHA_TIERS.indexOf('EPICA');
 }
+
+/**
+ * Fragmento bônus no giro (decisão fragmentos-20261030): 5% dos previews vêm
+ * com um fragmento junto, independente de raridade. Pesos dentro do bônus:
+ * Titanita 50% · Magnetita (DRACONICA) 30% · Titanita Sombria 10% ·
+ * Magnetita Sombria (SOMBRIA_DRACONICA) 10%. Os rótulos Dracônica* são
+ * exibidos como "Magnetita*" no front.
+ */
+export const SPIN_SHARD_CHANCE = 0.05;
+
+export const SPIN_SHARD_WEIGHTS = {
+  TITANITA: 0.5,
+  TITANITA_SOMBRIA: 0.1,
+  DRACONICA: 0.3,
+  SOMBRIA_DRACONICA: 0.1,
+} as const;
+
+export type SpinShardKind = keyof typeof SPIN_SHARD_WEIGHTS;
+
+/** Coluna de fragmentos no GachaInventory correspondente a cada bônus. */
+export const SPIN_SHARD_FIELD: Record<SpinShardKind, string> = {
+  TITANITA: 'titanitaShards',
+  TITANITA_SOMBRIA: 'titanitaSombriaShards',
+  DRACONICA: 'draconicaShards',
+  SOMBRIA_DRACONICA: 'sombriaDraconicaShards',
+};
