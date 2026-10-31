@@ -1,3 +1,10 @@
+# [1.62.0](https://github.com/1arley/animesice-back/compare/v1.61.1...v1.62.0) (2026-10-31)
+
+
+### Features
+
+* **catalog:** suporta topanimes no scanner e semeia Avatar Seven Havens ([27db255](https://github.com/1arley/animesice-back/commit/27db25529fbc13078d6ba07c7eaf6d942c88757d))
+
 ## [1.61.1](https://github.com/1arley/animesice-back/compare/v1.61.0...v1.61.1) (2026-10-30)
 
 
