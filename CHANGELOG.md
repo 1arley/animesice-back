@@ -1,3 +1,11 @@
+# [1.63.0](https://github.com/1arley/animesice-back/compare/v1.62.0...v1.63.0) (2026-10-31)
+
+
+### Features
+
+* **gacha:** add foil gem crafting and application ([#129](https://github.com/1arley/animesice-back/issues/129)) ([9b3f77a](https://github.com/1arley/animesice-back/commit/9b3f77a7fb118b28233a61a83cdf62a3ab5840cc))
+* **gacha:** bonus de fragmento de 5% no giro (5% dos previews vêm com fragmento) ([#131](https://github.com/1arley/animesice-back/issues/131)) ([94af3e5](https://github.com/1arley/animesice-back/commit/94af3e50ef7b0bf2cbc7bc0a2fd2f393b7dd99c9))
+
 # [1.62.0](https://github.com/1arley/animesice-back/compare/v1.61.1...v1.62.0) (2026-10-31)
 
 
