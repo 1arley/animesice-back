@@ -619,6 +619,39 @@ describe('CatalogScanner', () => {
       delete process.env.ANIMESDIGITAL_ENABLED;
     });
 
+    it('segue a paginação da listagem do animesdigital', async () => {
+      // A página 1 traz ~50 cards; os episódios antigos ficam em /page/N.
+      const page1 =
+        card('139003', 'Episódio 78') +
+        card('139004', 'Episódio 77') +
+        `<a href="https://animesdigital.org/anime/a/test-animesdigital/page/2/">2</a>`;
+      const page2 = card('139005', 'Episódio 01');
+      const fetchMock = jest.fn().mockImplementation((url: string) => {
+        const target = String(url);
+        if (target.includes('meusanimes.blog')) {
+          return Promise.resolve({
+            ok: true,
+            text: () => Promise.resolve('<html>vazio</html>'),
+          });
+        }
+        return Promise.resolve({
+          ok: true,
+          text: () =>
+            Promise.resolve(target.includes('/page/2') ? page2 : page1),
+        });
+      });
+      global.fetch = fetchMock;
+
+      const scan = await scanner.scanAnimeResolved('test-animesdigital');
+      expect(scan.sourceId).toBe('animesdigital');
+      expect(scan.entries.map((e) => e.episode)).toEqual([1, 77, 78]);
+      expect(
+        fetchMock.mock.calls.filter((c) =>
+          String(c[0]).includes('animesdigital.org'),
+        ),
+      ).toHaveLength(2);
+    });
+
     it('cai no animesdigital quando o meusanimes vem vazio', async () => {
       global.fetch = jest.fn().mockImplementation((url: string) => {
         if (String(url).includes('meusanimes.blog')) {
@@ -975,6 +1008,93 @@ describe('CatalogScanner', () => {
           episodeCount: 13,
           _count: { episodes: 13 },
           sourceMappings: [{ sourceId: 'topanimes' }],
+        },
+      ]);
+
+      const result = await scanner.scanAll(false);
+      expect(result).toEqual({ scanned: 1, enqueued: 1 });
+    });
+  });
+
+  describe('animesorion', () => {
+    const ORION_HTML = `
+      <ul class='episodios'>
+        <li class='mark-1'>
+          <div class='numerando'>1 - 1</div>
+          <div class='episodiotitle'>
+            <a href='https://animesorion.cc/episodios/super-onze-1x1/'>Episódio 1</a>
+          </div>
+        </li>
+        <li class='mark-2'>
+          <div class='numerando'>2 - 1</div>
+          <div class='episodiotitle'>
+            <a href='https://animesorion.cc/episodios/super-onze-2x1/'>Episódio 1</a>
+          </div>
+        </li>
+      </ul>
+    `;
+
+    it('usa o animesorion pelo mapeamento gravado', async () => {
+      m.prisma.animeSource.findUnique.mockImplementation(
+        (args: { where: { animeId_sourceId: { sourceId: string } } }) =>
+          args.where.animeId_sourceId.sourceId === 'animesorion'
+            ? Promise.resolve({ externalKey: 'inazuma-eleven-super-onze' })
+            : Promise.resolve(null),
+      );
+      global.fetch = jest.fn().mockImplementation((url: string) =>
+        Promise.resolve({
+          ok: true,
+          text: () =>
+            Promise.resolve(
+              String(url).includes('animesorion.cc')
+                ? ORION_HTML
+                : '<html></html>',
+            ),
+        }),
+      );
+
+      const scan = await scanner.scanAnimeResolved('inazuma-eleven', 'a1');
+      expect(scan.sourceId).toBe('animesorion');
+      expect(scan.sourceSlug).toBe('inazuma-eleven-super-onze');
+      expect(scan.entries).toEqual([
+        {
+          season: 1,
+          episode: 1,
+          url: 'https://animesorion.cc/episodios/super-onze-1x1/',
+        },
+        {
+          season: 2,
+          episode: 1,
+          url: 'https://animesorion.cc/episodios/super-onze-2x1/',
+        },
+      ]);
+    });
+
+    it('não consulta animesorion sem mapeamento gravado', async () => {
+      const fetchMock = jest.fn().mockResolvedValue({
+        ok: true,
+        text: () => Promise.resolve('<html></html>'),
+      });
+      global.fetch = fetchMock;
+
+      const scan = await scanner.scanAnimeResolved('inazuma-eleven', 'a1');
+      expect(scan.sourceId).not.toBe('animesorion');
+      expect(
+        fetchMock.mock.calls.filter((calls) =>
+          String(calls[0]).includes('animesorion.cc'),
+        ),
+      ).toHaveLength(0);
+    });
+
+    it('reescaneia animes com mapeamento no animesorion mesmo completos', async () => {
+      m.prisma.anime.findMany.mockResolvedValue([
+        {
+          id: 'a1',
+          slug: 'inazuma-eleven',
+          title: 'Inazuma Eleven',
+          episodeCount: 127,
+          _count: { episodes: 127 },
+          sourceMappings: [{ sourceId: 'animesorion' }],
         },
       ]);
 

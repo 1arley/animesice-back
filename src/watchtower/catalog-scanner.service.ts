@@ -51,6 +51,7 @@ const CATALOG_URLS: Record<string, (slug: string) => string> = {
   meusanimes: (slug) => `https://meusanimes.blog/a/${slug}/`,
   animesdigital: (slug) => `https://animesdigital.org/anime/a/${slug}`,
   topanimes: (slug) => `https://topanimes.net/animes/${slug}/`,
+  animesorion: (slug) => `https://animesorion.cc/animes/${slug}/`,
 };
 
 @Injectable()
@@ -73,9 +74,10 @@ export class CatalogScanner implements OnModuleInit {
    * já mapeados com episódios exclusivos.
    *
    * Ordem: meusanimes (base) -> animesdigital (fallback/complemento) ->
-   * topanimes (fallback: fonte de obras que as duas outras não publicam).
-   * Fontes sem URL derivável por slug (animesdigital usa post-ID do WordPress)
-   * só entram pelo caminho de descoberta de catálogo, nunca por template.
+   * topanimes -> animesorion (fallback: fonte de obras que as outras não
+   * publicam). Fontes sem URL derivável por slug (animesdigital usa post-ID do
+   * WordPress) só entram pelo caminho de descoberta de catálogo, nunca por
+   * template.
    */
   async scanAnimeResolved(
     animeSlug: string,
@@ -124,7 +126,11 @@ export class CatalogScanner implements OnModuleInit {
       return { ...animesdigital, definitiveMissing: false };
     }
     const topanimes = await this.scanTopanimes(animeId);
-    return { ...topanimes, definitiveMissing: false };
+    if (topanimes.entries.length > 0) {
+      return { ...topanimes, definitiveMissing: false };
+    }
+    const animesorion = await this.scanAnimesorion(animeId);
+    return { ...animesorion, definitiveMissing: false };
   }
 
   /** Compatibilidade: só as entradas (sem metadados da fonte). */
@@ -293,6 +299,45 @@ export class CatalogScanner implements OnModuleInit {
     return { entries, definitiveMissing: false };
   }
 
+  /**
+   * Escaneia o catálogo do animesorion.cc (/animes/<slug>/) — só para animes com
+   * mapeamento gravado (AnimeSource sourceId='animesorion'), como o topanimes.
+   * A listagem usa o mesmo markup (`numerando` + `episodiotitle`) e traz todas
+   * as temporadas da obra.
+   */
+  private async scanAnimesorion(animeId?: string): Promise<CatalogScan> {
+    const mapping = animeId
+      ? await Promise.resolve(
+          this.prisma.animeSource?.findUnique({
+            where: {
+              animeId_sourceId: { animeId, sourceId: 'animesorion' },
+            },
+            select: { externalKey: true },
+          }),
+        ).catch(() => null)
+      : null;
+    const sourceSlug = mapping?.externalKey?.trim();
+    if (!sourceSlug) return { ...EMPTY_SCAN, definitiveMissing: false };
+
+    const url = `https://animesorion.cc/animes/${sourceSlug}/`;
+    console.error(`[CATALOG] scanning ${url}`);
+    const html = await this.fetchCatalogHtml(url);
+    if (!html) return { ...EMPTY_SCAN, definitiveMissing: false };
+
+    const entries = this.parseCatalog(html, sourceSlug);
+    if (entries.length === 0)
+      return { ...EMPTY_SCAN, definitiveMissing: false };
+    console.error(
+      `[CATALOG] animesorion ${sourceSlug}: ${entries.length} episódios encontrados`,
+    );
+    return {
+      sourceId: 'animesorion',
+      sourceSlug,
+      entries,
+      definitiveMissing: false,
+    };
+  }
+
   /** GET de HTML com timeout; null quando a fonte não respondeu. */
   private async fetchCatalogHtml(url: string): Promise<string | null> {
     const controller = new AbortController();
@@ -409,44 +454,48 @@ export class CatalogScanner implements OnModuleInit {
     };
   }
 
-  /** Baixa a página /anime/a/<slug> do animesdigital e extrai os episódios. */
+  /**
+   * Baixa a página /anime/a/<slug> do animesdigital e extrai os episódios.
+   *
+   * A listagem é PAGINADA: a página 1 traz ~50 cards e os episódios mais
+   * antigos ficam em `/anime/a/<slug>/page/N`. O link de paginação do HTML
+   * diz se existe próxima página — sem ele, a resposta é a listagem toda.
+   */
   private async tryScanAnimesdigital(slug: string): Promise<CatalogResponse> {
     const url = `https://animesdigital.org/anime/a/${slug}`;
     console.error(`[CATALOG] scanning ${url}`);
 
-    let html: string;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 20_000);
-    try {
-      const res = await fetch(url, {
-        headers: {
-          'user-agent': UA,
-          accept: 'text/html,application/xhtml+xml',
-          'accept-language': 'pt-BR,pt;q=0.9',
-        },
-        redirect: 'follow',
-        signal: controller.signal,
-      });
-      if (!res.ok) {
-        return {
-          ...EMPTY_RESPONSE,
-          definitiveMissing: res.status === 404 || res.status === 410,
-        };
-      }
-      html = await res.text();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[CATALOG] fetch falhou p/ ${url}:`, msg);
-      return EMPTY_RESPONSE;
-    } finally {
-      clearTimeout(timeout);
+    const seen = new Set<number>();
+    const entries: CatalogEntry[] = [];
+    let page = 1;
+    let html = await this.fetchCatalogHtml(url);
+    while (html) {
+      entries.push(...this.parseAnimesdigitalCatalog(html, seen));
+      if (!this.animesdigitalHasNextPage(html, slug, page)) break;
+      page++;
+      if (page > 20) break;
+      html = await this.fetchCatalogHtml(`${url}/page/${page}`);
     }
 
-    const entries = this.parseAnimesdigitalCatalog(html);
+    entries.sort((a, b) => a.episode - b.episode);
     console.error(
       `[CATALOG] animesdigital ${slug}: ${entries.length} episódios encontrados`,
     );
     return { entries, definitiveMissing: false };
+  }
+
+  /** A listagem do animesdigital tem página seguinte? (link /anime/a/<slug>/page/N) */
+  private animesdigitalHasNextPage(
+    html: string,
+    slug: string,
+    page: number,
+  ): boolean {
+    for (const match of html.matchAll(
+      /\/anime\/a\/([^"'#?\s]+)\/page\/(\d+)/g,
+    )) {
+      if (match[1] === slug && Number(match[2]) > page) return true;
+    }
+    return false;
   }
 
   /**
@@ -457,9 +506,11 @@ export class CatalogScanner implements OnModuleInit {
    * O corpo do anchor é limitado a 1200 chars e não pode conter outro `<a`, o
    * que impede o regex de atravessar o card e capturar o "Episódio" do seguinte.
    */
-  private parseAnimesdigitalCatalog(html: string): CatalogEntry[] {
+  private parseAnimesdigitalCatalog(
+    html: string,
+    seen = new Set<number>(),
+  ): CatalogEntry[] {
     const entries: CatalogEntry[] = [];
-    const seen = new Set<number>();
 
     const cardRe =
       /<a\s+href=['"](https:\/\/animesdigital\.org\/video\/a\/\d+)\/?['"][^>]*>((?:(?!<a[\s>])[\s\S]){0,1200}?)<\/a>/gi;
@@ -541,7 +592,9 @@ export class CatalogScanner implements OnModuleInit {
         },
         sourceMappings: {
           where: {
-            sourceId: { in: ['meusanimes', 'animesdigital', 'topanimes'] },
+            sourceId: {
+              in: ['meusanimes', 'animesdigital', 'topanimes', 'animesorion'],
+            },
           },
           select: { sourceId: true },
         },
@@ -560,6 +613,7 @@ export class CatalogScanner implements OnModuleInit {
           (mapping) =>
             mapping.sourceId === 'meusanimes' ||
             mapping.sourceId === 'topanimes' ||
+            mapping.sourceId === 'animesorion' ||
             (mapping.sourceId === 'animesdigital' &&
               process.env.ANIMESDIGITAL_ENABLED === 'true'),
         ) || anime.catalogUnpublished;
@@ -853,7 +907,8 @@ export class CatalogScanner implements OnModuleInit {
   }
 
   /**
-   * Parseia o HTML da página de catálogo do meusanimes.
+   * Parseia o HTML da página de catálogo do meusanimes (e do animesorion, que
+   * usa o mesmo markup).
    *
    * Estrutura esperada:
    * - div.numerando contém "S - E" (temporada - episódio)
