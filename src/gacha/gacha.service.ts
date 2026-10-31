@@ -23,6 +23,10 @@ import {
   GACHA_TIERS,
   GachaFoil,
   GachaTier,
+  SPIN_SHARD_CHANCE,
+  SPIN_SHARD_FIELD,
+  SPIN_SHARD_WEIGHTS,
+  SpinShardKind,
   cardValue,
   conditionLabel,
   isEpicTier,
@@ -102,6 +106,7 @@ const PULL_SELECT = {
   value: true,
   rankedValue: true,
   valueOverride: true,
+  bonusShard: true,
   obtainedAt: true,
   user: {
     select: {
@@ -166,6 +171,7 @@ const SPIN_SELECT = {
   condition: true,
   foil: true,
   value: true,
+  bonusShard: true,
   claimedAt: true,
   expiresAt: true,
   createdAt: true,
@@ -852,6 +858,12 @@ export class GachaService {
 
     const condition = Math.random();
     const foil = pickWeighted(this.config.foilWeights);
+    // Fragmento bônus (fragmentos-20261030): 5% dos previews vêm com um
+    // fragmento junto. Só é concedido no claim.
+    const bonusShard: SpinShardKind | null =
+      Math.random() < SPIN_SHARD_CHANCE
+        ? pickWeighted(SPIN_SHARD_WEIGHTS)
+        : null;
     // ponytail: slot único (userId,hour,slot) torna giro concorrente
     // race-safe; P2002 = slot ocupado, tenta o próximo.
     for (let slot = 0; slot < this.config.spinsPerHour; slot++) {
@@ -864,6 +876,7 @@ export class GachaService {
             cardId: card.id,
             condition,
             foil,
+            bonusShard,
             value: cardValue(
               tier,
               condition,
@@ -934,6 +947,12 @@ export class GachaService {
             this.config.baseValue,
             this.config.foilMult,
           );
+          // Fragmento bônus do giro; dado persistido pode ter valor inesperado,
+          // então normaliza antes de usar a chave tipada no inventário.
+          const bonusShard =
+            spin.bonusShard != null && spin.bonusShard in SPIN_SHARD_FIELD
+              ? (spin.bonusShard as SpinShardKind)
+              : null;
           const created = await tx.userCard.create({
             data: {
               userId,
@@ -944,9 +963,19 @@ export class GachaService {
               edition,
               value: calculatedValue,
               rankedValue: calculatedValue,
+              // Fragmento bônus do giro: mantém o selo na carta e credita 1 fragmento.
+              bonusShard,
             },
             select: PULL_SELECT,
           });
+          if (bonusShard !== null) {
+            const shardField = SPIN_SHARD_FIELD[bonusShard];
+            await tx.gachaInventory.upsert({
+              where: { userId },
+              create: { userId, [shardField]: 1 },
+              update: { [shardField]: { increment: 1 } },
+            });
+          }
           await tx.gachaCardDiscovery.createMany({
             data: { userId, cardId: spin.card.id },
             skipDuplicates: true,
