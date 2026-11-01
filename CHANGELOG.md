@@ -1,3 +1,15 @@
+# [1.66.0](https://github.com/1arley/animesice-back/compare/v1.65.0...v1.66.0) (2026-11-01)
+
+
+### Bug Fixes
+
+* **seed:** enfileira scan do inazuma com prioridade do slug ([ba04093](https://github.com/1arley/animesice-back/commit/ba0409324704fcfe5bce410c55e3fd40941f60c8))
+
+
+### Features
+
+* **watchtower:** prioriza inazuma-eleven na fila de extracao ([4c4b470](https://github.com/1arley/animesice-back/commit/4c4b4700df27f6c75827e64aa1fee2fb45e3ef15))
+
 # [1.65.0](https://github.com/1arley/animesice-back/compare/v1.64.0...v1.65.0) (2026-11-01)
 
 
