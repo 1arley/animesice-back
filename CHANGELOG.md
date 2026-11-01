@@ -1,3 +1,11 @@
+# [1.65.0](https://github.com/1arley/animesice-back/compare/v1.64.0...v1.65.0) (2026-11-01)
+
+
+### Features
+
+* **catalog:** pagina listagem do animesdigital e mapeia animesorion ([78edb30](https://github.com/1arley/animesice-back/commit/78edb305efb90b10e2332349fe720a713db8b5bb))
+* **catalog:** semeia Inazuma Eleven com audio dublado e fontes mapeadas ([df5e19b](https://github.com/1arley/animesice-back/commit/df5e19b6a684f3a186b6515411144bc9e3f2c78c))
+
 # [1.64.0](https://github.com/1arley/animesice-back/compare/v1.63.1...v1.64.0) (2026-10-31)
 
 
