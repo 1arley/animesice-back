@@ -14,6 +14,7 @@ describe('watchtower priority boost (backlog temporário)', () => {
       'mushoku-tensei-isekai-ittara-honki-dasu-2',
       'mushoku-tensei-isekai-ittara-honki-dasu-3',
       'mushoku-tensei-iii-isekai-ittara-honki-dasu',
+      'inazuma-eleven',
     ];
     it.each(franchiseSlugs)('casa o slug "%s"', (slug) => {
       expect(isBoostedSlug(slug)).toBe(true);

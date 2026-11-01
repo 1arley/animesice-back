@@ -87,6 +87,9 @@ export const PRIORITY_SLUGS: string[] = [
   'kaguya-sama-wa-kokurasetai-otona-e-no-kaidan',
   'mushoku-tensei-isekai-ittara-honki-dasu',
   'mushoku-tensei-iii-isekai-ittara-honki-dasu',
+  // Backfill de Inazuma Eleven (eps 1-28 dublados no animesdigital): o
+  // backlog de SCAN_CATALOG deixaria a extração em espera por dias.
+  'inazuma-eleven',
 ];
 
 /** Prioridade urgente p/ jobs desses slugs (acima de todo backfill, mas
