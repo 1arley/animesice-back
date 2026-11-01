@@ -106,7 +106,6 @@ const PULL_SELECT = {
   value: true,
   rankedValue: true,
   valueOverride: true,
-  bonusShard: true,
   obtainedAt: true,
   user: {
     select: {
@@ -963,8 +962,9 @@ export class GachaService {
               edition,
               value: calculatedValue,
               rankedValue: calculatedValue,
-              // Fragmento bônus do giro: mantém o selo na carta e credita 1 fragmento.
-              bonusShard,
+              // Fragmento bônus do giro: credita 1 fragmento direto no
+              // inventário. O selo NÃO vai para a carta: o ícone só existe na
+              // prévia e sai no resgate.
             },
             select: PULL_SELECT,
           });

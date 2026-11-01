@@ -1136,9 +1136,6 @@ model UserCard {
   value          Int
   rankedValue    Int
   valueOverride  Int?
-  /// Fragmento bônus que veio junto do giro (null = nenhum); carrega o selo
-  /// visual da carta no front.
-  bonusShard     String?
   status         UserCardStatus @default(ACTIVE)
   obtainedAt     DateTime       @default(now())
 

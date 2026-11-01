@@ -792,21 +792,21 @@ describe('GachaService', () => {
       expect(mockPrisma.post.create).not.toHaveBeenCalled();
     });
 
-    it('claim com fragmento bônus credita 1 fragmento na coluna do kind', async () => {
+    it('claim com fragmento bônus credita só o inventário, sem selo na carta', async () => {
       mockPrisma.gachaSpin.findFirst.mockResolvedValue({
         ...previewComum,
         bonusShard: 'DRACONICA',
       });
       mockClaimCreate();
 
-      const pull = await service.claim('u1', 's1');
+      await service.claim('u1', 's1');
 
-      expect(pull.bonusShard).toBe('DRACONICA');
-      expect(mockPrisma.userCard.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ bonusShard: 'DRACONICA' }),
-        }),
-      );
+      const createData = (
+        mockPrisma.userCard.create.mock.calls.at(-1)[0] as {
+          data: Record<string, unknown>;
+        }
+      ).data;
+      expect(createData).not.toHaveProperty('bonusShard');
       expect(mockPrisma.gachaInventory.upsert).toHaveBeenCalledWith({
         where: { userId: 'u1' },
         create: { userId: 'u1', draconicaShards: 1 },
