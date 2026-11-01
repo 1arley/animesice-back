@@ -18,7 +18,11 @@
 import { AudioType, PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
-import { JOB_TYPE, PRIORITY } from '../src/watchtower/watchtower.types';
+import {
+  JOB_TYPE,
+  PRIORITY,
+  priorityForSlug,
+} from '../src/watchtower/watchtower.types';
 
 try {
   // dotenv é devDependency: existe no dev, não na imagem de produção.
@@ -65,6 +69,9 @@ async function enqueueScan(
 ): Promise<void> {
   const dedupeKey = `scan-catalog:${animeId}`;
   const payload = { animeId, slug };
+  // Slug em PRIORITY_SLUGS => scan entra com prioridade urgente, na frente do
+  // backlog de SCAN_CATALOG que existe em produção.
+  const priority = priorityForSlug(slug, PRIORITY.SCAN_CATALOG);
   const existing = await prisma.watchtowerJob.findUnique({
     where: { type_dedupeKey: { type: JOB_TYPE.SCAN_CATALOG, dedupeKey } },
     select: { id: true, status: true },
@@ -75,7 +82,7 @@ async function enqueueScan(
         type: JOB_TYPE.SCAN_CATALOG,
         dedupeKey,
         payload,
-        priority: PRIORITY.SCAN_CATALOG,
+        priority,
       },
     });
     return;
@@ -92,7 +99,7 @@ async function enqueueScan(
       lockedBy: null,
       lockedAt: null,
       payload,
-      priority: PRIORITY.SCAN_CATALOG,
+      priority,
     },
   });
 }
