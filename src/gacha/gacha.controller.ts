@@ -532,7 +532,7 @@ export class GachaController {
     const ownerId = userId || viewerId;
     if (!ownerId)
       throw new BadRequestException('Informe o usuário da coleção.');
-    return this.gachaService.collection(
+    const collectionArgs = [
       ownerId,
       viewerId,
       parseInt(page ?? '1', 10) || DEFAULT_PAGE,
@@ -540,6 +540,11 @@ export class GachaController {
       sort,
       rarity,
       foil,
+    ] as const;
+    if (search === undefined && eligibleKind === undefined)
+      return this.gachaService.collection(...collectionArgs);
+    return this.gachaService.collection(
+      ...collectionArgs,
       search,
       eligibleKind,
     );
