@@ -1,3 +1,15 @@
+## [1.66.2](https://github.com/1arley/animesice-back/compare/v1.66.1...v1.66.2) (2026-11-02)
+
+
+### Bug Fixes
+
+* **gacha:** preserve legacy collection call arguments ([060360a](https://github.com/1arley/animesice-back/commit/060360aa76b9059df1224ac40fd02c119666125b))
+
+
+### Performance Improvements
+
+* **gacha:** filter inventory results before pagination ([2dbcca4](https://github.com/1arley/animesice-back/commit/2dbcca40dcade122b2761db7c333ae1eb59156aa))
+
 ## [1.66.1](https://github.com/1arley/animesice-back/compare/v1.66.0...v1.66.1) (2026-11-02)
 
 
