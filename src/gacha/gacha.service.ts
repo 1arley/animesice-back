@@ -3259,6 +3259,7 @@ export class GachaService {
       rarity?: string;
       ownership?: 'all' | 'owned' | 'missing';
       animeId?: string;
+      animeTitle?: string;
       progress?: 'all' | 'near' | 'complete';
     },
   ): Promise<{
@@ -3314,9 +3315,143 @@ export class GachaService {
       rarity?: string;
       ownership?: 'all' | 'owned' | 'missing';
       animeId?: string;
+      animeTitle?: string;
       progress?: 'all' | 'near' | 'complete';
     } = {},
   ) {
+    const view = options.view === 'sets' ? 'sets' : 'cards';
+    if (view === 'cards' && Object.keys(options).length > 0) {
+      const term = options.search?.trim();
+      const where = {
+        ...(term
+          ? {
+              OR: [
+                { name: { contains: term, mode: 'insensitive' as const } },
+                {
+                  animeTitle: {
+                    contains: term,
+                    mode: 'insensitive' as const,
+                  },
+                },
+              ],
+            }
+          : {}),
+        ...(options.rarity ? { rarity: options.rarity } : {}),
+        ...(options.animeId === 'orphan'
+          ? {
+              animeId: null,
+              ...(options.animeTitle ? { animeTitle: options.animeTitle } : {}),
+            }
+          : options.animeId
+            ? { animeId: options.animeId }
+            : options.animeTitle
+              ? { animeId: null, animeTitle: options.animeTitle }
+              : {}),
+        ...(options.ownership === 'owned'
+          ? userId
+            ? { userCards: { some: { userId, status: 'ACTIVE' as const } } }
+            : { id: { in: [] } }
+          : options.ownership === 'missing' && userId
+            ? { userCards: { none: { userId, status: 'ACTIVE' as const } } }
+            : {}),
+      };
+      const page = Math.max(1, options.page ?? 1);
+      const limit = Math.min(100, Math.max(1, options.limit ?? 24));
+      const [total, cards, totalCards, setCounts, ownedRows] =
+        await Promise.all([
+          this.prisma.card.count({ where }),
+          this.prisma.card.findMany({
+            where,
+            orderBy: [{ animeTitle: 'asc' }, { name: 'asc' }, { id: 'asc' }],
+            skip: (page - 1) * limit,
+            take: limit,
+            include: {
+              anime: { select: { id: true, slug: true, title: true } },
+            },
+          }),
+          this.prisma.card.count(),
+          this.prisma.card.groupBy({
+            by: ['animeId', 'animeTitle'],
+            _count: { id: true },
+          }),
+          userId
+            ? this.prisma.userCard.groupBy({
+                by: ['cardId'],
+                where: { userId, status: 'ACTIVE' },
+              })
+            : Promise.resolve([]),
+        ]);
+      const ownedCardIds = ownedRows.map((row) => row.cardId);
+      const ownedCards = ownedCardIds.length
+        ? await this.prisma.card.findMany({
+            where: { id: { in: ownedCardIds } },
+            select: { animeId: true, animeTitle: true },
+          })
+        : [];
+      const setKey = (animeId: string | null, animeTitle: string | null) =>
+        JSON.stringify([animeId, animeId ? null : animeTitle]);
+      const ownedBySet = new Map<string, number>();
+      for (const card of ownedCards) {
+        const key = setKey(card.animeId, card.animeTitle);
+        ownedBySet.set(key, (ownedBySet.get(key) ?? 0) + 1);
+      }
+      const ownedIds = new Set(ownedCardIds);
+      const wishlistStates =
+        userId && this.wishlistService
+          ? await this.wishlistService.cardStates(
+              userId,
+              cards.map((card) => ({ id: card.id, animeId: card.animeId })),
+            )
+          : new Map<
+              string,
+              { direct: boolean; set: boolean; priority: string | null }
+            >();
+      const resultCards = cards.map((card) => {
+        const wish = wishlistStates.get(card.id);
+        return {
+          id: card.id,
+          name: card.imageHidden ? '???' : card.name,
+          image: card.imageHidden ? null : card.image,
+          imageHidden: card.imageHidden,
+          rarity: card.rarity,
+          favourites: card.favourites,
+          owned: ownedIds.has(card.id),
+          wishlisted: Boolean(wish?.direct || wish?.set),
+          wishlistPriority: wish?.priority ?? null,
+          animeId: card.animeId,
+          animeTitle: card.anime?.title ?? card.animeTitle ?? null,
+        };
+      });
+      const totalBySet = new Map<string, number>();
+      for (const set of setCounts) {
+        const key = setKey(set.animeId, set.animeTitle);
+        totalBySet.set(key, (totalBySet.get(key) ?? 0) + set._count.id);
+      }
+      const totalSets = totalBySet.size;
+      return {
+        view,
+        cards: resultCards,
+        sets: [],
+        meta: {
+          total,
+          page,
+          limit,
+          totalPages: Math.max(1, Math.ceil(total / limit)),
+        },
+        stats: {
+          totalCards,
+          ownedCards: ownedIds.size,
+          totalSets,
+          completeSets: [...totalBySet].filter(([key, total]) => {
+            return (
+              (ownedBySet.get(key) ?? 0) > 0 &&
+              (ownedBySet.get(key) ?? 0) === total
+            );
+          }).length,
+        },
+      };
+    }
+
     const cards = await this.prisma.card.findMany({
       orderBy: [{ animeTitle: 'asc' }, { name: 'asc' }],
       include: { anime: { select: { id: true, slug: true, title: true } } },
@@ -3363,13 +3498,13 @@ export class GachaService {
       }
     >();
     for (const card of cards) {
-      const key = card.animeId;
+      const key = card.animeId ?? `orphan:${card.animeTitle ?? ''}`;
       if (!byAnime.has(key)) {
         byAnime.set(key, {
-          animeId: key,
-          animeTitle: key
+          animeId: card.animeId,
+          animeTitle: card.animeId
             ? (card.anime?.title ?? card.animeTitle ?? null)
-            : null,
+            : (card.animeTitle ?? null),
           animeSlug: card.anime?.slug ?? null,
           total: 0,
           owned: 0,
@@ -3424,6 +3559,12 @@ export class GachaService {
         card.animeId !== options.animeId
       )
         return false;
+      if (
+        options.animeId === 'orphan' &&
+        options.animeTitle &&
+        card.animeTitle !== options.animeTitle
+      )
+        return false;
       if (options.ownership === 'owned' && !card.owned) return false;
       if (options.ownership === 'missing' && card.owned) return false;
       return true;
@@ -3436,7 +3577,6 @@ export class GachaService {
         return false;
       return true;
     });
-    const view = options.view === 'sets' ? 'sets' : 'cards';
     const source = view === 'sets' ? setsView : cardsView;
     const page = Math.max(1, options.page ?? 1);
     const limit = Math.min(100, Math.max(1, options.limit ?? 24));

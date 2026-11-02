@@ -688,6 +688,7 @@ export class GachaController {
     @Query('rarity') rarity?: string,
     @Query('ownership') ownership?: 'all' | 'owned' | 'missing',
     @Query('animeId') animeId?: string,
+    @Query('animeTitle') animeTitle?: string,
     @Query('progress') progress?: 'all' | 'near' | 'complete',
   ) {
     const options = {
@@ -698,6 +699,7 @@ export class GachaController {
       ...(rarity !== undefined ? { rarity } : {}),
       ...(ownership !== undefined ? { ownership } : {}),
       ...(animeId !== undefined ? { animeId } : {}),
+      ...(animeTitle !== undefined ? { animeTitle } : {}),
       ...(progress !== undefined ? { progress } : {}),
     };
     return Object.keys(options).length > 0
