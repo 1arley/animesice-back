@@ -241,8 +241,23 @@ export class GachaController {
     page: number,
     @Query('limit', new DefaultValuePipe(48), ParseIntPipe) limit: number,
     @Query('search') search?: string,
+    @Query('ownedPage', new ParseIntPipe({ optional: true }))
+    ownedPage?: number,
+    @Query('ownedLimit', new ParseIntPipe({ optional: true }))
+    ownedLimit?: number,
+    @Query('includeOwned') includeOwned?: string,
   ) {
-    return this.gachaService.skinCatalog(req.user.id, page, limit, search);
+    return this.gachaService.skinCatalog(
+      req.user.id,
+      page,
+      limit,
+      search,
+      ownedPage,
+      ownedLimit,
+      includeOwned === 'none' || includeOwned === 'count'
+        ? includeOwned
+        : 'all',
+    );
   }
 
   @Get('skins/recent')
@@ -510,6 +525,8 @@ export class GachaController {
     @Query('sort') sort?: string,
     @Query('rarity') rarity?: string,
     @Query('foil') foil?: string,
+    @Query('search') search?: string,
+    @Query('eligibleKind') eligibleKind?: string,
   ) {
     const viewerId = req.user?.id ?? null;
     const ownerId = userId || viewerId;
@@ -523,6 +540,8 @@ export class GachaController {
       sort,
       rarity,
       foil,
+      search,
+      eligibleKind,
     );
   }
 
@@ -690,6 +709,7 @@ export class GachaController {
     @Query('animeId') animeId?: string,
     @Query('animeTitle') animeTitle?: string,
     @Query('progress') progress?: 'all' | 'near' | 'complete',
+    @Query('summary') summary?: string,
   ) {
     const options = {
       ...(view !== undefined ? { view } : {}),
@@ -701,6 +721,7 @@ export class GachaController {
       ...(animeId !== undefined ? { animeId } : {}),
       ...(animeTitle !== undefined ? { animeTitle } : {}),
       ...(progress !== undefined ? { progress } : {}),
+      ...(summary === '1' ? { summary: true } : {}),
     };
     return Object.keys(options).length > 0
       ? this.gachaService.encyclopedia(req.user?.id ?? null, options)

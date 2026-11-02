@@ -2322,6 +2322,8 @@ export class GachaService {
     sort = 'value',
     rarity?: string,
     foil?: string,
+    search?: string,
+    eligibleKind?: string,
   ) {
     if (ownerId !== viewerId) {
       const privacy = await this.prisma.privacySettings.findUnique({
@@ -2335,6 +2337,41 @@ export class GachaService {
 
     const safeLimit = Math.min(Math.max(limit, 1), 100);
     const safePage = Math.max(page, 1);
+    const validKinds: Array<keyof EconomyConfig['item_eligibility']> = [
+      'TITANITA',
+      'TITANITA_SOMBRIA',
+      'DRACONICA',
+      'SOMBRIA_DRACONICA',
+    ];
+    const economyConfig = validKinds.includes(
+      eligibleKind as keyof EconomyConfig['item_eligibility'],
+    )
+      ? (await this.economy.currentVersion(this.prisma)).config
+      : null;
+    const eligibility =
+      economyConfig?.item_eligibility[
+        eligibleKind as keyof EconomyConfig['item_eligibility']
+      ];
+    const labels = ['POOR', 'PLAYED', 'EX', 'NM', 'MINT'];
+    const validSourceConditions = eligibility?.sourceConditions.filter(
+      (label) => {
+        const next = labels[labels.indexOf(label) + 1];
+        return (
+          !!next &&
+          labels.indexOf(next) <= labels.indexOf(eligibility.maxCondition) &&
+          economyConfig?.item_condition_anchor[
+            next as keyof EconomyConfig['item_condition_anchor']
+          ] != null
+        );
+      },
+    );
+    const conditionRanges: Record<string, Prisma.FloatFilter> = {
+      POOR: { gt: 0.55 },
+      PLAYED: { gt: 0.38, lte: 0.55 },
+      EX: { gt: 0.15, lte: 0.38 },
+      NM: { gt: 0.07, lte: 0.15 },
+      MINT: { lte: 0.07 },
+    };
     const where: Prisma.UserCardWhereInput = {
       userId: ownerId,
       status: 'ACTIVE',
@@ -2343,6 +2380,49 @@ export class GachaService {
         : {}),
       ...(foil && (GACHA_FOILS as readonly string[]).includes(foil)
         ? { foil }
+        : {}),
+      ...(eligibility
+        ? {
+            foil: { in: eligibility.foils as GachaFoil[] },
+          }
+        : {}),
+      ...(eligibility
+        ? {
+            OR: (validSourceConditions ?? []).map((label) => ({
+              condition: conditionRanges[label],
+            })),
+          }
+        : {}),
+      ...(search?.trim()
+        ? {
+            card: {
+              AND: [
+                ...(rarity &&
+                (GACHA_TIERS as readonly string[]).includes(rarity)
+                  ? [{ rarity }]
+                  : []),
+                search.trim() === '???'
+                  ? { imageHidden: true }
+                  : {
+                      imageHidden: false,
+                      OR: [
+                        {
+                          name: {
+                            contains: search.trim(),
+                            mode: 'insensitive' as const,
+                          },
+                        },
+                        {
+                          animeTitle: {
+                            contains: search.trim(),
+                            mode: 'insensitive' as const,
+                          },
+                        },
+                      ],
+                    },
+              ],
+            },
+          }
         : {}),
     };
     const orderBy: Prisma.UserCardOrderByWithRelationInput =
@@ -2541,9 +2621,20 @@ export class GachaService {
     };
   }
 
-  async skinCatalog(userId: string, page = 1, limit = 48, search?: string) {
+  async skinCatalog(
+    userId: string,
+    page = 1,
+    limit = 48,
+    search?: string,
+    ownedPage?: number,
+    ownedLimit?: number,
+    includeOwned: 'all' | 'count' | 'none' = 'all',
+  ) {
     const safeLimit = Math.min(Math.max(limit, 1), 100);
     const safePage = Math.max(page, 1);
+    const paginateOwned = ownedPage !== undefined || ownedLimit !== undefined;
+    const safeOwnedLimit = Math.min(Math.max(ownedLimit ?? 48, 1), 100);
+    const safeOwnedPage = Math.max(ownedPage ?? 1, 1);
     const term = search?.trim();
     const where: Prisma.GachaSkinWhereInput = {
       active: true,
@@ -2570,30 +2661,47 @@ export class GachaService {
         select: { acquiredAt: true, name: true, imageUrl: true },
       },
     };
-    const [total, skins, ownedSkins, user] = await this.prisma.$transaction([
-      this.prisma.gachaSkin.count({ where }),
-      this.prisma.gachaSkin.findMany({
-        where,
-        orderBy: [{ name: 'asc' }, { id: 'asc' }],
-        skip: (safePage - 1) * safeLimit,
-        take: safeLimit,
-        select: skinSelect,
-      }),
-      this.prisma.gachaSkin.findMany({
-        where: { ...where, owners: { some: { userId } } },
-        orderBy: [{ name: 'asc' }, { id: 'asc' }],
-        select: skinSelect,
-      }),
-      this.prisma.user.findUniqueOrThrow({
-        where: { id: userId },
-        select: {
-          crystalBalance: true,
-          crystalReserved: true,
-          equippedGachaSkinId: true,
-          nextGachaSkinSpinAt: true,
-        },
-      }),
-    ]);
+    const [total, skins, ownedTotal, ownedSkins, user] =
+      await this.prisma.$transaction([
+        this.prisma.gachaSkin.count({ where }),
+        this.prisma.gachaSkin.findMany({
+          where,
+          orderBy: [{ name: 'asc' }, { id: 'asc' }],
+          skip: (safePage - 1) * safeLimit,
+          take: safeLimit,
+          select: skinSelect,
+        }),
+        includeOwned !== 'none'
+          ? this.prisma.gachaSkin.count({
+              where: { ...where, owners: { some: { userId } } },
+            })
+          : this.prisma.gachaSkin.count({ where: { id: { in: [] } } }),
+        includeOwned === 'all'
+          ? this.prisma.gachaSkin.findMany({
+              where: { ...where, owners: { some: { userId } } },
+              orderBy: [{ name: 'asc' }, { id: 'asc' }],
+              ...(paginateOwned
+                ? {
+                    skip: (safeOwnedPage - 1) * safeOwnedLimit,
+                    take: safeOwnedLimit,
+                  }
+                : {}),
+              select: skinSelect,
+            })
+          : this.prisma.gachaSkin.findMany({
+              where: { id: { in: [] } },
+              select: skinSelect,
+            }),
+        this.prisma.user.findUniqueOrThrow({
+          where: { id: userId },
+          select: {
+            crystalBalance: true,
+            crystalReserved: true,
+            equippedGachaSkinId: true,
+            nextGachaSkinSpinAt: true,
+          },
+        }),
+      ]);
     const now = Date.now();
     const nextSpinAt = user.nextGachaSkinSpinAt;
     const present = (skin: (typeof skins)[number]) => {
@@ -2607,9 +2715,31 @@ export class GachaService {
         equipped: rest.id === user.equippedGachaSkinId,
       };
     };
+    const equippedSkin =
+      includeOwned === 'all' && user.equippedGachaSkinId
+        ? await this.prisma.gachaSkin.findUnique({
+            where: { id: user.equippedGachaSkinId },
+            select: skinSelect,
+          })
+        : null;
     return {
       skins: skins.map(present),
       owned: ownedSkins.map(present),
+      ...(includeOwned === 'all'
+        ? { equippedSkin: equippedSkin ? present(equippedSkin) : null }
+        : {}),
+      ...(includeOwned !== 'none'
+        ? {
+            ownedMeta: {
+              total: ownedTotal,
+              page: safeOwnedPage,
+              limit: paginateOwned ? safeOwnedLimit : Math.max(1, ownedTotal),
+              totalPages: paginateOwned
+                ? Math.max(1, Math.ceil(ownedTotal / safeOwnedLimit))
+                : 1,
+            },
+          }
+        : {}),
       equippedSkinId: user.equippedGachaSkinId,
       crystalBalance: user.crystalBalance,
       crystalReserved: user.crystalReserved,
@@ -3217,6 +3347,40 @@ export class GachaService {
     };
   }
 
+  private encyclopediaSetKey(
+    animeId: string | null,
+    animeTitle: string | null,
+  ) {
+    return animeId ? `anime:${animeId}` : `orphan:${animeTitle ?? ''}`;
+  }
+
+  private async encyclopediaOwnership(userId: string | null) {
+    const rows = userId
+      ? await this.prisma.$queryRaw<
+          Array<{
+            animeId: string | null;
+            animeTitle: string | null;
+            ownedCount: bigint | number;
+          }>
+        >`
+          SELECT c."animeId", c."animeTitle", COUNT(DISTINCT c."id") AS "ownedCount"
+          FROM "UserCard" uc
+          JOIN "Card" c ON c."id" = uc."cardId"
+          WHERE uc."userId" = ${userId} AND uc."status" = 'ACTIVE'
+          GROUP BY c."animeId", c."animeTitle"
+        `
+      : [];
+    const ownedBySet = new Map<string, number>();
+    let ownedCards = 0;
+    for (const row of rows) {
+      const count = Number(row.ownedCount);
+      const key = this.encyclopediaSetKey(row.animeId, row.animeTitle);
+      ownedBySet.set(key, (ownedBySet.get(key) ?? 0) + count);
+      ownedCards += count;
+    }
+    return { ownedBySet, ownedCards };
+  }
+
   /**
    * Catálogo completo (pool por anime) com flag de posse do usuário — usado
    * pela enciclopédia "quais faltam" da coleção. Sem usuário, tudo owned=false.
@@ -3261,6 +3425,7 @@ export class GachaService {
       animeId?: string;
       animeTitle?: string;
       progress?: 'all' | 'near' | 'complete';
+      summary?: boolean;
     },
   ): Promise<{
     view: 'cards' | 'sets';
@@ -3317,85 +3482,356 @@ export class GachaService {
       animeId?: string;
       animeTitle?: string;
       progress?: 'all' | 'near' | 'complete';
+      summary?: boolean;
     } = {},
   ) {
     const view = options.view === 'sets' ? 'sets' : 'cards';
-    if (view === 'cards' && Object.keys(options).length > 0) {
-      const term = options.search?.trim();
-      const where = {
-        ...(term
-          ? {
-              OR: [
-                { name: { contains: term, mode: 'insensitive' as const } },
-                {
-                  animeTitle: {
-                    contains: term,
-                    mode: 'insensitive' as const,
-                  },
-                },
-              ],
-            }
-          : {}),
-        ...(options.rarity ? { rarity: options.rarity } : {}),
-        ...(options.animeId === 'orphan'
-          ? {
-              animeId: null,
-              ...(options.animeTitle ? { animeTitle: options.animeTitle } : {}),
-            }
-          : options.animeId
-            ? { animeId: options.animeId }
-            : options.animeTitle
-              ? { animeId: null, animeTitle: options.animeTitle }
-              : {}),
-        ...(options.ownership === 'owned'
-          ? userId
-            ? { userCards: { some: { userId, status: 'ACTIVE' as const } } }
-            : { id: { in: [] } }
-          : options.ownership === 'missing' && userId
-            ? { userCards: { none: { userId, status: 'ACTIVE' as const } } }
-            : {}),
-      };
+    if (view === 'sets' && Object.keys(options).length > 0) {
+      const fold = (value: string | null | undefined) =>
+        (value ?? '')
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .toLowerCase();
+      const term = fold(options.search?.trim());
+      const pattern = term
+        ? `%${term.replace(/[!%_]/g, (character) => `!${character}`)}%`
+        : null;
+      const filters: Prisma.Sql[] = [];
+      if (pattern) {
+        filters.push(Prisma.sql`
+          regexp_replace(
+            normalize(lower(COALESCE(s."animeTitle", 'null') || ' ' || COALESCE(s."animeSlug", 'null')), NFD),
+            U&'[\\0300-\\036F]', '', 'g'
+          ) LIKE ${pattern} ESCAPE '!'
+        `);
+      }
+      if (options.progress === 'complete')
+        filters.push(Prisma.sql`s."setTotal" > 0 AND s."owned" = s."setTotal"`);
+      if (options.progress === 'near')
+        filters.push(Prisma.sql`s."owned" > 0 AND s."owned" < s."setTotal"`);
+      const where = filters.length
+        ? Prisma.sql`WHERE ${Prisma.join(filters, ' AND ')}`
+        : Prisma.empty;
       const page = Math.max(1, options.page ?? 1);
       const limit = Math.min(100, Math.max(1, options.limit ?? 24));
-      const [total, cards, totalCards, setCounts, ownedRows] =
+      type SetQueryRow = {
+        kind: number;
+        animeId: string | null;
+        orphanTitle: string | null;
+        animeTitle: string | null;
+        animeSlug: string | null;
+        setTotal: number | null;
+        owned: number | null;
+        wishlisted: boolean | null;
+        complete: boolean | null;
+        filteredTotal: number | null;
+        totalCards: number | null;
+        ownedCards: number | null;
+        totalSets: number | null;
+        completeSets: number | null;
+      };
+      const rows = await this.prisma.$queryRaw<SetQueryRow[]>(Prisma.sql`
+        WITH request AS (
+          SELECT ${userId}::text AS "userId"
+        ), owned_cards AS (
+          SELECT DISTINCT uc."cardId"
+          FROM "UserCard" uc CROSS JOIN request r
+          WHERE uc."userId" = r."userId" AND uc."status" = 'ACTIVE'
+        ), card_sets AS (
+          SELECT
+            c."animeId",
+            CASE WHEN c."animeId" IS NULL THEN c."animeTitle" END AS "orphanTitle",
+            COALESCE(a."title", c."animeTitle") AS "animeTitle",
+            a."slug" AS "animeSlug",
+            COUNT(*)::integer AS "setTotal",
+            COUNT(o."cardId")::integer AS "owned"
+          FROM "Card" c
+          LEFT JOIN "Anime" a ON a."id" = c."animeId"
+          LEFT JOIN owned_cards o ON o."cardId" = c."id"
+          GROUP BY
+            c."animeId",
+            CASE WHEN c."animeId" IS NULL THEN c."animeTitle" END,
+            COALESCE(a."title", c."animeTitle"),
+            a."slug"
+        ), sets AS (
+          SELECT
+            cs."animeId",
+            cs."orphanTitle",
+            MAX(cs."animeTitle") AS "animeTitle",
+            MAX(cs."animeSlug") AS "animeSlug",
+            SUM(cs."setTotal")::integer AS "setTotal",
+            SUM(cs."owned")::integer AS "owned"
+          FROM card_sets cs
+          GROUP BY cs."animeId", cs."orphanTitle"
+        ), filtered_sets AS (
+          SELECT s.* FROM sets s ${where}
+        ), result_rows AS (
+          SELECT
+            0 AS kind,
+            NULL::text AS "animeId",
+            NULL::text AS "orphanTitle",
+            NULL::text AS "animeTitle",
+            NULL::text AS "animeSlug",
+            NULL::integer AS "setTotal",
+            NULL::integer AS "owned",
+            NULL::boolean AS "wishlisted",
+            NULL::boolean AS "complete",
+            (SELECT COUNT(*)::integer FROM filtered_sets) AS "filteredTotal",
+            (SELECT COUNT(*)::integer FROM "Card") AS "totalCards",
+            (SELECT COUNT(*)::integer FROM owned_cards) AS "ownedCards",
+            (SELECT COUNT(*)::integer FROM sets) AS "totalSets",
+            (SELECT COUNT(*)::integer FROM sets WHERE "setTotal" > 0 AND "owned" = "setTotal") AS "completeSets"
+          UNION ALL
+          SELECT
+            1 AS kind,
+            s."animeId",
+            s."orphanTitle",
+            s."animeTitle",
+            s."animeSlug",
+            s."setTotal",
+            s."owned",
+            CASE WHEN s."animeId" IS NOT NULL THEN EXISTS (
+              SELECT 1 FROM "GachaSetWishlist" sw CROSS JOIN request r
+              WHERE sw."userId" = r."userId" AND sw."animeId" = s."animeId"
+            ) ELSE FALSE END AS "wishlisted",
+            (s."setTotal" > 0 AND s."owned" = s."setTotal") AS "complete",
+            NULL::integer AS "filteredTotal",
+            NULL::integer AS "totalCards",
+            NULL::integer AS "ownedCards",
+            NULL::integer AS "totalSets",
+            NULL::integer AS "completeSets"
+          FROM (
+            SELECT * FROM filtered_sets
+            ORDER BY "animeTitle" ASC NULLS LAST, "animeId" ASC, "orphanTitle" ASC
+            LIMIT ${limit} OFFSET ${(page - 1) * limit}
+          ) s
+        )
+        SELECT * FROM result_rows
+        ORDER BY kind, "animeTitle" ASC NULLS LAST, "animeId" ASC, "orphanTitle" ASC
+      `);
+      const meta = rows[0];
+      const pageSets = rows
+        .filter((row) => row.kind === 1)
+        .map((row) => ({
+          animeId: row.animeId,
+          animeTitle: row.animeTitle,
+          animeSlug: row.animeSlug,
+          total: row.setTotal ?? 0,
+          owned: row.owned ?? 0,
+          cards: [] as Array<{
+            id: string;
+            name: string;
+            image: string | null;
+            imageHidden: boolean;
+            rarity: string;
+            favourites: number;
+            owned: boolean;
+            wishlisted: boolean;
+            wishlistPriority: string | null;
+          }>,
+          wishlisted: row.wishlisted ?? false,
+          complete: row.complete ?? false,
+        }));
+      if (!options.summary && pageSets.length) {
+        const setCards = await this.prisma.card.findMany({
+          where: {
+            OR: pageSets.map((set) =>
+              set.animeId
+                ? { animeId: set.animeId }
+                : { animeId: null, animeTitle: set.animeTitle },
+            ),
+          },
+          orderBy: [{ animeTitle: 'asc' }, { name: 'asc' }, { id: 'asc' }],
+          select: {
+            id: true,
+            name: true,
+            image: true,
+            imageHidden: true,
+            rarity: true,
+            favourites: true,
+            animeId: true,
+            animeTitle: true,
+          },
+        });
+        const pageOwnedRows =
+          userId && setCards.length
+            ? await this.prisma.userCard.findMany({
+                where: {
+                  userId,
+                  status: 'ACTIVE',
+                  cardId: { in: setCards.map((card) => card.id) },
+                },
+                select: { cardId: true },
+                distinct: ['cardId'],
+              })
+            : [];
+        const ownedIds = new Set(pageOwnedRows.map((row) => row.cardId));
+        const wishlistStates =
+          userId && this.wishlistService
+            ? await this.wishlistService.cardStates(
+                userId,
+                setCards.map((card) => ({
+                  id: card.id,
+                  animeId: card.animeId,
+                })),
+              )
+            : new Map<
+                string,
+                { direct: boolean; set: boolean; priority: string | null }
+              >();
+        const pageSetsByKey = new Map(
+          pageSets.map((set) => [
+            this.encyclopediaSetKey(set.animeId, set.animeTitle),
+            set,
+          ]),
+        );
+        for (const card of setCards) {
+          const set = pageSetsByKey.get(
+            this.encyclopediaSetKey(card.animeId, card.animeTitle),
+          );
+          if (!set) continue;
+          const wish = wishlistStates.get(card.id);
+          const owned = ownedIds.has(card.id);
+          set.cards.push({
+            id: card.id,
+            name: card.imageHidden ? '???' : card.name,
+            image: card.imageHidden ? null : card.image,
+            imageHidden: card.imageHidden,
+            rarity: card.rarity,
+            favourites: card.favourites,
+            owned,
+            wishlisted: Boolean(wish?.direct || wish?.set),
+            wishlistPriority: wish?.priority ?? null,
+          });
+          if (wish?.set) set.wishlisted = true;
+        }
+      }
+      return {
+        view,
+        cards: [],
+        sets: pageSets,
+        meta: {
+          total: meta?.filteredTotal ?? 0,
+          page,
+          limit,
+          totalPages: Math.max(
+            1,
+            Math.ceil((meta?.filteredTotal ?? 0) / limit),
+          ),
+        },
+        stats: {
+          totalCards: meta?.totalCards ?? 0,
+          ownedCards: meta?.ownedCards ?? 0,
+          totalSets: meta?.totalSets ?? 0,
+          completeSets: meta?.completeSets ?? 0,
+        },
+      };
+    }
+
+    if (view === 'cards' && Object.keys(options).length > 0) {
+      const fold = (value: string | null | undefined) =>
+        (value ?? '')
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .toLowerCase();
+      const term = fold(options.search?.trim());
+      const pattern = term
+        ? `%${term.replace(/[!%_]/g, (character) => `!${character}`)}%`
+        : null;
+      const filters: Prisma.Sql[] = [];
+      if (pattern) {
+        filters.push(Prisma.sql`
+          regexp_replace(
+            normalize(lower((CASE WHEN c."imageHidden" THEN '???' ELSE c."name" END) || ' ' || COALESCE(a."title", c."animeTitle", 'null')), NFD),
+            U&'[\\0300-\\036F]', '', 'g'
+          ) LIKE ${pattern} ESCAPE '!'
+        `);
+      }
+      if (options.rarity)
+        filters.push(Prisma.sql`c."rarity" = ${options.rarity}`);
+      if (options.animeId === 'orphan') {
+        filters.push(Prisma.sql`c."animeId" IS NULL`);
+        if (options.animeTitle)
+          filters.push(Prisma.sql`c."animeTitle" = ${options.animeTitle}`);
+      } else if (options.animeId) {
+        filters.push(Prisma.sql`c."animeId" = ${options.animeId}`);
+      } else if (options.animeTitle) {
+        filters.push(
+          Prisma.sql`c."animeId" IS NULL AND c."animeTitle" = ${options.animeTitle}`,
+        );
+      }
+      if (options.ownership === 'owned') {
+        filters.push(
+          userId
+            ? Prisma.sql`EXISTS (
+                SELECT 1 FROM "UserCard" uc
+                WHERE uc."cardId" = c."id" AND uc."userId" = ${userId}
+                  AND uc."status" = 'ACTIVE'
+              )`
+            : Prisma.sql`FALSE`,
+        );
+      } else if (options.ownership === 'missing' && userId) {
+        filters.push(Prisma.sql`NOT EXISTS (
+          SELECT 1 FROM "UserCard" uc
+          WHERE uc."cardId" = c."id" AND uc."userId" = ${userId}
+            AND uc."status" = 'ACTIVE'
+        )`);
+      }
+      const where = filters.length
+        ? Prisma.sql`WHERE ${Prisma.join(filters, ' AND ')}`
+        : Prisma.empty;
+      const page = Math.max(1, options.page ?? 1);
+      const limit = Math.min(100, Math.max(1, options.limit ?? 24));
+      const [countRows, pageRows, totalCards, setCounts, ownership] =
         await Promise.all([
-          this.prisma.card.count({ where }),
-          this.prisma.card.findMany({
-            where,
-            orderBy: [{ animeTitle: 'asc' }, { name: 'asc' }, { id: 'asc' }],
-            skip: (page - 1) * limit,
-            take: limit,
-            include: {
-              anime: { select: { id: true, slug: true, title: true } },
-            },
-          }),
+          this.prisma.$queryRaw<Array<{ total: number }>>(Prisma.sql`
+            SELECT COUNT(*)::integer AS total
+            FROM "Card" c
+            LEFT JOIN "Anime" a ON a."id" = c."animeId"
+            ${where}
+          `),
+          this.prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+            SELECT c."id"
+            FROM "Card" c
+            LEFT JOIN "Anime" a ON a."id" = c."animeId"
+            ${where}
+            ORDER BY c."animeTitle" ASC, c."name" ASC, c."id" ASC
+            LIMIT ${limit} OFFSET ${(page - 1) * limit}
+          `),
           this.prisma.card.count(),
           this.prisma.card.groupBy({
             by: ['animeId', 'animeTitle'],
             _count: { id: true },
           }),
-          userId
-            ? this.prisma.userCard.groupBy({
-                by: ['cardId'],
-                where: { userId, status: 'ACTIVE' },
-              })
-            : Promise.resolve([]),
+          this.encyclopediaOwnership(userId),
         ]);
-      const ownedCardIds = ownedRows.map((row) => row.cardId);
-      const ownedCards = ownedCardIds.length
+      const cardIds = pageRows.map((row) => row.id);
+      const fetchedCards = cardIds.length
         ? await this.prisma.card.findMany({
-            where: { id: { in: ownedCardIds } },
-            select: { animeId: true, animeTitle: true },
+            where: { id: { in: cardIds } },
+            include: {
+              anime: { select: { id: true, slug: true, title: true } },
+            },
           })
         : [];
-      const setKey = (animeId: string | null, animeTitle: string | null) =>
-        JSON.stringify([animeId, animeId ? null : animeTitle]);
-      const ownedBySet = new Map<string, number>();
-      for (const card of ownedCards) {
-        const key = setKey(card.animeId, card.animeTitle);
-        ownedBySet.set(key, (ownedBySet.get(key) ?? 0) + 1);
-      }
-      const ownedIds = new Set(ownedCardIds);
+      const cardsById = new Map(fetchedCards.map((card) => [card.id, card]));
+      const cards = cardIds.flatMap((id) => {
+        const card = cardsById.get(id);
+        return card ? [card] : [];
+      });
+      const pageOwnedRows =
+        userId && cards.length
+          ? await this.prisma.userCard.findMany({
+              where: {
+                userId,
+                status: 'ACTIVE',
+                cardId: { in: cards.map((card) => card.id) },
+              },
+              select: { cardId: true },
+              distinct: ['cardId'],
+            })
+          : [];
+      const ownedIds = new Set(pageOwnedRows.map((row) => row.cardId));
       const wishlistStates =
         userId && this.wishlistService
           ? await this.wishlistService.cardStates(
@@ -3424,7 +3860,7 @@ export class GachaService {
       });
       const totalBySet = new Map<string, number>();
       for (const set of setCounts) {
-        const key = setKey(set.animeId, set.animeTitle);
+        const key = this.encyclopediaSetKey(set.animeId, set.animeTitle);
         totalBySet.set(key, (totalBySet.get(key) ?? 0) + set._count.id);
       }
       const totalSets = totalBySet.size;
@@ -3433,19 +3869,22 @@ export class GachaService {
         cards: resultCards,
         sets: [],
         meta: {
-          total,
+          total: countRows[0]?.total ?? 0,
           page,
           limit,
-          totalPages: Math.max(1, Math.ceil(total / limit)),
+          totalPages: Math.max(
+            1,
+            Math.ceil((countRows[0]?.total ?? 0) / limit),
+          ),
         },
         stats: {
           totalCards,
-          ownedCards: ownedIds.size,
+          ownedCards: ownership.ownedCards,
           totalSets,
           completeSets: [...totalBySet].filter(([key, total]) => {
             return (
-              (ownedBySet.get(key) ?? 0) > 0 &&
-              (ownedBySet.get(key) ?? 0) === total
+              (ownership.ownedBySet.get(key) ?? 0) > 0 &&
+              (ownership.ownedBySet.get(key) ?? 0) === total
             );
           }).length,
         },
@@ -3639,7 +4078,10 @@ export class GachaService {
     const term = query.trim();
     if (term.length < 2) return [];
     const rows = await this.prisma.card.findMany({
-      where: { name: { contains: term, mode: 'insensitive' } },
+      where: {
+        imageHidden: false,
+        name: { contains: term, mode: 'insensitive' },
+      },
       select: { name: true, animeTitle: true },
       orderBy: { name: 'asc' },
       take: 5,
