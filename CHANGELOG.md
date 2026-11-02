@@ -1,3 +1,10 @@
+## [1.66.1](https://github.com/1arley/animesice-back/compare/v1.66.0...v1.66.1) (2026-11-02)
+
+
+### Performance Improvements
+
+* **gacha:** paginate encyclopedia queries in database ([78d2795](https://github.com/1arley/animesice-back/commit/78d2795abc404c8d613852ccfc656c5e913a29be))
+
 # [1.66.0](https://github.com/1arley/animesice-back/compare/v1.65.0...v1.66.0) (2026-11-01)
 
 
