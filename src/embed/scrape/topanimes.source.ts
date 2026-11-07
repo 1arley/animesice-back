@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import type { Page } from 'playwright';
 import { fetchSafeRaw } from '@/common/ssrf';
 import { probeMediaUrlDead } from '@/common/media-probe';
+import { parseTopanimesCatalog } from './topanimes.catalog';
 import type {
   EpisodeUrlQuery,
   HttpExtractContext,
@@ -28,7 +29,9 @@ const PLAYER_HOST_RE =
  * adapter jogava "sem player reconhecido" em 100% dos episódios.
  */
 const EMBED_RE =
-  /https?:\/\/(?:www\.)?(csst|fsst|incvideo1)\.online\/embed\/(\d+)/gi;
+  /https?:\/\/(?:www\.)?(csst|fsst|incvideo1)\.online\/(?:embed|e)\/(\d+)\/?/gi;
+const GENERIC_EMBED_RE =
+  /https?:\/\/(?:www\.)?(?:filemoon\.sx|mixdrop\.(?:ag|click)|embedwish\.com)\/e\/[^'"\s<>]+/gi;
 
 /**
  * `file:"[360p]https://...360p.mp4/,[720p]https://...720p.mp4/,[1080p]..."`.
@@ -56,13 +59,6 @@ const MAX_MIRRORS = 2;
 
 /** src de <iframe> (players secundários). */
 const IFRAME_SRC_RE = /<iframe[^>]+src=["']([^"']+)["']/gi;
-
-/**
- * Link de episódio na página do anime: `/episodio/<slug>-episodio-<n>/`.
- * Aceita aspas simples E duplas — o tema emite as simples.
- */
-const EPISODE_LINK_RE =
-  /href=["'](https?:\/\/topanimes\.net\/episodio\/[^"']*?-episodio-(\d+)\/?)["']/gi;
 
 const UA_ANIME_PAGE =
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
@@ -120,12 +116,9 @@ export class TopanimesScrapeSource implements ScrapeSource {
     return /^https?:\/\/(?:[^/?#]+\.)?topanimes\.net(?:[/?#]|$)/i.test(url);
   }
 
-  /** Slug local em ordem de tentativa: como está, sem sufixo dublado/legendado. */
+  /** Usa apenas o slug mapeado para esta obra e áudio. */
   slugVariants(animeSlug: string): string[] {
-    const stripped = animeSlug.replace(/-(?:dublado|legendado)(?:-\d+)?$/i, '');
-    return [animeSlug, stripped].filter(
-      (slug, i, all) => !!slug && all.indexOf(slug) === i,
-    );
+    return [animeSlug];
   }
 
   episodeUrl(animeSlug: string, episodeNumber: number): string {
@@ -133,6 +126,7 @@ export class TopanimesScrapeSource implements ScrapeSource {
   }
 
   templateUrls(query: EpisodeUrlQuery): string[] {
+    if ((query.season ?? 1) !== 1) return [];
     return this.slugVariants(query.animeSlug).map((slug) =>
       this.episodeUrl(slug, query.episodeNumber),
     );
@@ -142,6 +136,7 @@ export class TopanimesScrapeSource implements ScrapeSource {
     const resolved = await this.resolveEpisodeUrl(
       query.animeSlug,
       query.episodeNumber,
+      query.season ?? 1,
     );
     return resolved ? [resolved] : [];
   }
@@ -162,33 +157,39 @@ export class TopanimesScrapeSource implements ScrapeSource {
   async resolveEpisodeUrl(
     animeSlug: string,
     episodeNumber: number,
+    season: number = 1,
   ): Promise<string | null> {
-    for (const slug of this.slugVariants(animeSlug)) {
-      const url = this.episodeUrl(slug, episodeNumber);
-      if (await this.exists(url)) return url;
-    }
-    return this.episodeLinkFromAnimePage(animeSlug, episodeNumber);
+    return this.episodeLinkFromAnimePage(animeSlug, episodeNumber, season);
   }
 
   /** Procura o episódio na listagem da página do anime. */
   private async episodeLinkFromAnimePage(
     animeSlug: string,
     episodeNumber: number,
+    season: number,
   ): Promise<string | null> {
     for (const slug of this.slugVariants(animeSlug)) {
       let html: string;
+      const catalogUrl = `https://topanimes.net/animes/${slug}/`;
       try {
-        html = await this.get(
-          `https://topanimes.net/animes/${slug}/`,
-          UA_ANIME_PAGE,
-        );
+        html = await this.get(catalogUrl, UA_ANIME_PAGE, undefined, catalogUrl);
       } catch {
         continue;
       }
-      const hit = [...html.matchAll(EPISODE_LINK_RE)]
-        .map((m) => ({ url: m[1]!, ep: Number(m[2]) }))
-        .find((c) => c.ep === episodeNumber);
-      if (hit) return hit.url;
+      const hit = parseTopanimesCatalog(html).episodes.find(
+        (episode) =>
+          episode.episode === episodeNumber && episode.season === season,
+      );
+      if (hit) {
+        try {
+          const url = new URL(hit.url, 'https://topanimes.net');
+          if (url.protocol === 'https:' && url.hostname === 'topanimes.net') {
+            return url.href;
+          }
+        } catch {
+          continue;
+        }
+      }
     }
     return null;
   }
@@ -225,11 +226,14 @@ export class TopanimesScrapeSource implements ScrapeSource {
     );
     const decoded = decodedUrls.join('\n');
     const embeds = [
-      ...new Set(
-        [...`${html}\n${decoded}`.matchAll(EMBED_RE)].map(
+      ...new Set([
+        ...[...`${html}\n${decoded}`.matchAll(EMBED_RE)].map(
           (m) => `https://${m[1]!.toLowerCase()}.online/embed/${m[2]}/`,
         ),
-      ),
+        ...[...`${html}\n${decoded}`.matchAll(GENERIC_EMBED_RE)].map(
+          (m) => m[0]!,
+        ),
+      ]),
     ];
 
     // O player sk-api é a via antiga: só vira fallback quando o embed não salva,
@@ -349,31 +353,11 @@ export class TopanimesScrapeSource implements ScrapeSource {
     return videos;
   }
 
-  private async exists(url: string): Promise<boolean> {
-    const response = await fetchSafeRaw(
-      url,
-      {
-        headers: {
-          'user-agent':
-            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-          accept: 'text/html',
-        },
-      },
-      15_000,
-    );
-    const dispatcher = response.dispatcher;
-    try {
-      await response.response.body?.cancel();
-      return response.response.status >= 200 && response.response.status < 400;
-    } finally {
-      await dispatcher.close();
-    }
-  }
-
   private async get(
     url: string,
     ua: string,
     accept = 'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8',
+    expectedUrl?: string,
   ): Promise<string> {
     let response: Response;
     let dispatcher: import('undici').Dispatcher;
@@ -400,6 +384,18 @@ export class TopanimesScrapeSource implements ScrapeSource {
     try {
       if (!response.ok) {
         throw new Error(`${url} retornou ${response.status}`);
+      }
+      if (expectedUrl) {
+        if (!response.url) throw new Error(`${url} sem URL final de resposta`);
+        const requested = new URL(expectedUrl);
+        const final = new URL(response.url);
+        if (
+          final.hostname !== requested.hostname ||
+          final.pathname.replace(/\/$/, '') !==
+            requested.pathname.replace(/\/$/, '')
+        ) {
+          throw new Error(`${url} redirecionou para outro catálogo`);
+        }
       }
       return await response.text();
     } finally {

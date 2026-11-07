@@ -72,16 +72,13 @@ export class AnimesonlineScrapeSource implements ScrapeSource {
   }
 
   async resolveEpisodeUrls(query: EpisodeUrlQuery): Promise<string[]> {
-    const urls = [...this.templateUrls(query)];
     const resolved = await this.resolveEpisodeUrl(
       query.animeSlug,
       query.episodeNumber,
       query.ua ?? DEFAULT_UA,
+      query.season ?? 1,
     ).catch(() => null);
-    if (resolved && !urls.includes(resolved)) {
-      urls.push(resolved);
-    }
-    return urls;
+    return resolved ? [resolved] : [];
   }
 
   /**
@@ -96,6 +93,7 @@ export class AnimesonlineScrapeSource implements ScrapeSource {
     animeSlug: string,
     episodeNumber: number,
     ua: string = DEFAULT_UA,
+    season: number = 1,
   ): Promise<string | null> {
     for (const host of SOURCE_HOSTS) {
       for (const slug of this.slugVariants(animeSlug)) {
@@ -103,6 +101,7 @@ export class AnimesonlineScrapeSource implements ScrapeSource {
           host,
           slug,
           episodeNumber,
+          season,
           ua,
         );
         if (hit) return hit;
@@ -129,6 +128,13 @@ export class AnimesonlineScrapeSource implements ScrapeSource {
         )) {
           if (candidateHost !== host || !candidate || candidate === 'anime')
             continue;
+          const requestedAudio = animeSlug
+            .match(/-(dublado|legendado)(?:-\d{1,2})?$/i)?.[1]
+            ?.toLowerCase();
+          const candidateAudio = candidate
+            .match(/-(dublado|legendado)(?:-\d{1,2})?$/i)?.[1]
+            ?.toLowerCase();
+          if (requestedAudio !== candidateAudio) continue;
           if (
             !term
               .split(' ')
@@ -143,6 +149,7 @@ export class AnimesonlineScrapeSource implements ScrapeSource {
             host,
             candidate,
             episodeNumber,
+            season,
             ua,
           );
           if (hit) return hit;
@@ -153,12 +160,14 @@ export class AnimesonlineScrapeSource implements ScrapeSource {
     return null;
   }
 
-  /** Slug local em ordem de tentativa: como está, sem sufixo dublado/legendado. */
+  /** Slugs locais e formas indexadas pela fonte (temporada/áudio são sufixos do catálogo). */
   private slugVariants(animeSlug: string): string[] {
-    return [
-      animeSlug,
-      animeSlug.replace(/-(?:dublado|legendado)(?:-\d+)?$/i, ''),
-    ].filter((slug, i, all) => slug && all.indexOf(slug) === i);
+    const variants = new Set([animeSlug]);
+    const withoutSeason = animeSlug.replace(/-\d+$/, '');
+    const withoutAudio = withoutSeason.replace(/-(?:dublado|legendado)$/i, '');
+    variants.add(withoutSeason);
+    variants.add(withoutAudio);
+    return [...variants];
   }
 
   /**
@@ -168,13 +177,10 @@ export class AnimesonlineScrapeSource implements ScrapeSource {
    * desambiguam e a página do candidato é quem confirma.
    */
   private searchTerms(animeSlug: string): string[] {
-    const words = animeSlug
-      .replace(/-(?:dublado|legendado)$/i, '')
-      .split('-')
-      .filter(Boolean);
+    const words = animeSlug.split('-').filter(Boolean);
     const terms = new Set<string>();
     for (const size of [2, 3, words.length]) {
-      if (words.length > size) terms.add(words.slice(0, size).join(' '));
+      if (words.length >= size) terms.add(words.slice(0, size).join(' '));
     }
     return [...terms];
   }
@@ -183,39 +189,71 @@ export class AnimesonlineScrapeSource implements ScrapeSource {
     host: (typeof SOURCE_HOSTS)[number],
     slug: string,
     episodeNumber: number,
+    season: number,
     ua: string,
   ): Promise<string | null> {
     let html: string;
     try {
-      html = await this.get(`https://${host}/anime/${slug}/`, ua);
+      const catalogUrl = `https://${host}/anime/${slug}/`;
+      html = await this.get(catalogUrl, ua, catalogUrl);
     } catch {
       return null;
     }
+    let hasSeasonNumbers = false;
+    for (const item of html.matchAll(/<li\b[^>]*>([\s\S]*?)<\/li>/gi)) {
+      const block = item[1] ?? '';
+      const numbers = block.match(
+        /class=['"]numerando['"]>\s*(\d+)\s*-\s*(\d+)\s*</i,
+      );
+      const href = block.match(/\bhref=["']([^"']+)["']/i)?.[1];
+      if (!numbers || !href) continue;
+      hasSeasonNumbers = true;
+      if (Number(numbers[1]) !== season || Number(numbers[2]) !== episodeNumber)
+        continue;
+      const url = this.safeEpisodeHref(href, host, episodeNumber, slug);
+      if (url) return url;
+    }
+    if (hasSeasonNumbers || season > 1) return null;
     for (const [, href] of html.matchAll(/\bhref=["']([^"']+)["']/gi)) {
       if (!href) continue;
-      try {
-        const url = new URL(this.decodeHtml(href), `https://${host}/`);
-        if (
-          !['http:', 'https:'].includes(url.protocol) ||
-          url.username !== '' ||
-          url.password !== '' ||
-          !SOURCE_HOSTS.some(
-            (sourceHost) =>
-              url.hostname === sourceHost ||
-              url.hostname === `www.${sourceHost}`,
-          )
-        ) {
-          continue;
-        }
-        const match = url.pathname.match(
-          /\/episodio\/[^/]+-episodio-(\d+)\/?$/i,
-        );
-        if (match && Number(match[1]) === episodeNumber) return url.href;
-      } catch {
-        continue;
-      }
+      const url = this.safeEpisodeHref(href, host, episodeNumber, slug);
+      if (url) return url;
     }
     return null;
+  }
+
+  private safeEpisodeHref(
+    href: string,
+    host: (typeof SOURCE_HOSTS)[number],
+    episodeNumber: number,
+    requestedSlug: string,
+  ): string | null {
+    try {
+      const url = new URL(this.decodeHtml(href), `https://${host}/`);
+      if (
+        !['http:', 'https:'].includes(url.protocol) ||
+        url.username !== '' ||
+        url.password !== '' ||
+        !SOURCE_HOSTS.some(
+          (sourceHost) =>
+            url.hostname === sourceHost || url.hostname === `www.${sourceHost}`,
+        )
+      )
+        return null;
+      const match = url.pathname.match(/\/episodio\/[^/]+-episodio-(\d+)\/?$/i);
+      if (!match || Number(match[1]) !== episodeNumber) return null;
+      const requestedAudio = requestedSlug
+        .match(/-(dublado|legendado)(?:-\d{1,2})?$/i)?.[1]
+        ?.toLowerCase();
+      const pageSlug =
+        url.pathname.match(/\/episodio\/([^/]+)-episodio-/i)?.[1] ?? '';
+      const pageAudio = pageSlug
+        .match(/-(dublado|legendado)(?:-\d{1,2})?$/i)?.[1]
+        ?.toLowerCase();
+      return requestedAudio === pageAudio ? url.href : null;
+    } catch {
+      return null;
+    }
   }
 
   async extractHttp(ctx: HttpExtractContext): Promise<ScrapeEpisodeResult> {
@@ -290,7 +328,11 @@ export class AnimesonlineScrapeSource implements ScrapeSource {
     return value.replace(/&amp;/g, '&');
   }
 
-  private async get(url: string, ua: string): Promise<string> {
+  private async get(
+    url: string,
+    ua: string,
+    expectedUrl?: string,
+  ): Promise<string> {
     let response: Response;
     let dispatcher: import('undici').Dispatcher;
     try {
@@ -317,6 +359,18 @@ export class AnimesonlineScrapeSource implements ScrapeSource {
     try {
       if (!response.ok) {
         throw new Error(`${url} retornou ${response.status}`);
+      }
+      if (expectedUrl) {
+        if (!response.url) throw new Error(`${url} sem URL final de resposta`);
+        const requested = new URL(expectedUrl);
+        const final = new URL(response.url);
+        if (
+          final.hostname !== requested.hostname ||
+          final.pathname.replace(/\/$/, '') !==
+            requested.pathname.replace(/\/$/, '')
+        ) {
+          throw new Error(`${url} redirecionou para outro catálogo`);
+        }
       }
       return await response.text();
     } finally {
