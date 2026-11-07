@@ -83,7 +83,6 @@ export class AnimesorionScrapeSource implements ScrapeSource {
   slugVariants(animeSlug: string): string[] {
     const variants = new Set([animeSlug]);
     const withoutSeason = animeSlug.replace(/-\d+$/, '');
-    variants.add(withoutSeason);
     variants.add(withoutSeason.replace(/-(?:dublado|legendado)$/i, ''));
     return [...variants];
   }

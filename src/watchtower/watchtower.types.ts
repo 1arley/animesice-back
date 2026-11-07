@@ -162,14 +162,10 @@ export function sourceEpisodeUrl(
  * `bleach-dublado-2`/`dr-stone-dublado-4` só a forma sem sufixo existe.
  * Sem isso o probe 404 descarta a fonte inteira.
  *
- * Ordem = mais específica -> mais genérica (o chamador usa a 1ª que existir).
+ * Mantém áudio e temporada no slug para não cruzar episódios entre versões.
  */
 export function slugVariants(animeSlug: string): string[] {
-  const variants = [
-    animeSlug,
-    animeSlug.replace(/-(?:dublado|legendado)(?:-\d+)?$/i, ''),
-  ];
-  return variants.filter((slug, i, all) => !!slug && all.indexOf(slug) === i);
+  return animeSlug ? [animeSlug] : [];
 }
 
 /**

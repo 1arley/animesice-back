@@ -74,18 +74,26 @@ export class MeusanimesScrapeSource implements ScrapeSource {
   }
 
   slugVariants(animeSlug: string): string[] {
-    const stripped = animeSlug.replace(/-(?:dublado|legendado)(?:-\d+)?$/i, '');
-    return [animeSlug, stripped].filter(
-      (slug, i, all) => !!slug && all.indexOf(slug) === i,
-    );
+    return [animeSlug];
   }
 
   templateUrls(query: EpisodeUrlQuery): string[] {
     const out: string[] = [];
+    const season = query.season ?? 1;
     for (const slug of this.slugVariants(query.animeSlug)) {
+      const base = season > 1 ? slug.replace(/-\d+$/i, '') : slug;
+      const seasonSuffix =
+        season === 1 && /-(?:dublado|legendado)$/i.test(base)
+          ? ''
+          : `-${season}`;
       out.push(
-        `https://meusanimes.blog/e/${slug}-episodio-${query.episodeNumber}/`,
+        `https://meusanimes.blog/e/${base}${seasonSuffix}-episodio-${query.episodeNumber}/`,
       );
+      if (season === 1) {
+        out.push(
+          `https://meusanimes.blog/e/${base}-episodio-${query.episodeNumber}/`,
+        );
+      }
     }
     for (const slug of this.slugVariants(query.animeSlug)) {
       out.push(`https://meusanimes.blog/e/${slug}/`);
@@ -94,10 +102,11 @@ export class MeusanimesScrapeSource implements ScrapeSource {
   }
 
   async resolveEpisodeUrls(query: EpisodeUrlQuery): Promise<string[]> {
-    const urls = [...this.templateUrls(query)];
+    const urls: string[] = [];
     for (const hit of await this.episodeLinksFromAnimePages(
       query.animeSlug,
       query.episodeNumber,
+      query.season ?? 1,
       query.ua ?? this.UA,
     )) {
       if (!urls.includes(hit)) urls.push(hit);
@@ -114,32 +123,51 @@ export class MeusanimesScrapeSource implements ScrapeSource {
    * sob /a/tensei-shitara-slime-datta-ken/). A listagem traz links de episódio
    * em HTML estático, então resolve por lá em vez de depender de slug adivinhado.
    *
-   * Percorre as variantes de slug em ordem; a primeira que tiver episódios do
-   * número alvo já basta. Candidatos correspondentes são mantidos e ordenados
-   * por prefixo comum (URL mais parecida primeiro; temporada errada 404 e o
-   * pipeline pula — o custo de escanear é 1 request).
+   * Prefere a temporada explícita do catálogo para não misturar episódios de
+   * temporadas diferentes que compartilham o mesmo número.
    */
   private async episodeLinksFromAnimePages(
     animeSlug: string,
     episodeNumber: number,
+    season: number,
     ua: string,
   ): Promise<string[]> {
     for (const slug of this.listingSlugVariants(animeSlug)) {
       let html: string;
       try {
-        html = await this.get(`https://meusanimes.blog/a/${slug}/`, ua);
+        const catalogUrl = `https://meusanimes.blog/a/${slug}/`;
+        html = await this.get(catalogUrl, ua, undefined, catalogUrl);
       } catch {
         continue;
       }
+      const exactSeasonHits = new Set<string>();
       const hits = new Set<string>();
+      let hasSeasonNumbers = false;
+      for (const item of html.matchAll(/<li\b[^>]*>([\s\S]*?)<\/li>/gi)) {
+        const block = item[1] ?? '';
+        const numbers = block.match(
+          /class=['"]numerando['"]>\s*(\d+)\s*-\s*(\d+)\s*</i,
+        );
+        const link = block.match(/<a\s+href=['"]([^'"]+)['"]/i);
+        if (!numbers || !link?.[1]) continue;
+        const url = this.catalogEpisodeHref(link[1], episodeNumber);
+        if (!url) continue;
+        hasSeasonNumbers = true;
+        hits.add(url);
+        if (Number(numbers[1]) === season) exactSeasonHits.add(url);
+      }
+      if (exactSeasonHits.size > 0)
+        return [...exactSeasonHits].slice(0, LISTING_MAX_CANDIDATES);
+      if (hasSeasonNumbers) continue;
+      if (season > 1) continue;
       for (const m of html.matchAll(
         /https:\/\/meusanimes\.blog\/e\/[^\s"'#?<>]+-episodio-(\d+)\/?/gi,
       )) {
         if (Number(m[1]) === episodeNumber) hits.add(m[0]);
       }
       if (hits.size === 0) continue;
-      const needle = `${animeSlug}-episodio-${episodeNumber}`;
-      const target = `${slug}-episodio-${episodeNumber}`;
+      const needle = `${animeSlug}-${season}-episodio-${episodeNumber}`;
+      const target = `${slug}-${season}-episodio-${episodeNumber}`;
       // shortcut: ordenação por prefixo é heurística, só prioriza latência
       // (candidato errado 404 e o pipeline tenta o próximo); sem matching de
       // temporada exato — se virar gargalo, casar `^/e/<slug>-(\d+)-episodio-`.
@@ -156,13 +184,29 @@ export class MeusanimesScrapeSource implements ScrapeSource {
   }
 
   /** Slug em ordem de tentativa p/ página do catálogo: como está, sem o número final (temporada) e sem dublado/legendado+temporada. */
+  private catalogEpisodeHref(
+    href: string,
+    episodeNumber: number,
+  ): string | null {
+    try {
+      const url = new URL(href, 'https://meusanimes.blog/');
+      if (
+        url.protocol !== 'https:' ||
+        !/^(?:www\.)?meusanimes\.blog$/i.test(url.hostname)
+      )
+        return null;
+      const match = url.pathname.match(/^\/e\/[^/]+-episodio-(\d+)\/?$/i);
+      return match && Number(match[1]) === episodeNumber ? url.href : null;
+    } catch {
+      return null;
+    }
+  }
+
   private listingSlugVariants(animeSlug: string): string[] {
     const noSeason = animeSlug.replace(/-\d+$/i, '');
-    return [
-      animeSlug,
-      noSeason,
-      noSeason.replace(/-(?:dublado|legendado)$/i, ''),
-    ].filter((slug, i, all) => slug && all.indexOf(slug) === i);
+    return [animeSlug, noSeason].filter(
+      (slug, i, all) => slug && all.indexOf(slug) === i,
+    );
   }
 
   async extractHttp(ctx: HttpExtractContext): Promise<ScrapeEpisodeResult> {
@@ -337,6 +381,7 @@ export class MeusanimesScrapeSource implements ScrapeSource {
     url: string,
     ua: string,
     referer?: string,
+    expectedUrl?: string,
   ): Promise<string> {
     const headers: Record<string, string> = {
       'user-agent': ua,
@@ -359,6 +404,21 @@ export class MeusanimesScrapeSource implements ScrapeSource {
     try {
       if (!response.ok) {
         throw new Error(`${url} retornou ${response.status}`);
+      }
+      if (expectedUrl) {
+        if (!response.url) throw new Error(`${url} sem URL final de resposta`);
+        const requested = new URL(expectedUrl);
+        const final = new URL(response.url);
+        const supportedHost =
+          /^(?:www\.)?meusanimes\.blog$/i.test(final.hostname) ||
+          /^(?:www\.)?meusdoramas\.club$/i.test(final.hostname);
+        if (
+          !supportedHost ||
+          final.pathname.replace(/\/$/, '') !==
+            requested.pathname.replace(/\/$/, '')
+        ) {
+          throw new Error(`${url} redirecionou para outro catálogo`);
+        }
       }
       return await response.text();
     } finally {

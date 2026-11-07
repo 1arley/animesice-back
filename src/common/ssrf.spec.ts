@@ -317,11 +317,12 @@ describe('fetchSafeRaw', () => {
     mockedUndiciFetch.mockReset();
   });
 
-  function okResponse(status = 200, location: string | null = null) {
+  function okResponse(status = 200, location: string | null = null, url = '') {
     return {
       status,
       headers: { get: () => location },
       body: null,
+      url,
     } as any;
   }
 
@@ -352,13 +353,16 @@ describe('fetchSafeRaw', () => {
         headers: { get: () => 'https://cdn2.example/final.mp4' },
         body: { cancel: jest.fn().mockResolvedValue(undefined) },
       } as any)
-      .mockResolvedValueOnce(okResponse(200));
+      .mockResolvedValueOnce(
+        okResponse(200, null, 'https://cdn2.example/final.mp4'),
+      );
     const { response } = await fetchSafeRaw(
       'https://cdn.example/a.mp4',
       {},
       5000,
     );
     expect(response.status).toBe(200);
+    expect(response.url).toBe('https://cdn2.example/final.mp4');
     expect(mockedUndiciFetch).toHaveBeenCalledTimes(2);
     expect(mockedUndiciFetch.mock.calls[1]![0]).toBe(
       'https://cdn2.example/final.mp4',

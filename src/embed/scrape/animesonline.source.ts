@@ -164,9 +164,12 @@ export class AnimesonlineScrapeSource implements ScrapeSource {
   private slugVariants(animeSlug: string): string[] {
     const variants = new Set([animeSlug]);
     const withoutSeason = animeSlug.replace(/-\d+$/, '');
-    const withoutAudio = withoutSeason.replace(/-(?:dublado|legendado)$/i, '');
-    variants.add(withoutSeason);
-    variants.add(withoutAudio);
+    if (
+      withoutSeason !== animeSlug &&
+      /-(?:dublado|legendado)$/i.test(withoutSeason)
+    ) {
+      variants.add(withoutSeason);
+    }
     return [...variants];
   }
 

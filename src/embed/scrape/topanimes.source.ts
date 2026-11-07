@@ -231,7 +231,7 @@ export class TopanimesScrapeSource implements ScrapeSource {
           (m) => `https://${m[1]!.toLowerCase()}.online/embed/${m[2]}/`,
         ),
         ...[...`${html}\n${decoded}`.matchAll(GENERIC_EMBED_RE)].map(
-          (m) => m[0]!,
+          (m) => m[0],
         ),
       ]),
     ];
