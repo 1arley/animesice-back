@@ -230,10 +230,13 @@ async function searchAniList(query: string): Promise<AniListResult | null> {
 
 async function main() {
   const args = parseArgs();
-  console.log(`[SEED] Iniciando seed do catálogo animefire (limit=${args.limit}, skipAniList=${args.skipAniList}, offset=${args.offset})`);
+  console.log(`[SEED] Iniciando seed do catálogo animefire (limit=${args.limit}, skipAniList=${args.skipAniList}, offset=${args.offset}, dry=${args.dry})`);
 
   const epsodeUrls = await fetchSitemap();
   const catalog = groupBySlug(epsodeUrls);
+  if (catalog.length === 0) {
+    throw new Error('Sitemap não trouxe nenhum anime; banco não foi alterado');
+  }
   console.log(`[SEED] ${catalog.length} animes únicos no catálogo`);
 
   const slice = catalog.slice(args.offset, args.offset + args.limit);
@@ -279,6 +282,13 @@ async function main() {
       const synopsis = anilist?.description || pageInfo.synopsis || null;
       const rating = anilist?.averageScore ? anilist.averageScore / 10 : 0;
       const ageRating = anilist?.isAdult ? 'A18' : 'A14';
+
+      if (args.dry) {
+        console.log(`  · ${title} (${dbSlug}) — ${entry.episodeUrls.length} eps${anilist ? ' + AniList' : ''} (dry-run)`);
+        created++;
+        await sleep(150);
+        continue;
+      }
 
       const genreIds: string[] = [];
       if (!args.skipAniList && anilist?.genres) {
@@ -343,12 +353,12 @@ async function main() {
     await sleep(150);
   }
 
-  console.log(`\n[SEED] Concluído: ${created} criados, ${skipped} pulados, ${failed} falhas`);
+  console.log(`\n[SEED] Concluído: ${created} ${args.dry ? 'planejados' : 'criados'}, ${skipped} pulados, ${failed} falhas`);
   await prisma.$disconnect();
 }
 
 function parseArgs() {
-  const args = { limit: Infinity, skipAniList: false, offset: 0 };
+  const args = { limit: Infinity, skipAniList: false, offset: 0, dry: false };
   const argv = process.argv.slice(2);
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--limit' || argv[i] === '-l') {
@@ -357,6 +367,8 @@ function parseArgs() {
       args.skipAniList = true;
     } else if (argv[i] === '--offset' || argv[i] === '-o') {
       args.offset = parseInt(argv[++i] || '', 10) || 0;
+    } else if (argv[i] === '--dry') {
+      args.dry = true;
     }
   }
   return args;

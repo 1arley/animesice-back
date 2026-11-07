@@ -79,12 +79,12 @@ export class AnimesorionScrapeSource implements ScrapeSource {
       : KIT_HOSTS.animesorion!.host;
   }
 
-  /** Slug local em ordem de tentativa: como está, sem sufixo dublado. */
+  /** Slugs indexados pela rede: remove temporada e áudio quando necessário. */
   slugVariants(animeSlug: string): string[] {
-    const stripped = animeSlug.replace(/-(?:dublado|legendado)(?:-\d+)?$/i, '');
-    return [animeSlug, stripped].filter(
-      (slug, i, all) => !!slug && all.indexOf(slug) === i,
-    );
+    const variants = new Set([animeSlug]);
+    const withoutSeason = animeSlug.replace(/-\d+$/, '');
+    variants.add(withoutSeason.replace(/-(?:dublado|legendado)$/i, ''));
+    return [...variants];
   }
 
   episodeUrl(
@@ -127,12 +127,8 @@ export class AnimesorionScrapeSource implements ScrapeSource {
   /**
    * URL real do episódio.
    *
-   * 1) variantes de slug na URL template;
-   * 2) página do anime, que traz a listagem real (formato `<slug>-<s>x<n>`).
-   *
-   * O passo 2 pega o que o template não acerta. NOTA: o HTML usa
-   * `href='...'` (aspas simples) — um padrão que só caseia aspas duplas
-   * devolve zero e faz a fonte parecer sem episódios.
+   * Só aceita links presentes na listagem da obra e com temporada/episódio
+   * explícitos; um template existente não prova que a página é daquele anime.
    */
   async resolveEpisodeUrl(
     animeSlug: string,
@@ -141,8 +137,8 @@ export class AnimesorionScrapeSource implements ScrapeSource {
     host = KIT_HOSTS.animesorion!.host,
   ): Promise<string | null> {
     for (const slug of this.slugVariants(animeSlug)) {
-      const url = this.episodeUrl(slug, episodeNumber, season, host);
-      if (await this.exists(url)) return url;
+      const direct = `${host}/episodios/${slug}-${season}x${episodeNumber}/`;
+      if (await this.exists(direct)) return direct;
     }
     return this.episodeLinkFromAnimePage(
       animeSlug,
@@ -219,7 +215,7 @@ export class AnimesorionScrapeSource implements ScrapeSource {
 
   private matchesAudio(option: PlayerOption, audio?: AudioType): boolean {
     if (!audio) return true;
-    const label = `${option.label ?? ''}`
+    const label = `${option.label ?? option.lang ?? ''}`
       .normalize('NFKD')
       .replace(/[\u0300-\u036f]/g, '')
       .toLowerCase();

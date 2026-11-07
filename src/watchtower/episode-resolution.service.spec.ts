@@ -86,7 +86,9 @@ function makeMocks() {
   };
 
   const scrape = {
-    resolveCandidateUrlsForSource: jest.fn().mockResolvedValue([]),
+    resolveCandidateUrlsForSource: jest.fn(async (sourceId: string) => [
+      `https://${sourceId}.test/episode/1`,
+    ]),
     scrapeEpisodeVideo: jest.fn(async (url: string, sourceId: string) => {
       const videos =
         scrapeResults.get(sourceId) ?? scrapeResults.get(url) ?? [];
@@ -157,6 +159,9 @@ describe('EpisodeResolution', () => {
     });
 
     it('candidates retorna ordem de health quando URLs respondem', async () => {
+      m.scrape.resolveCandidateUrlsForSource.mockImplementation(
+        async (sourceId: string) => [`https://${sourceId}.test/episode/1`],
+      );
       global.fetch = jest.fn(async () => ({
         status: 200,
         body: { cancel: jest.fn() },
@@ -188,13 +193,27 @@ describe('EpisodeResolution', () => {
       ]);
     });
 
+    it('não reintroduz templates genéricos quando o resolver seguro não encontra URL', async () => {
+      m.scrape.resolveCandidateUrlsForSource.mockResolvedValue([]);
+      m.health.rankedSources.mockResolvedValue(['topanimes']);
+      const fetch = jest.fn();
+      global.fetch = fetch as any;
+      await expect(m.resolution.candidates('bleach-2', 4, 1)).resolves.toEqual(
+        [],
+      );
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
     it('candidates exclui fonte cuja URL retorna 404 em todos os templates', async () => {
       global.fetch = jest.fn(async () => ({ status: 404 }) as any);
       const result = await m.resolution.candidates('solo-leveling', 1);
       expect(result).toHaveLength(0);
     });
 
-    it('candidates inclui fonte bloqueada (403) ou erro de rede como fallback', async () => {
+    it('candidates preserva URL exata quando fonte bloqueia ou falha na rede', async () => {
+      m.scrape.resolveCandidateUrlsForSource.mockImplementation(
+        async (sourceId: string) => [`https://${sourceId}.test/episode/1`],
+      );
       global.fetch = jest.fn(async (url: string) => {
         if (url.includes('meusanimes')) return { status: 403 } as any;
         throw new Error('network error');
@@ -206,18 +225,24 @@ describe('EpisodeResolution', () => {
       ]);
     });
 
-    it('allCandidates retorna todas as fontes e inclui variante sem sufixo dublado', () => {
+    it('allCandidates mantém o sufixo de áudio no slug', () => {
       const result = m.resolution.allCandidates('bleach-dublado-2', 7);
       expect(result.length).toBeGreaterThanOrEqual(SOURCE_IDS.length);
       const urls = result.map((c) => c.url);
       expect(urls).toContain(
         'https://meusanimes.blog/e/bleach-dublado-2-episodio-7/',
       );
-      expect(urls).toContain('https://meusanimes.blog/e/bleach-episodio-7/');
+      expect(urls).not.toContain(
+        'https://meusanimes.blog/e/bleach-episodio-7/',
+      );
     });
 
     it('candidates prioriza episodeUrl explícito e descarta se retornar 404', async () => {
       const realUrl = 'https://meusanimes.blog/e/kaguya-sama-episodio-3/';
+      m.scrape.resolveCandidateUrlsForSource.mockImplementation(
+        async (sourceId: string) =>
+          sourceId === 'meusanimes' ? [realUrl] : [],
+      );
       global.fetch = jest.fn(async () => ({ status: 200 }) as any);
       const hit = await m.resolution.candidates('kaguya-sama', 3, 1, realUrl);
       expect(hit[0]).toEqual({ sourceId: 'meusanimes', url: realUrl });
@@ -227,6 +252,26 @@ describe('EpisodeResolution', () => {
       ) as any;
       const miss = await m.resolution.candidates('kaguya-sama', 3, 1, realUrl);
       expect(miss.find((c) => c.url === realUrl)).toBeUndefined();
+    });
+
+    it('ignora episodeUrl explícita que não consta na resolução do episódio', async () => {
+      const wrongEpisode = 'https://meusanimes.blog/e/kaguya-sama-episodio-99/';
+      m.scrape.resolveCandidateUrlsForSource.mockImplementation(
+        async (sourceId: string) =>
+          sourceId === 'meusanimes'
+            ? ['https://meusanimes.blog/e/kaguya-sama-episodio-3/']
+            : [],
+      );
+      global.fetch = jest.fn(async () => ({ status: 200 }) as any);
+      const result = await m.resolution.candidates(
+        'kaguya-sama',
+        3,
+        1,
+        wrongEpisode,
+      );
+      expect(result.map((candidate) => candidate.url)).not.toContain(
+        wrongEpisode,
+      );
     });
   });
 
@@ -244,11 +289,16 @@ describe('EpisodeResolution', () => {
     });
 
     it('extractExact raspa só a fonte do handoff Rust e recusa fonte/host divergente', async () => {
+      const pageUrl = 'https://meusanimes.blog/e/bleach-1-episodio-1/';
+      m.scrape.resolveCandidateUrlsForSource.mockResolvedValue([pageUrl]);
       m.scrapeResults.set('meusanimes', ['https://cdn.test/rust.mp4']);
       const { candidates, triedSources } = await m.resolution.extractExact(
         'meusanimes',
-        'https://meusanimes.blog/e/bleach-1-episodio-1/',
+        pageUrl,
         'meusanimes',
+        'bleach',
+        1,
+        1,
       );
       expect(triedSources).toEqual(['meusanimes']);
       expect(candidates[0]!.videoUrl).toBe('https://cdn.test/rust.mp4');
@@ -258,6 +308,8 @@ describe('EpisodeResolution', () => {
           'meusanimes',
           'https://animefire.io/animes/solo/1',
           'meusanimes',
+          'bleach',
+          1,
         ),
       ).rejects.toThrow('incompatíveis');
     });
@@ -395,8 +447,8 @@ describe('EpisodeResolution', () => {
           episodeNumber: 1,
           mode: 'extract',
         }),
-      ).rejects.toThrow(/Nenhuma fonte resolveu/);
-      expect(m.prisma.episode.updateMany).toHaveBeenCalled();
+      ).rejects.toThrow(/Resolução inconclusiva/);
+      expect(m.prisma.episode.updateMany).not.toHaveBeenCalled();
 
       global.fetch = jest.fn(async () => ({ status: 200 }) as any);
       m.scrapeResults.set('meusanimes', ['https://cdn.test/dead.mp4']);
@@ -460,6 +512,12 @@ describe('EpisodeResolution', () => {
         videoUrl: null,
         embedUrl: 'https://meusanimes.blog/e/solo-episodio-1/',
       });
+      m.scrape.resolveCandidateUrlsForSource.mockImplementation(
+        async (sourceId: string) =>
+          sourceId === 'animesonline'
+            ? ['https://animesonline.cloud/episodio/solo-episodio-1']
+            : [`https://${sourceId}.test/episode/1`],
+      );
       m.scrapeResults.set('animesonline', ['https://cdn.test/repaired.mp4']);
       await m.resolution.resolveAndPublish({
         animeId: 'anime-1',
@@ -488,7 +546,10 @@ describe('EpisodeResolution', () => {
           episodeNumber: 2,
           mode: 'repair',
         }),
-      ).rejects.toThrow(/Repair: sem fonte/);
+      ).rejects.toThrow(/Repair inconclusivo/);
+      expect(m.prisma.episode.update).not.toHaveBeenCalledWith(
+        expect.objectContaining({ data: { videoBroken: true } }),
+      );
 
       // 5. Repair falha quando validação rejeita todos os vídeos
       global.fetch = jest.fn(async () => ({ status: 200 }) as any);

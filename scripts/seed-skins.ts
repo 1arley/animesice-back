@@ -44,13 +44,25 @@ const skins = [
 ];
 
 async function main() {
+  const dry = process.argv.includes('--dry');
   for (const s of skins) {
-    await prisma.gachaSkin.create({
-      data: { ...s, active: true, blocked: false },
+    const existing = await prisma.gachaSkin.findFirst({
+      where: { imageUrl: s.imageUrl },
+      select: { id: true },
     });
-    console.log(`✓ ${s.name} (${s.rarity})`);
+    if (dry) {
+      console.log(`${existing ? '↻' : '+'} ${s.name} (${s.rarity})`);
+      continue;
+    }
+    const data = { ...s, active: true, blocked: false };
+    if (existing) {
+      await prisma.gachaSkin.update({ where: { id: existing.id }, data });
+    } else {
+      await prisma.gachaSkin.create({ data });
+    }
+    console.log(`${existing ? '↻' : '✓'} ${s.name} (${s.rarity})`);
   }
-  console.log('Done. Total:', skins.length);
+  console.log(`${dry ? 'Dry-run. Total:' : 'Done. Total:'}`, skins.length);
 }
 
 main().catch(console.error).finally(() => prisma.$disconnect());
