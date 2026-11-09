@@ -258,6 +258,25 @@ export class StreamingService implements OnModuleDestroy {
       .catch(() => undefined);
   }
 
+  /** Retoma jobs interrompidos sem depender de o cliente continuar polling. */
+  @Cron(CronExpression.EVERY_MINUTE)
+  async recoverExpiredExtractionJobs(): Promise<void> {
+    const jobs = await this.prisma.streamExtractionJob.findMany({
+      where: {
+        OR: [
+          { status: 'pending' },
+          { status: 'processing', lockedUntil: { lt: new Date() } },
+        ],
+      },
+      orderBy: { createdAt: 'asc' },
+      take: 2,
+    });
+
+    for (const row of jobs) {
+      this.resumeExtractionJobIfStale(this.toExtractionJob(row));
+    }
+  }
+
   /** Evicta a entrada mais antiga quando o cache excede o teto máximo. */
   private evictScrapeCacheIfNeeded(): void {
     if (this.scrapeCache.size <= StreamingService.MAX_SCRAPE_CACHE_ENTRIES)

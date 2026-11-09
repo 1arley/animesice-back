@@ -73,6 +73,11 @@ function makeMocks() {
         async ({ where }: any) =>
           [...jobRows.values()].find((row) => matches(row, where)) ?? null,
       ),
+      findMany: jest.fn(async ({ where, take }: any) =>
+        [...jobRows.values()]
+          .filter((row) => matches(row, where))
+          .slice(0, take),
+      ),
       updateMany: jest.fn(async ({ where, data }: any) => {
         const found = [...jobRows.values()].filter((row) =>
           matches(row, where),
@@ -1946,6 +1951,48 @@ describe('StreamingService.getJobStatus', () => {
     });
     const out = await svc.getJobStatus('j4', 'https://api.x');
     expect(out).toEqual({ status: 'processing', result: null, error: null });
+  });
+
+  it('varre e retoma jobs expirados sem polling do cliente', async () => {
+    const { prisma, jobRows, scrapeService, svc } = makeMocks();
+    jobRows.set('expired-job', {
+      id: 'expired-job',
+      animeSlug: 'anime',
+      episodeNumber: 1,
+      season: 1,
+      status: 'processing',
+      videoUrl: null,
+      playerEmbed: null,
+      error: null,
+      createdAt: new Date(),
+      completedAt: null,
+      lockedUntil: new Date(Date.now() - 1000),
+      sourceId: null,
+    });
+    prisma.anime.findUnique.mockResolvedValue({ id: 'a1', slug: 'anime' });
+    prisma.episode.findUnique.mockResolvedValue({
+      id: 'ep-1',
+      number: 1,
+      embedUrl: 'https://meusanimes.blog/e/anime-1/',
+    });
+    scrapeService.scrapeEpisodeVideo.mockResolvedValue({
+      videos: ['https://cdn.example/resumed.mp4'],
+    });
+
+    await svc.recoverExpiredExtractionJobs();
+    await flush();
+
+    expect(prisma.streamExtractionJob.findMany).toHaveBeenCalledWith({
+      where: {
+        OR: [
+          { status: 'pending' },
+          { status: 'processing', lockedUntil: { lt: expect.any(Date) } },
+        ],
+      },
+      orderBy: { createdAt: 'asc' },
+      take: 2,
+    });
+    expect((await svc.getJob('expired-job'))?.status).toBe('completed');
   });
 
   it('retoma um job com lease vencido ao consultar o status', async () => {
