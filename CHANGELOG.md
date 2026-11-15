@@ -1,3 +1,10 @@
+## [1.66.3](https://github.com/1arley/animesice-back/compare/v1.66.2...v1.66.3) (2026-11-15)
+
+
+### Performance Improvements
+
+* **gacha:** trim the odds payload and the official offer selection ([0223513](https://github.com/1arley/animesice-back/commit/02235137acb72737b5aec6c8d92e15c091c4f752))
+
 ## [1.66.2](https://github.com/1arley/animesice-back/compare/v1.66.1...v1.66.2) (2026-11-02)
 
 
