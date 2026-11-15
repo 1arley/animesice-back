@@ -246,8 +246,12 @@ export class EconomyService {
     return { version, config: economyConfig(version.snapshot) };
   }
 
-  async odds() {
-    const { version, config } = await this.currentVersion(this.prisma);
+  /**
+   * Catálogo item a item das caixas. É caro (o catálogo tem centenas de milhar
+   * de cartas e o JSON passa de 40 MB) e nenhuma tela do front usa esse
+   * detalhamento — por isso sai só quando pedido explicitamente (`items=1`).
+   */
+  private async oddsItems() {
     const [cards, skins, backs] = await Promise.all([
       this.prisma.card.findMany({
         where: {
@@ -291,6 +295,16 @@ export class EconomyService {
           conditionalProbability: 1 / pool.length,
         }));
       });
+    return {
+      CARD: probabilities(cards, true),
+      SKIN: probabilities(skins, false),
+      CARD_BACK: probabilities(backs, false),
+    };
+  }
+
+  async odds(includeItems = false) {
+    const { version, config } = await this.currentVersion(this.prisma);
+    const items = includeItems ? await this.oddsItems() : null;
     const packages =
       (
         version.snapshot as {
@@ -325,11 +339,7 @@ export class EconomyService {
         id,
         ...pack,
       })),
-      items: {
-        CARD: probabilities(cards, true),
-        SKIN: probabilities(skins, false),
-        CARD_BACK: probabilities(backs, false),
-      },
+      items,
       cardBackSelection:
         'Uniform among unowned items of the selected quality; complete ownership converts a uniformly selected duplicate to 50% of its official price.',
       loyalty: {
@@ -3301,6 +3311,9 @@ export class EconomyService {
           status: 'ACTIVE',
           id: { notIn: await this.inactiveEventItems(this.prisma, 'cardIds') },
         },
+        // A seleção da loja só olha id e raridade: puxar o catálogo inteiro
+        // com todas as colunas custa memória e tempo à toa.
+        select: { id: true, rarity: true },
       }),
       this.prisma.userCard.findMany({
         where: { userId, status: 'ACTIVE' },
@@ -3404,6 +3417,9 @@ export class EconomyService {
           status: 'ACTIVE',
           id: { notIn: await this.inactiveEventItems(this.prisma, 'cardIds') },
         },
+        // A seleção da loja só olha id e raridade: puxar o catálogo inteiro
+        // com todas as colunas custa memória e tempo à toa.
+        select: { id: true, rarity: true },
       }),
       this.prisma.gachaSkin.findMany({
         where: {
@@ -3618,15 +3634,37 @@ export class EconomyService {
     return { type: 'CARD', userCardId: copy.id };
   }
 
+  private stableRank(id: string, seed: string): string {
+    return createHash('sha256').update(`${seed}:${id}`).digest('hex');
+  }
+
+  /**
+   * Ordena por hash estável do id. O hash é calculado uma vez por item:
+   * dentro do comparador eram duas hashes por comparação, o que custava
+   * segundos de CPU (bloqueando o event loop) sobre o catálogo inteiro.
+   */
   private stableOrder<T extends { id: string }>(items: T[], seed: string): T[] {
-    return [...items].sort((left, right) =>
-      createHash('sha256')
-        .update(`${seed}:${left.id}`)
-        .digest('hex')
-        .localeCompare(
-          createHash('sha256').update(`${seed}:${right.id}`).digest('hex'),
-        ),
-    );
+    return items
+      .map((item) => ({ item, rank: this.stableRank(item.id, seed) }))
+      .sort((left, right) => left.rank.localeCompare(right.rank))
+      .map(({ item }) => item);
+  }
+
+  /** Primeiro item na ordem estável, sem ordenar a lista inteira. */
+  private stablePick<T extends { id: string }>(
+    items: T[],
+    seed: string,
+  ): T | undefined {
+    let best: T | undefined;
+    let bestRank = '';
+    for (const item of items) {
+      const rank = this.stableRank(item.id, seed);
+      if (best === undefined || rank < bestRank) {
+        best = item;
+        bestRank = rank;
+      }
+    }
+    return best;
   }
 
   private selectOfficialCards<T extends { id: string; rarity: string }>(
@@ -3651,7 +3689,7 @@ export class EconomyService {
       );
       const candidates =
         pool.length > 0 ? pool : fallback.length ? fallback : cards;
-      const card = this.stableOrder(candidates, `${seed}:${slot}:item`)[0];
+      const card = this.stablePick(candidates, `${seed}:${slot}:item`);
       if (card) selected.push(card);
     }
     return selected;

@@ -497,13 +497,23 @@ describe('EconomyService safeguards', () => {
     db.card.findMany.mockResolvedValue([]);
     db.gachaSkin.findMany.mockResolvedValue([]);
     db.gachaCardBack.findMany.mockResolvedValue([]);
-    await service.odds();
+    await service.odds(true);
     expect(db.card.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({ id: { notIn: ['event-card'] } }),
       }),
     );
     jest.useRealTimers();
+  });
+
+  it('default odds skip the per-item catalog queries', async () => {
+    const compact = await service.odds();
+    expect(db.card.findMany).not.toHaveBeenCalled();
+    expect(db.gachaSkin.findMany).not.toHaveBeenCalled();
+    expect(compact.items).toBeNull();
+    expect(compact.boxPrices).toEqual(
+      economyConfig(ECONOMY_DEFAULTS).box_prices,
+    );
   });
 
   it('blocks item after cancelling orders and listings and compensates each live copy', async () => {

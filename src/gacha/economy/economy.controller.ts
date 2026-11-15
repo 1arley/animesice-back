@@ -44,10 +44,14 @@ import { EconomyService } from './economy.service';
 export class EconomyController {
   constructor(private readonly economy: EconomyService) {}
 
+  /**
+   * O catálogo item a item é opt-in (`items=1`): passa de 40 MB e nenhuma tela
+   * do front o consome, então o padrão devolve só a configuração da economia.
+   */
   @Public()
   @Get('odds')
-  odds() {
-    return this.economy.odds();
+  odds(@Query('items') items?: string) {
+    return this.economy.odds(items === '1' || items === 'true');
   }
 
   @Public()
