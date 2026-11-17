@@ -1,4 +1,9 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  OnModuleInit,
+} from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '@/prisma/prisma.service';
 import { assertItemShopSources } from '@/gacha/economy/economy.config';
@@ -7,6 +12,23 @@ export type GachaTier =
   'COMUM' | 'INCOMUM' | 'RARA' | 'EPICA' | 'LENDARIA' | 'MITICA' | 'GALACTICA';
 
 export type GachaFoil = 'NORMAL' | 'HOLO' | 'GOLD' | 'INK' | 'PRISM';
+
+/** Valor bruto da chave `claim_event` no GachaConfig (campos todos opcionais). */
+export interface ClaimEventValue {
+  active?: unknown;
+  name?: unknown;
+  startsAt?: unknown;
+  endsAt?: unknown;
+  tiers?: unknown;
+  spinsPerHour?: unknown;
+}
+
+/** Estado efetivo do evento: flag ativa E dentro da janela startsAt–endsAt. */
+export interface ClaimEventState {
+  active: boolean;
+  name: string;
+  tiers: GachaTier[];
+}
 
 export const GACHA_TIERS: readonly GachaTier[] = [
   'COMUM',
@@ -71,6 +93,7 @@ export class GachaConfigService implements OnModuleInit {
         [key]: value,
       };
       assertItemShopSources(candidate);
+      if (key === 'claim_event') assertClaimEvent(value);
 
       const row = await tx.gachaConfig.update({
         where: { key },
@@ -240,5 +263,91 @@ export class GachaConfigService implements OnModuleInit {
 
   claimLockMs(tier: GachaTier): number {
     return this.claimLockHours[tier] * 60 * 60 * 1000;
+  }
+
+  // ── claim event ──────────────────────────────────────────
+
+  get claimEvent(): ClaimEventValue {
+    return this.cache.get('claim_event') ?? {};
+  }
+
+  /**
+   * Estado efetivo do evento de resgate: `active` só vale dentro da janela
+   * startsAt–endsAt (com qualquer lado aberto). Parse defensivo — valor
+   * malformado nunca derruba o gacha, só mantém o evento desligado.
+   */
+  claimEventState(now = new Date()): ClaimEventState {
+    const raw = this.claimEvent;
+    const name = typeof raw.name === 'string' ? raw.name : '';
+    const start = parseDateOrNull(raw.startsAt);
+    const end = parseDateOrNull(raw.endsAt);
+    const tiers = Array.isArray(raw.tiers)
+      ? raw.tiers.filter((tier): tier is GachaTier =>
+          (GACHA_TIERS as readonly string[]).includes(tier as GachaTier),
+        )
+      : [];
+    const inWindow =
+      (start === null || now >= start) && (end === null || now < end);
+    return { active: raw.active === true && inWindow, name, tiers };
+  }
+
+  /** Giros/hora vigentes: override do evento quando ativo e definido. */
+  effectiveSpinsPerHour(now = new Date()): number {
+    if (!this.claimEventState(now).active) return this.spinsPerHour;
+    const override = Number(this.claimEvent.spinsPerHour);
+    return Number.isSafeInteger(override) && override > 0
+      ? override
+      : this.spinsPerHour;
+  }
+}
+
+function parseDateOrNull(value: unknown): Date | null {
+  if (typeof value !== 'string' || !value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+/** Rejeita shape inválido no PATCH — melhor erro no admin do que evento mudo. */
+export function assertClaimEvent(value: Prisma.InputJsonValue): void {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new BadRequestException('claim_event deve ser um objeto.');
+  }
+  const v = value as Record<string, unknown>;
+  if (v.active !== undefined && typeof v.active !== 'boolean') {
+    throw new BadRequestException('active deve ser boolean.');
+  }
+  if (v.name !== undefined && typeof v.name !== 'string') {
+    throw new BadRequestException('name deve ser string.');
+  }
+  for (const field of ['startsAt', 'endsAt'] as const) {
+    const raw = v[field];
+    if (raw === undefined || raw === null) continue;
+    if (typeof raw !== 'string' || Number.isNaN(new Date(raw).getTime())) {
+      throw new BadRequestException(
+        `${field} deve ser data ISO 8601 (ex.: 2026-11-20T03:00:00Z).`,
+      );
+    }
+  }
+  if (v.tiers !== undefined) {
+    if (
+      !Array.isArray(v.tiers) ||
+      (v.tiers as unknown[]).some(
+        (tier) =>
+          !(GACHA_TIERS as readonly string[]).includes(tier as GachaTier),
+      )
+    ) {
+      throw new BadRequestException(
+        `tiers deve ser lista de raridades válidas: ${GACHA_TIERS.join(', ')}.`,
+      );
+    }
+  }
+  if (
+    v.spinsPerHour !== undefined &&
+    v.spinsPerHour !== null &&
+    (!Number.isSafeInteger(v.spinsPerHour) || (v.spinsPerHour as number) < 1)
+  ) {
+    throw new BadRequestException(
+      'spinsPerHour deve ser inteiro >= 1 (ou null para usar o global).',
+    );
   }
 }

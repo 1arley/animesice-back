@@ -53,6 +53,7 @@ describe('EconomyService safeguards', () => {
         'gachaBuyOrder',
         'gachaListing',
         'gachaSkinListing',
+        'gachaItemListing',
         'crystalEvent',
         'gachaMarketSale',
         'gachaMarketOffer',
@@ -67,7 +68,7 @@ describe('EconomyService safeguards', () => {
       ].map((name) => [name, model()]),
     );
     db.$transaction = jest.fn();
-    db.$queryRaw = jest.fn().mockResolvedValue([]);
+    db.$queryRaw = jest.fn().mockResolvedValue([{ quantity: 0n }]);
     prismaMocks = createTransactionAwarePrismaMock(db);
     prismaMocks.reset();
     db.user.findUnique.mockResolvedValue({
@@ -92,6 +93,7 @@ describe('EconomyService safeguards', () => {
     db.gachaMarketOffer.findMany.mockResolvedValue([]);
     db.gachaListing.findMany.mockResolvedValue([]);
     db.gachaSkinListing.findMany.mockResolvedValue([]);
+    db.gachaItemListing.findMany.mockResolvedValue([]);
     db.gachaTrade.findMany.mockResolvedValue([]);
     db.gachaInventory.updateMany.mockResolvedValue({ count: 1 });
     db.gachaRetention.upsert.mockResolvedValue({ loyaltyRarePlusReady: false });
@@ -140,11 +142,17 @@ describe('EconomyService safeguards', () => {
       kind: 'TITANITA',
       quantity: 1,
     });
+    // creditItems: lock do inventário + incremento guardado pelo limite.
     expect(db.gachaInventory.upsert).toHaveBeenCalledWith({
       where: { userId: 'u1' },
-      create: { userId: 'u1', titanitaShards: 1 },
-      update: { titanitaShards: { increment: 1 } },
+      create: { userId: 'u1' },
+      update: {},
     });
+    expect(db.gachaInventory.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { titanitaItems: { increment: 1 } },
+      }),
+    );
     expect(result.opening.reward).toEqual({
       category: 'ITEM',
       kind: 'TITANITA',
@@ -262,11 +270,11 @@ describe('EconomyService safeguards', () => {
     const result = await service.openBox('u1', 'COMMON');
 
     expect(result.reward).toEqual({ category: 'SPIN_RESET', amount: 1 });
-    expect(db.gachaInventory.upsert).toHaveBeenCalledWith({
-      where: { userId: 'u1' },
-      create: { userId: 'u1', spinResets: 1 },
-      update: { spinResets: { increment: 1 } },
-    });
+    expect(db.gachaInventory.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { spinResets: { increment: 1 } },
+      }),
+    );
   });
 
   it('grants a key and rare box together from a common box', async () => {
@@ -280,11 +288,12 @@ describe('EconomyService safeguards', () => {
       keys: 1,
       rareBoxes: 1,
     });
-    expect(db.gachaInventory.upsert).toHaveBeenCalledWith({
-      where: { userId: 'u1' },
-      create: { userId: 'u1', keys: 1, rareBoxes: 1 },
-      update: { keys: { increment: 1 }, rareBoxes: { increment: 1 } },
-    });
+    expect(db.gachaInventory.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { keys: { increment: 1 } } }),
+    );
+    expect(db.gachaInventory.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { rareBoxes: { increment: 1 } } }),
+    );
   });
 
   it('grants two skins from a premium box', async () => {

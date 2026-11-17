@@ -1,3 +1,4 @@
+import { ESSENCE_KINDS, type EssenceKind } from './item-catalog';
 import { ConflictException } from '@nestjs/common';
 import {
   BOX_PRICE,
@@ -14,6 +15,18 @@ import type { GachaFoil, GachaTier } from '@/gacha/gacha.constants';
 const MAX_DATABASE_INT = 2_147_483_647;
 
 export const ECONOMY_DEFAULTS = {
+  essence_shop_price: Object.fromEntries(
+    ESSENCE_KINDS.map((kind) => [kind, 0]),
+  ) as Record<EssenceKind, number>,
+  essence_shop_enabled: Object.fromEntries(
+    ESSENCE_KINDS.map((kind) => [kind, false]),
+  ) as Record<EssenceKind, boolean>,
+  essence_kind_weights: Object.fromEntries(
+    (['COMMON', 'RARE', 'PREMIUM'] as const).map((tier) => [
+      tier,
+      Object.fromEntries(ESSENCE_KINDS.map((kind) => [kind, 0])),
+    ]),
+  ) as Record<BoxTier, Record<EssenceKind, number>>,
   key_price: 1500,
   box_prices: BOX_PRICE,
   box_category_weights: CATEGORY_WEIGHTS,
@@ -274,7 +287,17 @@ export function economyConfig(snapshot: unknown): EconomyConfig {
     ECONOMY_DEFAULTS.item_kind_weights,
     input.item_kind_weights,
   );
+  merged.essence_kind_weights = mergeWeightRows(
+    ECONOMY_DEFAULTS.essence_kind_weights,
+    input.essence_kind_weights,
+  );
   merged.item_eligibility = mergeItemEligibility(input.item_eligibility);
+  for (const key of ['essence_shop_price', 'essence_shop_enabled'] as const) {
+    const saved = input[key];
+    if (saved && typeof saved === 'object' && !Array.isArray(saved)) {
+      Object.assign(merged, { [key]: { ...ECONOMY_DEFAULTS[key], ...saved } });
+    }
+  }
   for (const key of ['foil_weights', 'foil_mult'] as const) {
     const saved = input[key];
     if (!saved || typeof saved !== 'object' || Array.isArray(saved)) continue;
@@ -426,6 +449,31 @@ export function economyConfig(snapshot: unknown): EconomyConfig {
       throw new ConflictException(
         'Preço de loja deve exceder a conversão do fragmento.',
       );
+  }
+  for (const kind of ESSENCE_KINDS) {
+    const price = merged.essence_shop_price[kind];
+    if (
+      !Number.isSafeInteger(price) ||
+      price < 0 ||
+      price > Math.floor(MAX_DATABASE_INT / 100)
+    )
+      throw new ConflictException('Preço de Essência inválido.');
+    if (merged.essence_shop_enabled[kind] && price === 0)
+      throw new ConflictException(
+        'Essência habilitada precisa de preço positivo.',
+      );
+  }
+  for (const tier of ['COMMON', 'RARE', 'PREMIUM'] as const) {
+    if (
+      merged.box_category_weights[tier].ESSENCE > 0 &&
+      Object.values(merged.essence_kind_weights[tier]).every(
+        (weight) => weight === 0,
+      )
+    ) {
+      throw new ConflictException(
+        `Baú ${tier} com Essências precisa de pesos de raridade.`,
+      );
+    }
   }
   return merged;
 }

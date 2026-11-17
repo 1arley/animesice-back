@@ -1,3 +1,4 @@
+import { CATALOG_ITEM_IDS, type CatalogItemId } from '../economy/item-catalog';
 import {
   ArrayMaxSize,
   ArrayMinSize,
@@ -15,10 +16,11 @@ import {
   IsUUID,
   MaxLength,
   ValidateIf,
+  ValidateNested,
   Max,
   Min,
 } from 'class-validator';
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateGachaSkinDto {
@@ -127,15 +129,33 @@ export class GachaEngagementPilotDto {
   percent!: number;
 }
 
+export class CodeItemRewardDto {
+  @IsIn(CATALOG_ITEM_IDS)
+  itemId!: CatalogItemId;
+
+  @IsInt()
+  @Min(1)
+  @Max(2_147_483_647)
+  quantity!: number;
+}
+
 export class CreateCrystalCodeDto {
   @IsString()
   @IsOptional()
   code?: string;
 
   @IsInt()
-  @Min(1)
+  @IsOptional()
+  @Min(0)
   @Max(2_147_483_647)
-  crystals!: number;
+  crystals = 0;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(CATALOG_ITEM_IDS.length)
+  @ValidateNested({ each: true })
+  @Type(() => CodeItemRewardDto)
+  items?: CodeItemRewardDto[];
 
   @IsInt()
   @IsOptional()
@@ -155,13 +175,20 @@ export class UpdateCrystalCodeDto {
 
   @IsInt()
   @IsOptional()
-  @Min(1)
+  @Min(0)
   @Max(2_147_483_647)
   crystals?: number;
 
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(CATALOG_ITEM_IDS.length)
+  @ValidateNested({ each: true })
+  @Type(() => CodeItemRewardDto)
+  items?: CodeItemRewardDto[];
+
   @IsInt()
   @IsOptional()
-  @Min(1)
+  @Min(0)
   @Max(2_147_483_647)
   maxUses?: number;
 
@@ -172,6 +199,13 @@ export class UpdateCrystalCodeDto {
   @IsString()
   @IsOptional()
   expiresAt?: string;
+}
+
+export class CreateCrystalCodeBatchDto extends CreateCrystalCodeDto {
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  count!: number;
 }
 
 export class RedeemCrystalCodeDto {

@@ -1,3 +1,17 @@
+import type {
+  CreateCrystalCodeDto,
+  CreateCrystalCodeBatchDto,
+  UpdateCrystalCodeDto,
+} from './dto/gacha.dto';
+import {
+  catalogItem,
+  catalogItemForField,
+  ESSENCE_RARITIES,
+  itemAmounts,
+  creditItems,
+  lockInventory,
+} from './economy/item-catalog';
+import type { UseEssenceDto } from './economy/economy.dto';
 import {
   BadRequestException,
   ConflictException,
@@ -810,7 +824,11 @@ export class GachaService {
       : this.config.pityDays;
 
     const locked = claim !== null && claim.lockedUntil.getTime() > Date.now();
-    const spinsLeft = Math.max(0, this.config.spinsPerHour - spinsUsed);
+    const claimEvent = this.config.claimEventState();
+    const spinsLeft = Math.max(
+      0,
+      this.config.effectiveSpinsPerHour() - spinsUsed,
+    );
 
     return {
       canRoll: false,
@@ -820,12 +838,23 @@ export class GachaService {
       canSpin: spinsLeft > 0,
       nextSpinAt:
         spinsLeft > 0 ? null : new Date(hour.getTime() + HOUR_MS).toISOString(),
-      canClaim: !locked,
-      nextClaimAt: locked ? claim.lockedUntil.toISOString() : null,
+      // Evento ativo libera o claim mesmo com lock vigente (o claim decide
+      // por raridade; aqui é só o sinal para a UI).
+      canClaim: !locked || claimEvent.active,
+      nextClaimAt:
+        locked && !claimEvent.active ? claim.lockedUntil.toISOString() : null,
       claimWarning: locked
-        ? 'Você já guardou uma carta. Girar continua liberado, mas a próxima só pode ser guardada após o fim do bloqueio.'
+        ? claimEvent.active
+          ? claimEvent.tiers.length > 0
+            ? `Evento ${claimEvent.name}: resgate liberado para ${claimEvent.tiers.join(', ')}.`
+            : `Evento ${claimEvent.name}: resgate liberado.`
+          : 'Você já guardou uma carta. Girar continua liberado, mas a próxima só pode ser guardada após o fim do bloqueio.'
         : null,
-      bypassPriceCents: locked ? this.config.bypassPriceCents : null,
+      bypassPriceCents:
+        locked && !claimEvent.active ? this.config.bypassPriceCents : null,
+      claimEvent: claimEvent.active
+        ? { name: claimEvent.name, tiers: claimEvent.tiers }
+        : null,
       crystalBalance: wallet?.crystalBalance ?? 0,
       crystalReserved: wallet?.crystalReserved ?? 0,
       pointsBalance: points._sum.value ?? 0,
@@ -849,6 +878,66 @@ export class GachaService {
     }));
   }
 
+  useEssence(userId: string, dto: UseEssenceDto) {
+    const economy = this.economy;
+    if (!economy) throw new ForbiddenException('Economia indisponível.');
+    return economy.runOperation(
+      userId,
+      dto.operationId,
+      'USE_ESSENCE',
+      { itemId: dto.itemId },
+      async (tx) => {
+        await economy.assertEconomyEnabled(tx, userId);
+        await lockInventory(tx, userId);
+        const item = catalogItem(dto.itemId);
+        const consumed = await tx.gachaInventory.updateMany({
+          where: { userId, [item.field]: { gte: 1 } },
+          data: { [item.field]: { decrement: 1 } },
+        });
+        if (consumed.count !== 1)
+          throw new BadRequestException('Essência insuficiente.');
+        const card = await this.drawFromTier(
+          ESSENCE_RARITIES[dto.itemId],
+          userId,
+          tx,
+        );
+        const counter = await tx.card.update({
+          where: { id: card.id },
+          data: { editionCounter: { increment: 1 } },
+          select: { editionCounter: true },
+        });
+        const condition = Math.random();
+        const foil = pickWeighted(this.config.foilWeights);
+        const value = cardValue(
+          card.rarity as GachaTier,
+          condition,
+          foil,
+          counter.editionCounter,
+          this.config.baseValue,
+          this.config.foilMult,
+        );
+        const pull = await tx.userCard.create({
+          data: {
+            userId,
+            originalUserId: userId,
+            cardId: card.id,
+            condition,
+            foil,
+            edition: counter.editionCounter,
+            value,
+            rankedValue: value,
+          },
+          select: PULL_SELECT,
+        });
+        await tx.gachaCardDiscovery.createMany({
+          data: { userId, cardId: card.id },
+          skipDuplicates: true,
+        });
+        return { pull: presentPull(pull) };
+      },
+    );
+  }
+
   async spin(userId: string) {
     const hour = this.hourStartUtc();
 
@@ -868,7 +957,8 @@ export class GachaService {
         : null;
     // ponytail: slot único (userId,hour,slot) torna giro concorrente
     // race-safe; P2002 = slot ocupado, tenta o próximo.
-    for (let slot = 0; slot < this.config.spinsPerHour; slot++) {
+    const spinsPerHour = this.config.effectiveSpinsPerHour();
+    for (let slot = 0; slot < spinsPerHour; slot++) {
       try {
         const spin = await this.prisma.gachaSpin.create({
           data: {
@@ -907,7 +997,7 @@ export class GachaService {
       }
     }
     throw new ForbiddenException(
-      'Você já usou seus 5 giros desta hora. Volte na próxima hora.',
+      `Você já usou seus ${spinsPerHour} giros desta hora. Volte na próxima hora.`,
     );
   }
 
@@ -932,9 +1022,18 @@ export class GachaService {
           if (inactiveEventIds(event?.value, 'cardIds').includes(spin.card.id))
             throw new ForbiddenException('Evento desta carta encerrado.');
 
-          const lock = await tx.gachaClaimLock.findUnique({
-            where: { userId },
-          });
+          // Evento temporário (claim_event): resgate sem cooldown para as
+          // raridades listadas — ignora inclusive lock já ativo, e resgates
+          // do evento não criam lock que penda pro pós-evento.
+          const claimEvent = this.config.claimEventState();
+          const eventFreeClaim =
+            claimEvent.active &&
+            claimEvent.tiers.includes(spin.card.rarity as GachaTier);
+          const lock = eventFreeClaim
+            ? null
+            : await tx.gachaClaimLock.findUnique({
+                where: { userId },
+              });
           if (lock !== null && lock.lockedUntil.getTime() > Date.now()) {
             throw new ForbiddenException(
               'Você já guardou uma carta recentemente.',
@@ -977,11 +1076,9 @@ export class GachaService {
           });
           if (bonusShard !== null) {
             const shardField = SPIN_SHARD_FIELD[bonusShard];
-            await tx.gachaInventory.upsert({
-              where: { userId },
-              create: { userId, [shardField]: 1 },
-              update: { [shardField]: { increment: 1 } },
-            });
+            await creditItems(tx, userId, [
+              { itemId: catalogItemForField(shardField).id, quantity: 1 },
+            ]);
           }
           await tx.gachaCardDiscovery.createMany({
             data: { userId, cardId: spin.card.id },
@@ -994,15 +1091,19 @@ export class GachaService {
           if (claimed.count !== 1) {
             throw new NotFoundException('Preview expirada ou já resgatada.');
           }
-          const lockMs = this.config.claimLockMs(spin.card.rarity as GachaTier);
-          await tx.gachaClaimLock.upsert({
-            where: { userId },
-            create: {
-              userId,
-              lockedUntil: new Date(Date.now() + lockMs),
-            },
-            update: { lockedUntil: new Date(Date.now() + lockMs) },
-          });
+          if (!eventFreeClaim) {
+            const lockMs = this.config.claimLockMs(
+              spin.card.rarity as GachaTier,
+            );
+            await tx.gachaClaimLock.upsert({
+              where: { userId },
+              create: {
+                userId,
+                lockedUntil: new Date(Date.now() + lockMs),
+              },
+              update: { lockedUntil: new Date(Date.now() + lockMs) },
+            });
+          }
           await this.changeCrystals(
             tx,
             userId,
@@ -1223,11 +1324,11 @@ export class GachaService {
 
   async redeemCrystalCode(userId: string, rawCode: string) {
     const code = rawCode.trim().toUpperCase();
-    if (!/^[A-Z0-9-]{4,64}$/.test(code)) {
+    if (!/^[A-Z0-9-]{4,64}$/.test(code))
       throw new BadRequestException('Código inválido.');
-    }
     return this.prisma.$transaction(
       async (tx) => {
+        await tx.$queryRaw`SELECT "id" FROM "CrystalCode" WHERE "code" = ${code} FOR UPDATE`;
         const item = await tx.crystalCode.findUnique({ where: { code } });
         if (!item || !item.active)
           throw new NotFoundException('Código inválido ou inativo.');
@@ -1235,6 +1336,7 @@ export class GachaService {
           throw new GoneException('Código expirado.');
         if (item.maxUses !== null && item.uses >= item.maxUses)
           throw new GoneException('Código esgotado.');
+        const items = itemAmounts(item.items);
         try {
           await tx.crystalCodeRedemption.create({
             data: { codeId: item.id, userId },
@@ -1243,75 +1345,133 @@ export class GachaService {
           if (
             error instanceof Prisma.PrismaClientKnownRequestError &&
             error.code === 'P2002'
-          ) {
+          )
             throw new ConflictException('Você já resgatou este código.');
-          }
           throw error;
         }
         await tx.crystalCode.update({
           where: { id: item.id },
           data: { uses: { increment: 1 } },
         });
-        await this.changeCrystals(
-          tx,
-          userId,
-          item.crystals,
-          'ADMIN',
-          `crystal-code:${item.id}`,
-          `Código ${item.code}`,
-        );
+        if (item.crystals > 0)
+          await this.changeCrystals(
+            tx,
+            userId,
+            item.crystals,
+            'ADMIN',
+            `crystal-code:${item.id}`,
+            `Código ${item.code}`,
+          );
+        await creditItems(tx, userId, items);
         const user = await tx.user.findUniqueOrThrow({
           where: { id: userId },
           select: { crystalBalance: true },
         });
-        return { crystals: item.crystals, balance: user.crystalBalance };
+        return { crystals: item.crystals, balance: user.crystalBalance, items };
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     );
   }
 
-  async adminCreateCrystalCode(input: {
-    code?: string;
-    crystals: number;
-    maxUses?: number;
-    expiresAt?: string;
-  }) {
-    if (!Number.isFinite(input.crystals) || input.crystals < 1)
-      throw new BadRequestException('Crystals deve ser um inteiro >= 1.');
-    const baseCode =
-      input.code?.trim().toUpperCase() ||
-      `ICE-${randomInt(100000, 1000000)}-${randomInt(100000, 1000000)}`;
-    if (!/^[A-Z0-9-]{4,64}$/.test(baseCode))
-      throw new BadRequestException('Código inválido.');
-    const expiresAt = input.expiresAt ? new Date(input.expiresAt) : null;
+  private codeRewards(crystals: number, rawItems: unknown) {
+    const items = itemAmounts(rawItems ?? []);
+    if (
+      !Number.isSafeInteger(crystals) ||
+      crystals < 0 ||
+      crystals > 2_147_483_647 ||
+      (crystals === 0 && items.length === 0)
+    )
+      throw new BadRequestException(
+        'O código precisa de cristais ou itens válidos.',
+      );
+    return { crystals, items };
+  }
+
+  private codeExpiry(value?: string) {
+    const expiresAt = value ? new Date(value) : null;
     if (expiresAt && Number.isNaN(expiresAt.getTime()))
       throw new BadRequestException('Validade inválida.');
+    return expiresAt;
+  }
+
+  private codeText(value?: string) {
+    const code =
+      value?.trim().toUpperCase() ||
+      `ICE-${randomInt(100000, 1000000)}-${randomInt(100000, 1000000)}`;
+    if (!/^[A-Z0-9-]{4,64}$/.test(code))
+      throw new BadRequestException('Código inválido.');
+    return code;
+  }
+
+  async adminCreateCrystalCode(input: CreateCrystalCodeDto) {
+    const baseCode = this.codeText(input.code);
+    const rewards = this.codeRewards(input.crystals ?? 0, input.items);
+    const expiresAt = this.codeExpiry(input.expiresAt);
     let lastError: unknown;
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         return await this.prisma.crystalCode.create({
           data: {
             code: attempt === 0 ? baseCode : `${baseCode}-${attempt + 1}`,
-            crystals: input.crystals,
+            ...rewards,
             maxUses: input.maxUses ?? null,
             expiresAt,
           },
         });
-      } catch (e: unknown) {
+      } catch (error: unknown) {
         if (
           attempt < 2 &&
-          typeof e === 'object' &&
-          e !== null &&
-          'code' in e &&
-          (e as { code: string }).code === 'P2002'
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2002'
         ) {
-          lastError = e;
+          lastError = error;
           continue;
         }
-        throw e;
+        throw error;
       }
     }
     throw lastError;
+  }
+
+  async adminCreateCrystalCodeBatch(input: CreateCrystalCodeBatchDto) {
+    if (
+      !Number.isSafeInteger(input.count) ||
+      input.count < 1 ||
+      input.count > 100
+    )
+      throw new BadRequestException('Lote deve conter entre 1 e 100 códigos.');
+    const rewards = this.codeRewards(input.crystals ?? 0, input.items);
+    const base = input.code ? this.codeText(input.code) : null;
+    const codes = Array.from({ length: input.count }, (_, index) =>
+      this.codeText(base ? `${base}-${index + 1}` : undefined),
+    );
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const created = [];
+        for (const code of codes)
+          created.push(
+            await tx.crystalCode.create({
+              data: {
+                code,
+                ...rewards,
+                maxUses: input.maxUses ?? null,
+                expiresAt: this.codeExpiry(input.expiresAt),
+              },
+            }),
+          );
+        return created;
+      });
+    } catch (error: unknown) {
+      if (
+        typeof error === 'object' &&
+        error !== null &&
+        'code' in error &&
+        (error as { code: string }).code === 'P2002'
+      ) {
+        throw new BadRequestException('Código já existe.');
+      }
+      throw error;
+    }
   }
 
   adminCrystalCodes() {
@@ -1332,57 +1492,84 @@ export class GachaService {
     return this.prisma.crystalCode.update({ where: { id }, data: { active } });
   }
 
-  async adminUpdateCrystalCode(
-    id: string,
-    input: {
-      code?: string;
-      crystals?: number;
-      maxUses?: number;
-      active?: boolean;
-      expiresAt?: string;
-    },
-  ) {
-    await this.prisma.crystalCode.findUniqueOrThrow({ where: { id } });
-    const data: Record<string, unknown> = {};
-
-    if (input.code !== undefined) {
-      const code = input.code.trim().toUpperCase();
-      if (!/^[A-Z0-9-]{4,64}$/.test(code))
-        throw new BadRequestException('Código inválido.');
-      data.code = code;
-    }
-    if (input.crystals !== undefined) {
-      if (!Number.isFinite(input.crystals) || input.crystals < 1)
-        throw new BadRequestException('Crystals deve ser um inteiro >= 1.');
-      data.crystals = input.crystals;
-    }
-    if (input.maxUses !== undefined)
-      data.maxUses = input.maxUses > 0 ? input.maxUses : null;
-    if (input.active !== undefined) data.active = input.active;
-    if (input.expiresAt !== undefined) {
-      const expiresAt = input.expiresAt ? new Date(input.expiresAt) : null;
-      if (expiresAt && Number.isNaN(expiresAt.getTime()))
-        throw new BadRequestException('Validade inválida.');
-      data.expiresAt = expiresAt;
-    }
-
-    try {
-      return await this.prisma.crystalCode.update({ where: { id }, data });
-    } catch (e: unknown) {
-      if (
-        typeof e === 'object' &&
-        e !== null &&
-        'code' in e &&
-        (e as { code: string }).code === 'P2002'
-      )
-        throw new BadRequestException('Código já existe.');
-      throw e;
-    }
+  async adminUpdateCrystalCode(id: string, input: UpdateCrystalCodeDto) {
+    return this.prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT "id" FROM "CrystalCode" WHERE "id" = ${id} FOR UPDATE`;
+        const current = await tx.crystalCode.findUniqueOrThrow({
+          where: { id },
+        });
+        const rewards = this.codeRewards(
+          input.crystals ?? current.crystals,
+          input.items ?? current.items,
+        );
+        const code =
+          input.code === undefined ? current.code : this.codeText(input.code);
+        if (
+          current.uses > 0 &&
+          (code !== current.code ||
+            rewards.crystals !== current.crystals ||
+            JSON.stringify(rewards.items) !==
+              JSON.stringify(itemAmounts(current.items)))
+        )
+          throw new ConflictException(
+            'Código resgatado não permite alterar texto ou recompensas.',
+          );
+        if (
+          input.maxUses !== undefined &&
+          input.maxUses > 0 &&
+          input.maxUses < current.uses
+        )
+          throw new BadRequestException(
+            'Limite não pode ser menor que os resgates existentes.',
+          );
+        try {
+          return await tx.crystalCode.update({
+            where: { id },
+            data: {
+              code,
+              ...rewards,
+              ...(input.maxUses === undefined
+                ? {}
+                : { maxUses: input.maxUses > 0 ? input.maxUses : null }),
+              ...(input.active === undefined ? {} : { active: input.active }),
+              ...(input.expiresAt === undefined
+                ? {}
+                : { expiresAt: this.codeExpiry(input.expiresAt) }),
+            },
+          });
+        } catch (error: unknown) {
+          if (
+            typeof error === 'object' &&
+            error !== null &&
+            'code' in error &&
+            (error as { code: string }).code === 'P2002'
+          ) {
+            throw new BadRequestException('Código já existe.');
+          }
+          throw error;
+        }
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
   }
 
   async adminDeleteCrystalCode(id: string) {
-    await this.prisma.crystalCode.findUniqueOrThrow({ where: { id } });
-    return this.prisma.crystalCode.delete({ where: { id } });
+    return this.prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT "id" FROM "CrystalCode" WHERE "id" = ${id} FOR UPDATE`;
+        const item = await tx.crystalCode.findUniqueOrThrow({ where: { id } });
+        if (
+          item.uses > 0 ||
+          (await tx.crystalCodeRedemption.count({ where: { codeId: id } }))
+        )
+          throw new ConflictException(
+            'Código com resgates não pode ser excluído. Desative-o.',
+          );
+        return tx.crystalCode.delete({ where: { id } });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
   }
 
   private async changeCrystals(
@@ -1910,15 +2097,12 @@ export class GachaService {
         );
         if (fragments) {
           const field = FOIL_INVENTORY_FIELDS[fragments.foil].shards;
-          const credited = await tx.gachaInventory.updateMany({
-            where: {
-              userId,
-              [field]: { lte: 2_147_483_647 - fragments.quantity },
+          await creditItems(tx, userId, [
+            {
+              itemId: catalogItemForField(field).id,
+              quantity: fragments.quantity,
             },
-            data: { [field]: { increment: fragments.quantity } },
-          });
-          if (!credited.count)
-            throw new ConflictException('Limite de fragmentos atingido.');
+          ]);
         }
         const burned = await tx.userCard.updateMany({
           where: { id: userCardId, userId, status: 'ACTIVE' },
@@ -2214,9 +2398,13 @@ export class GachaService {
     );
   }
 
-  private async drawFromTier(tier: GachaTier, userId: string) {
+  private async drawFromTier(
+    tier: GachaTier,
+    userId: string,
+    tx: Prisma.TransactionClient = this.prisma,
+  ) {
     const favorite = (await this.pilotEnabled(userId))
-      ? await this.prisma.user.findUnique({
+      ? await tx.user.findUnique({
           where: { id: userId },
           select: {
             favoriteCollection: {
@@ -2252,7 +2440,7 @@ export class GachaService {
       id: {
         notIn: inactiveEventIds(
           (
-            await this.prisma.gachaConfig.findUnique({
+            await tx.gachaConfig.findUnique({
               where: { key: 'economic_event' },
             })
           )?.value,
@@ -2261,25 +2449,25 @@ export class GachaService {
       },
     };
     const [favored, other] = collectionId
-      ? await this.prisma.$transaction([
-          this.prisma.card.count({
+      ? await Promise.all([
+          tx.card.count({
             where: {
               ...baseWhere,
               collectionMembers: { some: { collectionId } },
             },
           }),
-          this.prisma.card.count({
+          tx.card.count({
             where: {
               ...baseWhere,
               collectionMembers: { none: { collectionId } },
             },
           }),
         ])
-      : [0, await this.prisma.card.count({ where: baseWhere })];
+      : [0, await tx.card.count({ where: baseWhere })];
     const chooseFavored =
       favored > 0 && Math.random() * (favored * 1.15 + other) < favored * 1.15;
     const poolSize = chooseFavored ? favored : other;
-    const card = await this.prisma.card.findFirst({
+    const card = await tx.card.findFirst({
       where: {
         ...baseWhere,
         ...(collectionId
