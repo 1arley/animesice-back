@@ -293,7 +293,7 @@ describe('GachaController (e2e)', () => {
       .post('/gacha/economy/gems/craft')
       .set('Cookie', cookie)
       .send({ foil: 'HOLO' })
-      .expect(400);
+      .expect(409);
     const afterOverflow = await prisma.gachaInventory.findUniqueOrThrow({
       where: { userId },
     });
