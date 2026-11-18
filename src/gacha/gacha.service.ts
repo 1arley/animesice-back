@@ -149,6 +149,29 @@ const PULL_SELECT = {
 
 type Pull = Prisma.UserCardGetPayload<{ select: typeof PULL_SELECT }>;
 
+function isClaimEventActive(value: unknown, now = Date.now()): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const event = value as {
+    active?: unknown;
+    startsAt?: unknown;
+    endsAt?: unknown;
+  };
+  if (
+    event.active !== true ||
+    typeof event.startsAt !== 'string' ||
+    typeof event.endsAt !== 'string'
+  )
+    return false;
+  const startsAt = Date.parse(event.startsAt);
+  const endsAt = Date.parse(event.endsAt);
+  return (
+    Number.isFinite(startsAt) &&
+    Number.isFinite(endsAt) &&
+    startsAt <= now &&
+    now <= endsAt
+  );
+}
+
 const LISTING_SELECT = {
   id: true,
   userId: true,
@@ -988,7 +1011,13 @@ export class GachaService {
           if (claimed.count !== 1) {
             throw new NotFoundException('Preview expirada ou já resgatada.');
           }
-          const lockMs = this.config.claimLockMs(spin.card.rarity as GachaTier);
+          const claimEvent = await tx.gachaConfig.findUnique({
+            where: { key: 'claim_event' },
+            select: { value: true },
+          });
+          const lockMs = isClaimEventActive(claimEvent?.value)
+            ? HOUR_MS
+            : this.config.claimLockMs(spin.card.rarity as GachaTier);
           await tx.gachaClaimLock.upsert({
             where: { userId },
             create: {

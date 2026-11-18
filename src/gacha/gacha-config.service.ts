@@ -72,9 +72,10 @@ export class GachaConfigService implements OnModuleInit {
       };
       assertItemShopSources(candidate);
 
-      const row = await tx.gachaConfig.update({
+      const row = await tx.gachaConfig.upsert({
         where: { key },
-        data: { value },
+        create: { key, value, label: key, group: 'gacha' },
+        update: { value },
       });
       const [config, latest] = await Promise.all([
         tx.gachaConfig.findMany(),
