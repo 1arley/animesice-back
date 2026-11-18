@@ -1,3 +1,10 @@
+## [1.67.1](https://github.com/1arley/animesice-back/compare/v1.67.0...v1.67.1) (2026-11-18)
+
+
+### Bug Fixes
+
+* **gacha:** apply uniform 1-hour cooldown for event claims ([7730058](https://github.com/1arley/animesice-back/commit/7730058b3becd78a95e57cb4bea5d8ffae19f3c9))
+
 # [1.67.0](https://github.com/1arley/animesice-back/compare/v1.66.3...v1.67.0) (2026-11-18)
 
 
