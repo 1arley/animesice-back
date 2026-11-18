@@ -12,6 +12,7 @@ export const PRIZE_CATEGORIES = [
   'KEY_RARE_BOX',
   'KEY_PREMIUM_BOX',
   'ITEM',
+  'ESSENCE',
 ] as const;
 export type PrizeCategory = (typeof PRIZE_CATEGORIES)[number];
 
@@ -47,6 +48,7 @@ export const CATEGORY_WEIGHTS: Record<
     KEY_RARE_BOX: 4,
     KEY_PREMIUM_BOX: 1,
     ITEM: 4,
+    ESSENCE: 0,
   },
   RARE: {
     CRYSTAL: 9,
@@ -59,6 +61,7 @@ export const CATEGORY_WEIGHTS: Record<
     KEY_RARE_BOX: 0,
     KEY_PREMIUM_BOX: 4,
     ITEM: 6,
+    ESSENCE: 0,
   },
   PREMIUM: {
     CRYSTAL: 5,
@@ -71,6 +74,7 @@ export const CATEGORY_WEIGHTS: Record<
     KEY_RARE_BOX: 0,
     KEY_PREMIUM_BOX: 0,
     ITEM: 15,
+    ESSENCE: 0,
   },
 };
 

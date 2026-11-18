@@ -1,3 +1,4 @@
+import { UseEssenceDto } from './economy/economy.dto';
 import {
   BadRequestException,
   Body,
@@ -39,6 +40,7 @@ import {
   GachaCollectionPreferencesDto,
   GachaEngagementPilotDto,
   CreateCrystalCodeDto,
+  CreateCrystalCodeBatchDto,
   UpdateCrystalCodeDto,
   RedeemCrystalCodeDto,
   ToggleCrystalCodeDto,
@@ -203,6 +205,13 @@ export class GachaController {
   @ApiOperation({ summary: 'Resgata preview (1 a cada 6h)' })
   claim(@Req() req: AuthenticatedRequest, @Body() dto: ClaimGachaDto) {
     return this.gachaService.claim(req.user.id, dto.spinId);
+  }
+
+  @Post('essences/use')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  useEssence(@Req() req: AuthenticatedRequest, @Body() dto: UseEssenceDto) {
+    return this.gachaService.useEssence(req.user.id, dto);
   }
 
   @Post('claim-compensation')
@@ -618,6 +627,13 @@ export class GachaController {
   @Roles('ADMIN', 'SUPERADMIN')
   adminCreateCrystalCode(@Body() dto: CreateCrystalCodeDto) {
     return this.gachaService.adminCreateCrystalCode(dto);
+  }
+
+  @Post('admin/crystal-codes/batch')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  adminCreateCrystalCodeBatch(@Body() dto: CreateCrystalCodeBatchDto) {
+    return this.gachaService.adminCreateCrystalCodeBatch(dto);
   }
 
   @Patch('admin/crystal-codes/:id')

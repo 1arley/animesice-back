@@ -1,7 +1,9 @@
 import request from 'supertest';
 import { Role } from '@prisma/client';
+import { GachaConfigService } from '@/gacha/gacha-config.service';
 import {
   createTestUser,
+  getApp,
   getHttpServer,
   getPrismaService,
 } from '@test/setup/e2e.setup';
@@ -180,6 +182,82 @@ describe('GachaController (e2e)', () => {
     ).resolves.toBe(1);
   });
 
+  it('evento claim_event aplica cooldown de uma hora', async () => {
+    const prisma = getPrismaService();
+    const config = getApp().get(GachaConfigService);
+    const value = {
+      active: true,
+      name: 'Festival das Cartas',
+      startsAt: new Date(Date.now() - 3_600_000).toISOString(),
+      endsAt: new Date(Date.now() + 3_600_000).toISOString(),
+      tiers: [],
+      spinsPerHour: null,
+    };
+    await prisma.gachaConfig.update({
+      where: { key: 'claim_event' },
+      data: { value },
+    });
+    await config.refresh();
+
+    try {
+      const spin = await request(getHttpServer())
+        .post('/gacha/spin')
+        .set('Cookie', cookie)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(201);
+      const claimedAt = Date.now();
+      const claim = await request(getHttpServer())
+        .post('/gacha/claim')
+        .set('Cookie', cookie)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ spinId: spin.body.id })
+        .expect(201);
+
+      expect(claim.body.card).toBeDefined();
+      const lock = await prisma.gachaClaimLock.findUniqueOrThrow({
+        where: { userId },
+      });
+      expect(new Date(lock.lockedUntil).getTime()).toBeGreaterThanOrEqual(
+        claimedAt + 3_600_000 - 1000,
+      );
+      expect(new Date(lock.lockedUntil).getTime()).toBeLessThanOrEqual(
+        claimedAt + 3_600_000 + 1000,
+      );
+      await request(getHttpServer())
+        .post('/gacha/spin')
+        .set('Cookie', cookie)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(201);
+      const nextSpin = await prisma.gachaSpin.findFirstOrThrow({
+        where: { userId, claimedAt: null },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true },
+      });
+      await request(getHttpServer())
+        .post('/gacha/claim')
+        .set('Cookie', cookie)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ spinId: nextSpin.id })
+        .expect(403);
+    } finally {
+      await prisma.gachaConfig.update({
+        where: { key: 'claim_event' },
+        data: {
+          value: {
+            active: false,
+            name: '',
+            startsAt: null,
+            endsAt: null,
+            tiers: [],
+            spinsPerHour: null,
+          },
+        },
+      });
+      await config.refresh();
+      await prisma.gachaClaimLock.deleteMany({ where: { userId } });
+    }
+  });
+
   it('crafta fragmentos do mesmo foil uma única vez sob concorrência', async () => {
     const prisma = getPrismaService();
     await prisma.gachaInventory.upsert({
@@ -222,7 +300,7 @@ describe('GachaController (e2e)', () => {
       .post('/gacha/economy/gems/craft')
       .set('Cookie', cookie)
       .send({ foil: 'HOLO' })
-      .expect(400);
+      .expect(409);
     const afterOverflow = await prisma.gachaInventory.findUniqueOrThrow({
       where: { userId },
     });

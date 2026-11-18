@@ -1,3 +1,4 @@
+import { ITEM_CATALOG } from './item-catalog';
 import {
   Body,
   Controller,
@@ -18,9 +19,11 @@ import type { AuthenticatedRequest } from '@/common/interfaces/request.interface
 import {
   BuyBoxDto,
   BuyItemDto,
+  BuyEssenceDto,
   ConvertItemDto,
   CreateBuyOrderDto,
   CreateMarketOfferDto,
+  CreateItemListingDto,
   CreateCardListingDto,
   CreateSkinListingDto,
   CraftItemDto,
@@ -168,6 +171,16 @@ export class EconomyController {
     return this.economy.useSpinReset(req.user.id);
   }
 
+  @Get('items/catalog')
+  itemCatalog() {
+    return ITEM_CATALOG;
+  }
+
+  @Post('essences/buy')
+  buyEssence(@Req() req: AuthenticatedRequest, @Body() dto: BuyEssenceDto) {
+    return this.economy.buyEssence(req.user.id, dto);
+  }
+
   @Post('items/buy')
   buyItem(@Req() req: AuthenticatedRequest, @Body() dto: BuyItemDto) {
     return this.economy.buyItem(req.user.id, dto);
@@ -186,6 +199,24 @@ export class EconomyController {
   @Post('items/use')
   useItem(@Req() req: AuthenticatedRequest, @Body() dto: UseItemDto) {
     return this.economy.useItem(req.user.id, dto);
+  }
+
+  @Post('market/items')
+  createItemListing(
+    @Req() req: AuthenticatedRequest,
+    @Body() dto: CreateItemListingDto,
+  ) {
+    return this.economy.createItemListing(req.user.id, dto);
+  }
+
+  @Post('market/items/:id/buy')
+  buyItemListing(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.economy.buyItemListing(req.user.id, id);
+  }
+
+  @Post('market/items/:id/cancel')
+  cancelItemListing(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.economy.cancelItemListing(req.user.id, id);
   }
 
   @Post('market/orders')
