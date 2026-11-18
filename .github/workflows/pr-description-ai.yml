@@ -1,0 +1,40 @@
+name: Generate PR title and description
+
+on:
+  pull_request_target:
+    types: [opened]
+
+permissions:
+  contents: read
+  models: read
+  pull-requests: write
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout trusted base branch
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+
+      - name: Generate title and description from the diff
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: node scripts/pr-description.mjs "$PR_NUMBER" > /tmp/pr-description.json
+
+      - name: Update the pull request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_RESULT: /tmp/pr-description.json
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const { title, body } = JSON.parse(fs.readFileSync(process.env.PR_RESULT, 'utf8'));
+          fs.writeFileSync('/tmp/pr-title.txt', title);
+          fs.writeFileSync('/tmp/pr-body.md', body);
+          NODE
+          gh pr edit "$PR_NUMBER" --title "$(cat /tmp/pr-title.txt)" --body-file /tmp/pr-body.md

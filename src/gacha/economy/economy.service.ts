@@ -1,3 +1,11 @@
+import { reserveItems, itemAmounts, lockInventory } from './item-catalog';
+import {
+  ITEM_CATALOG,
+  catalogItem,
+  catalogItemForField,
+  creditItems,
+  type EssenceKind,
+} from './item-catalog';
 import {
   BadRequestException,
   ConflictException,
@@ -16,6 +24,8 @@ import {
   cardValue,
   conditionLabel,
   GACHA_FOILS,
+  FOIL_INVENTORY_FIELDS,
+  GEM_FRAGMENT_RECIPE,
 } from '@/gacha/gacha.constants';
 import type { GachaFoil, GachaTier } from '@/gacha/gacha.constants';
 import { GACHA_TIERS } from '@/gacha/gacha-config.service';
@@ -34,10 +44,12 @@ import {
 import {
   CreateBuyOrderDto,
   BuyItemDto,
+  BuyEssenceDto,
   ConvertItemDto,
   CraftItemDto,
   UseItemDto,
   CreateMarketOfferDto,
+  CreateItemListingDto,
   MarketQueryDto,
   EconomicEventDto,
   ReviewSaleDto,
@@ -85,6 +97,8 @@ const QUALITY_TIERS: Record<PrizeQuality, string[]> = {
 
 const MARKET_OFFER_ESCROW_SELECT = {
   id: true,
+  itemListingId: true,
+  offeredItems: true,
   offeredUserId: true,
   requestedUserId: true,
   cardListingId: true,
@@ -97,6 +111,8 @@ const MARKET_OFFER_ESCROW_SELECT = {
 
 const MARKET_OFFER_DETAILS = {
   id: true,
+  itemListingId: true,
+  offeredItems: true,
   offeredUserId: true,
   requestedUserId: true,
   crystals: true,
@@ -162,6 +178,9 @@ const MARKET_OFFER_DETAILS = {
       },
     },
   },
+  itemListing: {
+    select: { id: true, price: true, itemId: true, quantity: true },
+  },
 } satisfies Prisma.GachaMarketOfferSelect;
 
 const presentMarketOffer = (
@@ -220,7 +239,23 @@ const presentMarketOffer = (
     completedAt: offer.completedAt,
     offeredUser: offer.offeredUser,
     requestedUser: offer.requestedUser,
-    listing,
+    listing:
+      listing ??
+      (offer.itemListing
+        ? {
+            id: offer.itemListing.id,
+            itemType: 'ITEM' as const,
+            price: offer.itemListing.price,
+            item: {
+              ...catalogItem(offer.itemListing.itemId),
+              quantity: offer.itemListing.quantity,
+            },
+          }
+        : null),
+    offeredItems: itemAmounts(offer.offeredItems).map((entry) => ({
+      ...entry,
+      name: catalogItem(entry.itemId).name,
+    })),
     offeredCards: offer.offeredCards.map(({ userCard }) =>
       presentCard(userCard),
     ),
@@ -244,8 +279,12 @@ export class EconomyService {
     return { version, config: economyConfig(version.snapshot) };
   }
 
-  async odds() {
-    const { version, config } = await this.currentVersion(this.prisma);
+  /**
+   * Catálogo item a item das caixas. É caro (o catálogo tem centenas de milhar
+   * de cartas e o JSON passa de 40 MB) e nenhuma tela do front usa esse
+   * detalhamento — por isso sai só quando pedido explicitamente (`items=1`).
+   */
+  private async oddsItems() {
     const [cards, skins, backs] = await Promise.all([
       this.prisma.card.findMany({
         where: {
@@ -289,6 +328,16 @@ export class EconomyService {
           conditionalProbability: 1 / pool.length,
         }));
       });
+    return {
+      CARD: probabilities(cards, true),
+      SKIN: probabilities(skins, false),
+      CARD_BACK: probabilities(backs, false),
+    };
+  }
+
+  async odds(includeItems = false) {
+    const { version, config } = await this.currentVersion(this.prisma);
+    const items = includeItems ? await this.oddsItems() : null;
     const packages =
       (
         version.snapshot as {
@@ -307,6 +356,7 @@ export class EconomyService {
       categories: config.box_category_weights,
       qualities: config.box_quality_weights,
       itemKindWeights: config.item_kind_weights,
+      essenceKindWeights: config.essence_kind_weights,
       itemQtyPerQuality: config.item_qty_per_quality,
       foilWeights: config.foil_weights,
       // Raridade e pity saem de GachaConfig, a mesma fonte que o sorteio usa
@@ -323,11 +373,7 @@ export class EconomyService {
         id,
         ...pack,
       })),
-      items: {
-        CARD: probabilities(cards, true),
-        SKIN: probabilities(skins, false),
-        CARD_BACK: probabilities(backs, false),
-      },
+      items,
       cardBackSelection:
         'Uniform among unowned items of the selected quality; complete ownership converts a uniformly selected duplicate to 50% of its official price.',
       loyalty: {
@@ -353,7 +399,7 @@ export class EconomyService {
       ...(itemId ? { userSkin: { skinId: itemId } } : {}),
     };
     const [cards, skins, cardCount, skinCount] = await Promise.all([
-      itemType === 'SKIN'
+      itemType && itemType !== 'CARD'
         ? []
         : this.prisma.gachaListing.findMany({
             where: cardWhere,
@@ -388,7 +434,7 @@ export class EconomyService {
               },
             },
           }),
-      itemType === 'CARD'
+      itemType && itemType !== 'SKIN'
         ? []
         : this.prisma.gachaSkinListing.findMany({
             where: skinWhere,
@@ -413,10 +459,10 @@ export class EconomyService {
               },
             },
           }),
-      itemType === 'SKIN'
+      itemType && itemType !== 'CARD'
         ? 0
         : this.prisma.gachaListing.count({ where: cardWhere }),
-      itemType === 'CARD'
+      itemType && itemType !== 'SKIN'
         ? 0
         : this.prisma.gachaSkinListing.count({ where: skinWhere }),
     ]);
@@ -436,7 +482,40 @@ export class EconomyService {
         b.createdAt.getTime() - a.createdAt.getTime() ||
         a.id.localeCompare(b.id),
     );
-    return { items, page, limit, total: cardCount + skinCount };
+    const itemWhere = { ...where, ...(itemId ? { itemId } : {}) };
+    const [itemListings, itemCount] = await Promise.all([
+      itemType !== 'ITEM'
+        ? []
+        : this.prisma.gachaItemListing.findMany({
+            where: itemWhere,
+            orderBy: [{ createdAt: 'desc' }, { id: 'asc' }],
+            skip: (page - 1) * limit,
+            take: limit,
+            include: {
+              user: { select: { id: true, name: true, userName: true } },
+            },
+          }),
+      itemType !== 'ITEM'
+        ? 0
+        : this.prisma.gachaItemListing.count({ where: itemWhere }),
+    ]);
+    return {
+      items: [
+        ...items,
+        ...itemListings.map((entry) => ({
+          ...entry,
+          itemType: 'ITEM',
+          item: catalogItem(entry.itemId),
+        })),
+      ].sort(
+        (a, b) =>
+          b.createdAt.getTime() - a.createdAt.getTime() ||
+          a.id.localeCompare(b.id),
+      ),
+      page,
+      limit,
+      total: cardCount + skinCount + itemCount,
+    };
   }
 
   async orders(query: MarketQueryDto, userId?: string) {
@@ -503,6 +582,34 @@ export class EconomyService {
   @Cron('0 * * * * *', { waitForCompletion: true })
   async expireMarket() {
     return this.prisma.$transaction(async (tx) => {
+      const affectedOffers = await tx.gachaMarketOffer.findMany({
+        where: {
+          status: 'PENDING',
+          OR: [
+            { expiresAt: { lte: new Date() } },
+            {
+              cardListing: { status: 'ACTIVE', expiresAt: { lte: new Date() } },
+            },
+            {
+              skinListing: { status: 'ACTIVE', expiresAt: { lte: new Date() } },
+            },
+            {
+              itemListing: { status: 'ACTIVE', expiresAt: { lte: new Date() } },
+            },
+          ],
+        },
+        select: { offeredUserId: true, requestedUserId: true },
+      });
+      const expiredItems = await tx.gachaItemListing.findMany({
+        where: { status: 'ACTIVE', expiresAt: { lte: new Date() } },
+      });
+      await this.lockMarketParticipants(tx, [
+        ...affectedOffers.flatMap((offer) => [
+          offer.offeredUserId,
+          offer.requestedUserId,
+        ]),
+        ...expiredItems.map((listing) => listing.userId),
+      ]);
       await this.expireOrders(tx);
       const expiredOffers = await tx.gachaMarketOffer.findMany({
         where: { status: 'PENDING', expiresAt: { lte: new Date() } },
@@ -554,6 +661,20 @@ export class EconomyService {
             data: { status: 'ACTIVE' },
           });
         }
+      }
+      for (const listing of expiredItems) {
+        const expired = await tx.gachaItemListing.updateMany({
+          where: { id: listing.id, status: 'ACTIVE' },
+          data: { status: 'EXPIRED', completedAt: new Date() },
+        });
+        if (expired.count !== 1) continue;
+        await creditItems(tx, listing.userId, [
+          {
+            itemId: catalogItem(listing.itemId).id,
+            quantity: listing.quantity,
+          },
+        ]);
+        await this.cancelMarketOffersForListing(tx, 'ITEM', listing.id);
       }
     });
   }
@@ -827,7 +948,11 @@ export class EconomyService {
       balance: user.crystalBalance,
       reserved: user.crystalReserved,
       available: user.crystalBalance - user.crystalReserved,
+      itemCatalog: ITEM_CATALOG,
       itemConfig: {
+        essence_shop_price: config.essence_shop_price,
+        essence_shop_enabled: config.essence_shop_enabled,
+        essence_kind_weights: config.essence_kind_weights,
         item_shop_price: config.item_shop_price,
         item_shop_enabled: config.item_shop_enabled,
         item_drop_available: Object.fromEntries(
@@ -858,6 +983,127 @@ export class EconomyService {
           })
         )._sum.delta ?? 0,
     };
+  }
+
+  async craftFoilGem(userId: string, foil: keyof typeof FOIL_INVENTORY_FIELDS) {
+    const { shards, gems } = FOIL_INVENTORY_FIELDS[foil];
+    return this.withSerializableConflict(() =>
+      this.prisma.$transaction(
+        async (tx) => {
+          await this.lockItemInventory(tx, userId);
+          const crafted = await tx.gachaInventory.updateMany({
+            where: {
+              userId,
+              [shards]: { gte: GEM_FRAGMENT_RECIPE },
+            },
+            data: { [shards]: { decrement: GEM_FRAGMENT_RECIPE } },
+          });
+          if (!crafted.count)
+            throw new BadRequestException(
+              'Fragmentos insuficientes para craftar a gema.',
+            );
+          await creditItems(tx, userId, [
+            { itemId: catalogItemForField(gems).id, quantity: 1 },
+          ]);
+          return tx.gachaInventory.findUniqueOrThrow({ where: { userId } });
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      ),
+    );
+  }
+
+  async applyFoilGem(
+    userId: string,
+    userCardId: string,
+    foil: keyof typeof FOIL_INVENTORY_FIELDS,
+  ) {
+    const { gems } = FOIL_INVENTORY_FIELDS[foil];
+    return this.withSerializableConflict(() =>
+      this.prisma.$transaction(
+        async (tx) => {
+          await this.lockItemInventory(tx, userId);
+          await tx.$queryRaw`SELECT "id" FROM "UserCard" WHERE "id" = ${userCardId} AND "userId" = ${userId} FOR UPDATE`;
+          const card = await tx.userCard.findFirst({
+            where: { id: userCardId, userId, status: 'ACTIVE' },
+            select: {
+              id: true,
+              condition: true,
+              foil: true,
+              edition: true,
+              valueOverride: true,
+              card: { select: { rarity: true } },
+            },
+          });
+          if (!card) throw new NotFoundException('Carta não encontrada.');
+          if (card.foil !== 'NORMAL')
+            throw new BadRequestException(
+              `A carta já possui foil ${card.foil}.`,
+            );
+
+          const pendingTrade = await tx.gachaTrade.findFirst({
+            where: {
+              status: 'PENDING',
+              OR: [
+                { offeredUserCardId: userCardId },
+                { requestedUserCardId: userCardId },
+                { cards: { some: { userCardId } } },
+              ],
+            },
+            select: { id: true },
+          });
+          if (pendingTrade)
+            throw new ConflictException('Carta envolvida em troca pendente.');
+          const now = new Date();
+          const [listing, offer] = await Promise.all([
+            tx.gachaListing.findFirst({
+              where: {
+                userCardId,
+                status: 'ACTIVE',
+                expiresAt: { gt: now },
+              },
+              select: { id: true },
+            }),
+            tx.gachaMarketOfferCard.findFirst({
+              where: {
+                userCardId,
+                offer: { status: 'PENDING', expiresAt: { gt: now } },
+              },
+              select: { offerId: true },
+            }),
+          ]);
+          if (listing || offer)
+            throw new ConflictException(
+              'Remova a carta do mercado antes de aplicar a gema.',
+            );
+
+          const config = (await this.currentVersion(tx)).config;
+          const value =
+            card.valueOverride ??
+            cardValue(
+              card.card.rarity as GachaTier,
+              card.condition,
+              foil,
+              card.edition,
+              config.base_value,
+              config.foil_mult,
+            );
+          const updated = await tx.userCard.updateMany({
+            where: { id: userCardId, userId, status: 'ACTIVE', foil: 'NORMAL' },
+            data: { foil, value },
+          });
+          if (!updated.count)
+            throw new ConflictException('A carta não está mais disponível.');
+          const consumed = await tx.gachaInventory.updateMany({
+            where: { userId, [gems]: { gt: 0 } },
+            data: { [gems]: { decrement: 1 } },
+          });
+          if (!consumed.count)
+            throw new BadRequestException('Gema insuficiente.');
+          return tx.userCard.findUniqueOrThrow({ where: { id: userCardId } });
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      ),
+    );
   }
 
   tradeUpCards(userId: string, copyIds: string[]) {
@@ -1140,13 +1386,47 @@ export class EconomyService {
     return this.prisma.$transaction(async (tx) => {
       const config = (await this.currentVersion(tx)).config;
       await this.spend(tx, userId, config.key_price, 'Compra de chave', 'key');
-      const inventory = await tx.gachaInventory.upsert({
+      await creditItems(tx, userId, [{ itemId: 'KEY', quantity: 1 }]);
+      const inventory = await tx.gachaInventory.findUniqueOrThrow({
         where: { userId },
-        create: { userId, keys: 1 },
-        update: { keys: { increment: 1 } },
       });
       return { inventory, price: config.key_price };
     });
+  }
+
+  buyEssence(userId: string, dto: BuyEssenceDto) {
+    return this.runOperation(
+      userId,
+      dto.operationId,
+      'BUY_ESSENCE',
+      { itemId: dto.itemId, quantity: dto.quantity },
+      async (tx, config) => {
+        await this.assertEconomyEnabled(tx, userId);
+        const price = config.essence_shop_price[dto.itemId];
+        if (!config.essence_shop_enabled[dto.itemId] || price <= 0)
+          throw new BadRequestException(
+            'Esta Essência não está disponível na loja.',
+          );
+        await this.spend(
+          tx,
+          userId,
+          price * dto.quantity,
+          'Compra de Essência',
+          dto.operationId,
+        );
+        await creditItems(tx, userId, [
+          { itemId: dto.itemId, quantity: dto.quantity },
+        ]);
+        return {
+          inventory: await tx.gachaInventory.findUniqueOrThrow({
+            where: { userId },
+          }),
+          itemId: dto.itemId,
+          quantity: dto.quantity,
+          price: price * dto.quantity,
+        };
+      },
+    );
   }
 
   buyItem(userId: string, dto: BuyItemDto) {
@@ -1171,16 +1451,9 @@ export class EconomyService {
           `Compra de ${dto.kind}`,
           `economy-v1:item:${dto.operationId}`,
         );
-        await this.lockItemInventory(tx, userId);
-        const credited = await tx.gachaInventory.updateMany({
-          where: {
-            userId,
-            [field]: { lte: 2_147_483_647 - dto.quantity },
-          },
-          data: { [field]: { increment: dto.quantity } },
-        });
-        if (credited.count !== 1)
-          throw new BadRequestException('Limite de inventário atingido.');
+        await creditItems(tx, userId, [
+          { itemId: catalogItemForField(field).id, quantity: dto.quantity },
+        ]);
         const inventory = await tx.gachaInventory.findUniqueOrThrow({
           where: { userId },
         });
@@ -1251,15 +1524,12 @@ export class EconomyService {
           throw new BadRequestException(
             'Fragmentos insuficientes para fabricar.',
           );
-        const credited = await tx.gachaInventory.updateMany({
-          where: {
-            userId,
-            [itemField]: { lte: 2_147_483_647 - dto.quantity },
+        await creditItems(tx, userId, [
+          {
+            itemId: catalogItemForField(itemField).id,
+            quantity: dto.quantity,
           },
-          data: { [itemField]: { increment: dto.quantity } },
-        });
-        if (credited.count !== 1)
-          throw new BadRequestException('Limite de inventário atingido.');
+        ]);
         const inventory = await tx.gachaInventory.findUniqueOrThrow({
           where: { userId },
         });
@@ -1389,10 +1659,11 @@ export class EconomyService {
         `Compra de caixa ${tier}`,
         tier,
       );
-      const inventory = await tx.gachaInventory.upsert({
+      await creditItems(tx, userId, [
+        { itemId: catalogItemForField(field).id, quantity: 1 },
+      ]);
+      const inventory = await tx.gachaInventory.findUniqueOrThrow({
         where: { userId },
-        create: { userId, [field]: 1 },
-        update: { [field]: { increment: 1 } },
       });
       return { inventory, price: config.box_prices[tier] };
     });
@@ -1460,10 +1731,12 @@ export class EconomyService {
       if (claimed.count !== 1) {
         throw new ForbiddenException('Recompensa semanal indisponível.');
       }
-      const inventory = await tx.gachaInventory.upsert({
+      await creditItems(tx, userId, [
+        { itemId: 'RARE_BOX', quantity: 1 },
+        { itemId: 'KEY', quantity: 1 },
+      ]);
+      const inventory = await tx.gachaInventory.findUniqueOrThrow({
         where: { userId },
-        create: { userId, rareBoxes: 1, keys: 1 },
-        update: { rareBoxes: { increment: 1 }, keys: { increment: 1 } },
       });
       return { inventory, reward: { rareBoxes: 1, keys: 1 } };
     });
@@ -1560,14 +1833,17 @@ export class EconomyService {
     await this.expireMarket();
     const cardIds = dto.offeredUserCardIds ?? [];
     const crystals = dto.crystals ?? 0;
-    if (cardIds.length > 5 || (crystals === 0 && cardIds.length === 0)) {
+    const items = itemAmounts(dto.items ?? []);
+    if (
+      cardIds.length > 5 ||
+      (crystals === 0 && cardIds.length === 0 && items.length === 0)
+    ) {
       throw new BadRequestException(
-        'Ofereça Cristais, de 1 a 5 cartas, ou os dois juntos.',
+        'Ofereça itens, Cristais e/ou até 5 cartas.',
       );
     }
     return this.prisma.$transaction(
       async (tx) => {
-        await this.assertMarketEligible(tx, userId);
         const listing =
           dto.itemType === 'CARD'
             ? await tx.gachaListing.findUnique({
@@ -1579,15 +1855,25 @@ export class EconomyService {
                   expiresAt: true,
                 },
               })
-            : await tx.gachaSkinListing.findUnique({
-                where: { id: dto.listingId },
-                select: {
-                  id: true,
-                  userId: true,
-                  status: true,
-                  expiresAt: true,
-                },
-              });
+            : dto.itemType === 'ITEM'
+              ? await tx.gachaItemListing.findUnique({
+                  where: { id: dto.listingId },
+                  select: {
+                    id: true,
+                    userId: true,
+                    status: true,
+                    expiresAt: true,
+                  },
+                })
+              : await tx.gachaSkinListing.findUnique({
+                  where: { id: dto.listingId },
+                  select: {
+                    id: true,
+                    userId: true,
+                    status: true,
+                    expiresAt: true,
+                  },
+                });
         if (
           !listing ||
           listing.status !== 'ACTIVE' ||
@@ -1600,7 +1886,10 @@ export class EconomyService {
             'Você não pode ofertar no próprio anúncio.',
           );
         }
+        await this.lockMarketParticipants(tx, [userId, listing.userId]);
+        await this.assertMarketEligible(tx, userId);
         await this.assertMarketEligible(tx, listing.userId);
+        await reserveItems(tx, userId, items);
         const { config } = await this.currentVersion(tx);
         const active = await tx.gachaMarketOffer.count({
           where: {
@@ -1674,6 +1963,8 @@ export class EconomyService {
             cardListingId: dto.itemType === 'CARD' ? listing.id : null,
             skinListingId: dto.itemType === 'SKIN' ? listing.id : null,
             crystals,
+            itemListingId: dto.itemType === 'ITEM' ? listing.id : null,
+            offeredItems: items,
             expiresAt,
             offeredCards: {
               create: cardIds.map((userCardId, position) => ({
@@ -1687,6 +1978,9 @@ export class EconomyService {
         const consideration = [
           crystals > 0 ? `${crystals.toLocaleString('pt-BR')} Cristais` : null,
           cardIds.length > 0 ? `${cardIds.length} carta(s)` : null,
+          items.length > 0
+            ? `${items.reduce((sum, item) => sum + item.quantity, 0)} item(ns)`
+            : null,
         ]
           .filter(Boolean)
           .join(' + ');
@@ -1756,7 +2050,12 @@ export class EconomyService {
               },
             })
           : null;
-        const listing = cardListing ?? skinListing;
+        const itemListing = offer.itemListingId
+          ? await tx.gachaItemListing.findUnique({
+              where: { id: offer.itemListingId },
+            })
+          : null;
+        const listing = cardListing ?? skinListing ?? itemListing;
         if (
           !listing ||
           listing.status !== 'ACTIVE' ||
@@ -1764,6 +2063,12 @@ export class EconomyService {
         ) {
           throw new ConflictException('O anúncio não está mais disponível.');
         }
+        await this.lockListingParticipants(
+          tx,
+          [offer.offeredUserId, userId],
+          cardListing ? 'CARD' : skinListing ? 'SKIN' : 'ITEM',
+          listing.id,
+        );
         await this.assertMarketEligible(tx, offer.offeredUserId);
         await this.assertMarketEligible(tx, userId);
         const accepted = await tx.gachaMarketOffer.updateMany({
@@ -1818,6 +2123,27 @@ export class EconomyService {
             throw new ConflictException('Skin indisponível.');
         }
 
+        if (itemListing) {
+          if (itemListing.expiresAt <= new Date())
+            throw new ConflictException('Anúncio expirado.');
+          const sold = await tx.gachaItemListing.updateMany({
+            where: { id: itemListing.id, status: 'ACTIVE' },
+            data: {
+              status: 'FILLED',
+              buyerId: offer.offeredUserId,
+              completedAt: new Date(),
+            },
+          });
+          if (sold.count !== 1)
+            throw new ConflictException('Anúncio indisponível.');
+          await creditItems(tx, offer.offeredUserId, [
+            {
+              itemId: catalogItem(itemListing.itemId).id,
+              quantity: itemListing.quantity,
+            },
+          ]);
+        }
+        await creditItems(tx, userId, itemAmounts(offer.offeredItems));
         if (offer.offeredCards.length > 0) {
           const moved = await tx.userCard.updateMany({
             where: {
@@ -1865,7 +2191,9 @@ export class EconomyService {
             data: {
               sellerId: userId,
               buyerId: offer.offeredUserId,
-              itemType: cardListing ? 'CARD' : 'SKIN',
+              itemType: cardListing ? 'CARD' : skinListing ? 'SKIN' : 'ITEM',
+              itemId: itemListing?.itemId,
+              quantity: itemListing?.quantity,
               userCardId: cardListing?.userCardId,
               userSkinId: skinListing?.userSkinId,
               price: offer.crystals,
@@ -1875,9 +2203,26 @@ export class EconomyService {
           });
           saleId = sale.id;
         }
+        if (offer.crystals === 0) {
+          const sale = await tx.gachaMarketSale.create({
+            data: {
+              sellerId: userId,
+              buyerId: offer.offeredUserId,
+              itemType: cardListing ? 'CARD' : skinListing ? 'SKIN' : 'ITEM',
+              userCardId: cardListing?.userCardId,
+              userSkinId: skinListing?.userSkinId,
+              itemId: itemListing?.itemId,
+              quantity: itemListing?.quantity,
+              price: 0,
+              fee: 0,
+              variant: { marketOfferId: offer.id },
+            },
+          });
+          saleId = sale.id;
+        }
         await this.cancelMarketOffersForListing(
           tx,
-          cardListing ? 'CARD' : 'SKIN',
+          cardListing ? 'CARD' : skinListing ? 'SKIN' : 'ITEM',
           listing.id,
           offer.id,
         );
@@ -1937,6 +2282,10 @@ export class EconomyService {
         select: MARKET_OFFER_ESCROW_SELECT,
       });
       if (!offer) throw new NotFoundException('Proposta não encontrada.');
+      await this.lockMarketParticipants(tx, [
+        offer.offeredUserId,
+        offer.requestedUserId,
+      ]);
       const allowed =
         status === 'DECLINED'
           ? offer.requestedUserId === userId
@@ -2115,6 +2464,171 @@ export class EconomyService {
     );
   }
 
+  private async lockMarketParticipants(tx: Tx, userIds: string[]) {
+    const ids = [...new Set(userIds)].sort();
+    if (!ids.length) return;
+    await tx.$queryRaw(
+      Prisma.sql`SELECT "id" FROM "User" WHERE "id" IN (${Prisma.join(ids)}) ORDER BY "id" FOR UPDATE`,
+    );
+    for (const id of ids) await lockInventory(tx, id);
+  }
+
+  private async lockListingParticipants(
+    tx: Tx,
+    userIds: string[],
+    itemType: 'CARD' | 'SKIN' | 'ITEM',
+    listingId: string,
+  ) {
+    const offers = await tx.gachaMarketOffer.findMany({
+      where: {
+        status: 'PENDING',
+        ...(itemType === 'CARD'
+          ? { cardListingId: listingId }
+          : itemType === 'SKIN'
+            ? { skinListingId: listingId }
+            : { itemListingId: listingId }),
+      },
+      select: { offeredUserId: true, requestedUserId: true },
+    });
+    await this.lockMarketParticipants(tx, [
+      ...userIds,
+      ...offers.flatMap((offer) => [
+        offer.offeredUserId,
+        offer.requestedUserId,
+      ]),
+    ]);
+  }
+
+  createItemListing(userId: string, dto: CreateItemListingDto) {
+    const item = catalogItem(dto.itemId);
+    return this.prisma.$transaction(
+      async (tx) => {
+        await this.lockMarketParticipants(tx, [userId]);
+        await this.assertMarketEligible(tx, userId);
+        await this.assertListingLimit(tx, userId);
+        await reserveItems(tx, userId, [
+          { itemId: item.id, quantity: dto.quantity },
+        ]);
+        return tx.gachaItemListing.create({
+          data: {
+            userId,
+            itemId: item.id,
+            quantity: dto.quantity,
+            price: dto.price,
+            expiresAt: new Date(
+              Date.now() +
+                (await this.currentVersion(tx)).config.listing_ttl_ms,
+            ),
+          },
+        });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+  }
+
+  async buyItemListing(userId: string, listingId: string) {
+    await this.expireMarket();
+    return this.prisma.$transaction(
+      async (tx) => {
+        const listing = await tx.gachaItemListing.findUnique({
+          where: { id: listingId },
+        });
+        if (
+          !listing ||
+          listing.status !== 'ACTIVE' ||
+          listing.expiresAt <= new Date()
+        )
+          throw new ConflictException('Anúncio não está mais ativo.');
+        if (listing.userId === userId)
+          throw new BadRequestException(
+            'Você não pode comprar o próprio anúncio.',
+          );
+        await this.lockListingParticipants(
+          tx,
+          [userId, listing.userId],
+          'ITEM',
+          listing.id,
+        );
+        await this.assertMarketEligible(tx, userId);
+        await this.assertMarketEligible(tx, listing.userId);
+        const sold = await tx.gachaItemListing.updateMany({
+          where: { id: listing.id, status: 'ACTIVE' },
+          data: { status: 'FILLED', buyerId: userId, completedAt: new Date() },
+        });
+        if (sold.count !== 1)
+          throw new ConflictException('Anúncio não está mais ativo.');
+        await this.spend(
+          tx,
+          userId,
+          listing.price,
+          'Compra de itens no mercado',
+          listing.id,
+        );
+        await creditItems(tx, userId, [
+          {
+            itemId: catalogItem(listing.itemId).id,
+            quantity: listing.quantity,
+          },
+        ]);
+        const fee = Math.round(
+          listing.price * (await this.currentVersion(tx)).config.market_tax_pct,
+        );
+        if (listing.price > fee)
+          await this.credit(
+            tx,
+            listing.userId,
+            listing.price - fee,
+            'SALE',
+            listing.id,
+            'Venda de itens no mercado',
+          );
+        const sale = await tx.gachaMarketSale.create({
+          data: {
+            sellerId: listing.userId,
+            buyerId: userId,
+            itemType: 'ITEM',
+            itemId: listing.itemId,
+            quantity: listing.quantity,
+            price: listing.price,
+            fee,
+            variant: { quantity: listing.quantity },
+          },
+        });
+        await this.cancelMarketOffersForListing(tx, 'ITEM', listing.id);
+        await this.notifySale(tx, listing.userId, listing.price - fee, sale.id);
+        return { saleId: sale.id, price: listing.price, fee };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+  }
+
+  cancelItemListing(userId: string, listingId: string) {
+    return this.prisma.$transaction(
+      async (tx) => {
+        await this.lockListingParticipants(tx, [userId], 'ITEM', listingId);
+        const listing = await tx.gachaItemListing.findFirst({
+          where: { id: listingId, userId, status: 'ACTIVE' },
+        });
+        if (!listing) throw new ConflictException('Anúncio não está ativo.');
+        const cancelled = await tx.gachaItemListing.updateMany({
+          where: { id: listing.id, status: 'ACTIVE' },
+          data: { status: 'CANCELLED', completedAt: new Date() },
+        });
+        if (cancelled.count !== 1)
+          throw new ConflictException('Anúncio não está ativo.');
+        await creditItems(tx, userId, [
+          {
+            itemId: catalogItem(listing.itemId).id,
+            quantity: listing.quantity,
+          },
+        ]);
+        await this.cancelMarketOffersForListing(tx, 'ITEM', listing.id);
+        return { cancelled: true };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+  }
+
   createCardListing(userId: string, userCardId: string, price: number) {
     return this.prisma.$transaction(
       async (tx) => {
@@ -2195,6 +2709,12 @@ export class EconomyService {
         if (listing.expiresAt <= new Date()) {
           throw new ConflictException('Anúncio expirado.');
         }
+        await this.lockListingParticipants(
+          tx,
+          [userId, listing.userId],
+          'CARD',
+          listing.id,
+        );
         await this.assertMarketEligible(tx, listing.userId);
         await this.spend(
           tx,
@@ -2249,6 +2769,7 @@ export class EconomyService {
 
   cancelCardListing(userId: string, listingId: string) {
     return this.prisma.$transaction(async (tx) => {
+      await this.lockListingParticipants(tx, [userId], 'CARD', listingId);
       const listing = await tx.gachaListing.findFirst({
         where: { id: listingId, userId, status: 'ACTIVE' },
       });
@@ -2340,6 +2861,12 @@ export class EconomyService {
         if (listing.expiresAt <= new Date()) {
           throw new ConflictException('Anúncio expirado.');
         }
+        await this.lockListingParticipants(
+          tx,
+          [userId, listing.userId],
+          'SKIN',
+          listing.id,
+        );
         await this.assertMarketEligible(tx, listing.userId);
         await this.spend(
           tx,
@@ -2389,6 +2916,7 @@ export class EconomyService {
 
   cancelSkinListing(userId: string, listingId: string) {
     return this.prisma.$transaction(async (tx) => {
+      await this.lockListingParticipants(tx, [userId], 'SKIN', listingId);
       const listing = await tx.gachaSkinListing.findFirst({
         where: { id: listingId, userId, status: 'ACTIVE' },
       });
@@ -2409,7 +2937,7 @@ export class EconomyService {
   }
 
   async marketHistory(
-    itemType: 'CARD' | 'SKIN',
+    itemType: 'CARD' | 'SKIN' | 'ITEM',
     itemId: string,
     variant?: { foil?: string; condition?: string },
   ) {
@@ -2418,15 +2946,19 @@ export class EconomyService {
       where: {
         itemType,
         official: false,
+        price: { gt: 0 },
         suspicious: false,
         createdAt: { gte: since },
         ...(itemType === 'CARD'
           ? { userCard: { cardId: itemId } }
-          : { userSkin: { skinId: itemId } }),
+          : itemType === 'ITEM'
+            ? { itemId }
+            : { userSkin: { skinId: itemId } }),
       },
       orderBy: { price: 'asc' },
       select: {
         price: true,
+        quantity: true,
         variant: true,
         userCard: { select: { foil: true, condition: true } },
       },
@@ -2447,7 +2979,13 @@ export class EconomyService {
           })
         : [];
     // ponytail: five sales support a variant median; use card-wide history below that sample.
-    const rows = specific.length >= 5 ? specific : sales;
+    const rows = (specific.length >= 5 ? specific : sales)
+      .map((sale) =>
+        itemType === 'ITEM'
+          ? { ...sale, price: sale.price / (sale.quantity ?? 1) }
+          : sale,
+      )
+      .sort((a, b) => a.price - b.price);
     if (rows.length === 0)
       return { median: null, min: null, max: null, volume: 0 };
     const middle = Math.floor(rows.length / 2);
@@ -2547,10 +3085,9 @@ export class EconomyService {
       });
       if (claimed.count !== 1)
         throw new ConflictException('Missão já resgatada.');
-      const inventory = await tx.gachaInventory.upsert({
+      await creditItems(tx, userId, [{ itemId: 'KEY', quantity: 1 }]);
+      const inventory = await tx.gachaInventory.findUniqueOrThrow({
         where: { userId },
-        create: { userId, keys: 1 },
-        update: { keys: { increment: 1 } },
       });
       return { reward: { keys: 1 }, inventory };
     });
@@ -2716,42 +3253,44 @@ export class EconomyService {
     }
     if (category === 'KEY' || category === 'SPIN_RESET') {
       const field = category === 'KEY' ? 'keys' : 'spinResets';
-      await tx.gachaInventory.upsert({
-        where: { userId },
-        create: { userId, [field]: amount },
-        update: { [field]: { increment: amount } },
-      });
+      await creditItems(tx, userId, [
+        { itemId: catalogItemForField(field).id, quantity: amount },
+      ]);
       return { amount, data: { category, amount } };
+    }
+    if (category === 'ESSENCE') {
+      const kind = weightedPick<EssenceKind>(config.essence_kind_weights[tier]);
+      await creditItems(tx, userId, [{ itemId: kind, quantity: 1 }]);
+      return {
+        amount: 1,
+        data: {
+          category,
+          itemId: kind,
+          kind,
+          amount: 1,
+          name: catalogItem(kind).name,
+        },
+      };
     }
     if (category === 'ITEM') {
       const kind = weightedPick(config.item_kind_weights[tier]);
       // PROTECAO concede 1 uso por drop independentemente da qualidade.
       const quantity =
         kind === 'PROTECAO' ? 1 : config.item_qty_per_quality[quality];
-      const field = ITEM_FIELD[kind];
-      await tx.gachaInventory.upsert({
-        where: { userId },
-        create: { userId, [field]: quantity },
-        update: { [field]: { increment: quantity } },
-      });
+      await creditItems(tx, userId, [{ itemId: kind, quantity }]);
       return { amount: quantity, data: { category, kind, quantity } };
     }
     if (category === 'RARE_BOX') {
-      await tx.gachaInventory.upsert({
-        where: { userId },
-        create: { userId, rareBoxes: 1 },
-        update: { rareBoxes: { increment: 1 } },
-      });
+      await creditItems(tx, userId, [{ itemId: 'RARE_BOX', quantity: 1 }]);
       return { amount: 1, data: { category, tier: 'RARE', amount: 1 } };
     }
     if (category === 'KEY_RARE_BOX' || category === 'KEY_PREMIUM_BOX') {
       const boxField =
         category === 'KEY_RARE_BOX' ? 'rareBoxes' : 'premiumBoxes';
-      await tx.gachaInventory.upsert({
-        where: { userId },
-        create: { userId, keys: 1, [boxField]: 1 },
-        update: { keys: { increment: 1 }, [boxField]: { increment: 1 } },
-      });
+      await creditItems(tx, userId, [
+        { itemId: 'KEY', quantity: 1 },
+        { itemId: catalogItemForField(boxField).id, quantity: 1 },
+      ]);
       return { amount: 1, data: { category, keys: 1, [boxField]: 1 } };
     }
     if (category === 'CARD') {
@@ -3105,12 +3644,13 @@ export class EconomyService {
         offer.crystals,
       );
     }
+    await creditItems(tx, offer.offeredUserId, itemAmounts(offer.offeredItems));
     return true;
   }
 
   private async cancelMarketOffersForListing(
     tx: Tx,
-    itemType: 'CARD' | 'SKIN',
+    itemType: 'CARD' | 'SKIN' | 'ITEM',
     listingId: string,
     exceptId?: string,
   ) {
@@ -3120,7 +3660,9 @@ export class EconomyService {
         ...(exceptId ? { id: { not: exceptId } } : {}),
         ...(itemType === 'CARD'
           ? { cardListingId: listingId }
-          : { skinListingId: listingId }),
+          : itemType === 'ITEM'
+            ? { itemListingId: listingId }
+            : { skinListingId: listingId }),
       },
       select: MARKET_OFFER_ESCROW_SELECT,
     });
@@ -3153,7 +3695,10 @@ export class EconomyService {
   }
 
   private async assertListingLimit(tx: Tx, userId: string) {
-    const [cards, skins] = await Promise.all([
+    const [items, cards, skins] = await Promise.all([
+      tx.gachaItemListing.count({
+        where: { userId, status: 'ACTIVE', expiresAt: { gt: new Date() } },
+      }),
       tx.gachaListing.count({
         where: { userId, status: 'ACTIVE', expiresAt: { gt: new Date() } },
       }),
@@ -3162,7 +3707,7 @@ export class EconomyService {
       }),
     ]);
     if (
-      cards + skins >=
+      items + cards + skins >=
       (await this.currentVersion(tx)).config.listing_active_limit
     ) {
       throw new BadRequestException('Limite de anúncios ativos atingido.');
@@ -3177,6 +3722,9 @@ export class EconomyService {
           status: 'ACTIVE',
           id: { notIn: await this.inactiveEventItems(this.prisma, 'cardIds') },
         },
+        // A seleção da loja só olha id e raridade: puxar o catálogo inteiro
+        // com todas as colunas custa memória e tempo à toa.
+        select: { id: true, rarity: true },
       }),
       this.prisma.userCard.findMany({
         where: { userId, status: 'ACTIVE' },
@@ -3280,6 +3828,9 @@ export class EconomyService {
           status: 'ACTIVE',
           id: { notIn: await this.inactiveEventItems(this.prisma, 'cardIds') },
         },
+        // A seleção da loja só olha id e raridade: puxar o catálogo inteiro
+        // com todas as colunas custa memória e tempo à toa.
+        select: { id: true, rarity: true },
       }),
       this.prisma.gachaSkin.findMany({
         where: {
@@ -3438,11 +3989,9 @@ export class EconomyService {
   ) {
     if (offer.itemType === 'KEY' || offer.itemType === 'COMMON_BOX') {
       const field = offer.itemType === 'KEY' ? 'keys' : 'commonBoxes';
-      await tx.gachaInventory.upsert({
-        where: { userId },
-        create: { userId, [field]: 1 },
-        update: { [field]: { increment: 1 } },
-      });
+      await creditItems(tx, userId, [
+        { itemId: catalogItemForField(field).id, quantity: 1 },
+      ]);
       return { type: offer.itemType };
     }
     if (offer.itemType === 'SKIN' && offer.skin) {
@@ -3494,15 +4043,37 @@ export class EconomyService {
     return { type: 'CARD', userCardId: copy.id };
   }
 
+  private stableRank(id: string, seed: string): string {
+    return createHash('sha256').update(`${seed}:${id}`).digest('hex');
+  }
+
+  /**
+   * Ordena por hash estável do id. O hash é calculado uma vez por item:
+   * dentro do comparador eram duas hashes por comparação, o que custava
+   * segundos de CPU (bloqueando o event loop) sobre o catálogo inteiro.
+   */
   private stableOrder<T extends { id: string }>(items: T[], seed: string): T[] {
-    return [...items].sort((left, right) =>
-      createHash('sha256')
-        .update(`${seed}:${left.id}`)
-        .digest('hex')
-        .localeCompare(
-          createHash('sha256').update(`${seed}:${right.id}`).digest('hex'),
-        ),
-    );
+    return items
+      .map((item) => ({ item, rank: this.stableRank(item.id, seed) }))
+      .sort((left, right) => left.rank.localeCompare(right.rank))
+      .map(({ item }) => item);
+  }
+
+  /** Primeiro item na ordem estável, sem ordenar a lista inteira. */
+  private stablePick<T extends { id: string }>(
+    items: T[],
+    seed: string,
+  ): T | undefined {
+    let best: T | undefined;
+    let bestRank = '';
+    for (const item of items) {
+      const rank = this.stableRank(item.id, seed);
+      if (best === undefined || rank < bestRank) {
+        best = item;
+        bestRank = rank;
+      }
+    }
+    return best;
   }
 
   private selectOfficialCards<T extends { id: string; rarity: string }>(
@@ -3527,7 +4098,7 @@ export class EconomyService {
       );
       const candidates =
         pool.length > 0 ? pool : fallback.length ? fallback : cards;
-      const card = this.stableOrder(candidates, `${seed}:${slot}:item`)[0];
+      const card = this.stablePick(candidates, `${seed}:${slot}:item`);
       if (card) selected.push(card);
     }
     return selected;
@@ -3687,13 +4258,29 @@ export class EconomyService {
     await tx.$queryRaw`SELECT "userId" FROM "GachaInventory" WHERE "userId" = ${userId} FOR UPDATE`;
   }
 
+  private async withSerializableConflict<T>(operation: () => Promise<T>) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        (error.code === 'P2034' ||
+          (error.code === 'P2010' &&
+            error.message.includes('could not serialize access')))
+      ) {
+        throw new ConflictException('Conflito concorrente; tente novamente.');
+      }
+      throw error;
+    }
+  }
+
   private weekStart(): Date {
     const today = dateFromDayKey(dayKey());
     const daysSinceMonday = (today.getUTCDay() + 6) % 7;
     return new Date(today.getTime() - daysSinceMonday * 86_400_000);
   }
 
-  private async assertEconomyEnabled(tx: Tx, userId: string) {
+  async assertEconomyEnabled(tx: Tx, userId: string) {
     const [user, rollout] = await Promise.all([
       tx.user.findUniqueOrThrow({
         where: { id: userId },

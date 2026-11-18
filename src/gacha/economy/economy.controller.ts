@@ -1,3 +1,4 @@
+import { ITEM_CATALOG } from './item-catalog';
 import {
   Body,
   Controller,
@@ -18,9 +19,11 @@ import type { AuthenticatedRequest } from '@/common/interfaces/request.interface
 import {
   BuyBoxDto,
   BuyItemDto,
+  BuyEssenceDto,
   ConvertItemDto,
   CreateBuyOrderDto,
   CreateMarketOfferDto,
+  CreateItemListingDto,
   CreateCardListingDto,
   CreateSkinListingDto,
   CraftItemDto,
@@ -32,6 +35,8 @@ import {
   TradeUpCardsDto,
   TradeUpSkinsDto,
   UseItemDto,
+  CraftFoilGemDto,
+  ApplyFoilGemDto,
 } from './economy.dto';
 import { EconomyService } from './economy.service';
 
@@ -42,10 +47,14 @@ import { EconomyService } from './economy.service';
 export class EconomyController {
   constructor(private readonly economy: EconomyService) {}
 
+  /**
+   * O catálogo item a item é opt-in (`items=1`): passa de 40 MB e nenhuma tela
+   * do front o consome, então o padrão devolve só a configuração da economia.
+   */
   @Public()
   @Get('odds')
-  odds() {
-    return this.economy.odds();
+  odds(@Query('items') items?: string) {
+    return this.economy.odds(items === '1' || items === 'true');
   }
 
   @Public()
@@ -112,6 +121,16 @@ export class EconomyController {
     return this.economy.inventory(req.user.id);
   }
 
+  @Post('gems/craft')
+  craftFoilGem(@Req() req: AuthenticatedRequest, @Body() dto: CraftFoilGemDto) {
+    return this.economy.craftFoilGem(req.user.id, dto.foil);
+  }
+
+  @Post('gems/apply')
+  applyFoilGem(@Req() req: AuthenticatedRequest, @Body() dto: ApplyFoilGemDto) {
+    return this.economy.applyFoilGem(req.user.id, dto.userCardId, dto.foil);
+  }
+
   @Post('trade-up/cards')
   tradeUpCards(@Req() req: AuthenticatedRequest, @Body() dto: TradeUpCardsDto) {
     return this.economy.tradeUpCards(req.user.id, dto.copyIds);
@@ -152,6 +171,16 @@ export class EconomyController {
     return this.economy.useSpinReset(req.user.id);
   }
 
+  @Get('items/catalog')
+  itemCatalog() {
+    return ITEM_CATALOG;
+  }
+
+  @Post('essences/buy')
+  buyEssence(@Req() req: AuthenticatedRequest, @Body() dto: BuyEssenceDto) {
+    return this.economy.buyEssence(req.user.id, dto);
+  }
+
   @Post('items/buy')
   buyItem(@Req() req: AuthenticatedRequest, @Body() dto: BuyItemDto) {
     return this.economy.buyItem(req.user.id, dto);
@@ -170,6 +199,24 @@ export class EconomyController {
   @Post('items/use')
   useItem(@Req() req: AuthenticatedRequest, @Body() dto: UseItemDto) {
     return this.economy.useItem(req.user.id, dto);
+  }
+
+  @Post('market/items')
+  createItemListing(
+    @Req() req: AuthenticatedRequest,
+    @Body() dto: CreateItemListingDto,
+  ) {
+    return this.economy.createItemListing(req.user.id, dto);
+  }
+
+  @Post('market/items/:id/buy')
+  buyItemListing(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.economy.buyItemListing(req.user.id, id);
+  }
+
+  @Post('market/items/:id/cancel')
+  cancelItemListing(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.economy.cancelItemListing(req.user.id, id);
   }
 
   @Post('market/orders')

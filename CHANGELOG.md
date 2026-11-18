@@ -1,3 +1,84 @@
+# [1.67.0](https://github.com/1arley/animesice-back/compare/v1.66.3...v1.67.0) (2026-11-18)
+
+
+### Features
+
+* **gacha:** add e2e tests for essence, crystal codes, claim event and ITEM type ([1c953cf](https://github.com/1arley/animesice-back/commit/1c953cffaf5fdb8190fc1c4caf7e55f953735e47))
+* **gacha:** add essence, crystal codes, claim event and ITEM type ([7818db0](https://github.com/1arley/animesice-back/commit/7818db0a1b6c78eb97c32b1641a4479da5386880))
+
+## [1.66.3](https://github.com/1arley/animesice-back/compare/v1.66.2...v1.66.3) (2026-11-15)
+
+
+### Performance Improvements
+
+* **gacha:** trim the odds payload and the official offer selection ([0223513](https://github.com/1arley/animesice-back/commit/02235137acb72737b5aec6c8d92e15c091c4f752))
+
+## [1.66.2](https://github.com/1arley/animesice-back/compare/v1.66.1...v1.66.2) (2026-11-02)
+
+
+### Bug Fixes
+
+* **gacha:** preserve legacy collection call arguments ([060360a](https://github.com/1arley/animesice-back/commit/060360aa76b9059df1224ac40fd02c119666125b))
+
+
+### Performance Improvements
+
+* **gacha:** filter inventory results before pagination ([2dbcca4](https://github.com/1arley/animesice-back/commit/2dbcca40dcade122b2761db7c333ae1eb59156aa))
+
+## [1.66.1](https://github.com/1arley/animesice-back/compare/v1.66.0...v1.66.1) (2026-11-02)
+
+
+### Performance Improvements
+
+* **gacha:** paginate encyclopedia queries in database ([78d2795](https://github.com/1arley/animesice-back/commit/78d2795abc404c8d613852ccfc656c5e913a29be))
+
+# [1.66.0](https://github.com/1arley/animesice-back/compare/v1.65.0...v1.66.0) (2026-11-01)
+
+
+### Bug Fixes
+
+* **seed:** enfileira scan do inazuma com prioridade do slug ([ba04093](https://github.com/1arley/animesice-back/commit/ba0409324704fcfe5bce410c55e3fd40941f60c8))
+
+
+### Features
+
+* **watchtower:** prioriza inazuma-eleven na fila de extracao ([4c4b470](https://github.com/1arley/animesice-back/commit/4c4b4700df27f6c75827e64aa1fee2fb45e3ef15))
+
+# [1.65.0](https://github.com/1arley/animesice-back/compare/v1.64.0...v1.65.0) (2026-11-01)
+
+
+### Features
+
+* **catalog:** pagina listagem do animesdigital e mapeia animesorion ([78edb30](https://github.com/1arley/animesice-back/commit/78edb305efb90b10e2332349fe720a713db8b5bb))
+* **catalog:** semeia Inazuma Eleven com audio dublado e fontes mapeadas ([df5e19b](https://github.com/1arley/animesice-back/commit/df5e19b6a684f3a186b6515411144bc9e3f2c78c))
+
+# [1.64.0](https://github.com/1arley/animesice-back/compare/v1.63.1...v1.64.0) (2026-10-31)
+
+
+### Bug Fixes
+
+* **gacha:** narrow spin slot conflict handling ([93e2058](https://github.com/1arley/animesice-back/commit/93e2058c693072e5ff802a5aa04e042a70e6d7de))
+
+
+### Features
+
+* **ci:** replace commit-based PR description with LLM-generated title and body ([c1a3abb](https://github.com/1arley/animesice-back/commit/c1a3abbc639426547a8e2ed6c7b3bf7e678afa39))
+
+## [1.63.1](https://github.com/1arley/animesice-back/compare/v1.63.0...v1.63.1) (2026-10-31)
+
+
+### Bug Fixes
+
+* **deps:** bump rustls to 0.23.46 ([febba6d](https://github.com/1arley/animesice-back/commit/febba6d3f46c2e01a8a8fc87128461c8f1e2757b))
+
+# [1.63.0](https://github.com/1arley/animesice-back/compare/v1.62.0...v1.63.0) (2026-10-31)
+
+
+### Features
+
+* **gacha:** add foil gem crafting and application ([#129](https://github.com/1arley/animesice-back/issues/129)) ([9b3f77a](https://github.com/1arley/animesice-back/commit/9b3f77a7fb118b28233a61a83cdf62a3ab5840cc))
+* **gacha:** bonus de fragmento de 5% no giro (5% dos previews vêm com fragmento) ([#131](https://github.com/1arley/animesice-back/issues/131)) ([94af3e5](https://github.com/1arley/animesice-back/commit/94af3e50ef7b0bf2cbc7bc0a2fd2f393b7dd99c9))
+
 # [1.62.0](https://github.com/1arley/animesice-back/compare/v1.61.1...v1.62.0) (2026-10-31)
 
 

@@ -117,6 +117,7 @@ enum WishlistPriority {
 }
 
 model User {
+  gachaItemListings         GachaItemListing[]
   id                        String                     @id @default(uuid())
   email                     String                     @unique
   password                  String
@@ -208,7 +209,7 @@ model User {
   equippedGachaSkin         GachaSkin?                 @relation("EquippedGachaSkin", fields: [equippedGachaSkinId], references: [id], onDelete: SetNull)
   nextGachaSkinSpinAt       DateTime?                  @db.Timestamptz(6)
   gachaInventory            GachaInventory?
-  gachaItemOperations      GachaItemOperation[]
+  gachaItemOperations       GachaItemOperation[]
   gachaRetention            GachaRetention?
   gachaDailyClaims          GachaDailyClaim[]
   gachaOpeningDays          GachaOpeningDay[]
@@ -886,19 +887,19 @@ model WatchtowerSourceHealth {
 /// Rastro de dosagem de Cristais por tempo assistido — um registro por
 /// usuário+episódio. Drip por segundo consumido e bônus de episódio completo.
 model WatchReward {
-  userId             String
-  episodeId          String
-  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  episode            Episode  @relation(fields: [episodeId], references: [id], onDelete: Cascade)
+  userId            String
+  episodeId         String
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  episode           Episode   @relation(fields: [episodeId], references: [id], onDelete: Cascade)
   /// Segundos de reprodução contínua aceitos pelo servidor (sem seeks).
-  paidSeconds        Int      @default(0)
+  paidSeconds       Int       @default(0)
   /// Cristais já creditados por este episódio (drip) — evita re-pagamento.
-  credited           Int      @default(0)
+  credited          Int       @default(0)
   /// Bônus de episódio completo já tentado neste registro.
-  completedRewarded  Boolean  @default(false)
+  completedRewarded Boolean   @default(false)
   /// Âncora antifraude: delta de progresso só vale até o delta de relógio.
-  lastProgress       Int      @default(0)
-  lastAt             DateTime? @db.Timestamptz(6)
+  lastProgress      Int       @default(0)
+  lastAt            DateTime? @db.Timestamptz(6)
 
   @@id([userId, episodeId])
 }
@@ -1136,6 +1137,9 @@ model UserCard {
   value          Int
   rankedValue    Int
   valueOverride  Int?
+  /// Fragmento bônus que veio junto do giro (null = nenhum); carrega o selo
+  /// visual da carta no front.
+  bonusShard     String?
   status         UserCardStatus @default(ACTIVE)
   obtainedAt     DateTime       @default(now())
 
@@ -1249,21 +1253,21 @@ model GachaRollDay {
 
 /// Preview de giro — sorteio sem ownership. Só vira UserCard no claim.
 model GachaSpin {
-  id        String    @id @default(uuid())
-  userId    String
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  hour      DateTime  @db.Timestamptz(6)
-  slot      Int
-  cardId    String
-  card      Card      @relation(fields: [cardId], references: [id], onDelete: Cascade)
-  condition Float
-  foil      String    @default("NORMAL")
-  value     Int
+  id         String    @id @default(uuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  hour       DateTime  @db.Timestamptz(6)
+  slot       Int
+  cardId     String
+  card       Card      @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  condition  Float
+  foil       String    @default("NORMAL")
+  value      Int
   /// Fragmento bônus decidido no giro (null = sem bônus). Concedido só no claim.
   bonusShard String?
-  claimedAt DateTime? @db.Timestamptz(6)
-  expiresAt DateTime  @db.Timestamptz(6)
-  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  claimedAt  DateTime? @db.Timestamptz(6)
+  expiresAt  DateTime  @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @db.Timestamptz(6)
 
   @@unique([userId, hour, slot])
   @@index([userId, createdAt(sort: Desc)])
@@ -1434,22 +1438,37 @@ model GachaDailyBonus {
 }
 
 model GachaInventory {
-  userId                  String @id
-  commonBoxes             Int    @default(0)
-  rareBoxes               Int    @default(0)
-  premiumBoxes            Int    @default(0)
-  keys                    Int    @default(0)
-  spinResets              Int    @default(0)
-  titanitaShards          Int    @default(0)
-  titanitaSombriaShards   Int    @default(0)
-  draconicaShards         Int    @default(0)
-  sombriaDraconicaShards  Int    @default(0)
-  titanitaItems           Int    @default(0)
-  titanitaSombriaItems    Int    @default(0)
-  draconicaItems          Int    @default(0)
-  sombriaDraconicaItems   Int    @default(0)
-  protecao                Int    @default(0)
-  user                    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId                 String @id
+  commonBoxes            Int    @default(0)
+  rareBoxes              Int    @default(0)
+  premiumBoxes           Int    @default(0)
+  keys                   Int    @default(0)
+  spinResets             Int    @default(0)
+  titanitaShards         Int    @default(0)
+  titanitaSombriaShards  Int    @default(0)
+  draconicaShards        Int    @default(0)
+  sombriaDraconicaShards Int    @default(0)
+  titanitaItems          Int    @default(0)
+  titanitaSombriaItems   Int    @default(0)
+  draconicaItems         Int    @default(0)
+  sombriaDraconicaItems  Int    @default(0)
+  protecao               Int    @default(0)
+  essenciaComum          Int    @default(0)
+  essenciaIncomum        Int    @default(0)
+  essenciaRara           Int    @default(0)
+  essenciaEpica          Int    @default(0)
+  essenciaLendaria       Int    @default(0)
+  essenciaMitica         Int    @default(0)
+  essenciaGalactica      Int    @default(0)
+  holoShards             Int    @default(0)
+  goldShards             Int    @default(0)
+  inkShards              Int    @default(0)
+  prismShards            Int    @default(0)
+  holoGems               Int    @default(0)
+  goldGems               Int    @default(0)
+  inkGems                Int    @default(0)
+  prismGems              Int    @default(0)
+  user                   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model GachaItemOperation {
@@ -1591,12 +1610,34 @@ model GachaSkinListing {
   @@index([status, expiresAt])
 }
 
+model GachaItemListing {
+  id          String                 @id @default(uuid())
+  userId      String
+  itemId      String
+  quantity    Int
+  price       Int
+  status      GachaMarketOrderStatus @default(ACTIVE)
+  buyerId     String?
+  expiresAt   DateTime               @db.Timestamptz(6)
+  createdAt   DateTime               @default(now()) @db.Timestamptz(6)
+  completedAt DateTime?              @db.Timestamptz(6)
+  user        User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  offers      GachaMarketOffer[]
+
+  @@index([userId, status])
+  @@index([itemId, status, price])
+  @@index([status, expiresAt])
+}
+
 model GachaMarketOffer {
   id              String                 @id @default(uuid())
   offeredUserId   String
   requestedUserId String
   cardListingId   String?
   skinListingId   String?
+  itemListingId   String?
+  itemListing     GachaItemListing?      @relation(fields: [itemListingId], references: [id], onDelete: Restrict)
+  offeredItems    Json                   @default("[]")
   crystals        Int                    @default(0)
   status          GachaMarketOfferStatus @default(PENDING)
   expiresAt       DateTime               @db.Timestamptz(6)
@@ -1613,6 +1654,7 @@ model GachaMarketOffer {
   @@index([cardListingId, status])
   @@index([skinListingId, status])
   @@index([status, expiresAt])
+  @@index([itemListingId, status])
 }
 
 model GachaMarketOfferCard {
@@ -1639,6 +1681,8 @@ model GachaMarketSale {
   id         String              @id @default(uuid())
   sellerId   String
   buyerId    String
+  itemId     String?
+  quantity   Int?
   itemType   GachaMarketItemType
   userCardId String?
   userSkinId String?
@@ -1727,6 +1771,7 @@ enum GachaPrizeCategory {
   KEY_RARE_BOX
   KEY_PREMIUM_BOX
   ITEM
+  ESSENCE
 }
 
 enum GachaPrizeQuality {
@@ -1746,6 +1791,7 @@ enum CrystalPaymentStatus {
 enum GachaMarketItemType {
   CARD
   SKIN
+  ITEM
 }
 
 enum GachaMarketOrderStatus {
@@ -1781,7 +1827,8 @@ enum CrystalEventType {
 model CrystalCode {
   id          String                  @id @default(uuid())
   code        String                  @unique
-  crystals    Int
+  crystals    Int                     @default(0)
+  items       Json                    @default("[]")
   maxUses     Int?
   uses        Int                     @default(0)
   expiresAt   DateTime?               @db.Timestamptz(6)

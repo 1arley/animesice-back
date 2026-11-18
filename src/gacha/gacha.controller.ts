@@ -1,3 +1,4 @@
+import { UseEssenceDto } from './economy/economy.dto';
 import {
   BadRequestException,
   Body,
@@ -39,6 +40,7 @@ import {
   GachaCollectionPreferencesDto,
   GachaEngagementPilotDto,
   CreateCrystalCodeDto,
+  CreateCrystalCodeBatchDto,
   UpdateCrystalCodeDto,
   RedeemCrystalCodeDto,
   ToggleCrystalCodeDto,
@@ -205,6 +207,13 @@ export class GachaController {
     return this.gachaService.claim(req.user.id, dto.spinId);
   }
 
+  @Post('essences/use')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  useEssence(@Req() req: AuthenticatedRequest, @Body() dto: UseEssenceDto) {
+    return this.gachaService.useEssence(req.user.id, dto);
+  }
+
   @Post('claim-compensation')
   @UseGuards(JwtAuthGuard, VerifiedGuard)
   @ApiBearerAuth('JWT-auth')
@@ -241,8 +250,23 @@ export class GachaController {
     page: number,
     @Query('limit', new DefaultValuePipe(48), ParseIntPipe) limit: number,
     @Query('search') search?: string,
+    @Query('ownedPage', new ParseIntPipe({ optional: true }))
+    ownedPage?: number,
+    @Query('ownedLimit', new ParseIntPipe({ optional: true }))
+    ownedLimit?: number,
+    @Query('includeOwned') includeOwned?: string,
   ) {
-    return this.gachaService.skinCatalog(req.user.id, page, limit, search);
+    return this.gachaService.skinCatalog(
+      req.user.id,
+      page,
+      limit,
+      search,
+      ownedPage,
+      ownedLimit,
+      includeOwned === 'none' || includeOwned === 'count'
+        ? includeOwned
+        : 'all',
+    );
   }
 
   @Get('skins/recent')
@@ -343,7 +367,7 @@ export class GachaController {
   @Post('burn')
   @UseGuards(JwtAuthGuard, VerifiedGuard)
   @ApiBearerAuth('JWT-auth')
-  @ApiOperation({ summary: 'Queima carta e devolve 40% do valor em Crystal' })
+  @ApiOperation({ summary: 'Queima carta e devolve Crystal por raridade' })
   burn(@Req() req: AuthenticatedRequest, @Body() dto: BurnGachaCardDto) {
     return this.gachaService.burn(req.user.id, dto.userCardId);
   }
@@ -510,12 +534,14 @@ export class GachaController {
     @Query('sort') sort?: string,
     @Query('rarity') rarity?: string,
     @Query('foil') foil?: string,
+    @Query('search') search?: string,
+    @Query('eligibleKind') eligibleKind?: string,
   ) {
     const viewerId = req.user?.id ?? null;
     const ownerId = userId || viewerId;
     if (!ownerId)
       throw new BadRequestException('Informe o usuário da coleção.');
-    return this.gachaService.collection(
+    const collectionArgs = [
       ownerId,
       viewerId,
       parseInt(page ?? '1', 10) || DEFAULT_PAGE,
@@ -523,6 +549,13 @@ export class GachaController {
       sort,
       rarity,
       foil,
+    ] as const;
+    if (search === undefined && eligibleKind === undefined)
+      return this.gachaService.collection(...collectionArgs);
+    return this.gachaService.collection(
+      ...collectionArgs,
+      search,
+      eligibleKind,
     );
   }
 
@@ -594,6 +627,13 @@ export class GachaController {
   @Roles('ADMIN', 'SUPERADMIN')
   adminCreateCrystalCode(@Body() dto: CreateCrystalCodeDto) {
     return this.gachaService.adminCreateCrystalCode(dto);
+  }
+
+  @Post('admin/crystal-codes/batch')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  adminCreateCrystalCodeBatch(@Body() dto: CreateCrystalCodeBatchDto) {
+    return this.gachaService.adminCreateCrystalCodeBatch(dto);
   }
 
   @Patch('admin/crystal-codes/:id')
@@ -688,7 +728,9 @@ export class GachaController {
     @Query('rarity') rarity?: string,
     @Query('ownership') ownership?: 'all' | 'owned' | 'missing',
     @Query('animeId') animeId?: string,
+    @Query('animeTitle') animeTitle?: string,
     @Query('progress') progress?: 'all' | 'near' | 'complete',
+    @Query('summary') summary?: string,
   ) {
     const options = {
       ...(view !== undefined ? { view } : {}),
@@ -698,7 +740,9 @@ export class GachaController {
       ...(rarity !== undefined ? { rarity } : {}),
       ...(ownership !== undefined ? { ownership } : {}),
       ...(animeId !== undefined ? { animeId } : {}),
+      ...(animeTitle !== undefined ? { animeTitle } : {}),
       ...(progress !== undefined ? { progress } : {}),
+      ...(summary === '1' ? { summary: true } : {}),
     };
     return Object.keys(options).length > 0
       ? this.gachaService.encyclopedia(req.user?.id ?? null, options)

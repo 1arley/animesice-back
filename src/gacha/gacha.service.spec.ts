@@ -14,6 +14,7 @@ import {
 } from '@/gacha/gacha.service';
 import { PrismaService } from '@/prisma/prisma.service';
 import { GachaConfigService } from '@/gacha/gacha-config.service';
+import type { ClaimEventState } from '@/gacha/gacha-config.service';
 import { EconomyService } from '@/gacha/economy/economy.service';
 import {
   economyConfig,
@@ -113,6 +114,12 @@ describe('GachaService', () => {
           }) as Record<string, number>
         )[tier]! * 3_600_000,
     ),
+    claimEventState: jest.fn((): ClaimEventState => ({
+      active: false,
+      name: '',
+      tiers: [],
+    })),
+    effectiveSpinsPerHour: jest.fn((): number => 5),
   };
 
   const mockPrisma = {
@@ -272,7 +279,7 @@ describe('GachaService', () => {
       create: jest.fn(),
       findMany: jest.fn(),
     },
-    $queryRaw: jest.fn(async () => []),
+    $queryRaw: jest.fn(async (): Promise<unknown[]> => []),
     $transaction: jest.fn(),
   };
   const prismaMocks = createTransactionAwarePrismaMock(mockPrisma);
@@ -344,9 +351,21 @@ describe('GachaService', () => {
     mockPrisma.gachaTrade.updateMany.mockResolvedValue({ count: 1 });
     mockPrisma.gachaTradeCard.updateMany.mockResolvedValue({ count: 1 });
     mockPrisma.userCard.updateMany.mockResolvedValue({ count: 1 });
+    mockPrisma.gachaInventory.updateMany.mockResolvedValue({ count: 1 });
+    // resetAllMocks zera a impl do $queryRaw (creditItems/lockInventory
+    // usam como tagged template); religa com reserva zero.
+    mockPrisma.$queryRaw.mockResolvedValue([{ quantity: 0n }]);
     mockPrisma.gachaClaimLock.findUnique.mockResolvedValue(null);
     mockPrisma.card.update.mockResolvedValue({ editionCounter: 1 });
     mockPrisma.userCard.aggregate.mockResolvedValue({ _sum: { value: 0 } });
+    // resetAllMocks zera as impls declaradas em mockConfig; religa os dois
+    // getters de evento que o status/claim/spin consultam a cada chamada.
+    mockConfig.claimEventState.mockImplementation((): ClaimEventState => ({
+      active: false,
+      name: '',
+      tiers: [],
+    }));
+    mockConfig.effectiveSpinsPerHour.mockImplementation(() => 5);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -576,6 +595,32 @@ describe('GachaService', () => {
       expect(result.nextSpinAt).not.toBeNull();
     });
 
+    it('evento ativo libera claim mesmo com lock e anuncia o evento', async () => {
+      mockPrisma.gachaClaimLock.findUnique.mockResolvedValue({
+        userId: 'u1',
+        lockedUntil: new Date(Date.now() + 6 * 3_600_000),
+      });
+      mockPrisma.userCard.findFirst.mockResolvedValue({
+        obtainedAt: new Date(),
+      });
+      mockConfig.claimEventState.mockReturnValue({
+        active: true,
+        name: 'Semana de Cartas Livres',
+        tiers: ['COMUM', 'EPICA'],
+      });
+
+      const result = await service.status('u1');
+
+      expect(result.canClaim).toBe(true);
+      expect(result.nextClaimAt).toBeNull();
+      expect(result.claimWarning).toContain('Semana de Cartas Livres');
+      expect(result.bypassPriceCents).toBeNull();
+      expect(result.claimEvent).toEqual({
+        name: 'Semana de Cartas Livres',
+        tiers: ['COMUM', 'EPICA'],
+      });
+    });
+
     it('marca lock de claim com aviso e preço de bypass', async () => {
       mockPrisma.gachaClaimLock.findUnique.mockResolvedValue({
         userId: 'u1',
@@ -652,12 +697,43 @@ describe('GachaService', () => {
       freshAccount();
       stockOnly('COMUM');
       mockPrisma.card.findFirst.mockResolvedValue(cardComum);
-      mockPrisma.gachaSpin.create.mockRejectedValue({ code: 'P2002' });
+      mockPrisma.gachaSpin.create.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('duplicate spin slot', {
+          code: 'P2002',
+          clientVersion: '7.0.0',
+        }),
+      );
 
       await expect(service.spin('u1')).rejects.toBeInstanceOf(
         ForbiddenException,
       );
       expect(mockPrisma.gachaSpin.create).toHaveBeenCalledTimes(5);
+    });
+
+    it('evento pode elevar os giros da hora (spinsPerHour override)', async () => {
+      freshAccount();
+      stockOnly('COMUM');
+      mockPrisma.card.findFirst.mockResolvedValue(cardComum);
+      mockConfig.claimEventState.mockReturnValue({
+        active: true,
+        name: 'Evento',
+        tiers: [],
+      });
+      mockConfig.effectiveSpinsPerHour.mockReturnValue(8);
+      mockPrisma.gachaSpin.create.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('duplicate spin slot', {
+          code: 'P2002',
+          clientVersion: '7.0.0',
+        }),
+      );
+
+      await expect(service.spin('u1')).rejects.toMatchObject({
+        response: {
+          message:
+            'Você já usou seus 8 giros desta hora. Volte na próxima hora.',
+        },
+      });
+      expect(mockPrisma.gachaSpin.create).toHaveBeenCalledTimes(8);
     });
 
     it('pity força tier Épica+ no preview', async () => {
@@ -860,6 +936,51 @@ describe('GachaService', () => {
     });
 
     it('barra claim durante lock de 6h', async () => {
+      mockPrisma.gachaSpin.findFirst.mockResolvedValue(previewComum);
+      mockPrisma.gachaClaimLock.findUnique.mockResolvedValue({
+        userId: 'u1',
+        lockedUntil: new Date(Date.now() + 6 * 3_600_000),
+      });
+
+      await expect(service.claim('u1', 's1')).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      expect(mockPrisma.userCard.create).not.toHaveBeenCalled();
+    });
+
+    it('evento de resgate ignora lock ativo e não cria lock novo', async () => {
+      mockConfig.claimEventState.mockReturnValue({
+        active: true,
+        name: 'Semana de Cartas Livres',
+        tiers: [
+          'COMUM',
+          'INCOMUM',
+          'RARA',
+          'EPICA',
+          'LENDARIA',
+          'MITICA',
+          'GALACTICA',
+        ],
+      });
+      mockPrisma.gachaSpin.findFirst.mockResolvedValue(previewComum);
+      mockPrisma.gachaClaimLock.findUnique.mockResolvedValue({
+        userId: 'u1',
+        lockedUntil: new Date(Date.now() + 6 * 3_600_000),
+      });
+      mockClaimCreate();
+
+      const pull = await service.claim('u1', 's1');
+
+      expect(pull.card.id).toBe('w1');
+      expect(mockPrisma.gachaClaimLock.upsert).not.toHaveBeenCalled();
+    });
+
+    it('evento com raridades parciais mantém lock para as demais', async () => {
+      mockConfig.claimEventState.mockReturnValue({
+        active: true,
+        name: 'Parcial',
+        tiers: ['LENDARIA'],
+      });
       mockPrisma.gachaSpin.findFirst.mockResolvedValue(previewComum);
       mockPrisma.gachaClaimLock.findUnique.mockResolvedValue({
         userId: 'u1',
@@ -2369,6 +2490,8 @@ describe('GachaService', () => {
         id: 'p1',
         value: 100,
         edition: 3,
+        condition: 0.8,
+        foil: 'NORMAL',
         card: { name: 'Card Comum', rarity: 'COMUM' },
       });
       mockPrisma.gachaTrade.findFirst.mockResolvedValue(null);
@@ -2380,6 +2503,7 @@ describe('GachaService', () => {
       await expect(service.burn('u1', 'p1')).resolves.toEqual({
         burned: 'p1',
         payout: 100,
+        fragments: null,
       });
       expect(mockPrisma.userCard.updateMany).toHaveBeenCalledWith({
         where: { id: 'p1', userId: 'u1', status: 'ACTIVE' },
@@ -2401,6 +2525,8 @@ describe('GachaService', () => {
         id: 'p1',
         value: 100,
         edition: 3,
+        condition: 0.8,
+        foil: 'NORMAL',
         card: { name: 'Card Comum', rarity: 'COMUM' },
       });
       mockPrisma.gachaTrade.findFirst.mockResolvedValue(null);
@@ -2418,6 +2544,8 @@ describe('GachaService', () => {
         id: 'p1',
         value: 1,
         edition: 3,
+        condition: 0.8,
+        foil: 'NORMAL',
         card: { name: 'Card Comum', rarity: 'COMUM' },
       });
       mockPrisma.gachaTrade.findFirst.mockResolvedValue(null);
@@ -2429,6 +2557,36 @@ describe('GachaService', () => {
       expect(mockPrisma.user.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({
           data: { crystalBalance: { increment: 100 } },
+        }),
+      );
+    });
+
+    it.each([
+      ['COMUM', 100],
+      ['INCOMUM', 150],
+      ['RARA', 250],
+      ['EPICA', 500],
+      ['LENDARIA', 1000],
+      ['MITICA', 1800],
+      ['GALACTICA', 3000],
+    ] as const)('preserva payout de Crystal %s', async (rarity, payout) => {
+      mockPrisma.userCard.findFirst.mockResolvedValue({
+        id: 'p1',
+        value: 1,
+        edition: 12,
+        condition: 0.05,
+        foil: 'NORMAL',
+        card: { name: 'Card', rarity },
+      });
+      mockPrisma.gachaTrade.findFirst.mockResolvedValue(null);
+      mockPrisma.gachaListing.findFirst.mockResolvedValue(null);
+      mockPrisma.user.findFirst.mockResolvedValue(null);
+      mockPrisma.crystalEvent.create.mockResolvedValue({});
+
+      await expect(service.burn('u1', 'p1')).resolves.toMatchObject({ payout });
+      expect(mockPrisma.crystalEvent.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ delta: payout, type: 'BURN' }),
         }),
       );
     });

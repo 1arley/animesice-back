@@ -1,6 +1,11 @@
+import { CATALOG_ITEM_IDS, type CatalogItemId } from './item-catalog';
+import { CodeItemRewardDto } from '../dto/gacha.dto';
+import { ESSENCE_KINDS, type EssenceKind } from './item-catalog';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsEnum,
+  IsIn,
+  ValidateNested,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -19,6 +24,18 @@ import { Type } from 'class-transformer';
 import { BOX_TIERS, ITEM_KINDS } from './economy.rules';
 import type { BoxTier, ItemKind } from './economy.rules';
 
+export class CraftFoilGemDto {
+  @ApiProperty({ enum: ['HOLO', 'GOLD', 'INK', 'PRISM'] })
+  @IsEnum(['HOLO', 'GOLD', 'INK', 'PRISM'])
+  foil!: 'HOLO' | 'GOLD' | 'INK' | 'PRISM';
+}
+
+export class ApplyFoilGemDto extends CraftFoilGemDto {
+  @ApiProperty({ format: 'uuid' })
+  @IsUUID()
+  userCardId!: string;
+}
+
 export class BuyBoxDto {
   @ApiProperty({ enum: BOX_TIERS })
   @IsEnum(BOX_TIERS)
@@ -31,6 +48,21 @@ export class ItemOperationDto {
   @ApiProperty({ format: 'uuid' })
   @IsUUID()
   operationId!: string;
+}
+
+export class UseEssenceDto extends ItemOperationDto {
+  @ApiProperty({ enum: ESSENCE_KINDS })
+  @IsEnum(ESSENCE_KINDS)
+  itemId!: EssenceKind;
+}
+
+export class BuyEssenceDto extends UseEssenceDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  quantity = 1;
 }
 
 export class BuyItemDto extends ItemOperationDto {
@@ -111,8 +143,8 @@ export class CreateBuyOrderDto {
 
 export class MarketQueryDto {
   @IsOptional()
-  @IsEnum(['CARD', 'SKIN'])
-  itemType?: 'CARD' | 'SKIN';
+  @IsEnum(['CARD', 'SKIN', 'ITEM'])
+  itemType?: 'CARD' | 'SKIN' | 'ITEM';
 
   @IsOptional()
   @IsString()
@@ -133,8 +165,8 @@ export class MarketQueryDto {
 }
 
 export class MarketHistoryDto {
-  @IsEnum(['CARD', 'SKIN'])
-  type!: 'CARD' | 'SKIN';
+  @IsEnum(['CARD', 'SKIN', 'ITEM'])
+  type!: 'CARD' | 'SKIN' | 'ITEM';
 
   @IsString()
   @IsNotEmpty()
@@ -199,8 +231,8 @@ export class CreateSkinListingDto {
 }
 
 export class CreateMarketOfferDto {
-  @IsEnum(['CARD', 'SKIN'])
-  itemType!: 'CARD' | 'SKIN';
+  @IsEnum(['CARD', 'SKIN', 'ITEM'])
+  itemType!: 'CARD' | 'SKIN' | 'ITEM';
 
   @IsString()
   @IsNotEmpty()
@@ -217,6 +249,12 @@ export class CreateMarketOfferDto {
   @ArrayUnique()
   @IsString({ each: true })
   offeredUserCardIds?: string[];
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(CATALOG_ITEM_IDS.length)
+  @ValidateNested({ each: true })
+  @Type(() => CodeItemRewardDto)
+  items?: CodeItemRewardDto[];
 }
 
 export class CreateCardListingDto {
@@ -240,4 +278,19 @@ export class CreateCrystalCheckoutDto {
   @IsString()
   @IsNotEmpty()
   idempotencyKey!: string;
+}
+
+export class CreateItemListingDto {
+  @IsIn(CATALOG_ITEM_IDS)
+  itemId!: CatalogItemId;
+
+  @IsInt()
+  @Min(1)
+  @Max(2_147_483_647)
+  quantity!: number;
+
+  @IsInt()
+  @Min(1)
+  @Max(2_147_483_647)
+  price!: number;
 }

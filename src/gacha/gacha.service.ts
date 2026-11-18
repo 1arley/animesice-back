@@ -1,3 +1,17 @@
+import type {
+  CreateCrystalCodeDto,
+  CreateCrystalCodeBatchDto,
+  UpdateCrystalCodeDto,
+} from './dto/gacha.dto';
+import {
+  catalogItem,
+  catalogItemForField,
+  ESSENCE_RARITIES,
+  itemAmounts,
+  creditItems,
+  lockInventory,
+} from './economy/item-catalog';
+import type { UseEssenceDto } from './economy/economy.dto';
 import {
   BadRequestException,
   ConflictException,
@@ -28,6 +42,8 @@ import {
   SPIN_SHARD_WEIGHTS,
   SpinShardKind,
   cardValue,
+  burnFragments,
+  FOIL_INVENTORY_FIELDS,
   conditionLabel,
   isEpicTier,
   pickWeighted,
@@ -106,6 +122,7 @@ const PULL_SELECT = {
   value: true,
   rankedValue: true,
   valueOverride: true,
+  bonusShard: true,
   obtainedAt: true,
   user: {
     select: {
@@ -148,29 +165,6 @@ const PULL_SELECT = {
 } satisfies Prisma.UserCardSelect;
 
 type Pull = Prisma.UserCardGetPayload<{ select: typeof PULL_SELECT }>;
-
-function isClaimEventActive(value: unknown, now = Date.now()): boolean {
-  if (!value || typeof value !== 'object') return false;
-  const event = value as {
-    active?: unknown;
-    startsAt?: unknown;
-    endsAt?: unknown;
-  };
-  if (
-    event.active !== true ||
-    typeof event.startsAt !== 'string' ||
-    typeof event.endsAt !== 'string'
-  )
-    return false;
-  const startsAt = Date.parse(event.startsAt);
-  const endsAt = Date.parse(event.endsAt);
-  return (
-    Number.isFinite(startsAt) &&
-    Number.isFinite(endsAt) &&
-    startsAt <= now &&
-    now <= endsAt
-  );
-}
 
 const LISTING_SELECT = {
   id: true,
@@ -830,7 +824,11 @@ export class GachaService {
       : this.config.pityDays;
 
     const locked = claim !== null && claim.lockedUntil.getTime() > Date.now();
-    const spinsLeft = Math.max(0, this.config.spinsPerHour - spinsUsed);
+    const claimEvent = this.config.claimEventState();
+    const spinsLeft = Math.max(
+      0,
+      this.config.effectiveSpinsPerHour() - spinsUsed,
+    );
 
     return {
       canRoll: false,
@@ -840,12 +838,23 @@ export class GachaService {
       canSpin: spinsLeft > 0,
       nextSpinAt:
         spinsLeft > 0 ? null : new Date(hour.getTime() + HOUR_MS).toISOString(),
-      canClaim: !locked,
-      nextClaimAt: locked ? claim.lockedUntil.toISOString() : null,
+      // Evento ativo libera o claim mesmo com lock vigente (o claim decide
+      // por raridade; aqui é só o sinal para a UI).
+      canClaim: !locked || claimEvent.active,
+      nextClaimAt:
+        locked && !claimEvent.active ? claim.lockedUntil.toISOString() : null,
       claimWarning: locked
-        ? 'Você já guardou uma carta. Girar continua liberado, mas a próxima só pode ser guardada após o fim do bloqueio.'
+        ? claimEvent.active
+          ? claimEvent.tiers.length > 0
+            ? `Evento ${claimEvent.name}: resgate liberado para ${claimEvent.tiers.join(', ')}.`
+            : `Evento ${claimEvent.name}: resgate liberado.`
+          : 'Você já guardou uma carta. Girar continua liberado, mas a próxima só pode ser guardada após o fim do bloqueio.'
         : null,
-      bypassPriceCents: locked ? this.config.bypassPriceCents : null,
+      bypassPriceCents:
+        locked && !claimEvent.active ? this.config.bypassPriceCents : null,
+      claimEvent: claimEvent.active
+        ? { name: claimEvent.name, tiers: claimEvent.tiers }
+        : null,
       crystalBalance: wallet?.crystalBalance ?? 0,
       crystalReserved: wallet?.crystalReserved ?? 0,
       pointsBalance: points._sum.value ?? 0,
@@ -869,6 +878,66 @@ export class GachaService {
     }));
   }
 
+  useEssence(userId: string, dto: UseEssenceDto) {
+    const economy = this.economy;
+    if (!economy) throw new ForbiddenException('Economia indisponível.');
+    return economy.runOperation(
+      userId,
+      dto.operationId,
+      'USE_ESSENCE',
+      { itemId: dto.itemId },
+      async (tx) => {
+        await economy.assertEconomyEnabled(tx, userId);
+        await lockInventory(tx, userId);
+        const item = catalogItem(dto.itemId);
+        const consumed = await tx.gachaInventory.updateMany({
+          where: { userId, [item.field]: { gte: 1 } },
+          data: { [item.field]: { decrement: 1 } },
+        });
+        if (consumed.count !== 1)
+          throw new BadRequestException('Essência insuficiente.');
+        const card = await this.drawFromTier(
+          ESSENCE_RARITIES[dto.itemId],
+          userId,
+          tx,
+        );
+        const counter = await tx.card.update({
+          where: { id: card.id },
+          data: { editionCounter: { increment: 1 } },
+          select: { editionCounter: true },
+        });
+        const condition = Math.random();
+        const foil = pickWeighted(this.config.foilWeights);
+        const value = cardValue(
+          card.rarity as GachaTier,
+          condition,
+          foil,
+          counter.editionCounter,
+          this.config.baseValue,
+          this.config.foilMult,
+        );
+        const pull = await tx.userCard.create({
+          data: {
+            userId,
+            originalUserId: userId,
+            cardId: card.id,
+            condition,
+            foil,
+            edition: counter.editionCounter,
+            value,
+            rankedValue: value,
+          },
+          select: PULL_SELECT,
+        });
+        await tx.gachaCardDiscovery.createMany({
+          data: { userId, cardId: card.id },
+          skipDuplicates: true,
+        });
+        return { pull: presentPull(pull) };
+      },
+    );
+  }
+
   async spin(userId: string) {
     const hour = this.hourStartUtc();
 
@@ -888,7 +957,8 @@ export class GachaService {
         : null;
     // ponytail: slot único (userId,hour,slot) torna giro concorrente
     // race-safe; P2002 = slot ocupado, tenta o próximo.
-    for (let slot = 0; slot < this.config.spinsPerHour; slot++) {
+    const spinsPerHour = this.config.effectiveSpinsPerHour();
+    for (let slot = 0; slot < spinsPerHour; slot++) {
       try {
         const spin = await this.prisma.gachaSpin.create({
           data: {
@@ -918,11 +988,16 @@ export class GachaService {
           pityDue: pity.pityDue,
         };
       } catch (error) {
-        if ((error as { code?: string }).code !== 'P2002') throw error;
+        if (
+          !(error instanceof Prisma.PrismaClientKnownRequestError) ||
+          error.code !== 'P2002'
+        ) {
+          throw error;
+        }
       }
     }
     throw new ForbiddenException(
-      'Você já usou seus 5 giros desta hora. Volte na próxima hora.',
+      `Você já usou seus ${spinsPerHour} giros desta hora. Volte na próxima hora.`,
     );
   }
 
@@ -947,9 +1022,18 @@ export class GachaService {
           if (inactiveEventIds(event?.value, 'cardIds').includes(spin.card.id))
             throw new ForbiddenException('Evento desta carta encerrado.');
 
-          const lock = await tx.gachaClaimLock.findUnique({
-            where: { userId },
-          });
+          // Evento temporário (claim_event): resgate sem cooldown para as
+          // raridades listadas — ignora inclusive lock já ativo, e resgates
+          // do evento não criam lock que penda pro pós-evento.
+          const claimEvent = this.config.claimEventState();
+          const eventFreeClaim =
+            claimEvent.active &&
+            claimEvent.tiers.includes(spin.card.rarity as GachaTier);
+          const lock = eventFreeClaim
+            ? null
+            : await tx.gachaClaimLock.findUnique({
+                where: { userId },
+              });
           if (lock !== null && lock.lockedUntil.getTime() > Date.now()) {
             throw new ForbiddenException(
               'Você já guardou uma carta recentemente.',
@@ -1011,21 +1095,19 @@ export class GachaService {
           if (claimed.count !== 1) {
             throw new NotFoundException('Preview expirada ou já resgatada.');
           }
-          const claimEvent = await tx.gachaConfig.findUnique({
-            where: { key: 'claim_event' },
-            select: { value: true },
-          });
-          const lockMs = isClaimEventActive(claimEvent?.value)
-            ? HOUR_MS
-            : this.config.claimLockMs(spin.card.rarity as GachaTier);
-          await tx.gachaClaimLock.upsert({
-            where: { userId },
-            create: {
-              userId,
-              lockedUntil: new Date(Date.now() + lockMs),
-            },
-            update: { lockedUntil: new Date(Date.now() + lockMs) },
-          });
+          if (!eventFreeClaim) {
+            const lockMs = this.config.claimLockMs(
+              spin.card.rarity as GachaTier,
+            );
+            await tx.gachaClaimLock.upsert({
+              where: { userId },
+              create: {
+                userId,
+                lockedUntil: new Date(Date.now() + lockMs),
+              },
+              update: { lockedUntil: new Date(Date.now() + lockMs) },
+            });
+          }
           await this.changeCrystals(
             tx,
             userId,
@@ -1246,11 +1328,11 @@ export class GachaService {
 
   async redeemCrystalCode(userId: string, rawCode: string) {
     const code = rawCode.trim().toUpperCase();
-    if (!/^[A-Z0-9-]{4,64}$/.test(code)) {
+    if (!/^[A-Z0-9-]{4,64}$/.test(code))
       throw new BadRequestException('Código inválido.');
-    }
     return this.prisma.$transaction(
       async (tx) => {
+        await tx.$queryRaw`SELECT "id" FROM "CrystalCode" WHERE "code" = ${code} FOR UPDATE`;
         const item = await tx.crystalCode.findUnique({ where: { code } });
         if (!item || !item.active)
           throw new NotFoundException('Código inválido ou inativo.');
@@ -1258,6 +1340,7 @@ export class GachaService {
           throw new GoneException('Código expirado.');
         if (item.maxUses !== null && item.uses >= item.maxUses)
           throw new GoneException('Código esgotado.');
+        const items = itemAmounts(item.items);
         try {
           await tx.crystalCodeRedemption.create({
             data: { codeId: item.id, userId },
@@ -1266,75 +1349,133 @@ export class GachaService {
           if (
             error instanceof Prisma.PrismaClientKnownRequestError &&
             error.code === 'P2002'
-          ) {
+          )
             throw new ConflictException('Você já resgatou este código.');
-          }
           throw error;
         }
         await tx.crystalCode.update({
           where: { id: item.id },
           data: { uses: { increment: 1 } },
         });
-        await this.changeCrystals(
-          tx,
-          userId,
-          item.crystals,
-          'ADMIN',
-          `crystal-code:${item.id}`,
-          `Código ${item.code}`,
-        );
+        if (item.crystals > 0)
+          await this.changeCrystals(
+            tx,
+            userId,
+            item.crystals,
+            'ADMIN',
+            `crystal-code:${item.id}`,
+            `Código ${item.code}`,
+          );
+        await creditItems(tx, userId, items);
         const user = await tx.user.findUniqueOrThrow({
           where: { id: userId },
           select: { crystalBalance: true },
         });
-        return { crystals: item.crystals, balance: user.crystalBalance };
+        return { crystals: item.crystals, balance: user.crystalBalance, items };
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     );
   }
 
-  async adminCreateCrystalCode(input: {
-    code?: string;
-    crystals: number;
-    maxUses?: number;
-    expiresAt?: string;
-  }) {
-    if (!Number.isFinite(input.crystals) || input.crystals < 1)
-      throw new BadRequestException('Crystals deve ser um inteiro >= 1.');
-    const baseCode =
-      input.code?.trim().toUpperCase() ||
-      `ICE-${randomInt(100000, 1000000)}-${randomInt(100000, 1000000)}`;
-    if (!/^[A-Z0-9-]{4,64}$/.test(baseCode))
-      throw new BadRequestException('Código inválido.');
-    const expiresAt = input.expiresAt ? new Date(input.expiresAt) : null;
+  private codeRewards(crystals: number, rawItems: unknown) {
+    const items = itemAmounts(rawItems ?? []);
+    if (
+      !Number.isSafeInteger(crystals) ||
+      crystals < 0 ||
+      crystals > 2_147_483_647 ||
+      (crystals === 0 && items.length === 0)
+    )
+      throw new BadRequestException(
+        'O código precisa de cristais ou itens válidos.',
+      );
+    return { crystals, items };
+  }
+
+  private codeExpiry(value?: string) {
+    const expiresAt = value ? new Date(value) : null;
     if (expiresAt && Number.isNaN(expiresAt.getTime()))
       throw new BadRequestException('Validade inválida.');
+    return expiresAt;
+  }
+
+  private codeText(value?: string) {
+    const code =
+      value?.trim().toUpperCase() ||
+      `ICE-${randomInt(100000, 1000000)}-${randomInt(100000, 1000000)}`;
+    if (!/^[A-Z0-9-]{4,64}$/.test(code))
+      throw new BadRequestException('Código inválido.');
+    return code;
+  }
+
+  async adminCreateCrystalCode(input: CreateCrystalCodeDto) {
+    const baseCode = this.codeText(input.code);
+    const rewards = this.codeRewards(input.crystals ?? 0, input.items);
+    const expiresAt = this.codeExpiry(input.expiresAt);
     let lastError: unknown;
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         return await this.prisma.crystalCode.create({
           data: {
             code: attempt === 0 ? baseCode : `${baseCode}-${attempt + 1}`,
-            crystals: input.crystals,
+            ...rewards,
             maxUses: input.maxUses ?? null,
             expiresAt,
           },
         });
-      } catch (e: unknown) {
+      } catch (error: unknown) {
         if (
           attempt < 2 &&
-          typeof e === 'object' &&
-          e !== null &&
-          'code' in e &&
-          (e as { code: string }).code === 'P2002'
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2002'
         ) {
-          lastError = e;
+          lastError = error;
           continue;
         }
-        throw e;
+        throw error;
       }
     }
     throw lastError;
+  }
+
+  async adminCreateCrystalCodeBatch(input: CreateCrystalCodeBatchDto) {
+    if (
+      !Number.isSafeInteger(input.count) ||
+      input.count < 1 ||
+      input.count > 100
+    )
+      throw new BadRequestException('Lote deve conter entre 1 e 100 códigos.');
+    const rewards = this.codeRewards(input.crystals ?? 0, input.items);
+    const base = input.code ? this.codeText(input.code) : null;
+    const codes = Array.from({ length: input.count }, (_, index) =>
+      this.codeText(base ? `${base}-${index + 1}` : undefined),
+    );
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const created = [];
+        for (const code of codes)
+          created.push(
+            await tx.crystalCode.create({
+              data: {
+                code,
+                ...rewards,
+                maxUses: input.maxUses ?? null,
+                expiresAt: this.codeExpiry(input.expiresAt),
+              },
+            }),
+          );
+        return created;
+      });
+    } catch (error: unknown) {
+      if (
+        typeof error === 'object' &&
+        error !== null &&
+        'code' in error &&
+        (error as { code: string }).code === 'P2002'
+      ) {
+        throw new BadRequestException('Código já existe.');
+      }
+      throw error;
+    }
   }
 
   adminCrystalCodes() {
@@ -1355,57 +1496,84 @@ export class GachaService {
     return this.prisma.crystalCode.update({ where: { id }, data: { active } });
   }
 
-  async adminUpdateCrystalCode(
-    id: string,
-    input: {
-      code?: string;
-      crystals?: number;
-      maxUses?: number;
-      active?: boolean;
-      expiresAt?: string;
-    },
-  ) {
-    await this.prisma.crystalCode.findUniqueOrThrow({ where: { id } });
-    const data: Record<string, unknown> = {};
-
-    if (input.code !== undefined) {
-      const code = input.code.trim().toUpperCase();
-      if (!/^[A-Z0-9-]{4,64}$/.test(code))
-        throw new BadRequestException('Código inválido.');
-      data.code = code;
-    }
-    if (input.crystals !== undefined) {
-      if (!Number.isFinite(input.crystals) || input.crystals < 1)
-        throw new BadRequestException('Crystals deve ser um inteiro >= 1.');
-      data.crystals = input.crystals;
-    }
-    if (input.maxUses !== undefined)
-      data.maxUses = input.maxUses > 0 ? input.maxUses : null;
-    if (input.active !== undefined) data.active = input.active;
-    if (input.expiresAt !== undefined) {
-      const expiresAt = input.expiresAt ? new Date(input.expiresAt) : null;
-      if (expiresAt && Number.isNaN(expiresAt.getTime()))
-        throw new BadRequestException('Validade inválida.');
-      data.expiresAt = expiresAt;
-    }
-
-    try {
-      return await this.prisma.crystalCode.update({ where: { id }, data });
-    } catch (e: unknown) {
-      if (
-        typeof e === 'object' &&
-        e !== null &&
-        'code' in e &&
-        (e as { code: string }).code === 'P2002'
-      )
-        throw new BadRequestException('Código já existe.');
-      throw e;
-    }
+  async adminUpdateCrystalCode(id: string, input: UpdateCrystalCodeDto) {
+    return this.prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT "id" FROM "CrystalCode" WHERE "id" = ${id} FOR UPDATE`;
+        const current = await tx.crystalCode.findUniqueOrThrow({
+          where: { id },
+        });
+        const rewards = this.codeRewards(
+          input.crystals ?? current.crystals,
+          input.items ?? current.items,
+        );
+        const code =
+          input.code === undefined ? current.code : this.codeText(input.code);
+        if (
+          current.uses > 0 &&
+          (code !== current.code ||
+            rewards.crystals !== current.crystals ||
+            JSON.stringify(rewards.items) !==
+              JSON.stringify(itemAmounts(current.items)))
+        )
+          throw new ConflictException(
+            'Código resgatado não permite alterar texto ou recompensas.',
+          );
+        if (
+          input.maxUses !== undefined &&
+          input.maxUses > 0 &&
+          input.maxUses < current.uses
+        )
+          throw new BadRequestException(
+            'Limite não pode ser menor que os resgates existentes.',
+          );
+        try {
+          return await tx.crystalCode.update({
+            where: { id },
+            data: {
+              code,
+              ...rewards,
+              ...(input.maxUses === undefined
+                ? {}
+                : { maxUses: input.maxUses > 0 ? input.maxUses : null }),
+              ...(input.active === undefined ? {} : { active: input.active }),
+              ...(input.expiresAt === undefined
+                ? {}
+                : { expiresAt: this.codeExpiry(input.expiresAt) }),
+            },
+          });
+        } catch (error: unknown) {
+          if (
+            typeof error === 'object' &&
+            error !== null &&
+            'code' in error &&
+            (error as { code: string }).code === 'P2002'
+          ) {
+            throw new BadRequestException('Código já existe.');
+          }
+          throw error;
+        }
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
   }
 
   async adminDeleteCrystalCode(id: string) {
-    await this.prisma.crystalCode.findUniqueOrThrow({ where: { id } });
-    return this.prisma.crystalCode.delete({ where: { id } });
+    return this.prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT "id" FROM "CrystalCode" WHERE "id" = ${id} FOR UPDATE`;
+        const item = await tx.crystalCode.findUniqueOrThrow({ where: { id } });
+        if (
+          item.uses > 0 ||
+          (await tx.crystalCodeRedemption.count({ where: { codeId: id } }))
+        )
+          throw new ConflictException(
+            'Código com resgates não pode ser excluído. Desative-o.',
+          );
+        return tx.crystalCode.delete({ where: { id } });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
   }
 
   private async changeCrystals(
@@ -1839,12 +2007,35 @@ export class GachaService {
     await this.expirePendingTrades();
     return this.prisma.$transaction(
       async (tx) => {
+        await tx.gachaInventory.upsert({
+          where: { userId },
+          create: { userId },
+          update: {},
+        });
+        try {
+          await tx.$queryRaw`SELECT "userId" FROM "GachaInventory" WHERE "userId" = ${userId} FOR UPDATE`;
+          await tx.$queryRaw`SELECT "id" FROM "UserCard" WHERE "id" = ${userCardId} AND "userId" = ${userId} FOR UPDATE`;
+        } catch (error) {
+          if (
+            error instanceof Prisma.PrismaClientKnownRequestError &&
+            (error.code === 'P2034' ||
+              (error.code === 'P2010' &&
+                error.message.includes('could not serialize access')))
+          ) {
+            throw new ConflictException(
+              'Conflito concorrente; tente novamente.',
+            );
+          }
+          throw error;
+        }
         const card = await tx.userCard.findFirst({
           where: { id: userCardId, userId, status: 'ACTIVE' },
           select: {
             id: true,
             value: true,
             edition: true,
+            condition: true,
+            foil: true,
             card: { select: { name: true, rarity: true } },
           },
         });
@@ -1890,6 +2081,16 @@ export class GachaService {
         }
 
         const payout = this.config.burnPayout[card.card.rarity as GachaTier];
+        let fragments: ReturnType<typeof burnFragments>;
+        try {
+          fragments = burnFragments(
+            card.condition,
+            card.card.rarity,
+            card.foil,
+          );
+        } catch {
+          throw new BadRequestException('Foil ou raridade inválida na carta.');
+        }
         await this.changeCrystals(
           tx,
           userId,
@@ -1898,6 +2099,15 @@ export class GachaService {
           userCardId,
           `Queima ${card.card.name} #${card.edition}`,
         );
+        if (fragments) {
+          const field = FOIL_INVENTORY_FIELDS[fragments.foil].shards;
+          await creditItems(tx, userId, [
+            {
+              itemId: catalogItemForField(field).id,
+              quantity: fragments.quantity,
+            },
+          ]);
+        }
         const burned = await tx.userCard.updateMany({
           where: { id: userCardId, userId, status: 'ACTIVE' },
           data: { status: 'BURNED' },
@@ -1905,7 +2115,7 @@ export class GachaService {
         if (burned.count !== 1) {
           throw new ConflictException('Carta não está mais disponível.');
         }
-        return { burned: userCardId, payout };
+        return { burned: userCardId, payout, fragments };
       },
       { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
     );
@@ -2192,9 +2402,13 @@ export class GachaService {
     );
   }
 
-  private async drawFromTier(tier: GachaTier, userId: string) {
+  private async drawFromTier(
+    tier: GachaTier,
+    userId: string,
+    tx: Prisma.TransactionClient = this.prisma,
+  ) {
     const favorite = (await this.pilotEnabled(userId))
-      ? await this.prisma.user.findUnique({
+      ? await tx.user.findUnique({
           where: { id: userId },
           select: {
             favoriteCollection: {
@@ -2230,7 +2444,7 @@ export class GachaService {
       id: {
         notIn: inactiveEventIds(
           (
-            await this.prisma.gachaConfig.findUnique({
+            await tx.gachaConfig.findUnique({
               where: { key: 'economic_event' },
             })
           )?.value,
@@ -2239,25 +2453,25 @@ export class GachaService {
       },
     };
     const [favored, other] = collectionId
-      ? await this.prisma.$transaction([
-          this.prisma.card.count({
+      ? await Promise.all([
+          tx.card.count({
             where: {
               ...baseWhere,
               collectionMembers: { some: { collectionId } },
             },
           }),
-          this.prisma.card.count({
+          tx.card.count({
             where: {
               ...baseWhere,
               collectionMembers: { none: { collectionId } },
             },
           }),
         ])
-      : [0, await this.prisma.card.count({ where: baseWhere })];
+      : [0, await tx.card.count({ where: baseWhere })];
     const chooseFavored =
       favored > 0 && Math.random() * (favored * 1.15 + other) < favored * 1.15;
     const poolSize = chooseFavored ? favored : other;
-    const card = await this.prisma.card.findFirst({
+    const card = await tx.card.findFirst({
       where: {
         ...baseWhere,
         ...(collectionId
@@ -2300,6 +2514,8 @@ export class GachaService {
     sort = 'value',
     rarity?: string,
     foil?: string,
+    search?: string,
+    eligibleKind?: string,
   ) {
     if (ownerId !== viewerId) {
       const privacy = await this.prisma.privacySettings.findUnique({
@@ -2313,6 +2529,41 @@ export class GachaService {
 
     const safeLimit = Math.min(Math.max(limit, 1), 100);
     const safePage = Math.max(page, 1);
+    const validKinds: Array<keyof EconomyConfig['item_eligibility']> = [
+      'TITANITA',
+      'TITANITA_SOMBRIA',
+      'DRACONICA',
+      'SOMBRIA_DRACONICA',
+    ];
+    const economyConfig = validKinds.includes(
+      eligibleKind as keyof EconomyConfig['item_eligibility'],
+    )
+      ? (await this.economy.currentVersion(this.prisma)).config
+      : null;
+    const eligibility =
+      economyConfig?.item_eligibility[
+        eligibleKind as keyof EconomyConfig['item_eligibility']
+      ];
+    const labels = ['POOR', 'PLAYED', 'EX', 'NM', 'MINT'];
+    const validSourceConditions = eligibility?.sourceConditions.filter(
+      (label) => {
+        const next = labels[labels.indexOf(label) + 1];
+        return (
+          !!next &&
+          labels.indexOf(next) <= labels.indexOf(eligibility.maxCondition) &&
+          economyConfig?.item_condition_anchor[
+            next as keyof EconomyConfig['item_condition_anchor']
+          ] != null
+        );
+      },
+    );
+    const conditionRanges: Record<string, Prisma.FloatFilter> = {
+      POOR: { gt: 0.55 },
+      PLAYED: { gt: 0.38, lte: 0.55 },
+      EX: { gt: 0.15, lte: 0.38 },
+      NM: { gt: 0.07, lte: 0.15 },
+      MINT: { lte: 0.07 },
+    };
     const where: Prisma.UserCardWhereInput = {
       userId: ownerId,
       status: 'ACTIVE',
@@ -2321,6 +2572,49 @@ export class GachaService {
         : {}),
       ...(foil && (GACHA_FOILS as readonly string[]).includes(foil)
         ? { foil }
+        : {}),
+      ...(eligibility
+        ? {
+            foil: { in: eligibility.foils as GachaFoil[] },
+          }
+        : {}),
+      ...(eligibility
+        ? {
+            OR: (validSourceConditions ?? []).map((label) => ({
+              condition: conditionRanges[label],
+            })),
+          }
+        : {}),
+      ...(search?.trim()
+        ? {
+            card: {
+              AND: [
+                ...(rarity &&
+                (GACHA_TIERS as readonly string[]).includes(rarity)
+                  ? [{ rarity }]
+                  : []),
+                search.trim() === '???'
+                  ? { imageHidden: true }
+                  : {
+                      imageHidden: false,
+                      OR: [
+                        {
+                          name: {
+                            contains: search.trim(),
+                            mode: 'insensitive' as const,
+                          },
+                        },
+                        {
+                          animeTitle: {
+                            contains: search.trim(),
+                            mode: 'insensitive' as const,
+                          },
+                        },
+                      ],
+                    },
+              ],
+            },
+          }
         : {}),
     };
     const orderBy: Prisma.UserCardOrderByWithRelationInput =
@@ -2519,9 +2813,20 @@ export class GachaService {
     };
   }
 
-  async skinCatalog(userId: string, page = 1, limit = 48, search?: string) {
+  async skinCatalog(
+    userId: string,
+    page = 1,
+    limit = 48,
+    search?: string,
+    ownedPage?: number,
+    ownedLimit?: number,
+    includeOwned: 'all' | 'count' | 'none' = 'all',
+  ) {
     const safeLimit = Math.min(Math.max(limit, 1), 100);
     const safePage = Math.max(page, 1);
+    const paginateOwned = ownedPage !== undefined || ownedLimit !== undefined;
+    const safeOwnedLimit = Math.min(Math.max(ownedLimit ?? 48, 1), 100);
+    const safeOwnedPage = Math.max(ownedPage ?? 1, 1);
     const term = search?.trim();
     const where: Prisma.GachaSkinWhereInput = {
       active: true,
@@ -2548,30 +2853,47 @@ export class GachaService {
         select: { acquiredAt: true, name: true, imageUrl: true },
       },
     };
-    const [total, skins, ownedSkins, user] = await this.prisma.$transaction([
-      this.prisma.gachaSkin.count({ where }),
-      this.prisma.gachaSkin.findMany({
-        where,
-        orderBy: [{ name: 'asc' }, { id: 'asc' }],
-        skip: (safePage - 1) * safeLimit,
-        take: safeLimit,
-        select: skinSelect,
-      }),
-      this.prisma.gachaSkin.findMany({
-        where: { ...where, owners: { some: { userId } } },
-        orderBy: [{ name: 'asc' }, { id: 'asc' }],
-        select: skinSelect,
-      }),
-      this.prisma.user.findUniqueOrThrow({
-        where: { id: userId },
-        select: {
-          crystalBalance: true,
-          crystalReserved: true,
-          equippedGachaSkinId: true,
-          nextGachaSkinSpinAt: true,
-        },
-      }),
-    ]);
+    const [total, skins, ownedTotal, ownedSkins, user] =
+      await this.prisma.$transaction([
+        this.prisma.gachaSkin.count({ where }),
+        this.prisma.gachaSkin.findMany({
+          where,
+          orderBy: [{ name: 'asc' }, { id: 'asc' }],
+          skip: (safePage - 1) * safeLimit,
+          take: safeLimit,
+          select: skinSelect,
+        }),
+        includeOwned !== 'none'
+          ? this.prisma.gachaSkin.count({
+              where: { ...where, owners: { some: { userId } } },
+            })
+          : this.prisma.gachaSkin.count({ where: { id: { in: [] } } }),
+        includeOwned === 'all'
+          ? this.prisma.gachaSkin.findMany({
+              where: { ...where, owners: { some: { userId } } },
+              orderBy: [{ name: 'asc' }, { id: 'asc' }],
+              ...(paginateOwned
+                ? {
+                    skip: (safeOwnedPage - 1) * safeOwnedLimit,
+                    take: safeOwnedLimit,
+                  }
+                : {}),
+              select: skinSelect,
+            })
+          : this.prisma.gachaSkin.findMany({
+              where: { id: { in: [] } },
+              select: skinSelect,
+            }),
+        this.prisma.user.findUniqueOrThrow({
+          where: { id: userId },
+          select: {
+            crystalBalance: true,
+            crystalReserved: true,
+            equippedGachaSkinId: true,
+            nextGachaSkinSpinAt: true,
+          },
+        }),
+      ]);
     const now = Date.now();
     const nextSpinAt = user.nextGachaSkinSpinAt;
     const present = (skin: (typeof skins)[number]) => {
@@ -2585,9 +2907,31 @@ export class GachaService {
         equipped: rest.id === user.equippedGachaSkinId,
       };
     };
+    const equippedSkin =
+      includeOwned === 'all' && user.equippedGachaSkinId
+        ? await this.prisma.gachaSkin.findUnique({
+            where: { id: user.equippedGachaSkinId },
+            select: skinSelect,
+          })
+        : null;
     return {
       skins: skins.map(present),
       owned: ownedSkins.map(present),
+      ...(includeOwned === 'all'
+        ? { equippedSkin: equippedSkin ? present(equippedSkin) : null }
+        : {}),
+      ...(includeOwned !== 'none'
+        ? {
+            ownedMeta: {
+              total: ownedTotal,
+              page: safeOwnedPage,
+              limit: paginateOwned ? safeOwnedLimit : Math.max(1, ownedTotal),
+              totalPages: paginateOwned
+                ? Math.max(1, Math.ceil(ownedTotal / safeOwnedLimit))
+                : 1,
+            },
+          }
+        : {}),
       equippedSkinId: user.equippedGachaSkinId,
       crystalBalance: user.crystalBalance,
       crystalReserved: user.crystalReserved,
@@ -3195,6 +3539,40 @@ export class GachaService {
     };
   }
 
+  private encyclopediaSetKey(
+    animeId: string | null,
+    animeTitle: string | null,
+  ) {
+    return animeId ? `anime:${animeId}` : `orphan:${animeTitle ?? ''}`;
+  }
+
+  private async encyclopediaOwnership(userId: string | null) {
+    const rows = userId
+      ? await this.prisma.$queryRaw<
+          Array<{
+            animeId: string | null;
+            animeTitle: string | null;
+            ownedCount: bigint | number;
+          }>
+        >`
+          SELECT c."animeId", c."animeTitle", COUNT(DISTINCT c."id") AS "ownedCount"
+          FROM "UserCard" uc
+          JOIN "Card" c ON c."id" = uc."cardId"
+          WHERE uc."userId" = ${userId} AND uc."status" = 'ACTIVE'
+          GROUP BY c."animeId", c."animeTitle"
+        `
+      : [];
+    const ownedBySet = new Map<string, number>();
+    let ownedCards = 0;
+    for (const row of rows) {
+      const count = Number(row.ownedCount);
+      const key = this.encyclopediaSetKey(row.animeId, row.animeTitle);
+      ownedBySet.set(key, (ownedBySet.get(key) ?? 0) + count);
+      ownedCards += count;
+    }
+    return { ownedBySet, ownedCards };
+  }
+
   /**
    * Catálogo completo (pool por anime) com flag de posse do usuário — usado
    * pela enciclopédia "quais faltam" da coleção. Sem usuário, tudo owned=false.
@@ -3237,7 +3615,9 @@ export class GachaService {
       rarity?: string;
       ownership?: 'all' | 'owned' | 'missing';
       animeId?: string;
+      animeTitle?: string;
       progress?: 'all' | 'near' | 'complete';
+      summary?: boolean;
     },
   ): Promise<{
     view: 'cards' | 'sets';
@@ -3292,9 +3672,417 @@ export class GachaService {
       rarity?: string;
       ownership?: 'all' | 'owned' | 'missing';
       animeId?: string;
+      animeTitle?: string;
       progress?: 'all' | 'near' | 'complete';
+      summary?: boolean;
     } = {},
   ) {
+    const view = options.view === 'sets' ? 'sets' : 'cards';
+    if (view === 'sets' && Object.keys(options).length > 0) {
+      const fold = (value: string | null | undefined) =>
+        (value ?? '')
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .toLowerCase();
+      const term = fold(options.search?.trim());
+      const pattern = term
+        ? `%${term.replace(/[!%_]/g, (character) => `!${character}`)}%`
+        : null;
+      const filters: Prisma.Sql[] = [];
+      if (pattern) {
+        filters.push(Prisma.sql`
+          regexp_replace(
+            normalize(lower(COALESCE(s."animeTitle", 'null') || ' ' || COALESCE(s."animeSlug", 'null')), NFD),
+            U&'[\\0300-\\036F]', '', 'g'
+          ) LIKE ${pattern} ESCAPE '!'
+        `);
+      }
+      if (options.progress === 'complete')
+        filters.push(Prisma.sql`s."setTotal" > 0 AND s."owned" = s."setTotal"`);
+      if (options.progress === 'near')
+        filters.push(Prisma.sql`s."owned" > 0 AND s."owned" < s."setTotal"`);
+      const where = filters.length
+        ? Prisma.sql`WHERE ${Prisma.join(filters, ' AND ')}`
+        : Prisma.empty;
+      const page = Math.max(1, options.page ?? 1);
+      const limit = Math.min(100, Math.max(1, options.limit ?? 24));
+      type SetQueryRow = {
+        kind: number;
+        animeId: string | null;
+        orphanTitle: string | null;
+        animeTitle: string | null;
+        animeSlug: string | null;
+        setTotal: number | null;
+        owned: number | null;
+        wishlisted: boolean | null;
+        complete: boolean | null;
+        filteredTotal: number | null;
+        totalCards: number | null;
+        ownedCards: number | null;
+        totalSets: number | null;
+        completeSets: number | null;
+      };
+      const rows = await this.prisma.$queryRaw<SetQueryRow[]>(Prisma.sql`
+        WITH request AS (
+          SELECT ${userId}::text AS "userId"
+        ), owned_cards AS (
+          SELECT DISTINCT uc."cardId"
+          FROM "UserCard" uc CROSS JOIN request r
+          WHERE uc."userId" = r."userId" AND uc."status" = 'ACTIVE'
+        ), card_sets AS (
+          SELECT
+            c."animeId",
+            CASE WHEN c."animeId" IS NULL THEN c."animeTitle" END AS "orphanTitle",
+            COALESCE(a."title", c."animeTitle") AS "animeTitle",
+            a."slug" AS "animeSlug",
+            COUNT(*)::integer AS "setTotal",
+            COUNT(o."cardId")::integer AS "owned"
+          FROM "Card" c
+          LEFT JOIN "Anime" a ON a."id" = c."animeId"
+          LEFT JOIN owned_cards o ON o."cardId" = c."id"
+          GROUP BY
+            c."animeId",
+            CASE WHEN c."animeId" IS NULL THEN c."animeTitle" END,
+            COALESCE(a."title", c."animeTitle"),
+            a."slug"
+        ), sets AS (
+          SELECT
+            cs."animeId",
+            cs."orphanTitle",
+            MAX(cs."animeTitle") AS "animeTitle",
+            MAX(cs."animeSlug") AS "animeSlug",
+            SUM(cs."setTotal")::integer AS "setTotal",
+            SUM(cs."owned")::integer AS "owned"
+          FROM card_sets cs
+          GROUP BY cs."animeId", cs."orphanTitle"
+        ), filtered_sets AS (
+          SELECT s.* FROM sets s ${where}
+        ), result_rows AS (
+          SELECT
+            0 AS kind,
+            NULL::text AS "animeId",
+            NULL::text AS "orphanTitle",
+            NULL::text AS "animeTitle",
+            NULL::text AS "animeSlug",
+            NULL::integer AS "setTotal",
+            NULL::integer AS "owned",
+            NULL::boolean AS "wishlisted",
+            NULL::boolean AS "complete",
+            (SELECT COUNT(*)::integer FROM filtered_sets) AS "filteredTotal",
+            (SELECT COUNT(*)::integer FROM "Card") AS "totalCards",
+            (SELECT COUNT(*)::integer FROM owned_cards) AS "ownedCards",
+            (SELECT COUNT(*)::integer FROM sets) AS "totalSets",
+            (SELECT COUNT(*)::integer FROM sets WHERE "setTotal" > 0 AND "owned" = "setTotal") AS "completeSets"
+          UNION ALL
+          SELECT
+            1 AS kind,
+            s."animeId",
+            s."orphanTitle",
+            s."animeTitle",
+            s."animeSlug",
+            s."setTotal",
+            s."owned",
+            CASE WHEN s."animeId" IS NOT NULL THEN EXISTS (
+              SELECT 1 FROM "GachaSetWishlist" sw CROSS JOIN request r
+              WHERE sw."userId" = r."userId" AND sw."animeId" = s."animeId"
+            ) ELSE FALSE END AS "wishlisted",
+            (s."setTotal" > 0 AND s."owned" = s."setTotal") AS "complete",
+            NULL::integer AS "filteredTotal",
+            NULL::integer AS "totalCards",
+            NULL::integer AS "ownedCards",
+            NULL::integer AS "totalSets",
+            NULL::integer AS "completeSets"
+          FROM (
+            SELECT * FROM filtered_sets
+            ORDER BY "animeTitle" ASC NULLS LAST, "animeId" ASC, "orphanTitle" ASC
+            LIMIT ${limit} OFFSET ${(page - 1) * limit}
+          ) s
+        )
+        SELECT * FROM result_rows
+        ORDER BY kind, "animeTitle" ASC NULLS LAST, "animeId" ASC, "orphanTitle" ASC
+      `);
+      const meta = rows[0];
+      const pageSets = rows
+        .filter((row) => row.kind === 1)
+        .map((row) => ({
+          animeId: row.animeId,
+          animeTitle: row.animeTitle,
+          animeSlug: row.animeSlug,
+          total: row.setTotal ?? 0,
+          owned: row.owned ?? 0,
+          cards: [] as Array<{
+            id: string;
+            name: string;
+            image: string | null;
+            imageHidden: boolean;
+            rarity: string;
+            favourites: number;
+            owned: boolean;
+            wishlisted: boolean;
+            wishlistPriority: string | null;
+          }>,
+          wishlisted: row.wishlisted ?? false,
+          complete: row.complete ?? false,
+        }));
+      if (!options.summary && pageSets.length) {
+        const setCards = await this.prisma.card.findMany({
+          where: {
+            OR: pageSets.map((set) =>
+              set.animeId
+                ? { animeId: set.animeId }
+                : { animeId: null, animeTitle: set.animeTitle },
+            ),
+          },
+          orderBy: [{ animeTitle: 'asc' }, { name: 'asc' }, { id: 'asc' }],
+          select: {
+            id: true,
+            name: true,
+            image: true,
+            imageHidden: true,
+            rarity: true,
+            favourites: true,
+            animeId: true,
+            animeTitle: true,
+          },
+        });
+        const pageOwnedRows =
+          userId && setCards.length
+            ? await this.prisma.userCard.findMany({
+                where: {
+                  userId,
+                  status: 'ACTIVE',
+                  cardId: { in: setCards.map((card) => card.id) },
+                },
+                select: { cardId: true },
+                distinct: ['cardId'],
+              })
+            : [];
+        const ownedIds = new Set(pageOwnedRows.map((row) => row.cardId));
+        const wishlistStates =
+          userId && this.wishlistService
+            ? await this.wishlistService.cardStates(
+                userId,
+                setCards.map((card) => ({
+                  id: card.id,
+                  animeId: card.animeId,
+                })),
+              )
+            : new Map<
+                string,
+                { direct: boolean; set: boolean; priority: string | null }
+              >();
+        const pageSetsByKey = new Map(
+          pageSets.map((set) => [
+            this.encyclopediaSetKey(set.animeId, set.animeTitle),
+            set,
+          ]),
+        );
+        for (const card of setCards) {
+          const set = pageSetsByKey.get(
+            this.encyclopediaSetKey(card.animeId, card.animeTitle),
+          );
+          if (!set) continue;
+          const wish = wishlistStates.get(card.id);
+          const owned = ownedIds.has(card.id);
+          set.cards.push({
+            id: card.id,
+            name: card.imageHidden ? '???' : card.name,
+            image: card.imageHidden ? null : card.image,
+            imageHidden: card.imageHidden,
+            rarity: card.rarity,
+            favourites: card.favourites,
+            owned,
+            wishlisted: Boolean(wish?.direct || wish?.set),
+            wishlistPriority: wish?.priority ?? null,
+          });
+          if (wish?.set) set.wishlisted = true;
+        }
+      }
+      return {
+        view,
+        cards: [],
+        sets: pageSets,
+        meta: {
+          total: meta?.filteredTotal ?? 0,
+          page,
+          limit,
+          totalPages: Math.max(
+            1,
+            Math.ceil((meta?.filteredTotal ?? 0) / limit),
+          ),
+        },
+        stats: {
+          totalCards: meta?.totalCards ?? 0,
+          ownedCards: meta?.ownedCards ?? 0,
+          totalSets: meta?.totalSets ?? 0,
+          completeSets: meta?.completeSets ?? 0,
+        },
+      };
+    }
+
+    if (view === 'cards' && Object.keys(options).length > 0) {
+      const fold = (value: string | null | undefined) =>
+        (value ?? '')
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .toLowerCase();
+      const term = fold(options.search?.trim());
+      const pattern = term
+        ? `%${term.replace(/[!%_]/g, (character) => `!${character}`)}%`
+        : null;
+      const filters: Prisma.Sql[] = [];
+      if (pattern) {
+        filters.push(Prisma.sql`
+          regexp_replace(
+            normalize(lower((CASE WHEN c."imageHidden" THEN '???' ELSE c."name" END) || ' ' || COALESCE(a."title", c."animeTitle", 'null')), NFD),
+            U&'[\\0300-\\036F]', '', 'g'
+          ) LIKE ${pattern} ESCAPE '!'
+        `);
+      }
+      if (options.rarity)
+        filters.push(Prisma.sql`c."rarity" = ${options.rarity}`);
+      if (options.animeId === 'orphan') {
+        filters.push(Prisma.sql`c."animeId" IS NULL`);
+        if (options.animeTitle)
+          filters.push(Prisma.sql`c."animeTitle" = ${options.animeTitle}`);
+      } else if (options.animeId) {
+        filters.push(Prisma.sql`c."animeId" = ${options.animeId}`);
+      } else if (options.animeTitle) {
+        filters.push(
+          Prisma.sql`c."animeId" IS NULL AND c."animeTitle" = ${options.animeTitle}`,
+        );
+      }
+      if (options.ownership === 'owned') {
+        filters.push(
+          userId
+            ? Prisma.sql`EXISTS (
+                SELECT 1 FROM "UserCard" uc
+                WHERE uc."cardId" = c."id" AND uc."userId" = ${userId}
+                  AND uc."status" = 'ACTIVE'
+              )`
+            : Prisma.sql`FALSE`,
+        );
+      } else if (options.ownership === 'missing' && userId) {
+        filters.push(Prisma.sql`NOT EXISTS (
+          SELECT 1 FROM "UserCard" uc
+          WHERE uc."cardId" = c."id" AND uc."userId" = ${userId}
+            AND uc."status" = 'ACTIVE'
+        )`);
+      }
+      const where = filters.length
+        ? Prisma.sql`WHERE ${Prisma.join(filters, ' AND ')}`
+        : Prisma.empty;
+      const page = Math.max(1, options.page ?? 1);
+      const limit = Math.min(100, Math.max(1, options.limit ?? 24));
+      const [countRows, pageRows, totalCards, setCounts, ownership] =
+        await Promise.all([
+          this.prisma.$queryRaw<Array<{ total: number }>>(Prisma.sql`
+            SELECT COUNT(*)::integer AS total
+            FROM "Card" c
+            LEFT JOIN "Anime" a ON a."id" = c."animeId"
+            ${where}
+          `),
+          this.prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+            SELECT c."id"
+            FROM "Card" c
+            LEFT JOIN "Anime" a ON a."id" = c."animeId"
+            ${where}
+            ORDER BY c."animeTitle" ASC, c."name" ASC, c."id" ASC
+            LIMIT ${limit} OFFSET ${(page - 1) * limit}
+          `),
+          this.prisma.card.count(),
+          this.prisma.card.groupBy({
+            by: ['animeId', 'animeTitle'],
+            _count: { id: true },
+          }),
+          this.encyclopediaOwnership(userId),
+        ]);
+      const cardIds = pageRows.map((row) => row.id);
+      const fetchedCards = cardIds.length
+        ? await this.prisma.card.findMany({
+            where: { id: { in: cardIds } },
+            include: {
+              anime: { select: { id: true, slug: true, title: true } },
+            },
+          })
+        : [];
+      const cardsById = new Map(fetchedCards.map((card) => [card.id, card]));
+      const cards = cardIds.flatMap((id) => {
+        const card = cardsById.get(id);
+        return card ? [card] : [];
+      });
+      const pageOwnedRows =
+        userId && cards.length
+          ? await this.prisma.userCard.findMany({
+              where: {
+                userId,
+                status: 'ACTIVE',
+                cardId: { in: cards.map((card) => card.id) },
+              },
+              select: { cardId: true },
+              distinct: ['cardId'],
+            })
+          : [];
+      const ownedIds = new Set(pageOwnedRows.map((row) => row.cardId));
+      const wishlistStates =
+        userId && this.wishlistService
+          ? await this.wishlistService.cardStates(
+              userId,
+              cards.map((card) => ({ id: card.id, animeId: card.animeId })),
+            )
+          : new Map<
+              string,
+              { direct: boolean; set: boolean; priority: string | null }
+            >();
+      const resultCards = cards.map((card) => {
+        const wish = wishlistStates.get(card.id);
+        return {
+          id: card.id,
+          name: card.imageHidden ? '???' : card.name,
+          image: card.imageHidden ? null : card.image,
+          imageHidden: card.imageHidden,
+          rarity: card.rarity,
+          favourites: card.favourites,
+          owned: ownedIds.has(card.id),
+          wishlisted: Boolean(wish?.direct || wish?.set),
+          wishlistPriority: wish?.priority ?? null,
+          animeId: card.animeId,
+          animeTitle: card.anime?.title ?? card.animeTitle ?? null,
+        };
+      });
+      const totalBySet = new Map<string, number>();
+      for (const set of setCounts) {
+        const key = this.encyclopediaSetKey(set.animeId, set.animeTitle);
+        totalBySet.set(key, (totalBySet.get(key) ?? 0) + set._count.id);
+      }
+      const totalSets = totalBySet.size;
+      return {
+        view,
+        cards: resultCards,
+        sets: [],
+        meta: {
+          total: countRows[0]?.total ?? 0,
+          page,
+          limit,
+          totalPages: Math.max(
+            1,
+            Math.ceil((countRows[0]?.total ?? 0) / limit),
+          ),
+        },
+        stats: {
+          totalCards,
+          ownedCards: ownership.ownedCards,
+          totalSets,
+          completeSets: [...totalBySet].filter(([key, total]) => {
+            return (
+              (ownership.ownedBySet.get(key) ?? 0) > 0 &&
+              (ownership.ownedBySet.get(key) ?? 0) === total
+            );
+          }).length,
+        },
+      };
+    }
+
     const cards = await this.prisma.card.findMany({
       orderBy: [{ animeTitle: 'asc' }, { name: 'asc' }],
       include: { anime: { select: { id: true, slug: true, title: true } } },
@@ -3341,13 +4129,13 @@ export class GachaService {
       }
     >();
     for (const card of cards) {
-      const key = card.animeId;
+      const key = card.animeId ?? `orphan:${card.animeTitle ?? ''}`;
       if (!byAnime.has(key)) {
         byAnime.set(key, {
-          animeId: key,
-          animeTitle: key
+          animeId: card.animeId,
+          animeTitle: card.animeId
             ? (card.anime?.title ?? card.animeTitle ?? null)
-            : null,
+            : (card.animeTitle ?? null),
           animeSlug: card.anime?.slug ?? null,
           total: 0,
           owned: 0,
@@ -3402,6 +4190,12 @@ export class GachaService {
         card.animeId !== options.animeId
       )
         return false;
+      if (
+        options.animeId === 'orphan' &&
+        options.animeTitle &&
+        card.animeTitle !== options.animeTitle
+      )
+        return false;
       if (options.ownership === 'owned' && !card.owned) return false;
       if (options.ownership === 'missing' && card.owned) return false;
       return true;
@@ -3414,7 +4208,6 @@ export class GachaService {
         return false;
       return true;
     });
-    const view = options.view === 'sets' ? 'sets' : 'cards';
     const source = view === 'sets' ? setsView : cardsView;
     const page = Math.max(1, options.page ?? 1);
     const limit = Math.min(100, Math.max(1, options.limit ?? 24));
@@ -3477,7 +4270,10 @@ export class GachaService {
     const term = query.trim();
     if (term.length < 2) return [];
     const rows = await this.prisma.card.findMany({
-      where: { name: { contains: term, mode: 'insensitive' } },
+      where: {
+        imageHidden: false,
+        name: { contains: term, mode: 'insensitive' },
+      },
       select: { name: true, animeTitle: true },
       orderBy: { name: 'asc' },
       take: 5,
