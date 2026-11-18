@@ -611,8 +611,11 @@ describe('GachaService', () => {
 
       const result = await service.status('u1');
 
-      expect(result.canClaim).toBe(true);
-      expect(result.nextClaimAt).toBeNull();
+      expect(result.canClaim).toBe(false);
+      expect(result.nextClaimAt).not.toBeNull();
+      expect(result.claimWarning).toContain(
+        'cooldown de 1 hora para todas as raridades',
+      );
       expect(result.claimWarning).toContain('Semana de Cartas Livres');
       expect(result.bypassPriceCents).toBeNull();
       expect(result.claimEvent).toEqual({
@@ -948,33 +951,31 @@ describe('GachaService', () => {
       expect(mockPrisma.userCard.create).not.toHaveBeenCalled();
     });
 
-    it('evento de resgate ignora lock ativo e não cria lock novo', async () => {
+    it('evento de resgate aplica cooldown de uma hora para qualquer raridade', async () => {
       mockConfig.claimEventState.mockReturnValue({
         active: true,
-        name: 'Semana de Cartas Livres',
-        tiers: [
-          'COMUM',
-          'INCOMUM',
-          'RARA',
-          'EPICA',
-          'LENDARIA',
-          'MITICA',
-          'GALACTICA',
-        ],
+        name: 'Festival das Cartas',
+        tiers: [],
       });
       mockPrisma.gachaSpin.findFirst.mockResolvedValue(previewComum);
-      mockPrisma.gachaClaimLock.findUnique.mockResolvedValue({
-        userId: 'u1',
-        lockedUntil: new Date(Date.now() + 6 * 3_600_000),
-      });
+      mockPrisma.gachaClaimLock.findUnique.mockResolvedValue(null);
       mockClaimCreate();
 
-      const pull = await service.claim('u1', 's1');
+      await service.claim('u1', 's1');
 
-      expect(pull.card.id).toBe('w1');
-      expect(mockPrisma.gachaClaimLock.upsert).not.toHaveBeenCalled();
+      expect(mockPrisma.gachaClaimLock.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          create: expect.objectContaining({
+            lockedUntil: expect.any(Date),
+          }),
+          update: { lockedUntil: expect.any(Date) },
+        }),
+      );
+      const lockWrite = mockPrisma.gachaClaimLock.upsert.mock.calls[0][0];
+      const lockDuration = lockWrite.create.lockedUntil.getTime() - Date.now();
+      expect(lockDuration).toBeGreaterThan(3_600_000 - 1000);
+      expect(lockDuration).toBeLessThanOrEqual(3_600_000);
     });
-
     it('evento com raridades parciais mantém lock para as demais', async () => {
       mockConfig.claimEventState.mockReturnValue({
         active: true,

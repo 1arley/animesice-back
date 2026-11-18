@@ -839,8 +839,7 @@ export class GachaService {
         spinsLeft > 0 ? null : new Date(hour.getTime() + HOUR_MS).toISOString(),
       // Durante o evento, o claim segue o cooldown uniforme de uma hora.
       canClaim: !locked,
-      nextClaimAt:
-        locked ? claim.lockedUntil.toISOString() : null,
+      nextClaimAt: locked ? claim.lockedUntil.toISOString() : null,
       claimWarning: locked
         ? claimEvent.active
           ? `Evento ${claimEvent.name}: cooldown de 1 hora para todas as raridades.`
