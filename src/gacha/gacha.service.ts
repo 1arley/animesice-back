@@ -122,7 +122,6 @@ const PULL_SELECT = {
   value: true,
   rankedValue: true,
   valueOverride: true,
-  bonusShard: true,
   obtainedAt: true,
   user: {
     select: {
