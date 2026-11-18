@@ -1,3 +1,11 @@
+# [1.67.0](https://github.com/1arley/animesice-back/compare/v1.66.3...v1.67.0) (2026-11-18)
+
+
+### Features
+
+* **gacha:** add e2e tests for essence, crystal codes, claim event and ITEM type ([1c953cf](https://github.com/1arley/animesice-back/commit/1c953cffaf5fdb8190fc1c4caf7e55f953735e47))
+* **gacha:** add essence, crystal codes, claim event and ITEM type ([7818db0](https://github.com/1arley/animesice-back/commit/7818db0a1b6c78eb97c32b1641a4479da5386880))
+
 ## [1.66.3](https://github.com/1arley/animesice-back/compare/v1.66.2...v1.66.3) (2026-11-15)
 
 
