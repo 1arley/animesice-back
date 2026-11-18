@@ -20,7 +20,8 @@ INSERT INTO "GachaConfig" ("key", "value", "label", "group", "updatedAt") VALUES
 ('spins_per_hour',   '5',        'Spins de skin por hora',        'economia', NOW()),
 ('reroll_cost_pct',  '0.15',     'Custo do reroll (fração do valor)', 'economia', NOW()),
 ('daily_bonus',      '350',      'Bônus diário em Crystals',      'economia', NOW()),
-('economy_rollout_percent', '0', 'Percentual do rollout da economia', 'economia', NOW()),
+('economy_rollout_percent', '100', 'Percentual do rollout da economia', 'economia', NOW()),
+('market_account_age_days', '7', 'Dias mínimos para acessar o mercado', 'mercado', NOW()),
 ('key_price', '1500', 'Preço da chave universal', 'economia', NOW()),
 ('box_prices', '{"COMMON":2500,"RARE":5500,"PREMIUM":8500}', 'Preço das caixas', 'economia', NOW()),
 ('collection_rewards', '{"25":1000,"50":2500,"100":6000}', 'Recompensas de coleção', 'economia', NOW());
