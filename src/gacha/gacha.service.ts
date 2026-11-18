@@ -837,16 +837,13 @@ export class GachaService {
       canSpin: spinsLeft > 0,
       nextSpinAt:
         spinsLeft > 0 ? null : new Date(hour.getTime() + HOUR_MS).toISOString(),
-      // Evento ativo libera o claim mesmo com lock vigente (o claim decide
-      // por raridade; aqui é só o sinal para a UI).
-      canClaim: !locked || claimEvent.active,
+      // Durante o evento, o claim segue o cooldown uniforme de uma hora.
+      canClaim: !locked,
       nextClaimAt:
-        locked && !claimEvent.active ? claim.lockedUntil.toISOString() : null,
+        locked ? claim.lockedUntil.toISOString() : null,
       claimWarning: locked
         ? claimEvent.active
-          ? claimEvent.tiers.length > 0
-            ? `Evento ${claimEvent.name}: resgate liberado para ${claimEvent.tiers.join(', ')}.`
-            : `Evento ${claimEvent.name}: resgate liberado.`
+          ? `Evento ${claimEvent.name}: cooldown de 1 hora para todas as raridades.`
           : 'Você já guardou uma carta. Girar continua liberado, mas a próxima só pode ser guardada após o fim do bloqueio.'
         : null,
       bypassPriceCents:
@@ -1021,21 +1018,16 @@ export class GachaService {
           if (inactiveEventIds(event?.value, 'cardIds').includes(spin.card.id))
             throw new ForbiddenException('Evento desta carta encerrado.');
 
-          // Evento temporário (claim_event): resgate sem cooldown para as
-          // raridades listadas — ignora inclusive lock já ativo, e resgates
-          // do evento não criam lock que penda pro pós-evento.
+          // Durante o evento, todas as raridades usam cooldown de uma hora.
           const claimEvent = this.config.claimEventState();
-          const eventFreeClaim =
-            claimEvent.active &&
-            claimEvent.tiers.includes(spin.card.rarity as GachaTier);
-          const lock = eventFreeClaim
-            ? null
-            : await tx.gachaClaimLock.findUnique({
-                where: { userId },
-              });
+          const lock = await tx.gachaClaimLock.findUnique({
+            where: { userId },
+          });
           if (lock !== null && lock.lockedUntil.getTime() > Date.now()) {
             throw new ForbiddenException(
-              'Você já guardou uma carta recentemente.',
+              claimEvent.active
+                ? `Você já guardou uma carta. Durante ${claimEvent.name}, o cooldown é de 1 hora.`
+                : 'Você já guardou uma carta recentemente.',
             );
           }
           const counter = await tx.card.update({
@@ -1094,19 +1086,17 @@ export class GachaService {
           if (claimed.count !== 1) {
             throw new NotFoundException('Preview expirada ou já resgatada.');
           }
-          if (!eventFreeClaim) {
-            const lockMs = this.config.claimLockMs(
-              spin.card.rarity as GachaTier,
-            );
-            await tx.gachaClaimLock.upsert({
-              where: { userId },
-              create: {
-                userId,
-                lockedUntil: new Date(Date.now() + lockMs),
-              },
-              update: { lockedUntil: new Date(Date.now() + lockMs) },
-            });
-          }
+          const lockMs = claimEvent.active
+            ? HOUR_MS
+            : this.config.claimLockMs(spin.card.rarity as GachaTier);
+          await tx.gachaClaimLock.upsert({
+            where: { userId },
+            create: {
+              userId,
+              lockedUntil: new Date(Date.now() + lockMs),
+            },
+            update: { lockedUntil: new Date(Date.now() + lockMs) },
+          });
           await this.changeCrystals(
             tx,
             userId,

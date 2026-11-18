@@ -595,7 +595,7 @@ describe('GachaService', () => {
       expect(result.nextSpinAt).not.toBeNull();
     });
 
-    it('evento ativo libera claim mesmo com lock e anuncia o evento', async () => {
+    it('evento ativo mantém o lock e informa o cooldown uniforme', async () => {
       mockPrisma.gachaClaimLock.findUnique.mockResolvedValue({
         userId: 'u1',
         lockedUntil: new Date(Date.now() + 6 * 3_600_000),
