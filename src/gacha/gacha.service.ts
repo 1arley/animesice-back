@@ -122,7 +122,6 @@ const PULL_SELECT = {
   value: true,
   rankedValue: true,
   valueOverride: true,
-  bonusShard: true,
   obtainedAt: true,
   user: {
     select: {
@@ -1056,7 +1055,8 @@ export class GachaService {
           // Fragmento bônus do giro; dado persistido pode ter valor inesperado,
           // então normaliza antes de usar a chave tipada no inventário.
           const bonusShard =
-            spin.bonusShard != null && spin.bonusShard in SPIN_SHARD_FIELD
+            spin.bonusShard != null &&
+            Object.hasOwn(SPIN_SHARD_FIELD, spin.bonusShard)
               ? (spin.bonusShard as SpinShardKind)
               : null;
           const created = await tx.userCard.create({
@@ -1069,16 +1069,19 @@ export class GachaService {
               edition,
               value: calculatedValue,
               rankedValue: calculatedValue,
-              // Fragmento bônus do giro: mantém o selo na carta e credita 1 fragmento.
-              bonusShard,
+              // Fragmento bônus do giro: credita 1 fragmento direto no
+              // inventário. O selo NÃO vai para a carta: o ícone só existe na
+              // prévia e sai no resgate.
             },
             select: PULL_SELECT,
           });
           if (bonusShard !== null) {
             const shardField = SPIN_SHARD_FIELD[bonusShard];
-            await creditItems(tx, userId, [
-              { itemId: catalogItemForField(shardField).id, quantity: 1 },
-            ]);
+            await tx.gachaInventory.upsert({
+              where: { userId },
+              create: { userId, [shardField]: 1 },
+              update: { [shardField]: { increment: 1 } },
+            });
           }
           await tx.gachaCardDiscovery.createMany({
             data: { userId, cardId: spin.card.id },

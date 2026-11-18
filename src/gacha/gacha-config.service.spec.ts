@@ -18,7 +18,7 @@ function model() {
   return {
     findMany: jest.fn(),
     findUnique: jest.fn(),
-    update: jest.fn(),
+    upsert: jest.fn(),
   };
 }
 
@@ -60,7 +60,7 @@ describe('GachaConfigService', () => {
       },
     };
     db.gachaConfig.findMany.mockResolvedValue(rows);
-    db.gachaConfig.update.mockResolvedValue(rows[0]);
+    db.gachaConfig.upsert.mockResolvedValue(rows[0]);
     db.gachaEconomyVersion.aggregate.mockResolvedValue({
       _max: { version: null },
     });
@@ -98,9 +98,15 @@ describe('GachaConfigService', () => {
     const result = await service.update('daily_bonus', 800, 'admin', 'bump');
 
     expect(result).toEqual(rows[0]);
-    expect(db.gachaConfig.update).toHaveBeenCalledWith({
+    expect(db.gachaConfig.upsert).toHaveBeenCalledWith({
       where: { key: 'daily_bonus' },
-      data: { value: 800 },
+      create: {
+        key: 'daily_bonus',
+        value: 800,
+        label: 'daily_bonus',
+        group: 'gacha',
+      },
+      update: { value: 800 },
     });
     expect(db.gachaEconomyVersion.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
@@ -129,7 +135,7 @@ describe('GachaConfigService', () => {
         'invalid weights',
       ),
     ).rejects.toBeInstanceOf(ConflictException);
-    expect(db.gachaConfig.update).not.toHaveBeenCalled();
+    expect(db.gachaConfig.upsert).not.toHaveBeenCalled();
   });
 });
 
