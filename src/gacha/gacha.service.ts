@@ -949,7 +949,8 @@ export class GachaService {
           // Fragmento bônus do giro; dado persistido pode ter valor inesperado,
           // então normaliza antes de usar a chave tipada no inventário.
           const bonusShard =
-            spin.bonusShard != null && spin.bonusShard in SPIN_SHARD_FIELD
+            spin.bonusShard != null &&
+            Object.hasOwn(SPIN_SHARD_FIELD, spin.bonusShard)
               ? (spin.bonusShard as SpinShardKind)
               : null;
           const created = await tx.userCard.create({

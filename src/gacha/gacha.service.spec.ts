@@ -789,6 +789,7 @@ describe('GachaService', () => {
           create: expect.objectContaining({ userId: 'u1' }),
         }),
       );
+      expect(mockPrisma.gachaInventory.upsert).not.toHaveBeenCalled();
       expect(mockPrisma.post.create).not.toHaveBeenCalled();
     });
 

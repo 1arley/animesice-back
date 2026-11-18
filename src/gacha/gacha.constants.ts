@@ -86,9 +86,9 @@ export const SPIN_SHARD_WEIGHTS = {
 export type SpinShardKind = keyof typeof SPIN_SHARD_WEIGHTS;
 
 /** Coluna de fragmentos no GachaInventory correspondente a cada bônus. */
-export const SPIN_SHARD_FIELD: Record<SpinShardKind, string> = {
+export const SPIN_SHARD_FIELD = {
   TITANITA: 'titanitaShards',
   TITANITA_SOMBRIA: 'titanitaSombriaShards',
   DRACONICA: 'draconicaShards',
   SOMBRIA_DRACONICA: 'sombriaDraconicaShards',
-};
+} as const satisfies Record<SpinShardKind, string>;
