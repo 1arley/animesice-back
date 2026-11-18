@@ -93,9 +93,26 @@ npm run seed:animefire
 # Testar com 5 animes primeiro
 npm run seed:animefire:dry
 
+# Simular cadastro das skins sem gravar
+npm run seed:skins:dry
+
 # Pular AniList (só catálogo sem metadados ricos)
 npm run seed:animefire -- --skip-anilist
 
 # Paginar catálogo grande
 npm run seed:animefire -- --offset 100 --limit 50
+
+# Descobrir séries indexadas no MeusAnimes sem gravar
+npm run backfill:meusanimes-catalog
+
+# Importar catálogo e criar mapeamentos de fonte sem publicar as páginas
+npm run backfill:meusanimes-catalog -- --apply
+
+# Conferir nomes/áudio dos animes dublados (dry-run)
+npm run repair:dubbed-titles
+
+# Aplicar a correção de títulos/áudio
+npm run repair:dubbed-titles -- --apply
 ```
+
+`npm run seed` é apenas para desenvolvimento: ele cria contas e comentários de demonstração e é bloqueado em `NODE_ENV=production`.

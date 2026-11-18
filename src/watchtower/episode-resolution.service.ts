@@ -130,9 +130,10 @@ export class EpisodeResolution {
         where: { id: episode.id },
         select: { videoUrl: true },
       });
+      let currentVideoDead = false;
       if (current?.videoUrl) {
-        const dead = await probeMediaUrlDead(current.videoUrl);
-        if (!dead) {
+        currentVideoDead = await probeMediaUrlDead(current.videoUrl);
+        if (!currentVideoDead) {
           await this.prisma.episode.update({
             where: { id: episode.id },
             data: { videoBroken: false, videoCheckedAt: new Date() },
@@ -141,33 +142,38 @@ export class EpisodeResolution {
         }
       }
 
-      await this.prisma.episode
-        .update({
-          where: { id: episode.id },
-          data: { videoBroken: true },
-        })
-        .catch(() => undefined);
-      await this.unpublishIfFullyBroken(anime.id);
-
-      const { candidates } =
+      const exact =
         input.rustFallbackUrl && input.rustFallbackSourceId
           ? await this.extractExact(
               input.rustFallbackSourceId,
               input.rustFallbackUrl,
               input.rustFallbackSourceId,
-              anime.audio,
-            )
-          : await this.extract(
               anime.slug,
               input.episodeNumber,
               season,
-              episode.embedUrl ?? undefined,
               anime.audio,
-            );
+            )
+          : null;
+      const { candidates } = exact?.candidates.length
+        ? exact
+        : await this.extract(
+            anime.slug,
+            input.episodeNumber,
+            season,
+            episode.embedUrl ?? undefined,
+            anime.audio,
+          );
       if (candidates.length === 0) {
-        await this.unpublishIfFullyBroken(anime.id);
+        if (currentVideoDead) {
+          await this.prisma.episode
+            .update({
+              where: { id: episode.id },
+              data: { videoBroken: true },
+            })
+            .catch(() => undefined);
+        }
         throw new Error(
-          `Repair: sem fonte p/ ${anime.slug}/${input.episodeNumber}`,
+          `Repair inconclusivo: nenhuma fonte confirmou ${anime.slug}/s${season}/${input.episodeNumber}`,
         );
       }
 
@@ -180,7 +186,14 @@ export class EpisodeResolution {
             error: 'URL de mídia rejeitada pela validação',
           });
         }
-        await this.unpublishIfFullyBroken(anime.id);
+        if (currentVideoDead) {
+          await this.prisma.episode
+            .update({
+              where: { id: episode.id },
+              data: { videoBroken: true },
+            })
+            .catch(() => undefined);
+        }
         throw new Error(
           `Repair: validação falhou ${anime.slug}/${input.episodeNumber}`,
         );
@@ -232,9 +245,8 @@ export class EpisodeResolution {
       anime.audio,
     );
     if (candidates.length === 0) {
-      await this.markEpisodeBrokenIfAny(anime.id, season, input.episodeNumber);
       throw new Error(
-        `Nenhuma fonte resolveu ${anime.slug}/s${season}/${input.episodeNumber}`,
+        `Resolução inconclusiva: nenhuma fonte confirmou ${anime.slug}/s${season}/${input.episodeNumber}`,
       );
     }
 
@@ -299,36 +311,29 @@ export class EpisodeResolution {
   ): Promise<SourceCandidate[]> {
     const order = await this.health.rankedSources();
     const out: SourceCandidate[] = [];
-
-    if (episodeUrl) {
-      const explicit = this.explicitCandidate(episodeUrl);
-      if (explicit && !(await this.health.isDisabled(explicit.sourceId))) {
-        const status = await this.probeExists(explicit.url);
-        if (status !== 'missing') out.push(explicit);
-      }
-    }
-
-    const usedSources = new Set(out.map((c) => c.sourceId));
-    const onlyExplicit = episodeUrl ? usedSources : new Set<string>();
+    const explicit = episodeUrl ? this.explicitCandidate(episodeUrl) : null;
 
     for (const sourceId of order) {
-      if (onlyExplicit.has(sourceId)) continue;
-      let urls =
-        typeof this.scrape.resolveCandidateUrlsForSource === 'function'
-          ? await this.scrape.resolveCandidateUrlsForSource(
-              sourceId,
-              animeSlug,
-              episodeNumber,
-              season,
-            )
-          : [];
-      if (urls.length === 0) {
-        urls = sourceEpisodeUrlVariants(
-          sourceId,
-          animeSlug,
-          episodeNumber,
-          season,
-        );
+      if (
+        explicit?.sourceId === sourceId &&
+        (await this.health.isDisabled(sourceId))
+      )
+        continue;
+      const hasResolver =
+        typeof this.scrape.resolveCandidateUrlsForSource === 'function';
+      const urls = hasResolver
+        ? await this.scrape.resolveCandidateUrlsForSource(
+            sourceId,
+            animeSlug,
+            episodeNumber,
+            season,
+          )
+        : sourceEpisodeUrlVariants(sourceId, animeSlug, episodeNumber, season);
+
+      if (explicit?.sourceId === sourceId && urls.includes(explicit.url)) {
+        const status = await this.probeExists(explicit.url);
+        if (status !== 'missing') out.push(explicit);
+        continue;
       }
 
       const ok: SourceCandidate[] = [];
@@ -435,12 +440,23 @@ export class EpisodeResolution {
     sourceId: string,
     pageUrl: string,
     expectedSourceId: string,
+    animeSlug: string,
+    episodeNumber: number,
+    season: number = 1,
     audio?: AudioType,
   ): Promise<ExtractResult> {
     const candidate = this.exactCandidate(pageUrl, expectedSourceId);
     if (!candidate || candidate.sourceId !== sourceId) {
       throw new Error('Handoff Rust contém URL/fonte incompatíveis');
     }
+    const expectedUrls = await this.scrape.resolveCandidateUrlsForSource(
+      sourceId,
+      animeSlug,
+      episodeNumber,
+      season,
+    );
+    if (!expectedUrls.includes(candidate.url))
+      return { candidates: [], triedSources: [] };
     const result = await this.scrape.scrapeEpisodeVideo(
       candidate.url,
       candidate.sourceId,

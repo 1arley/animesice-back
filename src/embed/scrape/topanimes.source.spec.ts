@@ -34,9 +34,11 @@ const mockedExtractAllIframes = extractAllIframes as jest.MockedFunction<
 const UA = 'ua';
 
 /** Enfileira respostas na ordem em que o adapter vai pedir. */
-function queueFetch(...responses: { body: string; status?: number }[]): void {
+function queueFetch(
+  ...responses: { body: string; status?: number; url?: string }[]
+): void {
   let i = 0;
-  mockedFetchSafeRaw.mockImplementation(async () => {
+  mockedFetchSafeRaw.mockImplementation(async (url) => {
     const next = responses[Math.min(i, responses.length - 1)]!;
     i += 1;
     const dispatcher = {
@@ -47,6 +49,7 @@ function queueFetch(...responses: { body: string; status?: number }[]): void {
       response: {
         ok: status >= 200 && status < 300,
         status,
+        url: next.url ?? url,
         text: async () => next.body,
         body: { cancel: jest.fn().mockResolvedValue(undefined) },
       } as unknown as Response,
@@ -96,26 +99,20 @@ describe('TopanimesScrapeSource', () => {
     expect(source.supports('https://notopanimes.net.evil.com/x')).toBe(false);
   });
 
-  it('resolveEpisodeUrl tenta o slug sem sufixo dublado quando o original 404', async () => {
-    queueFetch({ body: '', status: 404 }, { body: '<html>ok</html>' });
-
-    const resolved = await source.resolveEpisodeUrl('one-piece-dublado', 1);
-
-    expect(resolved).toBe(
-      'https://topanimes.net/episodio/one-piece-episodio-1/',
-    );
-    expect(mockedFetchSafeRaw).toHaveBeenCalledTimes(2);
+  it('não remove o sufixo de áudio do slug mapeado', () => {
+    expect(source.slugVariants('one-piece-dublado')).toEqual([
+      'one-piece-dublado',
+    ]);
+    expect(
+      source.templateUrls({ animeSlug: 'one-piece-dublado', episodeNumber: 1 }),
+    ).toEqual(['https://topanimes.net/episodio/one-piece-dublado-episodio-1/']);
   });
 
   it('resolveEpisodeUrl cai na listagem da página do anime quando o template falha', async () => {
     // Aspas SIMPLES — o que o tema emite. Um padrão que só caseia aspas
     // duplas faz a fonte parecer não ter episódios.
-    const animePage = `
-      <div class='episodiotitle'><a href='https://topanimes.net/episodio/buchigire-reijou-wo-tatakitsubushimasu-episodio-1/'>Episódio 1</a></div>
-      <div class='episodiotitle'><a href='https://topanimes.net/episodio/buchigire-reijou-wo-tatakitsubushimasu-episodio-7/'>Episódio 7</a></div>
-    `;
-    // slug sem sufixo dublado => 1 variante => exists() 404 + página do anime
-    queueFetch({ body: '', status: 404 }, { body: animePage });
+    const animePage = `<ul><li><div class='numerando'>1 - 1</div><div class='episodiotitle'><a href='https://topanimes.net/episodio/buchigire-reijou-wo-tatakitsubushimasu-episodio-1/'>Episódio 1</a></div></li><li><div class='numerando'>1 - 7</div><div class='episodiotitle'><a href='https://topanimes.net/episodio/buchigire-reijou-wo-tatakitsubushimasu-episodio-7/'>Episódio 7</a></div></li></ul>`;
+    queueFetch({ body: animePage });
 
     const resolved = await source.resolveEpisodeUrl('buchigire-reijou', 7);
 
@@ -124,34 +121,34 @@ describe('TopanimesScrapeSource', () => {
     );
   });
 
-  it('resolveEpisodeUrl aceita aspas duplas também', async () => {
-    const animePage = `<a href="https://topanimes.net/episodio/x-episodio-3/">3</a>`;
-    queueFetch({ body: '', status: 404 }, { body: animePage });
+  it('resolveEpisodeUrl exige temporada e episódio catalogados', async () => {
+    const animePage = `<ul><li><div class="numerando">2 - 3</div><div class="episodiotitle"><a href="https://topanimes.net/episodio/x-episodio-3/">3</a></div></li></ul>`;
+    queueFetch({ body: animePage });
 
-    expect(await source.resolveEpisodeUrl('x', 3)).toBe(
+    expect(await source.resolveEpisodeUrl('x', 3, 2)).toBe(
       'https://topanimes.net/episodio/x-episodio-3/',
     );
+    expect(await source.resolveEpisodeUrl('x', 3, 1)).toBeNull();
+  });
+
+  it('rejeita URL final de redirect que aponta para outro catálogo', async () => {
+    queueFetch({
+      body: `<ul><li><div class='numerando'>1 - 1</div><div class='episodiotitle'><a href='https://topanimes.net/episodio/x-episodio-1/'>1</a></div></li></ul>`,
+      url: 'https://topanimes.net/animes/outra-obra/',
+    });
+    await expect(source.resolveEpisodeUrl('x', 1)).resolves.toBeNull();
   });
 
   it('resolveEpisodeUrl devolve null se a listagem não tem o episódio', async () => {
-    const animePage = `<a href='https://topanimes.net/episodio/x-episodio-1/'>1</a>`;
-    queueFetch({ body: '', status: 404 }, { body: animePage });
+    const animePage = `<ul><li><div class='numerando'>1 - 1</div><div class='episodiotitle'><a href='https://topanimes.net/episodio/x-episodio-1/'>1</a></div></li></ul>`;
+    queueFetch({ body: animePage });
 
     expect(await source.resolveEpisodeUrl('x', 9)).toBeNull();
   });
 
-  it('resolveEpisodeUrl tenta as duas variantes antes da página do anime', async () => {
-    const animePage = `<a href='https://topanimes.net/episodio/bleach-episodio-2/'>2</a>`;
-    queueFetch(
-      { body: '', status: 404 }, // exists(bleach-dublado-2)
-      { body: '', status: 404 }, // exists(bleach)
-      { body: '', status: 404 }, // pagina(bleach-dublado-2) -> 404
-      { body: animePage },
-    );
-
-    expect(await source.resolveEpisodeUrl('bleach-dublado-2', 2)).toBe(
-      'https://topanimes.net/episodio/bleach-episodio-2/',
-    );
+  it('não resolve slug de áudio alternativo sem mapeamento explícito', async () => {
+    queueFetch({ body: '<html></html>' });
+    expect(await source.resolveEpisodeUrl('bleach-dublado-2', 2)).toBeNull();
   });
 
   it('extractHttp extrai o HLS do player sk-api, melhor qualidade primeiro', async () => {
@@ -432,9 +429,9 @@ describe('TopanimesScrapeSource', () => {
       animeSlug: 'bleach-dublado-2',
       episodeNumber: 3,
     });
-    expect(templates).toContain(
-      'https://topanimes.net/episodio/bleach-episodio-3/',
-    );
+    expect(templates).toEqual([
+      'https://topanimes.net/episodio/bleach-dublado-2-episodio-3/',
+    ]);
 
     jest
       .spyOn(source, 'resolveEpisodeUrl')

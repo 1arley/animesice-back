@@ -60,6 +60,7 @@ function mockFetchSafeRaw(
     if (body === undefined) {
       return {
         response: {
+          url,
           ok: false,
           status: 404,
           text: async () => 'not found',
@@ -68,7 +69,12 @@ function mockFetchSafeRaw(
       };
     }
     return {
-      response: { ok: true, status: 200, text: async () => body } as Response,
+      response: {
+        url,
+        ok: true,
+        status: 200,
+        text: async () => body,
+      } as Response,
       dispatcher,
     };
   });
@@ -329,12 +335,17 @@ describe('MeusanimesScrapeSource (cobertura ampliada)', () => {
       episodeNumber: 5,
       season: 2,
     });
-    expect(urls).toEqual([
+    expect(
+      source.templateUrls({
+        animeSlug: 'bleach-dublado-2',
+        episodeNumber: 5,
+        season: 2,
+      }),
+    ).toEqual([
       'https://meusanimes.blog/e/bleach-dublado-2-episodio-5/',
-      'https://meusanimes.blog/e/bleach-episodio-5/',
       'https://meusanimes.blog/e/bleach-dublado-2/',
-      'https://meusanimes.blog/e/bleach/',
     ]);
+    expect(urls).toEqual([]);
   });
 });
 
@@ -364,12 +375,9 @@ describe('MeusanimesScrapeSource.resolveEpisodeUrls (fallback listagem)', () => 
       episodeNumber: 12,
       ua: UA,
     });
-    expect(urls[0]).toBe(
-      'https://meusanimes.blog/e/sentouin-hakenshimasu-episodio-12/',
-    );
-    expect(urls).toContain(
+    expect(urls).toEqual([
       'https://meusanimes.blog/e/sentouin-hakenshimasu-1-episodio-12/',
-    );
+    ]);
     expect(fetchMock).toHaveBeenCalledWith(
       'https://meusanimes.blog/a/sentouin-hakenshimasu/',
       expect.anything(),
@@ -379,17 +387,13 @@ describe('MeusanimesScrapeSource.resolveEpisodeUrls (fallback listagem)', () => 
 
   it('ordena por prefixo: temporada do slug local primeiro', async () => {
     mockFetchSafeRaw({
-      'https://meusanimes.blog/a/rick-e-morty/': listing([
-        'rick-e-morty-1-episodio-9/',
-        'rick-e-morty-2-episodio-9/',
-        'rick-e-morty-6-episodio-9/',
-        'rick-e-morty-3-episodio-9/',
-      ]),
+      'https://meusanimes.blog/a/rick-e-morty/': `<li><div class='numerando'>1 - 9</div><a href='https://meusanimes.blog/e/rick-e-morty-1-episodio-9/'>1</a></li><li><div class='numerando'>2 - 9</div><a href='https://meusanimes.blog/e/rick-e-morty-2-episodio-9/'>2</a></li><li><div class='numerando'>6 - 9</div><a href='https://meusanimes.blog/e/rick-e-morty-6-episodio-9/'>6</a></li><li><div class='numerando'>3 - 9</div><a href='https://meusanimes.blog/e/rick-e-morty-3-episodio-9/'>3</a></li>`,
     });
     const urls = await source.resolveEpisodeUrls({
       animeSlug: 'rick-e-morty-6',
       episodeNumber: 9,
       ua: UA,
+      season: 6,
     });
     expect(urls.filter((u) => u.includes('-episodio-9'))[0]).toBe(
       'https://meusanimes.blog/e/rick-e-morty-6-episodio-9/',
@@ -407,9 +411,9 @@ describe('MeusanimesScrapeSource.resolveEpisodeUrls (fallback listagem)', () => 
       episodeNumber: 5,
       ua: UA,
     });
-    expect(urls).toContain(
+    expect(urls).toEqual([
       'https://meusanimes.blog/e/bleach-dublado-episodio-5/',
-    );
+    ]);
     expect(fetchMock).toHaveBeenCalledTimes(2); // variante 1 (404) + variante 2 (hits)
   });
 
@@ -420,11 +424,25 @@ describe('MeusanimesScrapeSource.resolveEpisodeUrls (fallback listagem)', () => 
       episodeNumber: 3,
       ua: UA,
     });
-    expect(urls).toEqual([
-      'https://meusanimes.blog/e/x-legendado-episodio-3/',
-      'https://meusanimes.blog/e/x-episodio-3/',
-      'https://meusanimes.blog/e/x-legendado/',
-      'https://meusanimes.blog/e/x/',
-    ]);
+    expect(urls).toEqual([]);
+  });
+
+  it('rejeita catálogo que redireciona para outra obra', async () => {
+    mockedFetchSafeRaw.mockResolvedValueOnce({
+      response: {
+        ok: true,
+        status: 200,
+        url: 'https://meusanimes.blog/a/bleach-dublado/',
+        text: async () => listing(['bleach-dublado-episodio-5/']),
+      },
+      dispatcher: { close: jest.fn() } as never,
+    } as never);
+    await expect(
+      source.resolveEpisodeUrls({
+        animeSlug: 'bleach',
+        episodeNumber: 5,
+        ua: UA,
+      }),
+    ).resolves.toEqual([]);
   });
 });

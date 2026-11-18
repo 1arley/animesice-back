@@ -15,10 +15,11 @@
  *
  * Env: DATABASE_URL (a imagem de produção não tem dotenv — ele é devDep).
  */
-import { AudioType, PrismaClient } from '@prisma/client';
+import { AudioType, Prisma, PrismaClient } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
 import {
+  extractJobKey,
   JOB_TYPE,
   PRIORITY,
   priorityForSlug,
@@ -62,8 +63,71 @@ function createPrisma(): PrismaClient {
  * fonte e enfileira a extração; sem este job o anime fica sem episódios até
  * o próximo scanAll/GAP_CHECK do scheduler.
  */
+async function enqueueExtraction(
+  prisma: Prisma.TransactionClient,
+  animeId: string,
+  slug: string,
+  season: number,
+  episodeNumber: number,
+): Promise<void> {
+  const dedupeKey = extractJobKey(animeId, season, episodeNumber);
+  const payload = { animeId, slug, episodeNumber, season };
+  const priority = priorityForSlug(slug, PRIORITY.EXTRACT);
+  await prisma.$executeRaw(Prisma.sql`
+    INSERT INTO "WatchtowerJob"
+      ("id", "type", "dedupeKey", "payload", "priority", "maxAttempts",
+       "nextRunAt", "createdAt", "updatedAt")
+    VALUES
+      (gen_random_uuid()::text, ${JOB_TYPE.EXTRACT_EPISODE}, ${dedupeKey},
+       CAST(${JSON.stringify(payload)} AS jsonb), ${priority}, 5,
+       NOW(), NOW(), NOW())
+    ON CONFLICT ("type", "dedupeKey") DO UPDATE SET
+      "payload" = CASE
+        WHEN "WatchtowerJob"."status" = 'RUNNING'
+        THEN "WatchtowerJob"."payload"
+        ELSE EXCLUDED."payload"
+      END,
+      "priority" = CASE
+        WHEN "WatchtowerJob"."status" = 'RUNNING'
+        THEN "WatchtowerJob"."priority"
+        ELSE LEAST("WatchtowerJob"."priority", EXCLUDED."priority")
+      END,
+      "status" = CASE
+        WHEN "WatchtowerJob"."status" = 'RUNNING'
+        THEN "WatchtowerJob"."status"
+        ELSE 'PENDING'
+      END,
+      "attempts" = CASE
+        WHEN "WatchtowerJob"."status" = 'RUNNING'
+        THEN "WatchtowerJob"."attempts"
+        ELSE 0
+      END,
+      "nextRunAt" = CASE
+        WHEN "WatchtowerJob"."status" = 'RUNNING'
+        THEN "WatchtowerJob"."nextRunAt"
+        ELSE NOW()
+      END,
+      "lastError" = CASE
+        WHEN "WatchtowerJob"."status" = 'RUNNING'
+        THEN "WatchtowerJob"."lastError"
+        ELSE NULL
+      END,
+      "lockedBy" = CASE
+        WHEN "WatchtowerJob"."status" = 'RUNNING'
+        THEN "WatchtowerJob"."lockedBy"
+        ELSE NULL
+      END,
+      "lockedAt" = CASE
+        WHEN "WatchtowerJob"."status" = 'RUNNING'
+        THEN "WatchtowerJob"."lockedAt"
+        ELSE NULL
+      END,
+      "updatedAt" = NOW()
+  `);
+}
+
 async function enqueueScan(
-  prisma: PrismaClient,
+  prisma: Prisma.TransactionClient,
   animeId: string,
   slug: string,
 ): Promise<void> {
@@ -72,36 +136,61 @@ async function enqueueScan(
   // Slug em PRIORITY_SLUGS => scan entra com prioridade urgente, na frente do
   // backlog de SCAN_CATALOG que existe em produção.
   const priority = priorityForSlug(slug, PRIORITY.SCAN_CATALOG);
-  const existing = await prisma.watchtowerJob.findUnique({
-    where: { type_dedupeKey: { type: JOB_TYPE.SCAN_CATALOG, dedupeKey } },
-    select: { id: true, status: true },
-  });
-  if (!existing) {
-    await prisma.watchtowerJob.create({
-      data: {
-        type: JOB_TYPE.SCAN_CATALOG,
-        dedupeKey,
-        payload,
-        priority,
-      },
-    });
-    return;
-  }
-  // Job rodando pertence ao worker que o reivindicou — não mexe.
-  if (existing.status === 'RUNNING') return;
-  await prisma.watchtowerJob.update({
-    where: { id: existing.id },
-    data: {
-      status: 'PENDING',
-      attempts: 0,
-      nextRunAt: new Date(),
-      lastError: null,
-      lockedBy: null,
-      lockedAt: null,
-      payload,
-      priority,
-    },
-  });
+
+  // A atualização precisa ser atômica: um worker pode reivindicar o job entre
+  // um findUnique e um update. O CASE preserva payload/lock/status enquanto ele
+  // estiver RUNNING.
+  await prisma.$executeRaw(Prisma.sql`
+    INSERT INTO "WatchtowerJob"
+      ("id", "type", "dedupeKey", "payload", "priority", "maxAttempts",
+       "nextRunAt", "createdAt", "updatedAt")
+    VALUES
+      (gen_random_uuid()::text, ${JOB_TYPE.SCAN_CATALOG}, ${dedupeKey},
+       CAST(${JSON.stringify(payload)} AS jsonb), ${priority}, 8,
+       NOW(), NOW(), NOW())
+    ON CONFLICT ("type", "dedupeKey") DO UPDATE SET
+      "payload" = CASE
+        WHEN "WatchtowerJob"."status" = 'RUNNING'
+        THEN "WatchtowerJob"."payload"
+        ELSE EXCLUDED."payload"
+      END,
+      "priority" = CASE
+        WHEN "WatchtowerJob"."status" = 'RUNNING'
+        THEN "WatchtowerJob"."priority"
+        ELSE EXCLUDED."priority"
+      END,
+      "status" = CASE
+        WHEN "WatchtowerJob"."status" = 'RUNNING'
+        THEN "WatchtowerJob"."status"
+        ELSE 'PENDING'
+      END,
+      "attempts" = CASE
+        WHEN "WatchtowerJob"."status" = 'RUNNING'
+        THEN "WatchtowerJob"."attempts"
+        ELSE 0
+      END,
+      "nextRunAt" = CASE
+        WHEN "WatchtowerJob"."status" = 'RUNNING'
+        THEN "WatchtowerJob"."nextRunAt"
+        ELSE NOW()
+      END,
+      "lastError" = CASE
+        WHEN "WatchtowerJob"."status" = 'RUNNING'
+        THEN "WatchtowerJob"."lastError"
+        ELSE NULL
+      END,
+      "lockedBy" = CASE
+        WHEN "WatchtowerJob"."status" = 'RUNNING'
+        THEN "WatchtowerJob"."lockedBy"
+        ELSE NULL
+      END,
+      "lockedAt" = CASE
+        WHEN "WatchtowerJob"."status" = 'RUNNING'
+        THEN "WatchtowerJob"."lockedAt"
+        ELSE NULL
+      END,
+      "updatedAt" = NOW()
+  `);
 }
 
 async function main(): Promise<void> {
@@ -139,39 +228,56 @@ async function main(): Promise<void> {
       return;
     }
 
-    await prisma.anime.update({
-      where: { id: anime.id },
-      data: { audio: AUDIO },
-    });
-
-    for (const [sourceId, mapping] of Object.entries(MAPPINGS)) {
-      await prisma.animeSource.upsert({
-        where: {
-          animeId_sourceId: { animeId: anime.id, sourceId },
-        },
-        update: {
-          externalUrl: mapping.externalUrl,
-          externalKey: mapping.externalKey,
-          audio: AUDIO,
-          confidence: 1,
-          verifiedAt: new Date(),
-          lastError: null,
-        },
-        create: {
-          animeId: anime.id,
-          sourceId,
-          externalUrl: mapping.externalUrl,
-          externalKey: mapping.externalKey,
-          audio: AUDIO,
-          confidence: 1,
-          verifiedAt: new Date(),
-        },
+    const queued = await prisma.$transaction(async (tx) => {
+      await tx.anime.update({
+        where: { id: anime.id },
+        data: { audio: AUDIO },
       });
-    }
 
-    await enqueueScan(prisma, anime.id, SLUG);
+      for (const [sourceId, mapping] of Object.entries(MAPPINGS)) {
+        await tx.animeSource.upsert({
+          where: {
+            animeId_sourceId: { animeId: anime.id, sourceId },
+          },
+          update: {
+            externalUrl: mapping.externalUrl,
+            externalKey: mapping.externalKey,
+            audio: AUDIO,
+            confidence: 1,
+            verifiedAt: new Date(),
+            lastError: null,
+          },
+          create: {
+            animeId: anime.id,
+            sourceId,
+            externalUrl: mapping.externalUrl,
+            externalKey: mapping.externalKey,
+            audio: AUDIO,
+            confidence: 1,
+            verifiedAt: new Date(),
+          },
+        });
+      }
+
+      const existingEpisodes = await tx.episode.findMany({
+        where: { animeId: anime.id },
+        select: { season: true, number: true },
+      });
+      for (const episode of existingEpisodes) {
+        await enqueueExtraction(
+          tx,
+          anime.id,
+          SLUG,
+          episode.season,
+          episode.number,
+        );
+      }
+
+      await enqueueScan(tx, anime.id, SLUG);
+      return existingEpisodes.length;
+    });
     console.log(
-      `[SEED] ${SLUG} gravado (audio=${AUDIO}, 2 fontes, scan enfileirado)`,
+      `[SEED] ${SLUG} gravado (audio=${AUDIO}, 2 fontes, ${queued} extrações existentes, scan enfileirado)`,
     );
   } finally {
     await prisma.$disconnect();

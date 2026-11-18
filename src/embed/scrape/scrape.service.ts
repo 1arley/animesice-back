@@ -777,8 +777,37 @@ export class ScrapeService implements OnModuleInit {
     if (await this.sourceDisabled(sourceId)) return [];
     const source = this.sources.find((s) => s.id === sourceId);
     if (!source) return [];
+    let mapping: {
+      externalKey: string | null;
+      audio: AudioType;
+      anime: { audio: AudioType };
+    } | null;
+    try {
+      mapping = await this.prisma.animeSource.findFirst({
+        where: { sourceId, anime: { slug: animeSlug } },
+        select: {
+          externalKey: true,
+          audio: true,
+          anime: { select: { audio: true } },
+        },
+      });
+    } catch {
+      return [];
+    }
+    if (mapping && mapping.audio !== mapping.anime.audio) return [];
+    const localSeasonSuffix = animeSlug.match(/-(\d{1,2})$/);
+    if (
+      season === 1 &&
+      localSeasonSuffix &&
+      Number(localSeasonSuffix[1]) > 1 &&
+      (!mapping?.externalKey?.trim() ||
+        mapping.externalKey.trim() ===
+          animeSlug.slice(0, -localSeasonSuffix[0].length))
+    ) {
+      return [];
+    }
     const query: EpisodeUrlQuery = {
-      animeSlug,
+      animeSlug: mapping?.externalKey?.trim() || animeSlug,
       episodeNumber,
       season,
       ua: UA_DESKTOP,

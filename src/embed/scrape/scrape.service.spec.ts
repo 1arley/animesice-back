@@ -103,6 +103,9 @@ function makePrisma() {
     anime: {
       findUnique: jest.fn(async () => ({ id: 'a1' })),
     },
+    animeSource: {
+      findFirst: jest.fn(async () => null),
+    },
     episode: {
       findUnique: jest.fn(async () => ({
         id: 'e1',
@@ -1578,6 +1581,82 @@ describe('ScrapeService (cobertura de recuperação)', () => {
           season: 1,
         }),
       );
+    });
+
+    it('recusa temporada externa ambígua quando slug mapeado é base de anime sazonal', async () => {
+      const { svc, top } = buildWithNewSources();
+      const prisma = (svc as any).prisma;
+      prisma.animeSource.findFirst.mockResolvedValueOnce({
+        externalKey: 'ace-of-diamond',
+        audio: 'LEGENDADO',
+        anime: { audio: 'LEGENDADO' },
+      });
+      await expect(
+        svc.resolveCandidateUrlsForSource(
+          'topanimes',
+          'ace-of-diamond-3',
+          4,
+          1,
+        ),
+      ).resolves.toEqual([]);
+      expect(top.resolveEpisodeUrls).not.toHaveBeenCalled();
+
+      prisma.animeSource.findFirst.mockResolvedValueOnce({
+        externalKey: null,
+        audio: 'LEGENDADO',
+        anime: { audio: 'LEGENDADO' },
+      });
+      await expect(
+        svc.resolveCandidateUrlsForSource(
+          'topanimes',
+          'ace-of-diamond-3',
+          4,
+          1,
+        ),
+      ).resolves.toEqual([]);
+      expect(top.resolveEpisodeUrls).not.toHaveBeenCalled();
+    });
+
+    it('trata erro ao consultar mapeamento como inconclusivo', async () => {
+      const { svc, top } = buildWithNewSources();
+      (svc as any).prisma.animeSource.findFirst.mockRejectedValueOnce(
+        new Error('database unavailable'),
+      );
+      await expect(
+        svc.resolveCandidateUrlsForSource('topanimes', 'solo-leveling', 1),
+      ).resolves.toEqual([]);
+      expect(top.resolveEpisodeUrls).not.toHaveBeenCalled();
+    });
+
+    it('usa temporada externa somente quando recebida explicitamente', async () => {
+      const { svc, top } = buildWithNewSources();
+      (svc as any).prisma.animeSource.findFirst.mockResolvedValueOnce({
+        externalKey: 'ace-of-diamond',
+        audio: 'LEGENDADO',
+        anime: { audio: 'LEGENDADO' },
+      });
+      await svc.resolveCandidateUrlsForSource(
+        'topanimes',
+        'ace-of-diamond-3',
+        4,
+        3,
+      );
+      expect(top.resolveEpisodeUrls).toHaveBeenCalledWith(
+        expect.objectContaining({ animeSlug: 'ace-of-diamond', season: 3 }),
+      );
+    });
+
+    it('ignora mapeamento de áudio diferente do áudio cadastrado na obra', async () => {
+      const { svc, top } = buildWithNewSources();
+      (svc as any).prisma.animeSource.findFirst.mockResolvedValueOnce({
+        externalKey: 'solo-leveling-dublado',
+        audio: 'DUBLADO',
+        anime: { audio: 'LEGENDADO' },
+      });
+      await expect(
+        svc.resolveCandidateUrlsForSource('topanimes', 'solo-leveling', 1),
+      ).resolves.toEqual([]);
+      expect(top.resolveEpisodeUrls).not.toHaveBeenCalled();
     });
 
     it('scrapeEpisodeFromRankedSources faz failover para animesorion quando topanimes não tem URL', async () => {

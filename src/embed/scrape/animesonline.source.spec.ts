@@ -221,37 +221,48 @@ describe('AnimesonlineScrapeSource', () => {
       '<a href="https://animesonlinecc.to/episodio/witch-watch-episodio-10/">ep10</a>',
     ].join('');
 
-    it('resolve o episódio pelo slug do catálogo removendo sufixo dublado', async () => {
+    it('não troca automaticamente slug dublado pelo legendado', async () => {
       mockedFetchSafeRaw
         .mockResolvedValueOnce({
-          response: { ok: false, status: 404, text: async () => '' },
+          response: {
+            url: 'https://animesonlinecc.to/anime/witch-watch-dublado/',
+            ok: false,
+            status: 404,
+            text: async () => '',
+          },
           dispatcher: { close: jest.fn() },
         } as never)
         .mockResolvedValueOnce({
-          response: { ok: true, status: 200, text: async () => animePage },
+          response: {
+            url: 'https://animesonline.cloud/anime/witch-watch-dublado/',
+            ok: true,
+            status: 200,
+            text: async () => animePage,
+          },
           dispatcher: { close: jest.fn() },
         } as never);
 
       await expect(
         source.resolveEpisodeUrl('witch-watch-dublado', 10, UA),
-      ).resolves.toBe(
-        'https://animesonlinecc.to/episodio/witch-watch-episodio-10/',
-      );
+      ).resolves.toBeNull();
       expect(mockedFetchSafeRaw).toHaveBeenCalledWith(
         'https://animesonlinecc.to/anime/witch-watch-dublado/',
         expect.anything(),
         expect.anything(),
       );
-      expect(mockedFetchSafeRaw).toHaveBeenCalledWith(
+      expect(mockedFetchSafeRaw.mock.calls.map(([url]) => url)).not.toContain(
         'https://animesonlinecc.to/anime/witch-watch/',
-        expect.anything(),
-        expect.anything(),
       );
     });
 
     it('usa o slug como está quando ele já existe na fonte', async () => {
       mockedFetchSafeRaw.mockResolvedValueOnce({
-        response: { ok: true, status: 200, text: async () => animePage },
+        response: {
+          url: 'https://animesonlinecc.to/anime/witch-watch/',
+          ok: true,
+          status: 200,
+          text: async () => animePage,
+        },
         dispatcher: { close: jest.fn() },
       } as never);
 
@@ -263,11 +274,70 @@ describe('AnimesonlineScrapeSource', () => {
       expect(mockedFetchSafeRaw).toHaveBeenCalledTimes(1);
     });
 
-    it('devolve null quando o episódio não existe na fonte', async () => {
+    it('seleciona temporada e episódio pelo numerando do catálogo', async () => {
+      const catalog = `<ul><li><div class='numerando'>3 - 1</div><a href='https://animesonlinecc.to/episodio/provider-show-episodio-1/'>S3 E1</a></li></ul>`;
       mockedFetchSafeRaw.mockResolvedValue({
-        response: { ok: true, status: 200, text: async () => animePage },
+        response: {
+          url: 'https://animesonlinecc.to/anime/provider-show/',
+          ok: true,
+          status: 200,
+          text: async () => catalog,
+        },
         dispatcher: { close: jest.fn() },
       } as never);
+      await expect(
+        source.resolveEpisodeUrl('provider-show', 1, UA, 3),
+      ).resolves.toBe(
+        'https://animesonlinecc.to/episodio/provider-show-episodio-1/',
+      );
+      await expect(
+        source.resolveEpisodeUrl('provider-show', 1, UA, 1),
+      ).resolves.toBeNull();
+    });
+
+    it('rejeita URL final de redirect para catálogo de outra obra', async () => {
+      mockedFetchSafeRaw.mockResolvedValueOnce({
+        response: {
+          ok: true,
+          status: 200,
+          url: 'https://animesonlinecc.to/anime/outra-obra/',
+          text: async () => animePage,
+        },
+        dispatcher: { close: jest.fn() } as never,
+      } as never);
+      await expect(
+        source.resolveEpisodeUrl('witch-watch', 2, UA),
+      ).resolves.toBeNull();
+    });
+
+    it('rejeita URL final de redirect para outra versão de áudio', async () => {
+      mockedFetchSafeRaw.mockResolvedValueOnce({
+        response: {
+          url: 'https://animesonlinecc.to/anime/witch-watch-dublado/',
+          ok: true,
+          status: 200,
+          text: async () => animePage,
+        },
+        dispatcher: { close: jest.fn() } as never,
+      } as never);
+      await expect(
+        source.resolveEpisodeUrl('witch-watch', 2, UA),
+      ).resolves.toBeNull();
+    });
+
+    it('devolve null quando o episódio não existe na fonte', async () => {
+      mockedFetchSafeRaw.mockImplementation(
+        async (url: string) =>
+          ({
+            response: {
+              url,
+              ok: true,
+              status: 200,
+              text: async () => animePage,
+            },
+            dispatcher: { close: jest.fn() } as never,
+          }) as never,
+      );
 
       await expect(
         source.resolveEpisodeUrl('witch-watch', 99, UA),
@@ -281,8 +351,8 @@ describe('AnimesonlineScrapeSource', () => {
       ].join('');
       const kaguyaPage =
         '<a href="https://animesonlinecc.to/episodio/kaguya-sama-wa-kokurasetai-tensai-tachi-no-renai-zunousen-episodio-1/">ep1</a>';
-      const okPage = (html: string) => ({
-        response: { ok: true, status: 200, text: async () => html },
+      const okPage = (html: string, url = '') => ({
+        response: { url, ok: true, status: 200, text: async () => html },
         dispatcher: { close: jest.fn() },
       });
       const notFound = {
@@ -297,7 +367,12 @@ describe('AnimesonlineScrapeSource', () => {
         // busca por "kaguya sama"
         .mockResolvedValueOnce(okPage(searchHtml) as never)
         // página do primeiro candidato tem o episódio 1
-        .mockResolvedValueOnce(okPage(kaguyaPage) as never);
+        .mockResolvedValueOnce(
+          okPage(
+            kaguyaPage,
+            'https://animesonlinecc.to/anime/kaguya-sama-wa-kokurasetai-tensai-tachi-no-renai-zunousen/',
+          ) as never,
+        );
 
       await expect(
         source.resolveEpisodeUrl('kaguya-sama-love-is-war', 1, UA),
@@ -314,8 +389,8 @@ describe('AnimesonlineScrapeSource', () => {
     it('pula candidato da busca que não tem o episódio', async () => {
       const searchHtml =
         '<a href="https://animesonlinecc.to/anime/shining-hearts-shiawase-no-pan">x</a>';
-      const okPage = (html: string) => ({
-        response: { ok: true, status: 200, text: async () => html },
+      const okPage = (html: string, url = '') => ({
+        response: { url, ok: true, status: 200, text: async () => html },
         dispatcher: { close: jest.fn() },
       });
 
@@ -331,7 +406,10 @@ describe('AnimesonlineScrapeSource', () => {
         .mockResolvedValueOnce(okPage(searchHtml) as never)
         // primeiro candidato sem o episódio 3
         .mockResolvedValueOnce(
-          okPage('<a href="/episodio/x-episodio-1/">1</a>') as never,
+          okPage(
+            '<a href="/episodio/x-episodio-1/">1</a>',
+            'https://animesonlinecc.to/anime/shining-hearts-shiawase-no-pan/',
+          ) as never,
         );
 
       await expect(
@@ -350,10 +428,6 @@ describe('AnimesonlineScrapeSource', () => {
         episodeNumber: 3,
       });
       expect(urls).toEqual([
-        'https://animesonlinecc.to/episodio/witch-watch-dublado-episodio-3/',
-        'https://animesonlinecc.to/episodio/witch-watch-episodio-3/',
-        'https://animesonline.cloud/episodio/witch-watch-dublado-episodio-3/',
-        'https://animesonline.cloud/episodio/witch-watch-episodio-3/',
         'https://animesonlinecc.to/episodio/witch-watch-episodio-extra-3/',
       ]);
 
@@ -365,10 +439,7 @@ describe('AnimesonlineScrapeSource', () => {
         episodeNumber: 1,
         ua: UA,
       });
-      expect(fallbackOnly).toEqual([
-        'https://animesonlinecc.to/episodio/witch-watch-episodio-1/',
-        'https://animesonline.cloud/episodio/witch-watch-episodio-1/',
-      ]);
+      expect(fallbackOnly).toEqual([]);
     });
 
     it('não duplica URL resolvida que já está nos templates', async () => {
@@ -384,10 +455,7 @@ describe('AnimesonlineScrapeSource', () => {
           episodeNumber: 3,
         }),
       ).resolves.toEqual([
-        'https://animesonlinecc.to/episodio/witch-watch-dublado-episodio-3/',
         'https://animesonlinecc.to/episodio/witch-watch-episodio-3/',
-        'https://animesonline.cloud/episodio/witch-watch-dublado-episodio-3/',
-        'https://animesonline.cloud/episodio/witch-watch-episodio-3/',
       ]);
     });
   });

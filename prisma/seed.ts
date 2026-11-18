@@ -346,6 +346,11 @@ const ANIMEFIRE_BASE = 'https://animefire.io';
 const UA_DESKTOP = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
 async function main() {
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error(
+      'prisma/seed.ts creates demo users and placeholder episodes; use production backfill scripts instead',
+    );
+  }
   console.log('Buscando catálogo do MyAnimeList...');
   const target = parseInt(
     process.env.SEED_ANIME_COUNT || '12',
