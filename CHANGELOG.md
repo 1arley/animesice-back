@@ -1,3 +1,10 @@
+# [1.69.0](https://github.com/1arley/animesice-back/compare/v1.68.0...v1.69.0) (2026-11-19)
+
+
+### Features
+
+* **gacha:** add market age exemption for young verified accounts ([80d92a5](https://github.com/1arley/animesice-back/commit/80d92a565a8564faf4e4d3c94d6a94ab79b7de42))
+
 # [1.68.0](https://github.com/1arley/animesice-back/compare/v1.67.1...v1.68.0) (2026-11-19)
 
 
