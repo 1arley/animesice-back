@@ -1,3 +1,10 @@
+# [1.68.0](https://github.com/1arley/animesice-back/compare/v1.67.1...v1.68.0) (2026-11-19)
+
+
+### Features
+
+* add market_account_age_days config for admin control ([e3603cc](https://github.com/1arley/animesice-back/commit/e3603ccade3f0f22a376c3323f61997dfd6c517a))
+
 ## [1.67.1](https://github.com/1arley/animesice-back/compare/v1.67.0...v1.67.1) (2026-11-18)
 
 
