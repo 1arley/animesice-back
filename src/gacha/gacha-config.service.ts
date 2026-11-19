@@ -8,6 +8,45 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '@/prisma/prisma.service';
 import { assertItemShopSources } from '@/gacha/economy/economy.config';
 
+function hasExplicitTimezoneIsoTimestamp(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/i.test(
+      value,
+    ) &&
+    !Number.isNaN(Date.parse(value))
+  );
+}
+
+export function activeGachaEventEndsAt(
+  value: Prisma.JsonValue | null | undefined,
+  now = Date.now(),
+): string | null {
+  if (
+    value === null ||
+    value === undefined ||
+    Array.isArray(value) ||
+    typeof value !== 'object'
+  )
+    return null;
+  const endsAt = value.endsAt;
+  return hasExplicitTimezoneIsoTimestamp(endsAt) && Date.parse(endsAt) > now
+    ? endsAt
+    : null;
+}
+
+function assertMarketAgeExemption(value: Prisma.InputJsonValue): void {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new BadRequestException('market_age_exemption deve ser um objeto.');
+  }
+  const endsAt = (value as Record<string, unknown>).endsAt;
+  if (!hasExplicitTimezoneIsoTimestamp(endsAt)) {
+    throw new BadRequestException(
+      'market_age_exemption.endsAt deve ser data ISO 8601 com fuso horário explícito.',
+    );
+  }
+}
+
 export type GachaTier =
   'COMUM' | 'INCOMUM' | 'RARA' | 'EPICA' | 'LENDARIA' | 'MITICA' | 'GALACTICA';
 
@@ -94,6 +133,7 @@ export class GachaConfigService implements OnModuleInit {
       };
       assertItemShopSources(candidate);
       if (key === 'claim_event') assertClaimEvent(value);
+      if (key === 'market_age_exemption') assertMarketAgeExemption(value);
 
       const row = await tx.gachaConfig.upsert({
         where: { key },

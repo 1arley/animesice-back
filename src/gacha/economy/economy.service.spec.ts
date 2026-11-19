@@ -111,6 +111,17 @@ describe('EconomyService safeguards', () => {
 
   afterEach(() => jest.restoreAllMocks());
 
+  function mockMarketAgeExemption(endsAt: string) {
+    db.gachaConfig.findUnique.mockImplementation(
+      ({ where }: { where: { key: string } }) =>
+        Promise.resolve(
+          where.key === 'market_age_exemption'
+            ? { value: { endsAt } }
+            : { value: 100 },
+        ),
+    );
+  }
+
   it('returns the actual card rarity with a box reward', async () => {
     db.gachaRetention.upsert.mockResolvedValue({ loyaltyRarePlusReady: true });
     db.card.findMany.mockResolvedValue([{ id: 'card-1', name: 'Carta' }]);
@@ -376,6 +387,66 @@ describe('EconomyService safeguards', () => {
       createdAt: new Date(),
       role: 'USER',
     });
+    await expect(
+      service.createBuyOrder('u1', {
+        itemType: 'CARD',
+        itemId: 'card',
+        price: 10,
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('allows young verified accounts while the market age exemption is active', async () => {
+    const youngUser = {
+      isVerified: true,
+      createdAt: new Date(),
+      role: 'USER',
+      crystalBalance: 10000,
+      gachaMarketBlockedAt: null,
+    };
+    db.user.findUniqueOrThrow.mockResolvedValue(youngUser);
+    mockMarketAgeExemption(new Date(Date.now() + 60_000).toISOString());
+    const marketGuard = service as unknown as {
+      assertMarketEligible: (
+        tx: typeof prismaMocks.root,
+        userId: string,
+      ) => Promise<void>;
+    };
+
+    await expect(
+      marketGuard.assertMarketEligible(prismaMocks.root, 'u1'),
+    ).resolves.toBeUndefined();
+  });
+
+  it('rejects young accounts after the market age exemption expires', async () => {
+    db.user.findUniqueOrThrow.mockResolvedValue({
+      isVerified: true,
+      createdAt: new Date(),
+      role: 'USER',
+      crystalBalance: 10000,
+      gachaMarketBlockedAt: null,
+    });
+    mockMarketAgeExemption('2020-01-01T00:00:00.000Z');
+
+    await expect(
+      service.createBuyOrder('u1', {
+        itemType: 'CARD',
+        itemId: 'card',
+        price: 10,
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('still requires email verification during the market age exemption', async () => {
+    db.user.findUniqueOrThrow.mockResolvedValue({
+      isVerified: false,
+      createdAt: new Date(),
+      role: 'USER',
+      crystalBalance: 10000,
+      gachaMarketBlockedAt: null,
+    });
+    mockMarketAgeExemption(new Date(Date.now() + 60_000).toISOString());
+
     await expect(
       service.createBuyOrder('u1', {
         itemType: 'CARD',

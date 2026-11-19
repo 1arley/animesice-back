@@ -19,7 +19,10 @@ import { Cron } from '@nestjs/schedule';
 import { releaseTradesForCard } from '@/gacha/trade-escrow';
 import { PrismaService } from '@/prisma/prisma.service';
 import { CrystalAccountingService } from '@/gacha/crystal-accounting.service';
-import { GachaConfigService } from '@/gacha/gacha-config.service';
+import {
+  activeGachaEventEndsAt,
+  GachaConfigService,
+} from '@/gacha/gacha-config.service';
 import {
   cardValue,
   conditionLabel,
@@ -4336,6 +4339,14 @@ export class EconomyService {
     };
   }
 
+  async marketAgeExemptionStatus() {
+    const config = await this.prisma.gachaConfig.findUnique({
+      where: { key: 'market_age_exemption' },
+      select: { value: true },
+    });
+    return { endsAt: activeGachaEventEndsAt(config?.value) };
+  }
+
   private async assertMarketEligible(tx: Tx, userId: string) {
     await this.assertEconomyEnabled(tx, userId);
     const user = await tx.user.findUniqueOrThrow({
@@ -4344,7 +4355,14 @@ export class EconomyService {
     });
     if (!user.isVerified)
       throw new ForbiddenException('Verifique o e-mail para usar o mercado.');
-    if (user.createdAt.getTime() > Date.now() - 7 * 86_400_000) {
+    const exemption = await tx.gachaConfig.findUnique({
+      where: { key: 'market_age_exemption' },
+      select: { value: true },
+    });
+    if (
+      !activeGachaEventEndsAt(exemption?.value) &&
+      user.createdAt.getTime() > Date.now() - 7 * 86_400_000
+    ) {
       throw new ForbiddenException('Conta precisa ter pelo menos sete dias.');
     }
   }

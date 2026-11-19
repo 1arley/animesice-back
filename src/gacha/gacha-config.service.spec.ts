@@ -3,6 +3,7 @@ import { BadRequestException, ConflictException } from '@nestjs/common';
 import { PrismaService } from '@/prisma/prisma.service';
 import { ECONOMY_DEFAULTS } from './economy/economy.config';
 import {
+  activeGachaEventEndsAt,
   assertClaimEvent,
   GachaConfigService,
 } from '@/gacha/gacha-config.service';
@@ -137,6 +138,30 @@ describe('GachaConfigService', () => {
     ).rejects.toBeInstanceOf(ConflictException);
     expect(db.gachaConfig.upsert).not.toHaveBeenCalled();
   });
+
+  it('rejects market age exemption timestamps without an explicit timezone', async () => {
+    await expect(
+      service.update(
+        'market_age_exemption',
+        { endsAt: '2026-11-20T03:00:00' },
+        'admin',
+        'invalid exemption',
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(db.gachaConfig.upsert).not.toHaveBeenCalled();
+  });
+
+  it('accepts a timezone-qualified market age exemption timestamp', async () => {
+    const value = { endsAt: '2026-11-20T03:00:00.000Z' };
+    await service.update('market_age_exemption', value, 'admin', 'exemption');
+    expect(db.gachaConfig.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { key: 'market_age_exemption' },
+        create: expect.objectContaining({ value }),
+        update: { value },
+      }),
+    );
+  });
 });
 
 describe('GachaConfigService — claim_event', () => {
@@ -249,5 +274,23 @@ describe('GachaConfigService — claim_event', () => {
         /spinsPerHour/,
       );
     });
+  });
+});
+
+describe('activeGachaEventEndsAt', () => {
+  it('accepts future end times and rejects expired or invalid values', () => {
+    expect(
+      activeGachaEventEndsAt({ endsAt: '2026-11-17T12:00:00.000Z' }, 1000),
+    ).toBe('2026-11-17T12:00:00.000Z');
+    expect(
+      activeGachaEventEndsAt(
+        { endsAt: '2026-11-17T12:00:00.000Z' },
+        Date.parse('2026-11-17T12:00:00.000Z'),
+      ),
+    ).toBeNull();
+    expect(activeGachaEventEndsAt({ endsAt: 'invalid' })).toBeNull();
+    expect(
+      activeGachaEventEndsAt({ endsAt: '2026-11-20T03:00:00' }),
+    ).toBeNull();
   });
 });
