@@ -1,3 +1,17 @@
+# [1.70.0](https://github.com/1arley/animesice-back/compare/v1.69.0...v1.70.0) (2026-11-22)
+
+
+### Bug Fixes
+
+* **deps:** override effect to 3.22.5 (ReDoS vulnerability) ([46c7f97](https://github.com/1arley/animesice-back/commit/46c7f971b4c61fba45b9ddc7a0fc1989d6a22463))
+* **gacha:** skip skin reward when eligible skin pool is empty ([75ae0ab](https://github.com/1arley/animesice-back/commit/75ae0ab0a3b1396b719b6398ddbd3e9bae5eafbc))
+* **gacha:** skip skin reward when no eligible skin for rolled quality ([63992c4](https://github.com/1arley/animesice-back/commit/63992c4e8960e7c09ad1de71e8506bf42a534c3b))
+
+
+### Features
+
+* **watchtower:** add airingOnly parameter to scanAll ([d827c53](https://github.com/1arley/animesice-back/commit/d827c53ee76a66574dba10b7b853ac42f72f64a2))
+
 # [1.69.0](https://github.com/1arley/animesice-back/compare/v1.68.0...v1.69.0) (2026-11-19)
 
 
