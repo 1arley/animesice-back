@@ -1765,9 +1765,19 @@ export class EconomyService {
         });
         const loyaltyGuaranteed = retention.loyaltyRarePlusReady;
         const { version, config } = await this.currentVersion(tx);
+        const categoryWeights = { ...config.box_category_weights[tier] };
+        const eligibleSkins = await tx.gachaSkin.findMany({
+          where: {
+            active: true,
+            blocked: false,
+            id: { notIn: await this.inactiveEventItems(tx, 'skinIds') },
+          },
+          select: { id: true },
+        });
+        if (!eligibleSkins.length) categoryWeights.SKIN = 0;
         const category = loyaltyGuaranteed
           ? 'CARD'
-          : weightedPick(config.box_category_weights[tier]);
+          : weightedPick(categoryWeights);
         const quality =
           loyaltyGuaranteed && tier !== 'PREMIUM'
             ? weightedPick({ RARE: 55, EPIC: 35, LEGENDARY: 10 })

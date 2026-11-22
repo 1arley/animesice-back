@@ -96,6 +96,9 @@ describe('EconomyService safeguards', () => {
     db.gachaItemListing.findMany.mockResolvedValue([]);
     db.gachaTrade.findMany.mockResolvedValue([]);
     db.gachaInventory.updateMany.mockResolvedValue({ count: 1 });
+    db.gachaSkin.findMany.mockResolvedValue([
+      { id: 'skin-1', name: 'Skin', imageUrl: '/skin.png', rarity: 'COMMON' },
+    ]);
     db.gachaRetention.upsert.mockResolvedValue({ loyaltyRarePlusReady: false });
     db.gachaRetention.update.mockResolvedValue({ loyaltyDays: 1 });
     db.gachaOpeningDay.createMany.mockResolvedValue({ count: 1 });
@@ -328,6 +331,19 @@ describe('EconomyService safeguards', () => {
     });
     expect(result.opening).toMatchObject({ category: 'SKIN', amount: 2 });
     expect(db.userGachaSkin.create).toHaveBeenCalledTimes(2);
+  });
+
+  it('skips the skin reward when the eligible skin pool is empty', async () => {
+    db.gachaSkin.findMany.mockResolvedValue([]);
+    db.card.findMany.mockResolvedValue([{ id: 'card-1', name: 'Carta' }]);
+    db.card.update.mockResolvedValue({ editionCounter: 1, rarity: 'INCOMUM' });
+    db.userCard.create.mockResolvedValue({ id: 'copy-1' });
+    jest.spyOn(Math, 'random').mockReturnValue(0.7);
+
+    const result = await service.openBox('u1', 'RARE');
+
+    expect((result.reward as { category: string }).category).not.toBe('SKIN');
+    expect(db.gachaOpening.create).toHaveBeenCalledTimes(1);
   });
 
   it('rejects invalid economic snapshots rather than producing invalid rewards', () => {
