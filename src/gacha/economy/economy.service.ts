@@ -1772,16 +1772,39 @@ export class EconomyService {
             blocked: false,
             id: { notIn: await this.inactiveEventItems(tx, 'skinIds') },
           },
-          select: { id: true },
+          select: { id: true, rarity: true },
         });
-        if (!eligibleSkins.length) categoryWeights.SKIN = 0;
+        const availableSkinRarities = new Set(
+          eligibleSkins.map((skin) => skin.rarity),
+        );
+        const skinQualityWeights = Object.fromEntries(
+          Object.entries(config.box_quality_weights[tier]).map(
+            ([quality, weight]) => [
+              quality,
+              availableSkinRarities.has(
+                quality === 'BASIC' ? 'COMMON' : quality,
+              )
+                ? weight
+                : 0,
+            ],
+          ),
+        ) as Record<PrizeQuality, number>;
+        const skinHasQuality = Object.values(skinQualityWeights).some(
+          (weight) => weight > 0,
+        );
+        if (!eligibleSkins.length || !skinHasQuality) categoryWeights.SKIN = 0;
         const category = loyaltyGuaranteed
           ? 'CARD'
           : weightedPick(categoryWeights);
         const quality =
           loyaltyGuaranteed && tier !== 'PREMIUM'
             ? weightedPick({ RARE: 55, EPIC: 35, LEGENDARY: 10 })
-            : prizeQuality(tier, category, config.box_quality_weights);
+            : category === 'SKIN'
+              ? prizeQuality(tier, 'SKIN', {
+                  ...config.box_quality_weights,
+                  [tier]: skinQualityWeights,
+                })
+              : prizeQuality(tier, category, config.box_quality_weights);
         const reward = await this.grantPrize(
           tx,
           userId,
