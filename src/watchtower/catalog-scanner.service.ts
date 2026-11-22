@@ -577,10 +577,15 @@ export class CatalogScanner implements OnModuleInit {
    * descobrir novos posts sem URL derivável. Nos demais, episodeCount evita
    * revarrer catálogos completos e a dedupeKey mantém os enqueues idempotentes.
    */
-  async scanAll(force = false): Promise<{ scanned: number; enqueued: number }> {
+  async scanAll(
+    force = false,
+    airingOnly = false,
+  ): Promise<{ scanned: number; enqueued: number }> {
     const animes = await this.prisma.anime.findMany({
       where: {
-        status: { in: ['FINALIZADO', 'LANCAMENTO'] },
+        status: {
+          in: airingOnly ? ['LANCAMENTO'] : ['FINALIZADO', 'LANCAMENTO'],
+        },
       },
       select: {
         id: true,

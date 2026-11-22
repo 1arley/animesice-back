@@ -206,6 +206,12 @@ export class WatchtowerScheduler implements OnModuleInit {
       payload: {},
       priority: PRIORITY.GAP_CHECK,
     });
+    await this.catalog.scanAll(false, true).catch((e) => {
+      console.error(
+        '[WATCHTOWER] scan de animes em lançamento falhou:',
+        e instanceof Error ? e.message : String(e),
+      );
+    });
   }
 
   @Cron('0 3 * * *')
