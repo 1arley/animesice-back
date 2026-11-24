@@ -1202,8 +1202,21 @@ describe('ScrapeService (cobertura avançada)', () => {
     expect(svc.detectSourceId('https://unknown-host.test/ep/1')).toBeNull();
   });
 
+  it.each([
+    'https://meusanimes.io/e/foo?token=signed-query-token',
+    'https://meusanimes.io/e/signed-path-token/foo',
+  ])('omite credenciais da URL dos logs do scraper: %s', async (url) => {
+    const { svc } = build();
+    const log = jest.spyOn(console, 'error').mockImplementation();
+
+    await svc.scrapeEpisodeVideo(url, undefined, false);
+
+    expect(log.mock.calls.flat().join(' ')).not.toContain('signed-');
+    log.mockRestore();
+  });
+
   it('scrapeEpisodeFromRankedSources tenta candidatos ranqueados até achar vídeo válido', async () => {
-    const { svc, af } = build();
+    const { svc, af, ta } = build();
     af.resolveEpisodeUrls!.mockResolvedValueOnce([
       'https://meusanimes.blog/e/foo-episodio-1/',
       'https://meusanimes.blog/e/foo/',
@@ -1242,6 +1255,7 @@ describe('ScrapeService (cobertura avançada)', () => {
       false,
       undefined,
     );
+    expect(ta.resolveEpisodeUrls).not.toHaveBeenCalled();
   });
 
   it('scrapeEpisodeFromRankedSources retorna null quando todos os candidatos falham', async () => {

@@ -49,7 +49,15 @@ import { playwrightProxy } from '@/common/outbound-proxy';
 import type { AudioType } from '@prisma/client';
 /** Remove quebras de linha/separadores Unicode de dados externos antes de logar. */
 function sanitizeLog(v: string): string {
-  return v.replace(/[\r\n\u2028\u2029]/g, ' ');
+  return v
+    .replace(/[\r\n\u2028\u2029]/g, ' ')
+    .replace(/https?:\/\/[^\s"'<>]+/gi, (url) => {
+      try {
+        return new URL(url).origin;
+      } catch {
+        return '[url]';
+      }
+    });
 }
 
 /** Debug logger (survives NestJS log suppression). */
@@ -843,20 +851,22 @@ export class ScrapeService implements OnModuleInit {
     pageUrl: string;
     playerTokens?: string[];
   } | null> {
-    const groups = await this.resolveHealthRankedCandidates(
-      animeSlug,
-      episodeNumber,
-      season,
-    );
-    for (const group of groups) {
-      for (const pageUrl of group.urls) {
+    const ordered = await this.healthOrderedSources();
+    for (const source of ordered) {
+      const urls = await this.resolveCandidateUrlsForSource(
+        source.id,
+        animeSlug,
+        episodeNumber,
+        season,
+      );
+      for (const pageUrl of urls) {
         dbg(
-          `[SCRAPE] try ranked ${group.sourceId} ${animeSlug}/${episodeNumber} -> ${pageUrl}`,
+          `[SCRAPE] try ranked ${source.id} ${animeSlug}/${episodeNumber} -> ${pageUrl}`,
         );
         try {
           const result = await this.scrapeEpisodeVideo(
             pageUrl,
-            group.sourceId,
+            source.id,
             false,
             false,
             audio,
@@ -865,7 +875,7 @@ export class ScrapeService implements OnModuleInit {
             if (video && (await probeLive(video))) {
               return {
                 videoUrl: video,
-                sourceId: group.sourceId,
+                sourceId: source.id,
                 pageUrl,
                 playerTokens: result.playerTokens,
               };
@@ -873,7 +883,7 @@ export class ScrapeService implements OnModuleInit {
           }
         } catch (err) {
           dbg(
-            `[SCRAPE] ranked candidate failed ${group.sourceId} ${pageUrl}: ${err instanceof Error ? err.message : String(err)}`,
+            `[SCRAPE] ranked candidate failed ${source.id} ${pageUrl}: ${err instanceof Error ? err.message : String(err)}`,
           );
         }
       }
