@@ -1,3 +1,10 @@
+## [1.70.1](https://github.com/1arley/animesice-back/compare/v1.70.0...v1.70.1) (2026-11-25)
+
+
+### Bug Fixes
+
+* **watchtower:** prevent catalog scan starvation ([ef5aa5b](https://github.com/1arley/animesice-back/commit/ef5aa5b614efbe0089766def0b3d9aad7d28da54))
+
 # [1.70.0](https://github.com/1arley/animesice-back/compare/v1.69.0...v1.70.0) (2026-11-22)
 
 
