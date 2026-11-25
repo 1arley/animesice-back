@@ -1,3 +1,10 @@
+# [1.72.0](https://github.com/1arley/animesice-back/compare/v1.71.0...v1.72.0) (2026-11-25)
+
+
+### Features
+
+* **gacha:** make spin shard bonus chance configurable ([2cd2ea2](https://github.com/1arley/animesice-back/commit/2cd2ea221db97fa371d6ddbcc9c53eee9a5b7fe7))
+
 # [1.71.0](https://github.com/1arley/animesice-back/compare/v1.70.1...v1.71.0) (2026-11-25)
 
 
