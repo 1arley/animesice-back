@@ -201,7 +201,12 @@ export class AdminService {
     let coverImage = dto.coverImage?.trim();
 
     // Auto-fetch title/cover from source APIs when possible.
-    if (isMAL && externalId !== null && !title && process.env.MAL_CLIENT_ID) {
+    if (
+      isMAL &&
+      externalId !== null &&
+      (!title || !coverImage) &&
+      process.env.MAL_CLIENT_ID
+    ) {
       const mediaType =
         malMatch[1]?.toLowerCase() === 'anime' ? 'anime' : 'manga';
       const apiUrl = new URL(
@@ -209,19 +214,24 @@ export class AdminService {
         'https://api.myanimelist.net',
       );
       apiUrl.searchParams.set('fields', 'title,main_picture');
-      const response = await fetch(apiUrl, {
-        headers: { 'X-MAL-CLIENT-ID': process.env.MAL_CLIENT_ID },
-      });
-      if (response.ok) {
-        const payload = (await response.json()) as {
-          title?: string;
-          main_picture?: { large?: string; medium?: string };
-        };
-        title = payload.title;
-        coverImage =
-          coverImage ||
-          payload.main_picture?.large ||
-          payload.main_picture?.medium;
+      try {
+        const response = await fetch(apiUrl, {
+          headers: { 'X-MAL-CLIENT-ID': process.env.MAL_CLIENT_ID },
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (response.ok) {
+          const payload = (await response.json()) as {
+            title?: string;
+            main_picture?: { large?: string; medium?: string };
+          };
+          title = title || payload.title;
+          coverImage =
+            coverImage ||
+            payload.main_picture?.large ||
+            payload.main_picture?.medium;
+        }
+      } catch (error) {
+        if (!title) throw error;
       }
     }
 

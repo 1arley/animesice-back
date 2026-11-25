@@ -76,6 +76,69 @@ describe('AdminService', () => {
         anilistId: 123,
       });
     });
+
+    it('busca capa do MAL preservando título informado', async () => {
+      const originalClientId = process.env.MAL_CLIENT_ID;
+      process.env.MAL_CLIENT_ID = 'test-client';
+      prisma.anime.findFirst.mockResolvedValue(null);
+      prisma.anime.create.mockImplementation(({ data }: { data: object }) =>
+        Promise.resolve(data),
+      );
+      const timeoutSpy = jest.spyOn(AbortSignal, 'timeout');
+      const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          title: 'Título do MAL',
+          main_picture: { large: 'https://img.test/mal-cover.jpg' },
+        }),
+      } as Response);
+
+      try {
+        const result = await service.createExternalAnime({
+          url: 'https://myanimelist.net/anime/123/test',
+          title: 'Título informado',
+        });
+
+        expect(result).toMatchObject({
+          title: 'Título informado',
+          coverImage: 'https://img.test/mal-cover.jpg',
+        });
+        expect(timeoutSpy).toHaveBeenCalledWith(10_000);
+      } finally {
+        fetchSpy.mockRestore();
+        timeoutSpy.mockRestore();
+        if (originalClientId === undefined) delete process.env.MAL_CLIENT_ID;
+        else process.env.MAL_CLIENT_ID = originalClientId;
+      }
+    });
+
+    it('cria com título informado se a busca opcional de capa no MAL falhar', async () => {
+      const originalClientId = process.env.MAL_CLIENT_ID;
+      process.env.MAL_CLIENT_ID = 'test-client';
+      prisma.anime.findFirst.mockResolvedValue(null);
+      prisma.anime.create.mockImplementation(({ data }: { data: object }) =>
+        Promise.resolve(data),
+      );
+      const fetchSpy = jest
+        .spyOn(global, 'fetch')
+        .mockRejectedValue(new Error('MAL indisponível'));
+
+      try {
+        const result = await service.createExternalAnime({
+          url: 'https://myanimelist.net/anime/123/test',
+          title: 'Título informado',
+        });
+
+        expect(result).toMatchObject({
+          title: 'Título informado',
+          coverImage: undefined,
+        });
+      } finally {
+        fetchSpy.mockRestore();
+        if (originalClientId === undefined) delete process.env.MAL_CLIENT_ID;
+        else process.env.MAL_CLIENT_ID = originalClientId;
+      }
+    });
   });
 
   describe('createAnime', () => {
