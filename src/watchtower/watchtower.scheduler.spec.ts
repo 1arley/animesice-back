@@ -26,6 +26,9 @@ function makeMocks() {
     catalog: {
       scanAll: jest.fn(async () => ({ scanned: 0, enqueued: 0 })),
     },
+    coverRepair: {
+      sweep: jest.fn(async () => 0),
+    },
   };
 }
 
@@ -47,6 +50,7 @@ describe('WatchtowerScheduler', () => {
       m.repair as any,
       m.health as any,
       m.catalog as any,
+      m.coverRepair as any,
     );
     jest.clearAllMocks();
   });
@@ -74,6 +78,29 @@ describe('WatchtowerScheduler', () => {
     process.env.WATCHTOWER_ENABLED = 'false';
     await scheduler.tick();
     expect(m.jobs.claimBatch).not.toHaveBeenCalled();
+  });
+
+  it('repara capas periodicamente quando Watchtower está habilitado', async () => {
+    process.env.WATCHTOWER_ENABLED = 'true';
+
+    await scheduler.repairMissingCovers();
+
+    expect(m.coverRepair.sweep).toHaveBeenCalledTimes(1);
+  });
+
+  it('não roda reparo de capas quando Watchtower está desabilitado', async () => {
+    process.env.WATCHTOWER_ENABLED = 'false';
+
+    await scheduler.repairMissingCovers();
+
+    expect(m.coverRepair.sweep).not.toHaveBeenCalled();
+  });
+
+  it('absorve falha do reparo de capas para manter o scheduler ativo', async () => {
+    process.env.WATCHTOWER_ENABLED = 'true';
+    m.coverRepair.sweep.mockRejectedValue(new Error('API indisponível'));
+
+    await expect(scheduler.repairMissingCovers()).resolves.toBeUndefined();
   });
 
   it('aquece episódios ao iniciar sem depender do cron das 03h', async () => {

@@ -51,6 +51,33 @@ describe('AniListClient', () => {
 
       await expect(client.fetchMedia(1)).rejects.toThrow('resposta vazia');
     });
+
+    it('limita o Retry-After do AniList para não bloquear o worker indefinidamente', async () => {
+      jest.useFakeTimers();
+      jest.setSystemTime(new Date('2026-11-25T12:00:00Z'));
+      (global.fetch as jest.Mock)
+        .mockResolvedValueOnce(
+          new Response('', {
+            status: 429,
+            headers: { 'retry-after': '3600' },
+          }),
+        )
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({ data: { Media: { id: 12345, title: {} } } }),
+            { status: 200 },
+          ),
+        );
+
+      try {
+        const pending = client.fetchMedia(12345);
+        await jest.advanceTimersByTimeAsync(302_000);
+        await expect(pending).resolves.toMatchObject({ id: 12345 });
+        expect(global.fetch).toHaveBeenCalledTimes(2);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
   });
 
   describe('airingSchedule', () => {
@@ -125,6 +152,25 @@ describe('AniListClient', () => {
 
       const result = await client.searchMedia('nonexistent');
       expect(result).toBeNull();
+    });
+
+    it('retorna candidatos para validar correspondências ambíguas', async () => {
+      (global.fetch as jest.Mock).mockResolvedValue({
+        json: jest.fn().mockResolvedValue({
+          data: {
+            Page: {
+              media: [
+                { id: 111, title: { romaji: 'Found' } },
+                { id: 222, title: { english: 'Found' } },
+              ],
+            },
+          },
+        }),
+      });
+
+      const result = await client.searchMediaCandidates('test');
+
+      expect(result.map(({ id }) => id)).toEqual([111, 222]);
     });
   });
 

@@ -6,6 +6,7 @@
  *    scrapes e scans de catálogo, mais um controle, p/ descobertas não esperarem
  *    atrás de extrações antigas; scrapes têm timeout rígido (WT_JOB_TIMEOUT_MS)
  *  - a cada 15 min: enfileira CHECK_RELEASES + reapStale
+ *  - a cada 15 min: avança a reparação incremental de capas vazias
  *  - a cada 6h: enfileira GAP_CHECK (detecta gaps de episódios e enfileira SCAN_CATALOG)
  *  - 1x/dia (03:00): DISCOVER_SEASON + repair sweep + canário revive + scanAll (gaps only)
  *
@@ -24,6 +25,7 @@ import { WorkerService } from './worker.service';
 import { RepairWorker } from './repair-worker.service';
 import { HealthMonitor } from './health-monitor.service';
 import { CatalogScanner } from './catalog-scanner.service';
+import { AnimeCoverRepair } from './anime-cover-repair.service';
 import { CONTROL_JOB_TYPES, JOB_TYPE, PRIORITY } from './watchtower.types';
 
 const TICK_BATCH = Number(process.env.WT_TICK_BATCH ?? 20);
@@ -57,6 +59,7 @@ export class WatchtowerScheduler implements OnModuleInit {
     private readonly repair: RepairWorker,
     private readonly health: HealthMonitor,
     private readonly catalog: CatalogScanner,
+    private readonly coverRepair: AnimeCoverRepair,
   ) {}
 
   onModuleInit(): void {
@@ -207,6 +210,17 @@ export class WatchtowerScheduler implements OnModuleInit {
     await this.catalog.scanAll(false, true).catch((e) => {
       console.error(
         '[WATCHTOWER] scan de animes em lançamento falhou:',
+        e instanceof Error ? e.message : String(e),
+      );
+    });
+  }
+
+  @Cron('0 */15 * * * *')
+  async repairMissingCovers(): Promise<void> {
+    if (!this.enabled()) return;
+    await this.coverRepair.sweep().catch((e) => {
+      console.error(
+        '[WATCHTOWER] cover repair falhou:',
         e instanceof Error ? e.message : String(e),
       );
     });
