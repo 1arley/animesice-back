@@ -204,6 +204,10 @@ export class GachaConfigService implements OnModuleInit {
     return this.num('daily_bonus');
   }
 
+  get pullPostsEnabled(): boolean {
+    return this.cache.get('pull_posts_enabled') !== false;
+  }
+
   // ── bypass ───────────────────────────────────────────────
 
   get bypassPriceCents(): number {

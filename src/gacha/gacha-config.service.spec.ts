@@ -79,6 +79,23 @@ describe('GachaConfigService', () => {
     expect(service.dailyBonus).toBe(777);
     expect(service.tierWeights).toEqual(ECONOMY_DEFAULTS.tier_weights);
     expect(service.spinsPerHour).toBe(5);
+    expect(service.pullPostsEnabled).toBe(true);
+  });
+
+  it('desativa divulgação de pulls quando a chave está falsa', async () => {
+    db.gachaConfig.findMany.mockResolvedValue([
+      ...rows,
+      {
+        key: 'pull_posts_enabled',
+        value: false,
+        label: 'Divulgar pulls de cartas no feed',
+        group: 'social',
+      },
+    ]);
+
+    await service.onModuleInit();
+
+    expect(service.pullPostsEnabled).toBe(false);
   });
 
   it('getters devolvem NaN para chave ausente e objeto para JSON valido', async () => {

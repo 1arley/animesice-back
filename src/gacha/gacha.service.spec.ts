@@ -45,6 +45,7 @@ const TEST_FOIL_MULT = { NORMAL: 1, HOLO: 3, GOLD: 10, INK: 10, PRISM: 5 };
 describe('GachaService', () => {
   let service: GachaService;
   const mockConfig = {
+    pullPostsEnabled: true,
     baseValue: TEST_BASE_VALUE,
     foilMult: TEST_FOIL_MULT,
     foilWeights: { NORMAL: 79, HOLO: 12, GOLD: 3, INK: 3, PRISM: 3 },
@@ -366,6 +367,7 @@ describe('GachaService', () => {
       tiers: [],
     }));
     mockConfig.effectiveSpinsPerHour.mockImplementation(() => 5);
+    mockConfig.pullPostsEnabled = true;
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -936,6 +938,20 @@ describe('GachaService', () => {
           data: expect.objectContaining({ userId: 'u1', kind: 'GACHA_PULL' }),
         }),
       );
+    });
+
+    it('não publica pull quando a divulgação está desativada', async () => {
+      mockConfig.pullPostsEnabled = false;
+      mockPrisma.gachaSpin.findFirst.mockResolvedValue({
+        ...previewComum,
+        id: 's2',
+        card: cardEpica,
+      });
+      mockClaimCreate('p2', 'EPICA');
+
+      await service.claim('u1', 's2');
+
+      expect(mockPrisma.post.create).not.toHaveBeenCalled();
     });
 
     it('barra claim durante lock de 6h', async () => {

@@ -8,6 +8,7 @@ import {
 import { SocialService } from '@/social/social.service';
 import { PrismaService } from '@/prisma/prisma.service';
 import { NotificationService } from '@/notification/notification.service';
+import { GachaConfigService } from '@/gacha/gacha-config.service';
 
 describe('SocialService', () => {
   let service: SocialService;
@@ -16,6 +17,7 @@ describe('SocialService', () => {
   const mockNotifications = {
     create: jest.fn().mockResolvedValue({}),
   };
+  const mockGachaConfig = { pullPostsEnabled: true };
 
   const mockPrisma = {
     post: {
@@ -71,6 +73,7 @@ describe('SocialService', () => {
     // resetAllMocks (e não clearAllMocks) limpa também as filas de
     // mockResolvedValueOnce — evita vazamento de valores entre testes.
     jest.resetAllMocks();
+    mockGachaConfig.pullPostsEnabled = true;
     mockPrisma.$transaction.mockImplementation(
       (input: Promise<unknown>[] | ((tx: typeof mockPrisma) => unknown)) =>
         typeof input === 'function' ? input(mockPrisma) : Promise.all(input),
@@ -83,6 +86,7 @@ describe('SocialService', () => {
         SocialService,
         { provide: PrismaService, useValue: mockPrisma },
         { provide: NotificationService, useValue: mockNotifications },
+        { provide: GachaConfigService, useValue: mockGachaConfig },
       ],
     }).compile();
 
@@ -680,6 +684,28 @@ describe('SocialService', () => {
   });
 
   describe('getFeed (privacidade)', () => {
+    it('oculta posts antigos de pulls quando a divulgação está desativada', async () => {
+      mockGachaConfig.pullPostsEnabled = false;
+      mockPrisma.$queryRaw
+        .mockResolvedValueOnce([{ id: 'u1' }])
+        .mockResolvedValueOnce([{ id: 'u1' }])
+        .mockResolvedValueOnce([{ id: 'u1' }])
+        .mockResolvedValueOnce([{ id: 'u1' }]);
+      mockPrisma.post.findMany.mockResolvedValue([]);
+      mockPrisma.post.count.mockResolvedValue(0);
+      mockPrisma.$transaction.mockResolvedValue([[], [], [], [], 0, 0, 0, 0]);
+
+      await service.getFeed(null, 1, 20, 'global');
+
+      expect(prisma.post.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            AND: expect.arrayContaining([{ kind: { not: 'GACHA_PULL' } }]),
+          }),
+        }),
+      );
+    });
+
     it('feed global exclui posts de perfil privado', async () => {
       // u3 tem profilePublic=false — não retorna no $queryRaw.
       mockPrisma.$queryRaw

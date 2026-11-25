@@ -6050,6 +6050,8 @@ export class GachaService {
   }
 
   private async publishPullPost(userId: string, pull: Pull) {
+    if (!this.config.pullPostsEnabled) return null;
+
     const privacy = await this.prisma.privacySettings.findUnique({
       where: { userId },
       select: { showGacha: true },
