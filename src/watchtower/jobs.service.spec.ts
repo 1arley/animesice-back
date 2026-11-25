@@ -84,15 +84,16 @@ function makeMockPrisma() {
     $queryRaw: jest.fn(
       async (strings: TemplateStringsArray, ...values: any[]) => {
         const sql = strings.join(' ');
+        if (sql.includes('pg_advisory_xact_lock')) return [];
         if (sql.includes('RETURNING "dedupeKey"')) {
           // enqueueMany: dedupeKeys aceitas vêm no RETURNING; o mock não
           // parseia o VALUES, então os testes checam a query, não o retorno.
           return [];
         }
         if (sql.includes('candidates AS')) {
-          // ordem de interpolação: repairSlots, rust, rust, batchSize, lockId
-          const lockId = values[4];
-          const limit = values[3];
+          // batchSize e lockId são as duas últimas interpolações da query.
+          const lockId = values.at(-1);
+          const limit = values.at(-2);
           const candidates = [...store.values()]
             .filter((job) => job.status === 'PENDING')
             .slice(0, limit);
@@ -280,7 +281,12 @@ describe('JobsService', () => {
     expect(claimed[0]!.lockedBy).toBeDefined();
   });
 
-  it('claimBatch usa aging: job muito vencido fura a fila por prioridade', async () => {
+  it('claimBatch não reserva lanes quando o limite de scrape é zero', async () => {
+    expect(await svc.claimBatch(0)).toEqual([]);
+    expect(mock.$queryRaw).not.toHaveBeenCalled();
+  });
+
+  it('claimBatch reserva controles e scans e envelhece o restante', async () => {
     await svc.enqueue({
       type: 'SCAN_CATALOG',
       dedupeKey: 'scan:aged',
@@ -291,14 +297,34 @@ describe('JobsService', () => {
     // O critério de ordenação É o comportamento: sem aging, um backlog de
     // REPAIR_EPISODE que se reenfileira mantém SCAN_CATALOG (único caminho pra
     // descobrir episódio novo) semanas parado — foi o que segurou o eps 4/5 do
-    // JoJo por 2 semanas. Aging reduz a prioridade efetiva em 1/h vencida.
+    // JoJo por 2 semanas. Aging reduz a prioridade efetiva em 1 ponto por dia vencido.
     await svc.claimBatch(6);
     const call = mock.$queryRaw.mock.calls.find(([strings]) =>
       strings.join(' ').includes('candidates AS'),
     );
     const sql = call![0].join(' ');
+    expect(sql).toContain('control_candidates AS');
+    expect(sql).toContain('catalog_candidates AS');
+    expect(sql).toContain('"type" NOT IN (');
     expect(sql).toMatch(/GREATEST\(/);
     expect(sql).toMatch(/NOW\(\) - "nextRunAt"/);
+    expect(sql).toMatch(
+      /EXTRACT\(EPOCH FROM \(NOW\(\) - "nextRunAt"\)\) \/ 86400/,
+    );
+  });
+
+  it('claimBatch limita scans ao espaço restante da concorrência global', async () => {
+    mock.watchtowerJob.count.mockResolvedValueOnce(2);
+
+    await svc.claimBatch(2);
+
+    expect(mock.watchtowerJob.count).toHaveBeenCalledWith({
+      where: { type: 'SCAN_CATALOG', status: 'RUNNING' },
+    });
+    const call = mock.$queryRaw.mock.calls.find(([strings]) =>
+      strings.join(' ').includes('catalog_candidates AS'),
+    );
+    expect(call?.slice(1)).toContain(0);
   });
 
   it('complete marca DONE e limpa lock', async () => {

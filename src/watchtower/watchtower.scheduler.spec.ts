@@ -95,6 +95,8 @@ describe('WatchtowerScheduler', () => {
     const fakeJobs = [
       { id: 'j1', type: 'EXTRACT_EPISODE', payload: {}, status: 'RUNNING' },
       { id: 'j2', type: 'CHECK_RELEASES', payload: {}, status: 'RUNNING' },
+      { id: 'j3', type: 'SCAN_CATALOG', payload: {}, status: 'RUNNING' },
+      { id: 'j4', type: 'EXTRACT_EPISODE', payload: {}, status: 'RUNNING' },
     ];
     m.jobs.claimBatch.mockResolvedValueOnce(fakeJobs as any);
     await scheduler.tick();
@@ -105,27 +107,34 @@ describe('WatchtowerScheduler', () => {
       batchSize,
     );
     expect(m.jobs.claimBatch).toHaveBeenCalledWith(size, expect.anything());
-    expect(m.worker.process).toHaveBeenCalledTimes(2);
+    expect(m.worker.process).toHaveBeenCalledTimes(4);
+    expect(m.worker.process).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'CHECK_RELEASES' }),
+    );
+    expect(m.worker.process).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'SCAN_CATALOG' }),
+    );
   });
 
-  it('tick NÃO espera control job: um CHECK_RELEASES lento não pode congelar a fila', async () => {
+  it('tick não espera jobs de descoberta lentos', async () => {
     process.env.WATCHTOWER_ENABLED = 'true';
     let releaseControl: () => void = () => {};
     const controlGate = new Promise<void>((r) => {
       releaseControl = r;
     });
     m.worker.process.mockImplementation((async (job: any) => {
-      if (job.type === 'CHECK_RELEASES') await controlGate;
+      if (job.type === 'CHECK_RELEASES' || job.type === 'SCAN_CATALOG')
+        await controlGate;
     }) as any);
     m.jobs.claimBatch.mockResolvedValueOnce([
       { id: 'j1', type: 'EXTRACT_EPISODE', payload: {}, status: 'RUNNING' },
       { id: 'j2', type: 'CHECK_RELEASES', payload: {}, status: 'RUNNING' },
+      { id: 'j3', type: 'SCAN_CATALOG', payload: {}, status: 'RUNNING' },
     ] as any);
 
-    // O tick precisa resolver antes do control job — se voltasse a segurar
-    // `running` nele, os 15min de timeout do CHECK_RELEASES paravam a fila toda.
+    // Scrapes continuam sem esperar scans e controles de descoberta.
     await scheduler.tick();
-    expect(m.worker.process).toHaveBeenCalledTimes(2);
+    expect(m.worker.process).toHaveBeenCalledTimes(3);
 
     releaseControl();
     await controlGate;

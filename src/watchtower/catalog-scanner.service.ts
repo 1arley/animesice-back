@@ -373,6 +373,7 @@ export class CatalogScanner implements OnModuleInit {
     try {
       const res = await fetch(url, {
         headers: { 'user-agent': UA, accept: 'text/html' },
+        signal: AbortSignal.timeout(20_000),
       });
       if (!res.ok) return { slug: null, complete: false };
       const html = await res.text();
@@ -429,6 +430,7 @@ export class CatalogScanner implements OnModuleInit {
       const res = await fetch(url, {
         headers: { 'user-agent': UA, accept: 'text/html' },
         redirect: 'follow',
+        signal: AbortSignal.timeout(20_000),
       });
       if (!res.ok) return { slug: null, complete: false };
       html = await res.text();

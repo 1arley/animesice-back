@@ -10,7 +10,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '@/prisma/prisma.service';
 import { Prisma } from '@prisma/client';
-import { nextBackoffMs, priorityForSlug } from './watchtower.types';
+import {
+  CONTROL_JOB_TYPES,
+  JOB_TYPE,
+  nextBackoffMs,
+  priorityForSlug,
+} from './watchtower.types';
 
 interface EnqueueInput {
   type: string;
@@ -232,10 +237,10 @@ export class JobsService {
   }
 
   /**
-   * Claim N jobs devidos (status=PENDING, nextRunAt<=agora), mais urgentes 1º.
+   * Claim N slots de scrape, até N scans de catálogo e um controle se devidos.
    *
-   * Reserva um slot para escoar reparos antigos quando há concorrência. O
-   * restante usa aging por tempo vencido, sem depender do relógio do cron.
+   * Reserva slots para controles e scans de catálogo fora da concorrência de
+   * scraping. O restante reduz a prioridade em 1 ponto por dia vencido.
    */
   async claimBatch(
     limit: number,
@@ -243,9 +248,39 @@ export class JobsService {
   ): Promise<WatchtowerJobRow[]> {
     const lockId = crypto.randomUUID();
     const batchSize = Math.max(0, limit);
+    if (batchSize === 0) return [];
     const repairSlots = batchSize > 1 ? 1 : 0;
-    return this.prisma.$queryRaw<WatchtowerJobRow[]>`
-      WITH repair_candidates AS (
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT pg_advisory_xact_lock(991233, 3)::text`;
+      const runningCatalogScans = await tx.watchtowerJob.count({
+        where: { type: JOB_TYPE.SCAN_CATALOG, status: 'RUNNING' },
+      });
+      const catalogSlots = Math.max(0, batchSize - runningCatalogScans);
+
+      return tx.$queryRaw<WatchtowerJobRow[]>`
+      WITH control_candidates AS (
+        SELECT "id" FROM "WatchtowerJob"
+        WHERE "status" = 'PENDING' AND "nextRunAt" <= NOW()
+          AND "type" IN (${Prisma.join([...CONTROL_JOB_TYPES])})
+        ORDER BY "priority" ASC, "nextRunAt" ASC, "createdAt" ASC
+        FOR UPDATE SKIP LOCKED
+        LIMIT 1
+      ),
+      catalog_candidates AS (
+        SELECT "id" FROM "WatchtowerJob"
+        WHERE "status" = 'PENDING' AND "nextRunAt" <= NOW()
+          AND "type" = ${JOB_TYPE.SCAN_CATALOG}
+        ORDER BY GREATEST(
+          1,
+          "priority" - LEAST(
+            "priority" - 1,
+            FLOOR(EXTRACT(EPOCH FROM (NOW() - "nextRunAt")) / 86400)::int
+          )
+        ) ASC, "nextRunAt" ASC, "createdAt" ASC
+        FOR UPDATE SKIP LOCKED
+        LIMIT ${catalogSlots}
+      ),
+      repair_candidates AS (
         SELECT "id" FROM "WatchtowerJob"
         WHERE "status" = 'PENDING' AND "nextRunAt" <= NOW()
           AND "type" = 'REPAIR_EPISODE'
@@ -263,11 +298,18 @@ export class JobsService {
         LIMIT ${repairSlots}
       ),
       reserved_candidates AS (
+        SELECT "id" FROM control_candidates
+        UNION ALL
+        SELECT "id" FROM catalog_candidates
+        UNION ALL
         SELECT "id" FROM repair_candidates
       ),
       regular_candidates AS (
         SELECT "id" FROM "WatchtowerJob"
         WHERE "status" = 'PENDING' AND "nextRunAt" <= NOW()
+          AND "type" NOT IN (
+            ${Prisma.join([...CONTROL_JOB_TYPES])}, ${JOB_TYPE.SCAN_CATALOG}
+          )
           AND (
             NOT ${rustRepairEnabled}
             OR "type" <> 'REPAIR_EPISODE'
@@ -283,11 +325,11 @@ export class JobsService {
           1,
           "priority" - LEAST(
             "priority" - 1,
-            FLOOR(EXTRACT(EPOCH FROM (NOW() - "nextRunAt")) / 3600)::int
+            FLOOR(EXTRACT(EPOCH FROM (NOW() - "nextRunAt")) / 86400)::int
           )
         ) ASC, "nextRunAt" ASC, "createdAt" ASC
         FOR UPDATE SKIP LOCKED
-        LIMIT ${batchSize} - (SELECT COUNT(*) FROM reserved_candidates)
+        LIMIT ${batchSize} - (SELECT COUNT(*) FROM repair_candidates)
       ),
       candidates AS (
         SELECT "id" FROM reserved_candidates
@@ -301,6 +343,7 @@ export class JobsService {
       WHERE job."id" = candidates."id"
       RETURNING job.*
     `;
+    });
   }
 
   /** Marca job como DONE, limpa lock. Guarda lockedBy p/ checar ownership. */
