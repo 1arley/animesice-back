@@ -112,13 +112,14 @@ export function isEpicTier(tier: string): boolean {
 }
 
 /**
- * Fragmento bônus no giro (decisão fragmentos-20261030): 5% dos previews vêm
- * com um fragmento junto, independente de raridade. Pesos dentro do bônus:
+ * Fragmento bônus no giro (decisão fragmentos-20261030): chance editável no
+ * painel admin, com este padrão nos previews. O fragmento independe de
+ * raridade. Pesos dentro do bônus:
  * Titanita 50% · Magnetita (DRACONICA) 30% · Titanita Sombria 10% ·
  * Magnetita Sombria (SOMBRIA_DRACONICA) 10%. Os rótulos Dracônica* são
  * exibidos como "Magnetita*" no front.
  */
-export const SPIN_SHARD_CHANCE = 0.05;
+export const DEFAULT_SPIN_SHARD_CHANCE = 7.5;
 
 export const SPIN_SHARD_WEIGHTS = {
   TITANITA: 0.5,

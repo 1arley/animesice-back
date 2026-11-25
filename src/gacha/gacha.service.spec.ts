@@ -49,6 +49,7 @@ describe('GachaService', () => {
     baseValue: TEST_BASE_VALUE,
     foilMult: TEST_FOIL_MULT,
     foilWeights: { NORMAL: 79, HOLO: 12, GOLD: 3, INK: 3, PRISM: 3 },
+    spinShardChance: 7.5,
     tierWeights: {
       COMUM: 55,
       INCOMUM: 25,
@@ -778,7 +779,7 @@ describe('GachaService', () => {
       );
     });
 
-    it('bônus de 5% anexa fragmento ao preview (Titanita primeiro)', async () => {
+    it('bônus configurado de 7,5% anexa fragmento ao preview (Titanita primeiro)', async () => {
       freshAccount();
       stockOnly('COMUM');
       mockPrisma.card.findFirst.mockResolvedValue(cardComum);
@@ -794,8 +795,9 @@ describe('GachaService', () => {
           ...args.data,
         }),
       );
-      // 0.0499 < 0.05 dispara o bônus; o mesmo valor dita o pick (Titanita).
-      const randomSpy = jest.spyOn(Math, 'random').mockReturnValue(0.0499);
+      // Com 10% configurados, 0.099 dispara o bônus e dita o pick (Titanita).
+      mockConfig.spinShardChance = 10;
+      const randomSpy = jest.spyOn(Math, 'random').mockReturnValue(0.099);
 
       try {
         const preview = await service.spin('u1');
@@ -806,11 +808,12 @@ describe('GachaService', () => {
           }),
         );
       } finally {
+        mockConfig.spinShardChance = 7.5;
         randomSpy.mockRestore();
       }
     });
 
-    it('95% dos previews nascem sem fragmento bônus', async () => {
+    it('92,5% dos previews nascem sem fragmento bônus', async () => {
       freshAccount();
       stockOnly('COMUM');
       mockPrisma.card.findFirst.mockResolvedValue(cardComum);
@@ -826,7 +829,7 @@ describe('GachaService', () => {
           ...args.data,
         }),
       );
-      const randomSpy = jest.spyOn(Math, 'random').mockReturnValue(0.2);
+      const randomSpy = jest.spyOn(Math, 'random').mockReturnValue(0.075);
 
       try {
         const preview = await service.spin('u1');

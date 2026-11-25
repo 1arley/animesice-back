@@ -3360,7 +3360,7 @@ export class EconomyService {
         rarity: { in: QUALITY_TIERS[quality] },
         id: { notIn: await this.inactiveEventItems(tx, 'cardIds') },
       },
-      select: { id: true, name: true, imageHidden: true },
+      select: { id: true, name: true, image: true, imageHidden: true },
     });
     const cardSeed = this.seededRandom(`mint-card:${userId}:${Date.now()}`);
     const card = candidates[Math.floor(cardSeed * candidates.length)];
@@ -3402,6 +3402,7 @@ export class EconomyService {
       userCardId: copy.id,
       cardId: card.id,
       name: card.imageHidden ? '???' : card.name,
+      image: card.imageHidden ? null : card.image,
       rarity: counter.rarity,
       foil,
       condition,

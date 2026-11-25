@@ -125,9 +125,51 @@ describe('EconomyService safeguards', () => {
     );
   }
 
-  it('returns the actual card rarity with a box reward', async () => {
+  it('returns and stores visible card artwork with a box reward', async () => {
     db.gachaRetention.upsert.mockResolvedValue({ loyaltyRarePlusReady: true });
-    db.card.findMany.mockResolvedValue([{ id: 'card-1', name: 'Carta' }]);
+    db.card.findMany.mockResolvedValue([
+      {
+        id: 'card-1',
+        name: 'Carta',
+        image: 'https://cdn.example/carta.webp',
+        imageHidden: false,
+      },
+    ]);
+    db.card.update.mockResolvedValue({
+      editionCounter: 1,
+      rarity: 'INCOMUM',
+    });
+    db.userCard.create.mockResolvedValue({ id: 'copy-1' });
+    jest.spyOn(Math, 'random').mockReturnValueOnce(0).mockReturnValueOnce(0.5);
+
+    const result = await service.openBox('u1', 'COMMON');
+
+    expect(result.reward).toMatchObject({
+      category: 'CARD',
+      name: 'Carta',
+      image: 'https://cdn.example/carta.webp',
+      rarity: 'INCOMUM',
+    });
+    expect(db.gachaOpening.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        reward: expect.objectContaining({
+          name: 'Carta',
+          image: 'https://cdn.example/carta.webp',
+        }),
+      }),
+    });
+  });
+
+  it('masks hidden card name and artwork in the box reward and opening', async () => {
+    db.gachaRetention.upsert.mockResolvedValue({ loyaltyRarePlusReady: true });
+    db.card.findMany.mockResolvedValue([
+      {
+        id: 'card-1',
+        name: 'Carta secreta',
+        image: 'https://cdn.example/carta.webp',
+        imageHidden: true,
+      },
+    ]);
     db.card.update.mockResolvedValue({ editionCounter: 1, rarity: 'INCOMUM' });
     db.userCard.create.mockResolvedValue({ id: 'copy-1' });
     jest.spyOn(Math, 'random').mockReturnValueOnce(0).mockReturnValueOnce(0.5);
@@ -136,7 +178,13 @@ describe('EconomyService safeguards', () => {
 
     expect(result.reward).toMatchObject({
       category: 'CARD',
-      rarity: 'INCOMUM',
+      name: '???',
+      image: null,
+    });
+    expect(db.gachaOpening.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        reward: expect.objectContaining({ name: '???', image: null }),
+      }),
     });
   });
 

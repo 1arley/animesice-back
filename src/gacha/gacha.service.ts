@@ -37,7 +37,6 @@ import {
   GACHA_TIERS,
   GachaFoil,
   GachaTier,
-  SPIN_SHARD_CHANCE,
   SPIN_SHARD_FIELD,
   SPIN_SHARD_WEIGHTS,
   SpinShardKind,
@@ -944,10 +943,10 @@ export class GachaService {
 
     const condition = Math.random();
     const foil = pickWeighted(this.config.foilWeights);
-    // Fragmento bônus (fragmentos-20261030): 5% dos previews vêm com um
-    // fragmento junto. Só é concedido no claim.
+    // Fragmento bônus (fragmentos-20261030): chance configurada no admin;
+    // só é concedido no claim.
     const bonusShard: SpinShardKind | null =
-      Math.random() < SPIN_SHARD_CHANCE
+      Math.random() * 100 < this.config.spinShardChance
         ? pickWeighted(SPIN_SHARD_WEIGHTS)
         : null;
     // ponytail: slot único (userId,hour,slot) torna giro concorrente
