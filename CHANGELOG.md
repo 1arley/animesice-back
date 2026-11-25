@@ -1,3 +1,16 @@
+# [1.71.0](https://github.com/1arley/animesice-back/compare/v1.70.1...v1.71.0) (2026-11-25)
+
+
+### Bug Fixes
+
+* **admin:** harden MAL cover fetch for external anime ([9611c04](https://github.com/1arley/animesice-back/commit/9611c0420d3420e914dc6c8ae022eaa914bb8eee))
+
+
+### Features
+
+* **gacha:** add toggle to disable pull posts in community feed ([d2b6823](https://github.com/1arley/animesice-back/commit/d2b682338e020ce6ad83e8490c0ee9de06116712))
+* **watchtower:** add incremental anime cover repair ([635692f](https://github.com/1arley/animesice-back/commit/635692f392c754242c2cfa8064542df0a7752549))
+
 ## [1.70.1](https://github.com/1arley/animesice-back/compare/v1.70.0...v1.70.1) (2026-11-25)
 
 
