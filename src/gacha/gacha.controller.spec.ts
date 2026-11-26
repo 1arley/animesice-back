@@ -363,6 +363,8 @@ describe('GachaController', () => {
       await controller.createTrade(req('u1'), {
         offeredUserCardId: 'oc1',
         requestedUserCardId: 'rc1',
+        itemsOffered: [{ itemId: 'KEY', quantity: 2 }],
+        itemsRequested: [{ itemId: 'HOLO_SHARD', quantity: 1 }],
       });
       await controller.myTrades(req('u1'));
       await controller.acceptTrade(req('u1'), 't1');
@@ -381,6 +383,8 @@ describe('GachaController', () => {
         'rc1',
         0,
         0,
+        [{ itemId: 'KEY', quantity: 2 }],
+        [{ itemId: 'HOLO_SHARD', quantity: 1 }],
       );
       expect(m.gachaService.myTrades).toHaveBeenCalledWith('u1');
       expect(m.gachaService.acceptTrade).toHaveBeenCalledWith('u1', 't1');

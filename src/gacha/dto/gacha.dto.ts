@@ -296,10 +296,12 @@ export class CreateListingDto {
 }
 
 export class TradeItemDto {
-  @ApiProperty({ description: 'ID do item do catálogo.' })
-  @IsString()
-  @IsNotEmpty()
-  itemId!: string;
+  @ApiProperty({
+    description: 'ID do item do catálogo.',
+    enum: CATALOG_ITEM_IDS,
+  })
+  @IsIn(CATALOG_ITEM_IDS)
+  itemId!: CatalogItemId;
 
   @ApiProperty({ description: 'Quantidade (inteiro ≥ 1).' })
   @IsInt()

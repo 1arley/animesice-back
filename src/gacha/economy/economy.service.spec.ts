@@ -7,6 +7,7 @@ import { EconomyController } from './economy.controller';
 import { ECONOMY_DEFAULTS, economyConfig } from './economy.config';
 import { MarketQueryDto } from './economy.dto';
 import { dayKey } from './economy.rules';
+import { cardValue } from '@/gacha/gacha.constants';
 import { CrystalAccountingService } from '@/gacha/crystal-accounting.service';
 import { GachaConfigService } from '@/gacha/gacha-config.service';
 import { createTransactionAwarePrismaMock } from '@test/gacha/transaction-prisma.mock';
@@ -659,6 +660,54 @@ describe('EconomyService safeguards', () => {
       economyConfig(ECONOMY_DEFAULTS).box_prices,
     );
   });
+
+  it.each([
+    { value: 10, rankedValue: 100 },
+    { value: 10, rankedValue: 0 },
+  ])(
+    'applies only the foil value delta to ranking (value=$value, ranked=$rankedValue)',
+    async ({ value, rankedValue }) => {
+      db.userCard.findFirst.mockResolvedValue({
+        id: 'uc-1',
+        condition: 0.5,
+        foil: 'NORMAL',
+        edition: 1,
+        value,
+        rankedValue,
+        valueOverride: null,
+        card: { rarity: 'COMUM' },
+      });
+      db.gachaTrade.findFirst.mockResolvedValue(null);
+      db.gachaListing.findFirst.mockResolvedValue(null);
+      db.gachaMarketOfferCard.findFirst.mockResolvedValue(null);
+      db.userCard.updateMany.mockResolvedValue({ count: 1 });
+      db.userCard.findUniqueOrThrow.mockResolvedValue({ id: 'uc-1' });
+
+      const config = economyConfig(ECONOMY_DEFAULTS);
+      const newValue = cardValue(
+        'COMUM',
+        0.5,
+        'HOLO',
+        1,
+        config.base_value,
+        config.foil_mult,
+      );
+      await service.applyFoilGem('u1', 'uc-1', 'HOLO');
+
+      expect(db.userCard.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: {
+            foil: 'HOLO',
+            value: newValue,
+            rankedValue: Math.min(
+              2_147_483_647,
+              rankedValue + Math.max(0, newValue - value),
+            ),
+          },
+        }),
+      );
+    },
+  );
 
   it('blocks item after cancelling orders and listings and compensates each live copy', async () => {
     db.gachaBuyOrder.findMany.mockResolvedValue([

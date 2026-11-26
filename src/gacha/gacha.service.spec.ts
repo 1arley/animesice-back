@@ -894,9 +894,15 @@ describe('GachaService', () => {
       expect(createData).not.toHaveProperty('bonusShard');
       expect(mockPrisma.gachaInventory.upsert).toHaveBeenCalledWith({
         where: { userId: 'u1' },
-        create: { userId: 'u1', draconicaShards: 1 },
-        update: { draconicaShards: { increment: 1 } },
+        create: { userId: 'u1' },
+        update: {},
       });
+      expect(mockPrisma.gachaInventory.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { userId: 'u1', draconicaShards: { lte: 2_147_483_646 } },
+          data: { draconicaShards: { increment: 1 } },
+        }),
+      );
     });
 
     it('credita metade do valor da carta em Crystal no claim)', async () => {
@@ -1652,6 +1658,8 @@ describe('GachaService', () => {
         requestedUserCard: pullCard('rc1'),
         crystalsOffered: 0,
         crystalsRequested: 0,
+        itemsOffered: [],
+        itemsRequested: [],
         round: 1,
         parentTradeId: null,
         closedBy: null,
@@ -1785,6 +1793,51 @@ describe('GachaService', () => {
         });
       });
 
+      it('reserva os itens de ambos os lados dentro da transação', async () => {
+        mockTradeOwners();
+        mockPrisma.privacySettings.findUnique.mockResolvedValue(null);
+        mockPrisma.gachaTrade.create.mockResolvedValue(
+          tradeRow({
+            itemsOffered: [{ itemId: 'KEY', quantity: 2 }],
+            itemsRequested: [{ itemId: 'HOLO_SHARD', quantity: 1 }],
+          }),
+        );
+
+        await service.createTrade(
+          'u1',
+          'oc1',
+          'rc1',
+          0,
+          0,
+          [{ itemId: 'KEY', quantity: 2 }],
+          [{ itemId: 'HOLO_SHARD', quantity: 1 }],
+        );
+
+        expect(prismaMocks.root.userCard.findMany).not.toHaveBeenCalled();
+        expect(mockPrisma.gachaTrade.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: expect.objectContaining({
+              itemsOffered: [{ itemId: 'KEY', quantity: 2 }],
+              itemsRequested: [{ itemId: 'HOLO_SHARD', quantity: 1 }],
+            }),
+          }),
+        );
+        expect(mockPrisma.gachaInventory.updateMany).toHaveBeenNthCalledWith(
+          1,
+          {
+            where: { userId: 'u1', keys: { gte: 2 } },
+            data: { keys: { decrement: 2 } },
+          },
+        );
+        expect(mockPrisma.gachaInventory.updateMany).toHaveBeenNthCalledWith(
+          2,
+          {
+            where: { userId: 'u2', holoShards: { gte: 1 } },
+            data: { holoShards: { decrement: 1 } },
+          },
+        );
+      });
+
       it('409 quando uma das cartas está anunciada no mercado', async () => {
         mockTradeOwners();
         mockPrisma.gachaListing.count.mockResolvedValue(1);
@@ -1891,7 +1944,12 @@ describe('GachaService', () => {
       });
 
       it('troca donos, limpa destaque e conclui', async () => {
-        mockPrisma.gachaTrade.findUnique.mockResolvedValue(tradeRow());
+        mockPrisma.gachaTrade.findUnique.mockResolvedValue(
+          tradeRow({
+            itemsOffered: [{ itemId: 'KEY', quantity: 2 }],
+            itemsRequested: [{ itemId: 'HOLO_SHARD', quantity: 1 }],
+          }),
+        );
         mockTradeOwners();
         mockPrisma.gachaTrade.update.mockResolvedValue(
           tradeRow({ status: 'COMPLETED' }),
@@ -1915,6 +1973,18 @@ describe('GachaService', () => {
           expect.objectContaining({
             where: { id: 'u1', featuredUserCardId: 'oc1' },
             data: expect.objectContaining({ featuredUserCardId: null }),
+          }),
+        );
+        expect(mockPrisma.gachaInventory.updateMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: { userId: 'u2', keys: { lte: 2_147_483_645 } },
+            data: { keys: { increment: 2 } },
+          }),
+        );
+        expect(mockPrisma.gachaInventory.updateMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: { userId: 'u1', holoShards: { lte: 2_147_483_646 } },
+            data: { holoShards: { increment: 1 } },
           }),
         );
         expect(res.status).toBe('COMPLETED');
@@ -2002,7 +2072,12 @@ describe('GachaService', () => {
       );
 
       it('cancelar troca pendente', async () => {
-        mockPrisma.gachaTrade.findUnique.mockResolvedValue(tradeRow());
+        mockPrisma.gachaTrade.findUnique.mockResolvedValue(
+          tradeRow({
+            itemsOffered: [{ itemId: 'KEY', quantity: 2 }],
+            itemsRequested: [{ itemId: 'HOLO_SHARD', quantity: 1 }],
+          }),
+        );
 
         await expect(service.cancelTrade('u1', 't1')).resolves.toEqual({
           id: 't1',
@@ -2016,6 +2091,18 @@ describe('GachaService', () => {
             closedReason: 'CANCELLED',
           }),
         });
+        expect(mockPrisma.gachaInventory.updateMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: { userId: 'u1', keys: { lte: 2_147_483_645 } },
+            data: { keys: { increment: 2 } },
+          }),
+        );
+        expect(mockPrisma.gachaInventory.updateMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: { userId: 'u2', holoShards: { lte: 2_147_483_646 } },
+            data: { holoShards: { increment: 1 } },
+          }),
+        );
       });
 
       it('recusar troca pendente', async () => {
@@ -2121,6 +2208,8 @@ describe('GachaService', () => {
             requestedUserCardId: 'rc1',
             round: 1,
             parentTradeId: null,
+            itemsOffered: [{ itemId: 'KEY', quantity: 2 }],
+            itemsRequested: [{ itemId: 'HOLO_SHARD', quantity: 1 }],
           }),
         );
 
@@ -2141,6 +2230,8 @@ describe('GachaService', () => {
               requestedUserCardId: 'oc1',
               crystalsOffered: 15,
               crystalsRequested: 25,
+              itemsOffered: [{ itemId: 'HOLO_SHARD', quantity: 1 }],
+              itemsRequested: [{ itemId: 'KEY', quantity: 2 }],
               round: 2,
               parentTradeId: 't1',
             }),

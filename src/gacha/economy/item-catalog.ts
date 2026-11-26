@@ -160,6 +160,22 @@ export async function creditItems(
           WHERE offer."offeredUserId" = ${userId}
             AND offer."status" = 'PENDING'
             AND reward.value->>'itemId' = ${entry.itemId}
+        ), 0)::bigint
+        + COALESCE((
+          SELECT SUM((item.value->>'quantity')::bigint)
+          FROM "GachaTrade" AS trade,
+            LATERAL jsonb_array_elements(trade."itemsOffered") AS item(value)
+          WHERE trade."offeredUserId" = ${userId}
+            AND trade."status" = 'PENDING'
+            AND item.value->>'itemId' = ${entry.itemId}
+        ), 0)::bigint
+        + COALESCE((
+          SELECT SUM((item.value->>'quantity')::bigint)
+          FROM "GachaTrade" AS trade,
+            LATERAL jsonb_array_elements(trade."itemsRequested") AS item(value)
+          WHERE trade."requestedUserId" = ${userId}
+            AND trade."status" = 'PENDING'
+            AND item.value->>'itemId' = ${entry.itemId}
         ), 0)::bigint AS quantity
     `;
     const reservedQuantity = Number(reserved?.quantity ?? 0);

@@ -1071,11 +1071,9 @@ export class GachaService {
           });
           if (bonusShard !== null) {
             const shardField = SPIN_SHARD_FIELD[bonusShard];
-            await tx.gachaInventory.upsert({
-              where: { userId },
-              create: { userId, [shardField]: 1 },
-              update: { [shardField]: { increment: 1 } },
-            });
+            await creditItems(tx, userId, [
+              { itemId: catalogItemForField(shardField).id, quantity: 1 },
+            ]);
           }
           await tx.gachaCardDiscovery.createMany({
             data: { userId, cardId: spin.card.id },
@@ -5519,15 +5517,15 @@ export class GachaService {
     const offeredItems = itemAmounts(itemsOfferedRaw ?? []);
     const requestedItems = itemAmounts(itemsRequestedRaw ?? []);
     try {
-      const prepared = await this.prepareTrade(
-        this.prisma,
-        userId,
-        offeredIds,
-        requestedIds,
-      );
-      const trade = await this.prisma.$transaction(
-        (tx) =>
-          this.createTradeTx(
+      const { trade, prepared } = await this.prisma.$transaction(
+        async (tx) => {
+          const prepared = await this.prepareTrade(
+            tx,
+            userId,
+            offeredIds,
+            requestedIds,
+          );
+          const trade = await this.createTradeTx(
             tx,
             userId,
             offeredIds,
@@ -5541,7 +5539,9 @@ export class GachaService {
               new Date(Date.now() + this.config.tradeTtlMs),
             overrides?.round ?? 1,
             overrides?.parentTradeId ?? null,
-          ),
+          );
+          return { trade, prepared };
+        },
         { isolationLevel: 'Serializable' },
       );
       if (!overrides?.silent) {

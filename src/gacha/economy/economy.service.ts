@@ -1033,6 +1033,8 @@ export class EconomyService {
               condition: true,
               foil: true,
               edition: true,
+              value: true,
+              rankedValue: true,
               valueOverride: true,
               card: { select: { rarity: true } },
             },
@@ -1092,7 +1094,14 @@ export class EconomyService {
             );
           const updated = await tx.userCard.updateMany({
             where: { id: userCardId, userId, status: 'ACTIVE', foil: 'NORMAL' },
-            data: { foil, value, rankedValue: value },
+            data: {
+              foil,
+              value,
+              rankedValue: Math.min(
+                2_147_483_647,
+                card.rankedValue + Math.max(0, value - card.value),
+              ),
+            },
           });
           if (!updated.count)
             throw new ConflictException('A carta não está mais disponível.');
