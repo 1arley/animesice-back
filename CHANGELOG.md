@@ -1,3 +1,10 @@
+# [1.74.0](https://github.com/1arley/animesice-back/compare/v1.73.0...v1.74.0) (2026-11-26)
+
+
+### Features
+
+* **gacha:** add itemsOffered and itemsRequested to trades ([6268ffa](https://github.com/1arley/animesice-back/commit/6268ffae2984bd77eae1b5b67b7027aeaf41e060))
+
 # [1.73.0](https://github.com/1arley/animesice-back/compare/v1.72.0...v1.73.0) (2026-11-26)
 
 
