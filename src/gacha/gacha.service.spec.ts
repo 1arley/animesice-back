@@ -281,7 +281,9 @@ describe('GachaService', () => {
       create: jest.fn(),
       findMany: jest.fn(),
     },
-    $queryRaw: jest.fn(async (): Promise<unknown[]> => []),
+    $queryRaw: jest.fn(
+      async (_query: TemplateStringsArray): Promise<unknown[]> => [],
+    ),
     $transaction: jest.fn(),
   };
   const prismaMocks = createTransactionAwarePrismaMock(mockPrisma);
@@ -2643,8 +2645,8 @@ describe('GachaService', () => {
       const walletLock = mockPrisma.$queryRaw.mock
         .calls[0]?.[0] as TemplateStringsArray;
       expect(walletLock.join('')).toContain('FROM "User"');
-      expect(mockPrisma.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
-        mockPrisma.gachaInventory.upsert.mock.invocationCallOrder[0],
+      expect(mockPrisma.$queryRaw.mock.invocationCallOrder.at(0)!).toBeLessThan(
+        mockPrisma.gachaInventory.upsert.mock.invocationCallOrder.at(0)!,
       );
     });
 
