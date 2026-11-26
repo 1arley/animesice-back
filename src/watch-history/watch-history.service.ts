@@ -94,7 +94,7 @@ export class WatchHistoryService {
 
   /**
    * Créditos por tempo assistido: só entra no contador o delta de progresso
-   * limitado pelo delta de relógio entre POSTs (rewind/seek não vale cristal),
+   * limitado pelo delta de relógio entre POSTs (rewind/seek não vale crystal),
    * com teto diário por usuário. Espelha EconomyService.currentVersion para
    * não expor a API do gacha aqui.
    */

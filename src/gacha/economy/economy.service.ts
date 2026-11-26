@@ -1092,7 +1092,7 @@ export class EconomyService {
             );
           const updated = await tx.userCard.updateMany({
             where: { id: userCardId, userId, status: 'ACTIVE', foil: 'NORMAL' },
-            data: { foil, value },
+            data: { foil, value, rankedValue: value },
           });
           if (!updated.count)
             throw new ConflictException('A carta não está mais disponível.');
@@ -1875,7 +1875,7 @@ export class EconomyService {
       (crystals === 0 && cardIds.length === 0 && items.length === 0)
     ) {
       throw new BadRequestException(
-        'Ofereça itens, Cristais e/ou até 5 cartas.',
+        'Ofereça itens, Crystals e/ou até 5 cartas.',
       );
     }
     return this.prisma.$transaction(
@@ -1943,7 +1943,7 @@ export class EconomyService {
             tx,
             userId,
             crystals,
-            'Cristais disponíveis insuficientes.',
+            'Crystals disponíveis insuficientes.',
           );
         }
 
@@ -2012,7 +2012,7 @@ export class EconomyService {
           select: { id: true, status: true, expiresAt: true },
         });
         const consideration = [
-          crystals > 0 ? `${crystals.toLocaleString('pt-BR')} Cristais` : null,
+          crystals > 0 ? `${crystals.toLocaleString('pt-BR')} Crystals` : null,
           cardIds.length > 0 ? `${cardIds.length} carta(s)` : null,
           items.length > 0
             ? `${items.reduce((sum, item) => sum + item.quantity, 0)} item(ns)`
@@ -2274,7 +2274,7 @@ export class EconomyService {
         });
         const acceptedSummary = [
           offer.crystals > 0
-            ? `${sellerProceeds.toLocaleString('pt-BR')} Cristais líquidos`
+            ? `${sellerProceeds.toLocaleString('pt-BR')} Crystals líquidos`
             : null,
           offer.offeredCards.length > 0
             ? `${offer.offeredCards.length} carta(s)`

@@ -2111,7 +2111,7 @@ describe('GachaService', () => {
         );
       });
 
-      it('permite que o recebedor envie contraproposta com novas cartas e cristais', async () => {
+      it('permite que o recebedor envie contraproposta com novas cartas e crystals', async () => {
         mockPrisma.gachaTrade.findUnique.mockResolvedValue(
           tradeRow({
             id: 't1',

@@ -295,6 +295,19 @@ export class CreateListingDto {
   price!: number;
 }
 
+export class TradeItemDto {
+  @ApiProperty({ description: 'ID do item do catálogo.' })
+  @IsString()
+  @IsNotEmpty()
+  itemId!: string;
+
+  @ApiProperty({ description: 'Quantidade (inteiro ≥ 1).' })
+  @IsInt()
+  @Min(1)
+  @Max(2_147_483_647)
+  quantity!: number;
+}
+
 export class NewTradeDto {
   @ApiProperty({ type: [String], minItems: 1, maxItems: 5 })
   @IsArray()
@@ -320,7 +333,7 @@ export class NewTradeDto {
   requestedUserCardId?: string;
 
   @ApiProperty({
-    description: 'Cristais que você oferece (reservados no escrow).',
+    description: 'Crystals que você oferece (reservados no escrow).',
     required: false,
   })
   @IsOptional()
@@ -330,7 +343,7 @@ export class NewTradeDto {
   crystalsOffered?: number;
 
   @ApiProperty({
-    description: 'Cristais que você pede à outra pessoa.',
+    description: 'Crystals que você pede à outra pessoa.',
     required: false,
   })
   @IsOptional()
@@ -338,6 +351,20 @@ export class NewTradeDto {
   @Min(0)
   @Max(2_147_483_647)
   crystalsRequested?: number;
+
+  @ApiProperty({ type: [TradeItemDto], required: false })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => TradeItemDto)
+  itemsOffered?: TradeItemDto[];
+
+  @ApiProperty({ type: [TradeItemDto], required: false })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => TradeItemDto)
+  itemsRequested?: TradeItemDto[];
 }
 
 export class CounterTradeDto {
@@ -374,7 +401,7 @@ export class CounterTradeDto {
   requestedUserCardIds?: string[];
 
   @ApiProperty({
-    description: 'Cristais que você oferece agora.',
+    description: 'Crystals que você oferece agora.',
     required: false,
   })
   @IsOptional()
@@ -384,7 +411,7 @@ export class CounterTradeDto {
   crystalsOffered?: number;
 
   @ApiProperty({
-    description: 'Cristais que você pede agora.',
+    description: 'Crystals que você pede agora.',
     required: false,
   })
   @IsOptional()
@@ -392,6 +419,20 @@ export class CounterTradeDto {
   @Min(0)
   @Max(2_147_483_647)
   crystalsRequested?: number;
+
+  @ApiProperty({ type: [TradeItemDto], required: false })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => TradeItemDto)
+  itemsOffered?: TradeItemDto[];
+
+  @ApiProperty({ type: [TradeItemDto], required: false })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => TradeItemDto)
+  itemsRequested?: TradeItemDto[];
 }
 
 export enum WishlistPriorityDto {

@@ -203,7 +203,7 @@ describe('WatchHistoryService', () => {
     it('15s de reprodução contínua após os blocos anteriores creditam o bloco', async () => {
       const { svc, prisma, accounting } = build();
       ready(prisma);
-      // 590s anteriores → 29 cristais convertidos e 19 creditados.
+      // 590s anteriores → 29 crystals convertidos e 19 creditados.
       existingReward(prisma, {
         paidSeconds: 590,
         credited: 19,

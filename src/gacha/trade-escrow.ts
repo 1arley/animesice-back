@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { CrystalAccountingService } from '@/gacha/crystal-accounting.service';
+import { creditItems, itemAmounts } from '@/gacha/economy/item-catalog';
 
 /**
  * Escrow de troca vive aqui, e não como método do GachaService, porque o
@@ -10,7 +11,7 @@ import { CrystalAccountingService } from '@/gacha/crystal-accounting.service';
  */
 
 /**
- * Fecha uma troca PENDING e devolve os Cristais reservados e qualquer escrow
+ * Fecha uma troca PENDING e devolve os Crystals reservados e qualquer escrow
  * legado de cartas. Compartilhado por decline/cancel/expire/
  * contraproposta/bloqueio de carta. Idempotente via closed.count !== 1 — e,
  * por isso, sai ANTES de liberar: release não é idempotente.
@@ -32,6 +33,8 @@ export async function releaseTrade(
       requestedUserCardId: true,
       crystalsOffered: true,
       crystalsRequested: true,
+      itemsOffered: true,
+      itemsRequested: true,
       cards: { select: { userCardId: true } },
     },
   });
@@ -65,6 +68,14 @@ export async function releaseTrade(
       trade.requestedUserId,
       trade.crystalsRequested,
     );
+  }
+  const offeredItems = itemAmounts(trade.itemsOffered ?? []);
+  const requestedItems = itemAmounts(trade.itemsRequested ?? []);
+  if (offeredItems.length > 0) {
+    await creditItems(tx, trade.offeredUserId, offeredItems);
+  }
+  if (requestedItems.length > 0) {
+    await creditItems(tx, trade.requestedUserId, requestedItems);
   }
   const cardIds = trade.cards.length
     ? trade.cards.map((c) => c.userCardId)
