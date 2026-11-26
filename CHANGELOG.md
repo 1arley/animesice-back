@@ -1,3 +1,16 @@
+# [1.73.0](https://github.com/1arley/animesice-back/compare/v1.72.0...v1.73.0) (2026-11-26)
+
+
+### Bug Fixes
+
+* **deps:** patch minimatch advisory ([024b6f9](https://github.com/1arley/animesice-back/commit/024b6f910bde360b42216c9bbe9da785dd39f7f5))
+* **gacha:** address trade item escrow review findings ([d2dcee2](https://github.com/1arley/animesice-back/commit/d2dcee22e890869ab58882d406382d0d053d380a))
+
+
+### Features
+
+* **gacha:** support inventory items in trades ([#140](https://github.com/1arley/animesice-back/issues/140)) ([0df065e](https://github.com/1arley/animesice-back/commit/0df065e95f34a8a775e8c83628b5b7951614f33e)), closes [#130](https://github.com/1arley/animesice-back/issues/130)
+
 # [1.72.0](https://github.com/1arley/animesice-back/compare/v1.71.0...v1.72.0) (2026-11-25)
 
 
