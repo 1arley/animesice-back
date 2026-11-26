@@ -373,6 +373,7 @@ export class CatalogScanner implements OnModuleInit {
     try {
       const res = await fetch(url, {
         headers: { 'user-agent': UA, accept: 'text/html' },
+        signal: AbortSignal.timeout(20_000),
       });
       if (!res.ok) return { slug: null, complete: false };
       const html = await res.text();
@@ -429,6 +430,7 @@ export class CatalogScanner implements OnModuleInit {
       const res = await fetch(url, {
         headers: { 'user-agent': UA, accept: 'text/html' },
         redirect: 'follow',
+        signal: AbortSignal.timeout(20_000),
       });
       if (!res.ok) return { slug: null, complete: false };
       html = await res.text();
@@ -577,10 +579,15 @@ export class CatalogScanner implements OnModuleInit {
    * descobrir novos posts sem URL derivável. Nos demais, episodeCount evita
    * revarrer catálogos completos e a dedupeKey mantém os enqueues idempotentes.
    */
-  async scanAll(force = false): Promise<{ scanned: number; enqueued: number }> {
+  async scanAll(
+    force = false,
+    airingOnly = false,
+  ): Promise<{ scanned: number; enqueued: number }> {
     const animes = await this.prisma.anime.findMany({
       where: {
-        status: { in: ['FINALIZADO', 'LANCAMENTO'] },
+        status: {
+          in: airingOnly ? ['LANCAMENTO'] : ['FINALIZADO', 'LANCAMENTO'],
+        },
       },
       select: {
         id: true,

@@ -20,6 +20,7 @@ import { WatchtowerScheduler } from './watchtower.scheduler';
 import { CatalogScanner } from './catalog-scanner.service';
 import { ScheduleSync } from './schedule-sync.service';
 import { AdultCatalogSyncService } from './adult-catalog-sync.service';
+import { AnimeCoverRepair } from './anime-cover-repair.service';
 import { WatchtowerController } from './watchtower.controller';
 
 @Module({
@@ -38,6 +39,7 @@ import { WatchtowerController } from './watchtower.controller';
     CatalogScanner,
     ScheduleSync,
     AdultCatalogSyncService,
+    AnimeCoverRepair,
   ],
   exports: [JobsService, HealthMonitor, ReleaseMonitor, EpisodeResolution],
 })

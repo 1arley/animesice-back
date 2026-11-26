@@ -1,3 +1,65 @@
+# [1.72.0](https://github.com/1arley/animesice-back/compare/v1.71.0...v1.72.0) (2026-11-25)
+
+
+### Features
+
+* **gacha:** make spin shard bonus chance configurable ([2cd2ea2](https://github.com/1arley/animesice-back/commit/2cd2ea221db97fa371d6ddbcc9c53eee9a5b7fe7))
+
+# [1.71.0](https://github.com/1arley/animesice-back/compare/v1.70.1...v1.71.0) (2026-11-25)
+
+
+### Bug Fixes
+
+* **admin:** harden MAL cover fetch for external anime ([9611c04](https://github.com/1arley/animesice-back/commit/9611c0420d3420e914dc6c8ae022eaa914bb8eee))
+
+
+### Features
+
+* **gacha:** add toggle to disable pull posts in community feed ([d2b6823](https://github.com/1arley/animesice-back/commit/d2b682338e020ce6ad83e8490c0ee9de06116712))
+* **watchtower:** add incremental anime cover repair ([635692f](https://github.com/1arley/animesice-back/commit/635692f392c754242c2cfa8064542df0a7752549))
+
+## [1.70.1](https://github.com/1arley/animesice-back/compare/v1.70.0...v1.70.1) (2026-11-25)
+
+
+### Bug Fixes
+
+* **watchtower:** prevent catalog scan starvation ([ef5aa5b](https://github.com/1arley/animesice-back/commit/ef5aa5b614efbe0089766def0b3d9aad7d28da54))
+
+# [1.70.0](https://github.com/1arley/animesice-back/compare/v1.69.0...v1.70.0) (2026-11-22)
+
+
+### Bug Fixes
+
+* **deps:** override effect to 3.22.5 (ReDoS vulnerability) ([46c7f97](https://github.com/1arley/animesice-back/commit/46c7f971b4c61fba45b9ddc7a0fc1989d6a22463))
+* **gacha:** skip skin reward when eligible skin pool is empty ([75ae0ab](https://github.com/1arley/animesice-back/commit/75ae0ab0a3b1396b719b6398ddbd3e9bae5eafbc))
+* **gacha:** skip skin reward when no eligible skin for rolled quality ([63992c4](https://github.com/1arley/animesice-back/commit/63992c4e8960e7c09ad1de71e8506bf42a534c3b))
+
+
+### Features
+
+* **watchtower:** add airingOnly parameter to scanAll ([d827c53](https://github.com/1arley/animesice-back/commit/d827c53ee76a66574dba10b7b853ac42f72f64a2))
+
+# [1.69.0](https://github.com/1arley/animesice-back/compare/v1.68.0...v1.69.0) (2026-11-19)
+
+
+### Features
+
+* **gacha:** add market age exemption for young verified accounts ([80d92a5](https://github.com/1arley/animesice-back/commit/80d92a565a8564faf4e4d3c94d6a94ab79b7de42))
+
+# [1.68.0](https://github.com/1arley/animesice-back/compare/v1.67.1...v1.68.0) (2026-11-19)
+
+
+### Features
+
+* add market_account_age_days config for admin control ([e3603cc](https://github.com/1arley/animesice-back/commit/e3603ccade3f0f22a376c3323f61997dfd6c517a))
+
+## [1.67.1](https://github.com/1arley/animesice-back/compare/v1.67.0...v1.67.1) (2026-11-18)
+
+
+### Bug Fixes
+
+* **gacha:** apply uniform 1-hour cooldown for event claims ([7730058](https://github.com/1arley/animesice-back/commit/7730058b3becd78a95e57cb4bea5d8ffae19f3c9))
+
 # [1.67.0](https://github.com/1arley/animesice-back/compare/v1.66.3...v1.67.0) (2026-11-18)
 
 

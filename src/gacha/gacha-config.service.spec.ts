@@ -3,6 +3,7 @@ import { BadRequestException, ConflictException } from '@nestjs/common';
 import { PrismaService } from '@/prisma/prisma.service';
 import { ECONOMY_DEFAULTS } from './economy/economy.config';
 import {
+  activeGachaEventEndsAt,
   assertClaimEvent,
   GachaConfigService,
 } from '@/gacha/gacha-config.service';
@@ -42,12 +43,22 @@ const rows: Row[] = [
     label: 'Spins por hora',
     group: 'economia',
   },
+  {
+    key: 'spin_shard_chance',
+    value: 7.5,
+    label: 'Chance de fragmento bônus por giro (%)',
+    group: 'rates',
+  },
 ];
 
 describe('GachaConfigService', () => {
   let db: {
     gachaConfig: ReturnType<typeof model>;
-    gachaEconomyVersion: { aggregate: jest.Mock; create: jest.Mock };
+    gachaEconomyVersion: {
+      aggregate: jest.Mock;
+      create: jest.Mock;
+      findFirst: jest.Mock;
+    };
   };
   let service: GachaConfigService;
 
@@ -57,6 +68,7 @@ describe('GachaConfigService', () => {
       gachaEconomyVersion: {
         aggregate: jest.fn(),
         create: jest.fn(),
+        findFirst: jest.fn(),
       },
     };
     db.gachaConfig.findMany.mockResolvedValue(rows);
@@ -78,6 +90,36 @@ describe('GachaConfigService', () => {
     expect(service.dailyBonus).toBe(777);
     expect(service.tierWeights).toEqual(ECONOMY_DEFAULTS.tier_weights);
     expect(service.spinsPerHour).toBe(5);
+    expect(service.spinShardChance).toBe(7.5);
+    expect(service.pullPostsEnabled).toBe(true);
+  });
+
+  it('uses the default spin shard chance when the cached value is invalid', async () => {
+    db.gachaConfig.findMany.mockResolvedValue(
+      rows.map((row) =>
+        row.key === 'spin_shard_chance' ? { ...row, value: '100' } : row,
+      ),
+    );
+
+    await service.onModuleInit();
+
+    expect(service.spinShardChance).toBe(7.5);
+  });
+
+  it('desativa divulgação de pulls quando a chave está falsa', async () => {
+    db.gachaConfig.findMany.mockResolvedValue([
+      ...rows,
+      {
+        key: 'pull_posts_enabled',
+        value: false,
+        label: 'Divulgar pulls de cartas no feed',
+        group: 'social',
+      },
+    ]);
+
+    await service.onModuleInit();
+
+    expect(service.pullPostsEnabled).toBe(false);
   });
 
   it('getters devolvem NaN para chave ausente e objeto para JSON valido', async () => {
@@ -136,6 +178,67 @@ describe('GachaConfigService', () => {
       ),
     ).rejects.toBeInstanceOf(ConflictException);
     expect(db.gachaConfig.upsert).not.toHaveBeenCalled();
+  });
+
+  it('rejects spin shard chances outside 0–100%', async () => {
+    await expect(
+      service.update('spin_shard_chance', 100.1, 'admin', 'invalid chance'),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      service.update('spin_shard_chance', -0.1, 'admin', 'invalid chance'),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      service.update('spin_shard_chance', '7.5', 'admin', 'invalid chance'),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(db.gachaConfig.upsert).not.toHaveBeenCalled();
+  });
+
+  it('accepts 0% and 100% spin shard chances', async () => {
+    await service.update('spin_shard_chance', 0, 'admin', 'disable bonus');
+    await service.update('spin_shard_chance', 100, 'admin', 'guarantee bonus');
+    expect(db.gachaConfig.upsert).toHaveBeenCalledTimes(2);
+  });
+
+  it('publishes a spin chance edit without changing the active economy snapshot', async () => {
+    const activeSnapshot = {
+      foil_weights: { NORMAL: 50, HOLO: 5, GOLD: 20, INK: 10, PRISM: 15 },
+      box_category_weights: ECONOMY_DEFAULTS.box_category_weights,
+    };
+    db.gachaEconomyVersion.findFirst.mockResolvedValue({
+      snapshot: activeSnapshot,
+    });
+
+    await service.update('spin_shard_chance', 10, 'admin', 'increase bonus');
+
+    expect(db.gachaEconomyVersion.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        snapshot: { ...activeSnapshot, spin_shard_chance: 10 },
+      }),
+    });
+  });
+
+  it('rejects market age exemption timestamps without an explicit timezone', async () => {
+    await expect(
+      service.update(
+        'market_age_exemption',
+        { endsAt: '2026-11-20T03:00:00' },
+        'admin',
+        'invalid exemption',
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(db.gachaConfig.upsert).not.toHaveBeenCalled();
+  });
+
+  it('accepts a timezone-qualified market age exemption timestamp', async () => {
+    const value = { endsAt: '2026-11-20T03:00:00.000Z' };
+    await service.update('market_age_exemption', value, 'admin', 'exemption');
+    expect(db.gachaConfig.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { key: 'market_age_exemption' },
+        create: expect.objectContaining({ value }),
+        update: { value },
+      }),
+    );
   });
 });
 
@@ -249,5 +352,23 @@ describe('GachaConfigService — claim_event', () => {
         /spinsPerHour/,
       );
     });
+  });
+});
+
+describe('activeGachaEventEndsAt', () => {
+  it('accepts future end times and rejects expired or invalid values', () => {
+    expect(
+      activeGachaEventEndsAt({ endsAt: '2026-11-17T12:00:00.000Z' }, 1000),
+    ).toBe('2026-11-17T12:00:00.000Z');
+    expect(
+      activeGachaEventEndsAt(
+        { endsAt: '2026-11-17T12:00:00.000Z' },
+        Date.parse('2026-11-17T12:00:00.000Z'),
+      ),
+    ).toBeNull();
+    expect(activeGachaEventEndsAt({ endsAt: 'invalid' })).toBeNull();
+    expect(
+      activeGachaEventEndsAt({ endsAt: '2026-11-20T03:00:00' }),
+    ).toBeNull();
   });
 });

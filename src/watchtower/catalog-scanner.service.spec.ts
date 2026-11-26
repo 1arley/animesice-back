@@ -810,6 +810,9 @@ describe('CatalogScanner', () => {
       );
       expect(found.slug).toBe('jojo-no-kimyou-na-bouken-steel-ball-run');
       expect(found.complete).toBe(false);
+      expect(
+        (global.fetch as jest.Mock).mock.calls[0]![1].signal,
+      ).toBeInstanceOf(AbortSignal);
     });
 
     it('respeita dublado/legendado na descoberta de slug', async () => {

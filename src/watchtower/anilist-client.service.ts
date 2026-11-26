@@ -188,9 +188,22 @@ export class AniListClient {
 
   /** Busca media por título (sort: SEARCH_MATCH). */
   async searchMedia(search: string): Promise<AniListMediaSummary | null> {
+    const media = await this.queryMedia(search, 1);
+    return media[0] ?? null;
+  }
+
+  async searchMediaCandidates(search: string): Promise<AniListMediaSummary[]> {
+    return this.queryMedia(search, 10);
+  }
+
+  // shortcut: inspect 10 candidates; raise the window if exact catalog matches fall outside it.
+  private async queryMedia(
+    search: string,
+    perPage: number,
+  ): Promise<AniListMediaSummary[]> {
     const query = `
-      query ($search: String) {
-        Page(perPage: 1) {
+      query ($search: String, $perPage: Int) {
+        Page(perPage: $perPage) {
           media(search: $search, type: ANIME, sort: SEARCH_MATCH) {
             id
             title { romaji english native }
@@ -212,9 +225,9 @@ export class AniListClient {
         }
       }`;
     const data = await this.request<{ Page: { media: AniListMediaSummary[] } }>(
-      JSON.stringify({ query, variables: { search } }),
+      JSON.stringify({ query, variables: { search, perPage } }),
     );
-    return data.Page.media?.[0] ?? null;
+    return data.Page.media ?? [];
   }
 
   /** Lista media da temporada (season + year). perPage default 50. */
@@ -302,7 +315,10 @@ export class AniListClient {
         5 * 60_000,
         5000 * 2 ** (MAX_429_RETRIES - retries),
       );
-      await sleep(Math.max(retryAfterMs, backoffMs) + Math.random() * 1000);
+      await sleep(
+        Math.min(5 * 60_000, Math.max(retryAfterMs, backoffMs)) +
+          Math.random() * 1000,
+      );
       return this.request<T>(body, retries - 1);
     }
 

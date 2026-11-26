@@ -2,10 +2,11 @@
  * WatchtowerScheduler — dispatcher de cron do NestJS.
  *
  *Ticks:
- *  - a cada 1 min: processa batch de jobs devidos (cap env WT_TICK_BATCH=20),
- *    cada job com timeout rígido (env WT_JOB_TIMEOUT_MS=180000) p/ um scrape
- *    travado nunca congelar a fila
+ *  - a cada 1 min: processa até min(WT_TICK_BATCH, MAX_CONCURRENT_SCRAPES)
+ *    scrapes e scans de catálogo, mais um controle, p/ descobertas não esperarem
+ *    atrás de extrações antigas; scrapes têm timeout rígido (WT_JOB_TIMEOUT_MS)
  *  - a cada 15 min: enfileira CHECK_RELEASES + reapStale
+ *  - a cada 15 min: avança a reparação incremental de capas vazias
  *  - a cada 6h: enfileira GAP_CHECK (detecta gaps de episódios e enfileira SCAN_CATALOG)
  *  - 1x/dia (03:00): DISCOVER_SEASON + repair sweep + canário revive + scanAll (gaps only)
  *
@@ -24,7 +25,8 @@ import { WorkerService } from './worker.service';
 import { RepairWorker } from './repair-worker.service';
 import { HealthMonitor } from './health-monitor.service';
 import { CatalogScanner } from './catalog-scanner.service';
-import { JOB_TYPE, PRIORITY } from './watchtower.types';
+import { AnimeCoverRepair } from './anime-cover-repair.service';
+import { CONTROL_JOB_TYPES, JOB_TYPE, PRIORITY } from './watchtower.types';
 
 const TICK_BATCH = Number(process.env.WT_TICK_BATCH ?? 20);
 const STALE_MS = 10 * 60_000;
@@ -40,15 +42,6 @@ const JOB_TIMEOUT_MS = Number(process.env.WT_JOB_TIMEOUT_MS ?? 180_000);
 const CONTROL_TIMEOUT_MS = Number(
   process.env.WT_CONTROL_TIMEOUT_MS ?? 15 * 60_000,
 );
-/** Jobs de controle (raros, sem risco de hang de chromium) — timeout generoso. */
-const CONTROL_JOB_TYPES = new Set<string>([
-  JOB_TYPE.CHECK_RELEASES,
-  JOB_TYPE.DISCOVER_SEASON,
-  JOB_TYPE.SYNC_AIRING,
-  JOB_TYPE.GAP_CHECK,
-  JOB_TYPE.BACKFILL_ANILIST,
-  JOB_TYPE.SYNC_SCHEDULES,
-]);
 const configuredConcurrency = Number(process.env.MAX_CONCURRENT_SCRAPES ?? 2);
 const TICK_CONCURRENCY =
   Number.isInteger(configuredConcurrency) && configuredConcurrency > 0
@@ -66,6 +59,7 @@ export class WatchtowerScheduler implements OnModuleInit {
     private readonly repair: RepairWorker,
     private readonly health: HealthMonitor,
     private readonly catalog: CatalogScanner,
+    private readonly coverRepair: AnimeCoverRepair,
   ) {}
 
   onModuleInit(): void {
@@ -129,9 +123,16 @@ export class WatchtowerScheduler implements OnModuleInit {
         Math.min(TICK_BATCH, TICK_CONCURRENCY),
         process.env.WT_RUST_REPAIR_ENABLED === 'true',
       );
-      const controls = batch.filter((job) => CONTROL_JOB_TYPES.has(job.type));
-      const scrapes = batch.filter((job) => !CONTROL_JOB_TYPES.has(job.type));
-      for (const job of controls) void this.processWithTimeout(job);
+      const discoveries = batch.filter(
+        (job) =>
+          CONTROL_JOB_TYPES.has(job.type) || job.type === JOB_TYPE.SCAN_CATALOG,
+      );
+      const scrapes = batch.filter(
+        (job) =>
+          !CONTROL_JOB_TYPES.has(job.type) &&
+          job.type !== JOB_TYPE.SCAN_CATALOG,
+      );
+      for (const job of discoveries) void this.processWithTimeout(job);
       await Promise.all(scrapes.map((job) => this.processWithTimeout(job)));
     } finally {
       this.running = false;
@@ -205,6 +206,23 @@ export class WatchtowerScheduler implements OnModuleInit {
       dedupeKey: 'gap-check',
       payload: {},
       priority: PRIORITY.GAP_CHECK,
+    });
+    await this.catalog.scanAll(false, true).catch((e) => {
+      console.error(
+        '[WATCHTOWER] scan de animes em lançamento falhou:',
+        e instanceof Error ? e.message : String(e),
+      );
+    });
+  }
+
+  @Cron('0 */15 * * * *')
+  async repairMissingCovers(): Promise<void> {
+    if (!this.enabled()) return;
+    await this.coverRepair.sweep().catch((e) => {
+      console.error(
+        '[WATCHTOWER] cover repair falhou:',
+        e instanceof Error ? e.message : String(e),
+      );
     });
   }
 

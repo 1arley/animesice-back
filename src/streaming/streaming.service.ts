@@ -26,7 +26,15 @@ import { Readable } from 'stream';
 import type { AudioType } from '@prisma/client';
 
 function dbg(msg: string): void {
-  const safeMsg = msg.replace(/[\r\n\u2028\u2029]/g, ' ');
+  const safeMsg = msg
+    .replace(/[\r\n\u2028\u2029]/g, ' ')
+    .replace(/https?:\/\/[^\s"'<>]+/gi, (url) => {
+      try {
+        return new URL(url).origin;
+      } catch {
+        return '[url]';
+      }
+    });
   console.error(`${new Date().toISOString()} ${safeMsg}`);
 }
 
@@ -905,28 +913,23 @@ export class StreamingService implements OnModuleDestroy {
     if (!episode) {
       throw new NotFoundException('Episódio não encontrado.');
     }
-    const availableSources = await this.getAvailableSources(
-      episode.id,
-      anime.audio,
-    );
-
     const isCatalogUnpublished =
       anime.published === false && anime.catalogUnpublished === true;
 
-    const {
-      videoUrl: rawVideoUrl,
-      playerEmbed,
-      reextracted,
-    } = await this.resolveVideo(
-      episode,
-      anime.slug,
-      episodeNumber,
-      season,
-      forceRefresh,
-      skipLiveness,
-      anime.audio,
-      isCatalogUnpublished,
-    );
+    const [availableSources, resolved] = await Promise.all([
+      this.getAvailableSources(episode.id, anime.audio),
+      this.resolveVideo(
+        episode,
+        anime.slug,
+        episodeNumber,
+        season,
+        forceRefresh,
+        skipLiveness,
+        anime.audio,
+        isCatalogUnpublished,
+      ),
+    ]);
+    const { videoUrl: rawVideoUrl, playerEmbed, reextracted } = resolved;
 
     if (!rawVideoUrl && !playerEmbed) {
       throw new NotFoundException(

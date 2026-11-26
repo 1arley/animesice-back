@@ -52,6 +52,7 @@ jobs:
         id: release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HUSKY: 0
         run: |
           before="$(git tag --list 'v*' | sort -V)"
           npm run release

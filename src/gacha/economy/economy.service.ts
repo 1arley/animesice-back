@@ -19,7 +19,10 @@ import { Cron } from '@nestjs/schedule';
 import { releaseTradesForCard } from '@/gacha/trade-escrow';
 import { PrismaService } from '@/prisma/prisma.service';
 import { CrystalAccountingService } from '@/gacha/crystal-accounting.service';
-import { GachaConfigService } from '@/gacha/gacha-config.service';
+import {
+  activeGachaEventEndsAt,
+  GachaConfigService,
+} from '@/gacha/gacha-config.service';
 import {
   cardValue,
   conditionLabel,
@@ -1762,13 +1765,46 @@ export class EconomyService {
         });
         const loyaltyGuaranteed = retention.loyaltyRarePlusReady;
         const { version, config } = await this.currentVersion(tx);
+        const categoryWeights = { ...config.box_category_weights[tier] };
+        const eligibleSkins = await tx.gachaSkin.findMany({
+          where: {
+            active: true,
+            blocked: false,
+            id: { notIn: await this.inactiveEventItems(tx, 'skinIds') },
+          },
+          select: { id: true, rarity: true },
+        });
+        const availableSkinRarities = new Set(
+          eligibleSkins.map((skin) => skin.rarity),
+        );
+        const skinQualityWeights = Object.fromEntries(
+          Object.entries(config.box_quality_weights[tier]).map(
+            ([quality, weight]) => [
+              quality,
+              availableSkinRarities.has(
+                quality === 'BASIC' ? 'COMMON' : quality,
+              )
+                ? weight
+                : 0,
+            ],
+          ),
+        ) as Record<PrizeQuality, number>;
+        const skinHasQuality = Object.values(skinQualityWeights).some(
+          (weight) => weight > 0,
+        );
+        if (!eligibleSkins.length || !skinHasQuality) categoryWeights.SKIN = 0;
         const category = loyaltyGuaranteed
           ? 'CARD'
-          : weightedPick(config.box_category_weights[tier]);
+          : weightedPick(categoryWeights);
         const quality =
           loyaltyGuaranteed && tier !== 'PREMIUM'
             ? weightedPick({ RARE: 55, EPIC: 35, LEGENDARY: 10 })
-            : prizeQuality(tier, category, config.box_quality_weights);
+            : category === 'SKIN'
+              ? prizeQuality(tier, 'SKIN', {
+                  ...config.box_quality_weights,
+                  [tier]: skinQualityWeights,
+                })
+              : prizeQuality(tier, category, config.box_quality_weights);
         const reward = await this.grantPrize(
           tx,
           userId,
@@ -3324,7 +3360,7 @@ export class EconomyService {
         rarity: { in: QUALITY_TIERS[quality] },
         id: { notIn: await this.inactiveEventItems(tx, 'cardIds') },
       },
-      select: { id: true, name: true, imageHidden: true },
+      select: { id: true, name: true, image: true, imageHidden: true },
     });
     const cardSeed = this.seededRandom(`mint-card:${userId}:${Date.now()}`);
     const card = candidates[Math.floor(cardSeed * candidates.length)];
@@ -3366,6 +3402,7 @@ export class EconomyService {
       userCardId: copy.id,
       cardId: card.id,
       name: card.imageHidden ? '???' : card.name,
+      image: card.imageHidden ? null : card.image,
       rarity: counter.rarity,
       foil,
       condition,
@@ -4336,6 +4373,14 @@ export class EconomyService {
     };
   }
 
+  async marketAgeExemptionStatus() {
+    const config = await this.prisma.gachaConfig.findUnique({
+      where: { key: 'market_age_exemption' },
+      select: { value: true },
+    });
+    return { endsAt: activeGachaEventEndsAt(config?.value) };
+  }
+
   private async assertMarketEligible(tx: Tx, userId: string) {
     await this.assertEconomyEnabled(tx, userId);
     const user = await tx.user.findUniqueOrThrow({
@@ -4344,7 +4389,14 @@ export class EconomyService {
     });
     if (!user.isVerified)
       throw new ForbiddenException('Verifique o e-mail para usar o mercado.');
-    if (user.createdAt.getTime() > Date.now() - 7 * 86_400_000) {
+    const exemption = await tx.gachaConfig.findUnique({
+      where: { key: 'market_age_exemption' },
+      select: { value: true },
+    });
+    if (
+      !activeGachaEventEndsAt(exemption?.value) &&
+      user.createdAt.getTime() > Date.now() - 7 * 86_400_000
+    ) {
       throw new ForbiddenException('Conta precisa ter pelo menos sete dias.');
     }
   }

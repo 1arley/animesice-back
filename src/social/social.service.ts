@@ -11,6 +11,7 @@ import { NotificationService } from '@/notification/notification.service';
 import { ContentStatus, NotificationType, Prisma } from '@prisma/client';
 import { CreatePostCommentDto, CreatePostDto } from '@/social/dto/social.dto';
 import { PROFILE_PUBLIC_OR_EMPTY } from '@/common/prisma-filters';
+import { GachaConfigService } from '@/gacha/gacha-config.service';
 
 const MAX_POST_LENGTH = 2000;
 
@@ -68,6 +69,7 @@ export class SocialService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationService: NotificationService,
+    private readonly gachaConfig: GachaConfigService,
   ) {}
 
   // ------------------------------------------------------------------
@@ -674,6 +676,9 @@ export class SocialService {
       status: ContentStatus.VISIBLE,
       AND: [
         { kind: { not: 'GACHA_SKIN_PULL' } },
+        ...(this.gachaConfig.pullPostsEnabled
+          ? []
+          : [{ kind: { not: 'GACHA_PULL' } }]),
         {
           OR: [
             { kind: { not: 'GACHA_PULL' } },

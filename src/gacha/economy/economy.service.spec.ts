@@ -96,6 +96,9 @@ describe('EconomyService safeguards', () => {
     db.gachaItemListing.findMany.mockResolvedValue([]);
     db.gachaTrade.findMany.mockResolvedValue([]);
     db.gachaInventory.updateMany.mockResolvedValue({ count: 1 });
+    db.gachaSkin.findMany.mockResolvedValue([
+      { id: 'skin-1', name: 'Skin', imageUrl: '/skin.png', rarity: 'COMMON' },
+    ]);
     db.gachaRetention.upsert.mockResolvedValue({ loyaltyRarePlusReady: false });
     db.gachaRetention.update.mockResolvedValue({ loyaltyDays: 1 });
     db.gachaOpeningDay.createMany.mockResolvedValue({ count: 1 });
@@ -111,9 +114,62 @@ describe('EconomyService safeguards', () => {
 
   afterEach(() => jest.restoreAllMocks());
 
-  it('returns the actual card rarity with a box reward', async () => {
+  function mockMarketAgeExemption(endsAt: string) {
+    db.gachaConfig.findUnique.mockImplementation(
+      ({ where }: { where: { key: string } }) =>
+        Promise.resolve(
+          where.key === 'market_age_exemption'
+            ? { value: { endsAt } }
+            : { value: 100 },
+        ),
+    );
+  }
+
+  it('returns and stores visible card artwork with a box reward', async () => {
     db.gachaRetention.upsert.mockResolvedValue({ loyaltyRarePlusReady: true });
-    db.card.findMany.mockResolvedValue([{ id: 'card-1', name: 'Carta' }]);
+    db.card.findMany.mockResolvedValue([
+      {
+        id: 'card-1',
+        name: 'Carta',
+        image: 'https://cdn.example/carta.webp',
+        imageHidden: false,
+      },
+    ]);
+    db.card.update.mockResolvedValue({
+      editionCounter: 1,
+      rarity: 'INCOMUM',
+    });
+    db.userCard.create.mockResolvedValue({ id: 'copy-1' });
+    jest.spyOn(Math, 'random').mockReturnValueOnce(0).mockReturnValueOnce(0.5);
+
+    const result = await service.openBox('u1', 'COMMON');
+
+    expect(result.reward).toMatchObject({
+      category: 'CARD',
+      name: 'Carta',
+      image: 'https://cdn.example/carta.webp',
+      rarity: 'INCOMUM',
+    });
+    expect(db.gachaOpening.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        reward: expect.objectContaining({
+          name: 'Carta',
+          image: 'https://cdn.example/carta.webp',
+        }),
+      }),
+    });
+  });
+
+  it('masks hidden card name and artwork in the box reward and opening', async () => {
+    db.gachaRetention.upsert.mockResolvedValue({ loyaltyRarePlusReady: true });
+    db.card.findMany.mockResolvedValue([
+      {
+        id: 'card-1',
+        name: 'Carta secreta',
+        image: 'https://cdn.example/carta.webp',
+        imageHidden: true,
+      },
+    ]);
     db.card.update.mockResolvedValue({ editionCounter: 1, rarity: 'INCOMUM' });
     db.userCard.create.mockResolvedValue({ id: 'copy-1' });
     jest.spyOn(Math, 'random').mockReturnValueOnce(0).mockReturnValueOnce(0.5);
@@ -122,7 +178,13 @@ describe('EconomyService safeguards', () => {
 
     expect(result.reward).toMatchObject({
       category: 'CARD',
-      rarity: 'INCOMUM',
+      name: '???',
+      image: null,
+    });
+    expect(db.gachaOpening.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        reward: expect.objectContaining({ name: '???', image: null }),
+      }),
     });
   });
 
@@ -319,6 +381,19 @@ describe('EconomyService safeguards', () => {
     expect(db.userGachaSkin.create).toHaveBeenCalledTimes(2);
   });
 
+  it('skips the skin reward when the eligible skin pool is empty', async () => {
+    db.gachaSkin.findMany.mockResolvedValue([]);
+    db.card.findMany.mockResolvedValue([{ id: 'card-1', name: 'Carta' }]);
+    db.card.update.mockResolvedValue({ editionCounter: 1, rarity: 'INCOMUM' });
+    db.userCard.create.mockResolvedValue({ id: 'copy-1' });
+    jest.spyOn(Math, 'random').mockReturnValue(0.7);
+
+    const result = await service.openBox('u1', 'RARE');
+
+    expect((result.reward as { category: string }).category).not.toBe('SKIN');
+    expect(db.gachaOpening.create).toHaveBeenCalledTimes(1);
+  });
+
   it('rejects invalid economic snapshots rather than producing invalid rewards', () => {
     expect(() =>
       economyConfig({ ...ECONOMY_DEFAULTS, box_prices: {} }),
@@ -376,6 +451,66 @@ describe('EconomyService safeguards', () => {
       createdAt: new Date(),
       role: 'USER',
     });
+    await expect(
+      service.createBuyOrder('u1', {
+        itemType: 'CARD',
+        itemId: 'card',
+        price: 10,
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('allows young verified accounts while the market age exemption is active', async () => {
+    const youngUser = {
+      isVerified: true,
+      createdAt: new Date(),
+      role: 'USER',
+      crystalBalance: 10000,
+      gachaMarketBlockedAt: null,
+    };
+    db.user.findUniqueOrThrow.mockResolvedValue(youngUser);
+    mockMarketAgeExemption(new Date(Date.now() + 60_000).toISOString());
+    const marketGuard = service as unknown as {
+      assertMarketEligible: (
+        tx: typeof prismaMocks.root,
+        userId: string,
+      ) => Promise<void>;
+    };
+
+    await expect(
+      marketGuard.assertMarketEligible(prismaMocks.root, 'u1'),
+    ).resolves.toBeUndefined();
+  });
+
+  it('rejects young accounts after the market age exemption expires', async () => {
+    db.user.findUniqueOrThrow.mockResolvedValue({
+      isVerified: true,
+      createdAt: new Date(),
+      role: 'USER',
+      crystalBalance: 10000,
+      gachaMarketBlockedAt: null,
+    });
+    mockMarketAgeExemption('2020-01-01T00:00:00.000Z');
+
+    await expect(
+      service.createBuyOrder('u1', {
+        itemType: 'CARD',
+        itemId: 'card',
+        price: 10,
+      }),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('still requires email verification during the market age exemption', async () => {
+    db.user.findUniqueOrThrow.mockResolvedValue({
+      isVerified: false,
+      createdAt: new Date(),
+      role: 'USER',
+      crystalBalance: 10000,
+      gachaMarketBlockedAt: null,
+    });
+    mockMarketAgeExemption(new Date(Date.now() + 60_000).toISOString());
+
     await expect(
       service.createBuyOrder('u1', {
         itemType: 'CARD',

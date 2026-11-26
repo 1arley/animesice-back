@@ -344,6 +344,12 @@ export class EconomyController {
     return this.economy.nightMarketStatus();
   }
 
+  @Public()
+  @Get('market/age-exemption')
+  marketAgeExemptionStatus() {
+    return this.economy.marketAgeExemptionStatus();
+  }
+
   @Get('shop')
   shop(@Req() req: AuthenticatedRequest) {
     return this.economy.officialShop(req.user.id);

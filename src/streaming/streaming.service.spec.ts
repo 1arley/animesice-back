@@ -549,6 +549,71 @@ describe('StreamingService.getSource', () => {
     probeSpy.mockRestore();
   });
 
+  it('resolve a fonte de vídeo em paralelo à lista de servidores', async () => {
+    const { prisma, svc } = makeMocks();
+    prisma.anime.findUnique.mockResolvedValue({
+      id: 'a1',
+      slug: 'anime',
+      audio: 'LEGENDADO',
+    });
+    prisma.episode.findUnique.mockResolvedValue({
+      id: 'ep1',
+      number: 1,
+      videoUrl: 'https://cdn.test/video.mp4',
+      embedUrl: 'https://meusanimes.blog/e/anime/',
+      thumbnailUrl: null,
+    });
+    let releaseSources!: (sources: { id: string; label: string }[]) => void;
+    const sources = new Promise<{ id: string; label: string }[]>((resolve) => {
+      releaseSources = resolve;
+    });
+    const availableSources = jest
+      .spyOn(svc as any, 'getAvailableSources')
+      .mockReturnValue(sources);
+    const resolveVideo = jest
+      .spyOn(svc as any, 'resolveVideo')
+      .mockResolvedValue({
+        videoUrl: 'https://cdn.test/video.mp4',
+        playerEmbed: null,
+        reextracted: false,
+      });
+
+    const result = svc.getSource('anime', 1, 'https://api.test');
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(availableSources).toHaveBeenCalled();
+    expect(resolveVideo).toHaveBeenCalled();
+    releaseSources([]);
+    await expect(result).resolves.toMatchObject({
+      rawVideoUrl: 'https://cdn.test/video.mp4',
+      availableSources: [],
+    });
+  });
+
+  it('omite tokens no caminho das URLs dos logs de streaming', async () => {
+    const { prisma, svc } = makeMocks();
+    const token = 'signed-path-token';
+    prisma.anime.findUnique.mockResolvedValue({
+      id: 'a1',
+      slug: 'anime',
+      audio: 'LEGENDADO',
+    });
+    prisma.episode.findUnique.mockResolvedValue({
+      id: 'ep1',
+      number: 1,
+      videoUrl: `https://cdn.test/${token}/video.mp4`,
+      embedUrl: 'https://meusanimes.blog/e/anime/',
+      thumbnailUrl: null,
+    });
+    const log = jest.spyOn(console, 'error').mockImplementation();
+
+    await svc.getSource('anime', 1, 'https://api.test');
+
+    expect(log.mock.calls.flat().join(' ')).not.toContain(token);
+    log.mockRestore();
+  });
+
   it('descarta vidcache morta quando não há outra fonte ativa', async () => {
     const { prisma, scrapeService, svc } = makeMocks();
     const dead = 'https://vidcache.net:8161/token/video.mp4';

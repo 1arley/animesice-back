@@ -25,6 +25,14 @@ o resultado automático, e a URL escolhida não substitui `Episode.videoUrl`.
 
 Sem login, sem token client-side.
 
+No caminho síncrono, a resolução/probe da mídia e a consulta de servidores
+alternativos acontecem em paralelo; a resposta continua aguardando os dois
+resultados. O modo `async=1` mantém o fluxo de job/SSE para extrações que não
+podem ser concluídas imediatamente.
+
+O diagnóstico público dos sites e os limites de benchmark estão em
+[`STREAMING-RESEARCH.md`](./STREAMING-RESEARCH.md).
+
 ## Anti-hotlinking
 
 CDNs pirate (lightspeedst.net) validam `Referer` contra o site fonte (animefire.io), não contra o host da CDN. `EmbedService.proxyMedia` injeta:

@@ -33,6 +33,16 @@ export const JOB_TYPE = {
 
 export type JobType = (typeof JOB_TYPE)[keyof typeof JOB_TYPE];
 
+/** Control jobs do not scrape media and must not wait behind extraction backlogs. */
+export const CONTROL_JOB_TYPES = new Set<string>([
+  JOB_TYPE.CHECK_RELEASES,
+  JOB_TYPE.DISCOVER_SEASON,
+  JOB_TYPE.SYNC_AIRING,
+  JOB_TYPE.GAP_CHECK,
+  JOB_TYPE.BACKFILL_ANILIST,
+  JOB_TYPE.SYNC_SCHEDULES,
+]);
+
 export const JOB_STATUS = {
   PENDING: 'PENDING',
   RUNNING: 'RUNNING',

@@ -7,6 +7,63 @@ import {
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '@/prisma/prisma.service';
 import { assertItemShopSources } from '@/gacha/economy/economy.config';
+import { DEFAULT_SPIN_SHARD_CHANCE } from '@/gacha/gacha.constants';
+
+function hasExplicitTimezoneIsoTimestamp(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/i.test(
+      value,
+    ) &&
+    !Number.isNaN(Date.parse(value))
+  );
+}
+
+export function activeGachaEventEndsAt(
+  value: Prisma.JsonValue | null | undefined,
+  now = Date.now(),
+): string | null {
+  if (
+    value === null ||
+    value === undefined ||
+    Array.isArray(value) ||
+    typeof value !== 'object'
+  )
+    return null;
+  const endsAt = value.endsAt;
+  return hasExplicitTimezoneIsoTimestamp(endsAt) && Date.parse(endsAt) > now
+    ? endsAt
+    : null;
+}
+
+function assertMarketAgeExemption(value: Prisma.InputJsonValue): void {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new BadRequestException('market_age_exemption deve ser um objeto.');
+  }
+  const endsAt = (value as Record<string, unknown>).endsAt;
+  if (!hasExplicitTimezoneIsoTimestamp(endsAt)) {
+    throw new BadRequestException(
+      'market_age_exemption.endsAt deve ser data ISO 8601 com fuso horário explícito.',
+    );
+  }
+}
+
+function isSpinShardChance(value: unknown): value is number {
+  return (
+    typeof value === 'number' &&
+    Number.isFinite(value) &&
+    value >= 0 &&
+    value <= 100
+  );
+}
+
+function assertSpinShardChance(value: Prisma.InputJsonValue): void {
+  if (!isSpinShardChance(value)) {
+    throw new BadRequestException(
+      'spin_shard_chance deve ser um número entre 0 e 100.',
+    );
+  }
+}
 
 export type GachaTier =
   'COMUM' | 'INCOMUM' | 'RARA' | 'EPICA' | 'LENDARIA' | 'MITICA' | 'GALACTICA';
@@ -94,26 +151,41 @@ export class GachaConfigService implements OnModuleInit {
       };
       assertItemShopSources(candidate);
       if (key === 'claim_event') assertClaimEvent(value);
+      if (key === 'market_age_exemption') assertMarketAgeExemption(value);
+      if (key === 'spin_shard_chance') assertSpinShardChance(value);
 
       const row = await tx.gachaConfig.upsert({
         where: { key },
         create: { key, value, label: key, group: 'gacha' },
         update: { value },
       });
-      const [config, latest] = await Promise.all([
+      const [config, latest, activeVersion] = await Promise.all([
         tx.gachaConfig.findMany(),
         tx.gachaEconomyVersion.aggregate({ _max: { version: true } }),
+        key === 'spin_shard_chance'
+          ? tx.gachaEconomyVersion.findFirst({
+              where: { activeFrom: { lte: new Date() } },
+              orderBy: [{ activeFrom: 'desc' }, { version: 'desc' }],
+              select: { snapshot: true },
+            })
+          : Promise.resolve(null),
       ]);
-      const snapshot = Object.fromEntries(
+      const liveSnapshot = Object.fromEntries(
         config.map((item) => [item.key, item.value]),
       );
+      const activeSnapshot = activeVersion?.snapshot;
+      const snapshot =
+        key === 'spin_shard_chance' &&
+        activeSnapshot !== null &&
+        typeof activeSnapshot === 'object' &&
+        !Array.isArray(activeSnapshot)
+          ? { ...activeSnapshot, spin_shard_chance: value }
+          : liveSnapshot;
       assertItemShopSources(snapshot);
       await tx.gachaEconomyVersion.create({
         data: {
           version: (latest._max.version ?? 0) + 1,
-          snapshot: Object.fromEntries(
-            config.map((item) => [item.key, item.value]),
-          ),
+          snapshot,
           authorId,
           reason,
         },
@@ -152,6 +224,11 @@ export class GachaConfigService implements OnModuleInit {
     return this.num('spins_per_hour');
   }
 
+  get spinShardChance(): number {
+    const value = this.cache.get('spin_shard_chance');
+    return isSpinShardChance(value) ? value : DEFAULT_SPIN_SHARD_CHANCE;
+  }
+
   get rerollCostPct(): number {
     return this.num('reroll_cost_pct');
   }
@@ -162,6 +239,10 @@ export class GachaConfigService implements OnModuleInit {
 
   get dailyBonus(): number {
     return this.num('daily_bonus');
+  }
+
+  get pullPostsEnabled(): boolean {
+    return this.cache.get('pull_posts_enabled') !== false;
   }
 
   // ── bypass ───────────────────────────────────────────────
