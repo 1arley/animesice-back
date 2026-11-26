@@ -278,6 +278,14 @@ const presentReroll = (pull: Pull): RerollResult => ({
 
 const fmtTrade = (t: TradeRow) => ({
   ...t,
+  itemsOffered: itemAmounts(t.itemsOffered ?? []).map((item) => ({
+    ...item,
+    name: catalogItem(item.itemId).name,
+  })),
+  itemsRequested: itemAmounts(t.itemsRequested ?? []).map((item) => ({
+    ...item,
+    name: catalogItem(item.itemId).name,
+  })),
   offeredUserCards: t.cards
     ?.filter((c) => c.side === 'OFFERED')
     .map((c) => c.snapshot) ?? [t.offeredUserCard],
@@ -1996,6 +2004,7 @@ export class GachaService {
     await this.expirePendingTrades();
     return this.prisma.$transaction(
       async (tx) => {
+        await this.crystalAccounting.lockWallets(tx, [userId]);
         await tx.gachaInventory.upsert({
           where: { userId },
           create: { userId },

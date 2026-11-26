@@ -151,6 +151,11 @@ describe('EconomyService safeguards', () => {
       image: 'https://cdn.example/carta.webp',
       rarity: 'INCOMUM',
     });
+    const walletLock = db.$queryRaw.mock.calls[0]?.[0] as TemplateStringsArray;
+    expect(walletLock.join('')).toContain('FROM "User"');
+    expect(db.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+      db.gachaInventory.updateMany.mock.invocationCallOrder[0],
+    );
     expect(db.gachaOpening.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         reward: expect.objectContaining({

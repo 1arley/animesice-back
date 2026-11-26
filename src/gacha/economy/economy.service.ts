@@ -1758,6 +1758,7 @@ export class EconomyService {
     return this.prisma.$transaction(
       async (tx) => {
         await this.assertEconomyEnabled(tx, userId);
+        await this.crystalAccounting.lockWallets(tx, [userId]);
         const field = BOX_FIELD[tier];
         const consumed = await tx.gachaInventory.updateMany({
           where: { userId, [field]: { gte: 1 }, keys: { gte: 1 } },
@@ -2021,7 +2022,7 @@ export class EconomyService {
           select: { id: true, status: true, expiresAt: true },
         });
         const consideration = [
-          crystals > 0 ? `${crystals.toLocaleString('pt-BR')} Crystals` : null,
+          crystals > 0 ? `${crystals.toLocaleString('pt-BR')} Cristais` : null,
           cardIds.length > 0 ? `${cardIds.length} carta(s)` : null,
           items.length > 0
             ? `${items.reduce((sum, item) => sum + item.quantity, 0)} item(ns)`

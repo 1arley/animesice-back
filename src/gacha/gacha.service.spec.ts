@@ -1803,7 +1803,7 @@ describe('GachaService', () => {
           }),
         );
 
-        await service.createTrade(
+        const trade = await service.createTrade(
           'u1',
           'oc1',
           'rc1',
@@ -1813,6 +1813,12 @@ describe('GachaService', () => {
           [{ itemId: 'HOLO_SHARD', quantity: 1 }],
         );
 
+        expect(trade.itemsOffered).toEqual([
+          { itemId: 'KEY', quantity: 2, name: 'Chave' },
+        ]);
+        expect(trade.itemsRequested).toEqual([
+          { itemId: 'HOLO_SHARD', quantity: 1, name: 'Fragmento Holo' },
+        ]);
         expect(prismaMocks.root.userCard.findMany).not.toHaveBeenCalled();
         expect(mockPrisma.gachaTrade.create).toHaveBeenCalledWith(
           expect.objectContaining({
@@ -1944,6 +1950,7 @@ describe('GachaService', () => {
       });
 
       it('troca donos, limpa destaque e conclui', async () => {
+        mockPrisma.gachaTrade.updateMany.mockResolvedValueOnce({ count: 0 });
         mockPrisma.gachaTrade.findUnique.mockResolvedValue(
           tradeRow({
             itemsOffered: [{ itemId: 'KEY', quantity: 2 }],
@@ -1987,6 +1994,7 @@ describe('GachaService', () => {
             data: { holoShards: { increment: 1 } },
           }),
         );
+        expect(mockPrisma.gachaInventory.updateMany).toHaveBeenCalledTimes(2);
         expect(res.status).toBe('COMPLETED');
         // expireTrade + aceite, cada um na sua transação serializável.
         expect(mockPrisma.$transaction).toHaveBeenCalledTimes(4);
@@ -2072,6 +2080,7 @@ describe('GachaService', () => {
       );
 
       it('cancelar troca pendente', async () => {
+        mockPrisma.gachaTrade.updateMany.mockResolvedValueOnce({ count: 0 });
         mockPrisma.gachaTrade.findUnique.mockResolvedValue(
           tradeRow({
             itemsOffered: [{ itemId: 'KEY', quantity: 2 }],
@@ -2103,6 +2112,7 @@ describe('GachaService', () => {
             data: { holoShards: { increment: 1 } },
           }),
         );
+        expect(mockPrisma.gachaInventory.updateMany).toHaveBeenCalledTimes(2);
       });
 
       it('recusar troca pendente', async () => {
@@ -2218,6 +2228,7 @@ describe('GachaService', () => {
           requestedUserCardIds: ['oc1'],
           crystalsOffered: 15,
           crystalsRequested: 25,
+          itemsOffered: [],
         });
 
         expect(result.id).toBe('t2');
@@ -2230,7 +2241,7 @@ describe('GachaService', () => {
               requestedUserCardId: 'oc1',
               crystalsOffered: 15,
               crystalsRequested: 25,
-              itemsOffered: [{ itemId: 'HOLO_SHARD', quantity: 1 }],
+              itemsOffered: [],
               itemsRequested: [{ itemId: 'KEY', quantity: 2 }],
               round: 2,
               parentTradeId: 't1',
@@ -2628,6 +2639,12 @@ describe('GachaService', () => {
             refId: 'p1',
           }),
         }),
+      );
+      const walletLock = mockPrisma.$queryRaw.mock
+        .calls[0]?.[0] as TemplateStringsArray;
+      expect(walletLock.join('')).toContain('FROM "User"');
+      expect(mockPrisma.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        mockPrisma.gachaInventory.upsert.mock.invocationCallOrder[0],
       );
     });
 

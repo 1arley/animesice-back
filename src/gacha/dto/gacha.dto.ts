@@ -130,9 +130,14 @@ export class GachaEngagementPilotDto {
 }
 
 export class CodeItemRewardDto {
+  @ApiProperty({
+    description: 'ID do item do catálogo.',
+    enum: CATALOG_ITEM_IDS,
+  })
   @IsIn(CATALOG_ITEM_IDS)
   itemId!: CatalogItemId;
 
+  @ApiProperty({ description: 'Quantidade (inteiro ≥ 1).' })
   @IsInt()
   @Min(1)
   @Max(2_147_483_647)
@@ -295,21 +300,6 @@ export class CreateListingDto {
   price!: number;
 }
 
-export class TradeItemDto {
-  @ApiProperty({
-    description: 'ID do item do catálogo.',
-    enum: CATALOG_ITEM_IDS,
-  })
-  @IsIn(CATALOG_ITEM_IDS)
-  itemId!: CatalogItemId;
-
-  @ApiProperty({ description: 'Quantidade (inteiro ≥ 1).' })
-  @IsInt()
-  @Min(1)
-  @Max(2_147_483_647)
-  quantity!: number;
-}
-
 export class NewTradeDto {
   @ApiProperty({ type: [String], minItems: 1, maxItems: 5 })
   @IsArray()
@@ -354,19 +344,21 @@ export class NewTradeDto {
   @Max(2_147_483_647)
   crystalsRequested?: number;
 
-  @ApiProperty({ type: [TradeItemDto], required: false })
+  @ApiPropertyOptional({ type: [CodeItemRewardDto] })
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(CATALOG_ITEM_IDS.length)
   @ValidateNested({ each: true })
-  @Type(() => TradeItemDto)
-  itemsOffered?: TradeItemDto[];
+  @Type(() => CodeItemRewardDto)
+  itemsOffered?: CodeItemRewardDto[];
 
-  @ApiProperty({ type: [TradeItemDto], required: false })
+  @ApiPropertyOptional({ type: [CodeItemRewardDto] })
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(CATALOG_ITEM_IDS.length)
   @ValidateNested({ each: true })
-  @Type(() => TradeItemDto)
-  itemsRequested?: TradeItemDto[];
+  @Type(() => CodeItemRewardDto)
+  itemsRequested?: CodeItemRewardDto[];
 }
 
 export class CounterTradeDto {
@@ -422,19 +414,21 @@ export class CounterTradeDto {
   @Max(2_147_483_647)
   crystalsRequested?: number;
 
-  @ApiProperty({ type: [TradeItemDto], required: false })
+  @ApiPropertyOptional({ type: [CodeItemRewardDto] })
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(CATALOG_ITEM_IDS.length)
   @ValidateNested({ each: true })
-  @Type(() => TradeItemDto)
-  itemsOffered?: TradeItemDto[];
+  @Type(() => CodeItemRewardDto)
+  itemsOffered?: CodeItemRewardDto[];
 
-  @ApiProperty({ type: [TradeItemDto], required: false })
+  @ApiPropertyOptional({ type: [CodeItemRewardDto] })
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(CATALOG_ITEM_IDS.length)
   @ValidateNested({ each: true })
-  @Type(() => TradeItemDto)
-  itemsRequested?: TradeItemDto[];
+  @Type(() => CodeItemRewardDto)
+  itemsRequested?: CodeItemRewardDto[];
 }
 
 export enum WishlistPriorityDto {
