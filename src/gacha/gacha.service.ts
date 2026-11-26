@@ -9,9 +9,11 @@ import {
   ESSENCE_RARITIES,
   itemAmounts,
   creditItems,
+  reserveItems,
   lockInventory,
 } from './economy/item-catalog';
 import type { UseEssenceDto } from './economy/economy.dto';
+import type { ItemAmount } from './economy/item-catalog';
 import {
   BadRequestException,
   ConflictException,
@@ -227,6 +229,8 @@ const TRADE_SELECT = {
   requestedUserCard: { select: PULL_SELECT },
   crystalsOffered: true,
   crystalsRequested: true,
+  itemsOffered: true,
+  itemsRequested: true,
   round: true,
   parentTradeId: true,
   closedBy: true,
@@ -1385,7 +1389,7 @@ export class GachaService {
       (crystals === 0 && items.length === 0)
     )
       throw new BadRequestException(
-        'O código precisa de cristais ou itens válidos.',
+        'O código precisa de crystals ou itens válidos.',
       );
     return { crystals, items };
   }
@@ -5420,7 +5424,7 @@ export class GachaService {
 
   /**
    * Corpo da criação dentro de uma transação já aberta: trava carteiras,
-   * põe cartas e Cristais em escrow e cria a linha. `createTrade` e
+   * põe cartas e Crystals em escrow e cria a linha. `createTrade` e
    * `counterTrade` compartilham este caminho — divergir reconstrói o bug de
    * escrow.
    */
@@ -5431,6 +5435,8 @@ export class GachaService {
     requestedIds: string[],
     crystalsOffered: number,
     crystalsRequested: number,
+    offeredItems: ItemAmount[],
+    requestedItems: ItemAmount[],
     prepared: PreparedTrade,
     expiresAt: Date,
     round: number,
@@ -5464,6 +5470,12 @@ export class GachaService {
         crystalsRequested,
       );
     }
+    if (offeredItems.length > 0) {
+      await reserveItems(tx, userId, offeredItems);
+    }
+    if (requestedItems.length > 0) {
+      await reserveItems(tx, prepared.targetUserId, requestedItems);
+    }
     return tx.gachaTrade.create({
       data: {
         offeredUserId: userId,
@@ -5473,6 +5485,8 @@ export class GachaService {
         expiresAt,
         crystalsOffered,
         crystalsRequested,
+        itemsOffered: offeredItems,
+        itemsRequested: requestedItems,
         round,
         parentTradeId,
         cards: {
@@ -5486,8 +5500,8 @@ export class GachaService {
   }
 
   /**
-   * Cria uma troca: até 5 cartas por lado + Cristais opcionais, com escrow
-   * de cartas e de Cristais enquanto PENDING. Aceitar é o único caminho que
+   * Cria uma troca: até 5 cartas por lado + Crystals opcionais, com escrow
+   * de cartas e de Crystals enquanto PENDING. Aceitar é o único caminho que
    * libera tudo (`acceptTrade`); recusar/cancelar/expirar/contra-propor usam
    * `releaseTrade`.
    */
@@ -5497,6 +5511,8 @@ export class GachaService {
     requestedUserCardId: string | string[],
     crystalsOffered = 0,
     crystalsRequested = 0,
+    itemsOfferedRaw?: unknown,
+    itemsRequestedRaw?: unknown,
     overrides?: {
       expiresAt?: Date;
       round?: number;
@@ -5512,6 +5528,8 @@ export class GachaService {
     const requestedIds = Array.isArray(requestedUserCardId)
       ? requestedUserCardId
       : [requestedUserCardId];
+    const offeredItems = itemAmounts(itemsOfferedRaw ?? []);
+    const requestedItems = itemAmounts(itemsRequestedRaw ?? []);
     try {
       const prepared = await this.prepareTrade(
         this.prisma,
@@ -5528,6 +5546,8 @@ export class GachaService {
             requestedIds,
             crystalsOffered,
             crystalsRequested,
+            offeredItems,
+            requestedItems,
             prepared,
             overrides?.expiresAt ??
               new Date(Date.now() + this.config.tradeTtlMs),
@@ -5600,6 +5620,8 @@ export class GachaService {
       requestedUserCardIds?: string[];
       crystalsOffered?: number;
       crystalsRequested?: number;
+      itemsOffered?: unknown;
+      itemsRequested?: unknown;
     },
   ) {
     let notify: { recipientId: string; tradeId: string } | null = null;
@@ -5624,7 +5646,7 @@ export class GachaService {
           }
           // Espelho lido DENTRO da tx, antes do release: quem recebeu a
           // proposta oferece o que era pedido e pede o que era oferecido —
-          // os Cristais trocam de lado junto (mesma regra abaixo).
+          // os Crystals trocam de lado junto (mesma regra abaixo).
           const parentOffered = parent.cards.length
             ? parent.cards
                 .filter((c) => c.side === 'OFFERED')
@@ -5637,6 +5659,14 @@ export class GachaService {
             : [parent.requestedUserCardId];
           const offeredIds = dto.offeredUserCardIds ?? parentRequested;
           const requestedIds = dto.requestedUserCardIds ?? parentOffered;
+          const parentOfferedItems = itemAmounts(parent.itemsOffered ?? []);
+          const parentRequestedItems = itemAmounts(parent.itemsRequested ?? []);
+          const offeredItems = dto.itemsOffered
+            ? itemAmounts(dto.itemsOffered)
+            : parentRequestedItems;
+          const requestedItems = dto.itemsRequested
+            ? itemAmounts(dto.itemsRequested)
+            : parentOfferedItems;
           const released = await releaseTrade(
             tx,
             this.crystalAccounting,
@@ -5666,6 +5696,8 @@ export class GachaService {
             requestedIds,
             dto.crystalsOffered ?? parent.crystalsRequested,
             dto.crystalsRequested ?? parent.crystalsOffered,
+            offeredItems,
+            requestedItems,
             prepared,
             new Date(Date.now() + this.config.tradeCounterTtlMs),
             parent.round + 1,
@@ -5793,7 +5825,7 @@ export class GachaService {
             found.crystalsOffered,
             'SPEND',
             `economy-v1:trade:${tradeId}:offered`,
-            'Troca aceita — Cristais enviados',
+            'Troca aceita — Crystals enviados',
           );
           await this.crystalAccounting.credit(
             tx,
@@ -5801,7 +5833,7 @@ export class GachaService {
             found.crystalsOffered,
             'SALE',
             `economy-v1:trade:${tradeId}:offered`,
-            'Troca aceita — Cristais recebidos',
+            'Troca aceita — Crystals recebidos',
           );
         }
         if (found.crystalsRequested > 0) {
@@ -5811,7 +5843,7 @@ export class GachaService {
             found.crystalsRequested,
             'SPEND',
             `economy-v1:trade:${tradeId}:requested`,
-            'Troca aceita — Cristais enviados',
+            'Troca aceita — Crystals enviados',
           );
           await this.crystalAccounting.credit(
             tx,
@@ -5819,8 +5851,17 @@ export class GachaService {
             found.crystalsRequested,
             'SALE',
             `economy-v1:trade:${tradeId}:requested`,
-            'Troca aceita — Cristais recebidos',
+            'Troca aceita — Crystals recebidos',
           );
+        }
+
+        const offeredItems = itemAmounts(found.itemsOffered ?? []);
+        const requestedItems = itemAmounts(found.itemsRequested ?? []);
+        if (offeredItems.length > 0) {
+          await creditItems(tx, found.requestedUserId, offeredItems);
+        }
+        if (requestedItems.length > 0) {
+          await creditItems(tx, found.offeredUserId, requestedItems);
         }
 
         const owners = await tx.userCard.findMany({
@@ -5928,7 +5969,7 @@ export class GachaService {
         title: 'Troca aceita',
         body:
           trade.crystalsOffered + trade.crystalsRequested
-            ? 'Sua proposta de troca foi aceita e os Cristais foram transferidos.'
+            ? 'Sua proposta de troca foi aceita e os Crystals foram transferidos.'
             : 'Sua proposta de troca foi aceita.',
         linkUrl: '/gacha/mercado',
         actorId: userId,

@@ -884,7 +884,7 @@ model WatchtowerSourceHealth {
   @@index([disabled])
 }
 
-/// Rastro de dosagem de Cristais por tempo assistido — um registro por
+/// Rastro de dosagem de Crystals por tempo assistido — um registro por
 /// usuário+episódio. Drip por segundo consumido e bônus de episódio completo.
 model WatchReward {
   userId            String
@@ -893,7 +893,7 @@ model WatchReward {
   episode           Episode   @relation(fields: [episodeId], references: [id], onDelete: Cascade)
   /// Segundos de reprodução contínua aceitos pelo servidor (sem seeks).
   paidSeconds       Int       @default(0)
-  /// Cristais já creditados por este episódio (drip) — evita re-pagamento.
+  /// Crystals já creditados por este episódio (drip) — evita re-pagamento.
   credited          Int       @default(0)
   /// Bônus de episódio completo já tentado neste registro.
   completedRewarded Boolean   @default(false)
@@ -1291,8 +1291,8 @@ model GachaBypass {
   @@index([userId, status])
 }
 
-/// Troca entre dois usuários (1:1 ou lote até 5 por lado), com Cristais
-/// opcionais. Cristais ficam reservados enquanto PENDING; cartas podem estar
+/// Troca entre dois usuários (1:1 ou lote até 5 por lado), com Crystals
+/// opcionais. Crystals ficam reservados enquanto PENDING; cartas podem estar
 /// em várias propostas, e a aceitação cancela as concorrentes antes do swap.
 /// Vale por 48h após criada; contraproposta vale 7 dias.
 model GachaTrade {
@@ -1305,10 +1305,14 @@ model GachaTrade {
   expiresAt           DateTime         @db.Timestamptz(6)
   createdAt           DateTime         @default(now()) @db.Timestamptz(6)
   completedAt         DateTime?        @db.Timestamptz(6)
-  /// Cristais que o offeredUser reserva enquanto a troca está PENDING.
+  /// Crystals que o offeredUser reserva enquanto a troca está PENDING.
   crystalsOffered     Int              @default(0)
-  /// Cristais que o requestedUser reserva enquanto a troca está PENDING.
+  /// Crystals que o requestedUser reserva enquanto a troca está PENDING.
   crystalsRequested   Int              @default(0)
+  /// Itens do inventário que o offeredUser reserva enquanto a troca está PENDING.
+  itemsOffered       Json             @default("[]")
+  /// Itens do inventário que o requestedUser reserva enquanto a troca está PENDING.
+  itemsRequested     Json             @default("[]")
   /// Rodada da cadeia de contrapropostas (1 = proposta original).
   round               Int              @default(1)
   /// Raiz da cadeia de contrapropostas (achatada — aponta sempre para a

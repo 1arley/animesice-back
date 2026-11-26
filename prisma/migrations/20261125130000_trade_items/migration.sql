@@ -1,0 +1,2 @@
+ALTER TABLE "GachaTrade" ADD COLUMN "itemsOffered" JSONB NOT NULL DEFAULT '[]';
+ALTER TABLE "GachaTrade" ADD COLUMN "itemsRequested" JSONB NOT NULL DEFAULT '[]';

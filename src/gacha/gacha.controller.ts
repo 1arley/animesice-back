@@ -816,7 +816,7 @@ export class GachaController {
   @UseGuards(JwtAuthGuard, VerifiedGuard)
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({
-    summary: 'Propõe troca de 1 a 5 cartas por lado, com Cristais (48h)',
+    summary: 'Propõe troca de 1 a 5 cartas por lado, com Crystals (48h)',
   })
   createTrade(@Req() req: AuthenticatedRequest, @Body() dto: NewTradeDto) {
     if (
@@ -831,6 +831,8 @@ export class GachaController {
       dto.requestedUserCardIds ?? dto.requestedUserCardId!,
       dto.crystalsOffered ?? 0,
       dto.crystalsRequested ?? 0,
+      dto.itemsOffered,
+      dto.itemsRequested,
     );
   }
 
