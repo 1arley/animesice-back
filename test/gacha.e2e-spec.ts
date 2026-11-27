@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { Role } from '@prisma/client';
 import { GachaConfigService } from '@/gacha/gacha-config.service';
@@ -270,7 +271,7 @@ describe('GachaController (e2e)', () => {
         request(getHttpServer())
           .post('/gacha/economy/gems/craft')
           .set('Cookie', cookie)
-          .send({ foil: 'HOLO' }),
+          .send({ foil: 'HOLO', operationId: randomUUID() }),
       ),
     );
     expect(results.filter((result) => result.status === 201)).toHaveLength(1);
@@ -285,7 +286,7 @@ describe('GachaController (e2e)', () => {
     await request(getHttpServer())
       .post('/gacha/economy/gems/craft')
       .set('Cookie', cookie)
-      .send({ foil: 'GOLD' })
+      .send({ foil: 'GOLD', operationId: randomUUID() })
       .expect(400);
     expect(
       (await prisma.gachaInventory.findUniqueOrThrow({ where: { userId } }))
@@ -299,7 +300,7 @@ describe('GachaController (e2e)', () => {
     await request(getHttpServer())
       .post('/gacha/economy/gems/craft')
       .set('Cookie', cookie)
-      .send({ foil: 'HOLO' })
+      .send({ foil: 'HOLO', operationId: randomUUID() })
       .expect(409);
     const afterOverflow = await prisma.gachaInventory.findUniqueOrThrow({
       where: { userId },
@@ -346,7 +347,7 @@ describe('GachaController (e2e)', () => {
       await request(getHttpServer())
         .post('/gacha/economy/gems/apply')
         .set('Cookie', cookie)
-        .send({ foil, userCardId: owned.id })
+        .send({ foil, userCardId: owned.id, operationId: randomUUID() })
         .expect(201);
       expect(
         (await prisma.userCard.findUniqueOrThrow({ where: { id: owned.id } }))
@@ -362,7 +363,7 @@ describe('GachaController (e2e)', () => {
     await request(getHttpServer())
       .post('/gacha/economy/gems/apply')
       .set('Cookie', cookie)
-      .send({ foil: 'HOLO', userCardId: owned.id })
+      .send({ foil: 'HOLO', userCardId: owned.id, operationId: randomUUID() })
       .expect(400);
     expect(
       (await prisma.userCard.findUniqueOrThrow({ where: { id: owned.id } }))
@@ -376,7 +377,7 @@ describe('GachaController (e2e)', () => {
     await request(getHttpServer())
       .post('/gacha/economy/gems/apply')
       .set('Cookie', cookie)
-      .send({ foil: 'GOLD', userCardId: owned.id })
+      .send({ foil: 'GOLD', userCardId: owned.id, operationId: randomUUID() })
       .expect(400);
     expect(
       (await prisma.userCard.findUniqueOrThrow({ where: { id: owned.id } }))
@@ -415,7 +416,7 @@ describe('GachaController (e2e)', () => {
     await request(getHttpServer())
       .post('/gacha/economy/gems/apply')
       .set('Cookie', cookie)
-      .send({ foil: 'HOLO', userCardId: foreign.id })
+      .send({ foil: 'HOLO', userCardId: foreign.id, operationId: randomUUID() })
       .expect(404);
     expect(
       (await prisma.userCard.findUniqueOrThrow({ where: { id: foreign.id } }))
@@ -452,7 +453,11 @@ describe('GachaController (e2e)', () => {
         request(getHttpServer())
           .post('/gacha/economy/gems/apply')
           .set('Cookie', cookie)
-          .send({ foil: 'GOLD', userCardId: owned.id }),
+          .send({
+            foil: 'GOLD',
+            userCardId: owned.id,
+            operationId: randomUUID(),
+          }),
       ),
     );
     expect(results.filter((result) => result.status === 201)).toHaveLength(1);
