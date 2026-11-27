@@ -1,3 +1,10 @@
+## [1.74.3](https://github.com/1arley/animesice-back/compare/v1.74.2...v1.74.3) (2026-11-27)
+
+
+### Bug Fixes
+
+* **gacha:** make foil gem operations idempotent ([f9ede12](https://github.com/1arley/animesice-back/commit/f9ede12ede9dcc708cf7ea5c8bcb2396b673fca9))
+
 ## [1.74.2](https://github.com/1arley/animesice-back/compare/v1.74.1...v1.74.2) (2026-11-27)
 
 
