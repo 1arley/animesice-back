@@ -5,7 +5,7 @@ function makeMocks() {
   return {
     prisma: {
       anime: {
-        findMany: jest.fn(),
+        findMany: jest.fn().mockResolvedValue([]),
         createMany: jest.fn(),
       },
       genre: {
@@ -152,6 +152,7 @@ describe('SeasonDiscovery', () => {
       m.prisma.anime.findMany.mockResolvedValue([]);
       m.prisma.anime.createMany.mockResolvedValue({ count: 1 });
       m.prisma.anime.findMany.mockResolvedValueOnce([]);
+      m.prisma.anime.findMany.mockResolvedValueOnce([]);
       m.prisma.anime.findMany.mockResolvedValueOnce([
         { id: 'a1', anilistId: 55555 },
       ]);
@@ -200,6 +201,7 @@ describe('SeasonDiscovery', () => {
       });
       m.prisma.anime.findMany.mockResolvedValue([]);
       m.prisma.anime.createMany.mockResolvedValue({ count: 1 });
+      m.prisma.anime.findMany.mockResolvedValueOnce([]);
       m.prisma.anime.findMany.mockResolvedValueOnce([]);
       m.prisma.anime.findMany.mockResolvedValueOnce([
         { id: 'a1', anilistId: 77777 },

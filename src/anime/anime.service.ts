@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { Prisma, AnimeFormat, AnimeSeason, AudioType } from '@prisma/client';
 import { PrismaService } from '@/prisma/prisma.service';
+import { normalizeAnimeTitle } from '@/common/anime-title';
 import {
   ADULT_AGE_RATING,
   ADULT_GENRE_SLUG,
@@ -327,15 +328,62 @@ export class AnimeService {
     return rows.map((r) => r.id);
   }
 
+  private normalizeSeasonSlug(slug: string): string {
+    return slug
+      .replace(/-(\d+)(st|nd|rd|th)-season(?=-|$)/g, '-$1')
+      .replace(/-season-(\d+)(?=-|$)/g, '-$1');
+  }
+
+  private seasonSlugCandidates(slug: string): string[] {
+    const normalized = this.normalizeSeasonSlug(slug);
+    const numeric = normalized.match(/^(.*)-(\d+)(-dublado)?$/);
+    const candidates = [normalized, slug];
+    if (numeric) {
+      const number = Number(numeric[2]);
+      const ordinal =
+        number % 100 >= 11 && number % 100 <= 13
+          ? 'th'
+          : number % 10 === 1
+            ? 'st'
+            : number % 10 === 2
+              ? 'nd'
+              : number % 10 === 3
+                ? 'rd'
+                : 'th';
+      candidates.push(
+        `${numeric[1]}-season-${numeric[2]}${numeric[3] ?? ''}`,
+        `${numeric[1]}-${numeric[2]}${ordinal}-season${numeric[3] ?? ''}`,
+      );
+    }
+    return [...new Set(candidates)];
+  }
+
+  private preferSeasonRecord<
+    T extends {
+      title: string;
+      anilistId: number | null;
+      episodes?: unknown[];
+    },
+  >(candidate: T, current: T): boolean {
+    if (
+      normalizeAnimeTitle(candidate.title) !==
+      normalizeAnimeTitle(current.title)
+    )
+      return false;
+    if ((candidate.episodes?.length ?? 0) !== (current.episodes?.length ?? 0))
+      return (
+        (candidate.episodes?.length ?? 0) > (current.episodes?.length ?? 0)
+      );
+    return Boolean(candidate.anilistId) && !current.anilistId;
+  }
+
   async findBySlug(slug: string) {
-    const anime = await this.prisma.anime.findFirst({
-      where: { slug, published: true },
+    const candidates = this.seasonSlugCandidates(slug);
+
+    const matches = await this.prisma.anime.findMany({
+      where: { slug: { in: candidates }, published: true },
       include: {
         genres: true,
-        // Os chips de episódio no FE usam só id/number + flag de disponibilidade
-        // (videoUrl||embedUrl). O player resolve o src por /stream/source no
-        // clique, então as outras ~11 colunas por episódio eram peso morto —
-        // em anime longo, o maior bloco de bytes por request desta rota.
         episodes: {
           orderBy: { number: 'asc' },
           select: { id: true, number: true, videoUrl: true, embedUrl: true },
@@ -343,6 +391,13 @@ export class AnimeService {
         animeSchedules: true,
       },
     });
+    const anime = matches.reduce<(typeof matches)[number] | null>(
+      (current, candidate) =>
+        !current || this.preferSeasonRecord(candidate, current)
+          ? candidate
+          : current,
+      null,
+    );
 
     if (!anime) {
       throw new NotFoundException('Anime não encontrado.');
@@ -352,14 +407,26 @@ export class AnimeService {
   }
 
   async findEpisodesBySlug(slug: string) {
-    const anime = await this.prisma.anime.findFirst({
-      where: { slug, published: true },
+    const candidates = this.seasonSlugCandidates(slug);
+
+    type AnimeWithEpisodes = Prisma.AnimeGetPayload<{
+      include: { episodes: true };
+    }>;
+    const matches = await this.prisma.anime.findMany({
+      where: { slug: { in: candidates }, published: true },
       include: {
         episodes: {
           orderBy: { number: 'desc' },
         },
       },
     });
+    const anime = matches.reduce<AnimeWithEpisodes | null>(
+      (current, candidate) =>
+        !current || this.preferSeasonRecord(candidate, current)
+          ? candidate
+          : current,
+      null,
+    );
 
     if (!anime) {
       throw new NotFoundException('Anime não encontrado.');

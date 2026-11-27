@@ -5,6 +5,7 @@ describe('AdminService (consistência de áudio)', () => {
   function build() {
     const anime = {
       findUnique: jest.fn(),
+      findMany: jest.fn().mockResolvedValue([]),
       // Cast como jest.Mock (mesmo padrão de anime.service.spec): com
       // noUncheckedIndexedAccess, um jest.fn tipado pelo argumento tem
       // calls: Array<trunc>, e o spec indexa mock.calls[0][0].

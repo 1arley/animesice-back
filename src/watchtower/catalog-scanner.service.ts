@@ -3,6 +3,7 @@ import { PrismaService } from '@/prisma/prisma.service';
 import { JobsService } from './jobs.service';
 import { extractJobKey, JOB_TYPE, PRIORITY } from './watchtower.types';
 import { audioTypeFromTitle } from '@/common/anime-audio';
+import { normalizeAnimeTitle } from '@/common/anime-title';
 import { parseTopanimesCatalog } from '@/embed/scrape/topanimes.catalog';
 
 const UA =
@@ -660,13 +661,10 @@ export class CatalogScanner implements OnModuleInit {
 
   /**
    * Processa um job SCAN_CATALOG: escaneia o anime, compara com o DB e enfileira
-   * EXTRACT_EPISODE para episódios faltantes. Catalog split-aware: S1 fica no
-   * anime original; S2+ são defendidas em animes-irmãos (`<slug>-<n>`), que
-   * são criados (Anime row) sob demanda. Episódios sempre season=1 no destino.
+   * EXTRACT_EPISODE para episódios faltantes. S1 fica no anime original; S2+
+   * usam siblings numéricos `<slug>-<n>`. Episódios sempre season=1 no destino.
    *
-   * Detecção de sibling: se o slug termina em `-<n>` (ex: "kaguya-...-2"),
-   * processa apenas a temporada N do catálogo. Se for slug base, processa
-   * todas as temporadas (criando siblings conforme necessário).
+   * Um slug sibling processa só sua temporada; o slug base processa todas.
    */
   async processScanCatalog(
     animeId: string,
@@ -679,9 +677,12 @@ export class CatalogScanner implements OnModuleInit {
       return { found: 0, missing: 0 };
     }
 
-    // Detecta se este anime é um sibling (slug termina em -<n>)
-    const siblingMatch = slug.match(/-(\d+)$/);
+    const catalogSlug = slug
+      .replace(/-(\d+)(st|nd|rd|th)-season(?=-dublado$|$)/, '-$1')
+      .replace(/-season-(\d+)(?=-dublado$|$)/, '-$1');
+    const siblingMatch = catalogSlug.match(/-(\d+)(-dublado)?$/);
     const siblingSeason = siblingMatch ? parseInt(siblingMatch[1]!, 10) : null;
+    const siblingAudioSuffix = siblingMatch?.[2] ?? '';
 
     const seasonsMap = new Map<number, typeof entries>();
     for (const e of entries) {
@@ -770,7 +771,7 @@ export class CatalogScanner implements OnModuleInit {
       const seasonEntries = seasonsMap.get(seasonNum);
       if (!seasonEntries || seasonEntries.length === 0) continue;
 
-      // Target anime: S1 → original; S2+ → slug-<n> sibling
+      // Target anime: S1 → original; S2+ → sibling da temporada.
       let targetId: string;
       let targetSlug: string;
       if (seasonNum === 1 && !siblingSeason) {
@@ -778,19 +779,47 @@ export class CatalogScanner implements OnModuleInit {
         targetSlug = slug;
       } else {
         const baseSlugForSibling = siblingSeason
-          ? slug.replace(/-\d+$/, '')
-          : slug;
-        const siblingSlug = `${baseSlugForSibling}-${seasonNum}`;
-        const existing = await this.prisma.anime.findUnique({
-          where: { slug: siblingSlug },
-          select: { id: true },
-        });
+          ? catalogSlug.replace(/-\d+(-dublado)?$/, '')
+          : catalogSlug;
+        const siblingSlug = `${baseSlugForSibling}-${seasonNum}${siblingAudioSuffix}`;
+        const semanticMatches =
+          (await this.prisma.anime.findMany({
+            where: {
+              id: { not: animeId },
+              audio: baseAnime.audio,
+              published: baseAnime.published,
+              title: { startsWith: baseAnime.title, mode: 'insensitive' },
+            },
+            select: { id: true, slug: true, title: true, anilistId: true },
+          })) ?? [];
+        const expectedTitle = normalizeAnimeTitle(
+          `${baseAnime.title} ${seasonNum}`,
+        );
+        const semanticMatchesForSeason = semanticMatches.filter(
+          (anime) => normalizeAnimeTitle(anime.title) === expectedTitle,
+        );
+        const anilistMatches = semanticMatchesForSeason.filter(
+          (anime) => anime.anilistId !== null,
+        );
+        const semanticMatch =
+          semanticMatchesForSeason.length === 1
+            ? semanticMatchesForSeason[0]
+            : anilistMatches.length === 1
+              ? anilistMatches[0]
+              : null;
+        const existing =
+          semanticMatch ??
+          (await this.prisma.anime.findUnique({
+            where: { slug: `${baseSlugForSibling}-${seasonNum}` },
+            select: { id: true, slug: true },
+          }));
         if (existing) {
           targetId = existing.id;
+          targetSlug = existing.slug;
         } else if (siblingSeason) {
           // Já é o sibling correto
           targetId = animeId;
-          targetSlug = siblingSlug;
+          targetSlug = baseAnime.slug;
           const existingEps = await this.prisma.episode.findMany({
             where: { animeId: targetId },
             select: { number: true },
@@ -822,30 +851,45 @@ export class CatalogScanner implements OnModuleInit {
           continue;
         } else {
           const siblingTitle = `${baseAnime.title} ${seasonNum}`;
-          const created = await this.prisma.anime.create({
-            data: {
-              slug: siblingSlug,
-              title: siblingTitle,
-              synopsis: baseAnime.synopsis,
-              coverImage: baseAnime.coverImage,
-              bannerImage: baseAnime.bannerImage,
-              rating: 0,
-              ageRating: baseAnime.ageRating,
-              status: baseAnime.status,
-              audio: audioTypeFromTitle(siblingTitle),
-              format: baseAnime.format,
-              year: baseAnime.year,
-              season: baseAnime.season,
-              studios: baseAnime.studios,
-              themes: baseAnime.themes,
-              alternativeTitles: baseAnime.alternativeTitles,
+          const siblingAudio = audioTypeFromTitle(siblingTitle);
+          // Evita duplicata: se já existe anime com mesmo título+áudio, reusa.
+          const existingByTitle = await this.prisma.anime.findFirst({
+            where: {
+              audio: siblingAudio,
               published: baseAnime.published,
-              episodeCount: 0,
+              title: { equals: siblingTitle, mode: 'insensitive' },
             },
+            select: { id: true, slug: true },
           });
-          targetId = created.id;
+          if (existingByTitle) {
+            targetId = existingByTitle.id;
+            targetSlug = existingByTitle.slug;
+          } else {
+            const created = await this.prisma.anime.create({
+              data: {
+                slug: siblingSlug,
+                title: siblingTitle,
+                synopsis: baseAnime.synopsis,
+                coverImage: baseAnime.coverImage,
+                bannerImage: baseAnime.bannerImage,
+                rating: 0,
+                ageRating: baseAnime.ageRating,
+                status: baseAnime.status,
+                audio: siblingAudio,
+                format: baseAnime.format,
+                year: baseAnime.year,
+                season: baseAnime.season,
+                studios: baseAnime.studios,
+                themes: baseAnime.themes,
+                alternativeTitles: baseAnime.alternativeTitles,
+                published: baseAnime.published,
+                episodeCount: 0,
+              },
+            });
+            targetId = created.id;
+            targetSlug = siblingSlug;
+          }
         }
-        targetSlug = siblingSlug;
       }
 
       const existing = await this.prisma.episode.findMany({

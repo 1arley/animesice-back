@@ -5,8 +5,9 @@ function makeMocks() {
   return {
     prisma: {
       anime: {
-        findMany: jest.fn(),
+        findMany: jest.fn().mockResolvedValue([]),
         findUnique: jest.fn(),
+        findFirst: jest.fn().mockResolvedValue(null),
         create: jest.fn(),
         updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       },

@@ -9,6 +9,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '@/prisma/prisma.service';
+import { normalizeAnimeTitle } from '@/common/anime-title';
 import { AniListClient, AniListMediaSummary } from './anilist-client.service';
 import { JobsService } from './jobs.service';
 import { extractJobKey, JOB_TYPE, PRIORITY } from './watchtower.types';
@@ -112,12 +113,39 @@ export class SeasonDiscovery {
             },
           ],
         },
-        select: { anilistId: true, slug: true },
+        select: { anilistId: true, slug: true, title: true },
       });
       const existingIds = new Set(existing.map(({ anilistId }) => anilistId));
-      const usedSlugs = new Set(existing.map(({ slug }) => slug));
+      const usedSlugs = new Set(
+        existing.map(({ slug }) =>
+          slug
+            .replace(/-(\d+)(st|nd|rd|th)-season$/, '-$1')
+            .replace(/-season-(\d+)$/, '-$1'),
+        ),
+      );
+      // Evita duplicatas por título normalizado + áudio (LEGENDADO): se já
+      // existe um anime com o mesmo título (independente de slug/anilistId),
+      // não cria outro registro.
+      const existingLegendado = await this.prisma.anime.findMany({
+        where: { audio: 'LEGENDADO' },
+        select: { title: true },
+      });
+      const existingTitleKeys = new Set(
+        existingLegendado.map((anime) => normalizeAnimeTitle(anime.title)),
+      );
       const candidates = batch
         .filter((media) => !existingIds.has(media.id))
+        .filter((media) => {
+          const titles = [
+            media.title?.romaji,
+            media.title?.english,
+            media.title?.native,
+          ].filter((title): title is string => Boolean(title));
+          const keys = titles.map((title) => normalizeAnimeTitle(title));
+          if (keys.some((key) => existingTitleKeys.has(key))) return false;
+          keys.forEach((key) => existingTitleKeys.add(key));
+          return true;
+        })
         .map((media) => {
           const title =
             media.title?.romaji ||
@@ -125,7 +153,13 @@ export class SeasonDiscovery {
             media.title?.native ||
             `anime-${media.id}`;
           const slug = slugify(title);
-          const finalSlug = usedSlugs.has(slug) ? `${slug}-${media.id}` : slug;
+          // Padroniza temporada ordinal para numérico (ex.: "x-3rd-season" -> "x-3")
+          const normalizedSlug = slug
+            .replace(/-(\d+)(st|nd|rd|th)-season$/, '-$1')
+            .replace(/-season-(\d+)$/, '-$1');
+          const finalSlug = usedSlugs.has(normalizedSlug)
+            ? `${normalizedSlug}-${media.id}`
+            : normalizedSlug;
           usedSlugs.add(finalSlug);
           return {
             media,

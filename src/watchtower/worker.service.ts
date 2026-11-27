@@ -160,9 +160,19 @@ export class WorkerService {
   }
 
   private async handleExtract(p: ExtractPayload): Promise<void> {
+    const canonicalSlug = p.slug
+      .replace(/-(\d+)(st|nd|rd|th)-season(?=-dublado$|$)/, '-$1')
+      .replace(/-season-(\d+)(?=-dublado$|$)/, '-$1');
+    const canonicalAnime =
+      canonicalSlug === p.slug
+        ? null
+        : await this.prisma.anime.findUnique({
+            where: { slug: canonicalSlug },
+            select: { id: true, slug: true },
+          });
     await this.episodes.resolveAndPublish({
-      animeId: p.animeId,
-      slug: p.slug,
+      animeId: canonicalAnime?.id ?? p.animeId,
+      slug: canonicalAnime?.slug ?? p.slug,
       episodeNumber: p.episodeNumber,
       season: p.season ?? 1,
       episodeUrl: p.episodeUrl,

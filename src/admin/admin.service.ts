@@ -16,6 +16,7 @@ import { AniListService, AniListMedia } from '@/admin/anilist.service';
 import { ImportAnimeDto } from '@/admin/dto/import-anime.dto';
 import { AnimeFormat, AnimeSeason, AudioType } from '@prisma/client';
 import { audioTypeFromTitle } from '@/common/anime-audio';
+import { normalizeAnimeTitle } from '@/common/anime-title';
 import { CreateExternalAnimeDto } from '@/admin/dto/create-external-anime.dto';
 import {
   CreateProfileBackgroundDto,
@@ -57,6 +58,8 @@ export class AdminService {
         .replace(/[^a-z0-9]+/g, '-')
         .replace(/^-+|(?<!-)-+$/g, '')
         .replace(/-{2,}/g, '-')
+        .replace(/-(\d+)(st|nd|rd|th)-season(-dublado)?$/, '-$1$3')
+        .replace(/-season-(\d+)(-dublado)?$/, '-$1$2')
         .slice(0, 80) || 'anime'
     );
   }
@@ -74,6 +77,18 @@ export class AdminService {
       n += 1;
     }
     return slug;
+  }
+
+  private async findTitleDuplicate(title: string, audio: AudioType) {
+    const normalizedTitle = normalizeAnimeTitle(title);
+    const candidates = await this.prisma.anime.findMany({
+      where: { audio },
+    });
+    return (
+      candidates.find(
+        (anime) => normalizeAnimeTitle(anime.title) === normalizedTitle,
+      ) ?? null
+    );
   }
 
   /**
@@ -136,6 +151,15 @@ export class AdminService {
     });
     if (existing) {
       throw new ConflictException('Slug já existe.');
+    }
+
+    // Evita duplicatas por título + áudio (independente de slug).
+    const audio = audioTypeFromTitle(dto.title);
+    const titleDup = await this.findTitleDuplicate(dto.title.trim(), audio);
+    if (titleDup) {
+      throw new ConflictException(
+        `Anime com mesmo título e áudio já existe (slug: ${titleDup.slug}).`,
+      );
     }
 
     const { genreSlugs, ...animeFields } = dto;
@@ -254,6 +278,11 @@ export class AdminService {
       throw new NotFoundException(
         'Título obrigatório para fontes externas que não sejam MAL ou AniList.',
       );
+
+    // Evita duplicatas por título + áudio (independente de slug/fonte).
+    const externalAudio = audioTypeFromTitle(title);
+    const titleDup = await this.findTitleDuplicate(title.trim(), externalAudio);
+    if (titleDup) return titleDup;
 
     const slug = await this.uniqueSlug(this.slugify(title));
     return this.prisma.anime.create({
