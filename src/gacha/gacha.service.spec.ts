@@ -147,6 +147,7 @@ describe('GachaService', () => {
       findMany: jest.fn(),
       count: jest.fn(),
     },
+    crystalCode: { delete: jest.fn() },
     gachaDailyBonus: {
       createMany: jest.fn(),
       updateMany: jest.fn(),
@@ -460,6 +461,18 @@ describe('GachaService', () => {
       await expect(
         service.adminGrantUserCard('u1', 'w1', { rarity: 'COMUM' }),
       ).rejects.toBeInstanceOf(BadRequestException);
+    });
+  });
+
+  describe('adminDeleteCrystalCode', () => {
+    it('exclui código com resgates', async () => {
+      mockPrisma.crystalCode.delete.mockResolvedValue({ id: 'code-1' });
+
+      await service.adminDeleteCrystalCode('code-1');
+
+      expect(mockPrisma.crystalCode.delete).toHaveBeenCalledWith({
+        where: { id: 'code-1' },
+      });
     });
   });
 

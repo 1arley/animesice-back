@@ -1555,22 +1555,8 @@ export class GachaService {
     );
   }
 
-  async adminDeleteCrystalCode(id: string) {
-    return this.prisma.$transaction(
-      async (tx) => {
-        await tx.$queryRaw`SELECT "id" FROM "CrystalCode" WHERE "id" = ${id} FOR UPDATE`;
-        const item = await tx.crystalCode.findUniqueOrThrow({ where: { id } });
-        if (
-          item.uses > 0 ||
-          (await tx.crystalCodeRedemption.count({ where: { codeId: id } }))
-        )
-          throw new ConflictException(
-            'Código com resgates não pode ser excluído. Desative-o.',
-          );
-        return tx.crystalCode.delete({ where: { id } });
-      },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
-    );
+  adminDeleteCrystalCode(id: string) {
+    return this.prisma.crystalCode.delete({ where: { id } });
   }
 
   private async changeCrystals(
