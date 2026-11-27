@@ -1,3 +1,10 @@
+## [1.74.2](https://github.com/1arley/animesice-back/compare/v1.74.1...v1.74.2) (2026-11-27)
+
+
+### Bug Fixes
+
+* **gacha:** allow deleting crystal codes with redemptions ([d365ef3](https://github.com/1arley/animesice-back/commit/d365ef330938e3b2b99bc921da67e677d2e2109e))
+
 ## [1.74.1](https://github.com/1arley/animesice-back/compare/v1.74.0...v1.74.1) (2026-11-27)
 
 
