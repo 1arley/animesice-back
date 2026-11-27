@@ -833,8 +833,8 @@ export class GachaService {
       ? Math.max(0, this.config.pityDays - daysSince)
       : this.config.pityDays;
 
-    const locked = claim !== null && claim.lockedUntil.getTime() > Date.now();
     const claimEvent = this.config.claimEventState();
+    const locked = claim !== null && claim.lockedUntil.getTime() > Date.now();
     const spinsLeft = Math.max(
       0,
       this.config.effectiveSpinsPerHour() - spinsUsed,
@@ -1028,7 +1028,6 @@ export class GachaService {
           if (inactiveEventIds(event?.value, 'cardIds').includes(spin.card.id))
             throw new ForbiddenException('Evento desta carta encerrado.');
 
-          // Durante o evento, todas as raridades usam cooldown de uma hora.
           const claimEvent = this.config.claimEventState();
           const lock = await tx.gachaClaimLock.findUnique({
             where: { userId },

@@ -271,6 +271,41 @@ describe('EconomyService safeguards', () => {
     expect(db.gachaInventory.updateMany).not.toHaveBeenCalled();
   });
 
+  it('replays a foil gem craft without consuming fragments again', async () => {
+    db.gachaItemOperation.findUnique.mockResolvedValue({
+      kind: 'CRAFT_FOIL_GEM',
+      payload: { foil: 'GOLD' },
+      result: { goldShards: 0, goldGems: 1 },
+    });
+
+    await expect(
+      service.craftFoilGem('u1', {
+        operationId: 'd59383e4-6f57-42fa-ad8c-c5d65a2746cb',
+        foil: 'GOLD',
+      }),
+    ).resolves.toEqual({ goldShards: 0, goldGems: 1 });
+    expect(db.gachaInventory.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('replays foil gem application after the card has already been updated', async () => {
+    const result = { id: 'copy-1', foil: 'GOLD', value: 1000 };
+    db.gachaItemOperation.findUnique.mockResolvedValue({
+      kind: 'APPLY_FOIL_GEM',
+      payload: { userCardId: 'copy-1', foil: 'GOLD' },
+      result,
+    });
+
+    await expect(
+      service.applyFoilGem('u1', {
+        operationId: 'd59383e4-6f57-42fa-ad8c-c5d65a2746cb',
+        userCardId: 'copy-1',
+        foil: 'GOLD',
+      }),
+    ).resolves.toEqual(result);
+    expect(db.gachaInventory.updateMany).not.toHaveBeenCalled();
+    expect(db.userCard.updateMany).not.toHaveBeenCalled();
+  });
+
   it('rejects converting protection instead of crediting crystals', async () => {
     await expect(
       service.convertItem('u1', {
@@ -697,7 +732,11 @@ describe('EconomyService safeguards', () => {
         config.base_value,
         config.foil_mult,
       );
-      await service.applyFoilGem('u1', 'uc-1', 'HOLO');
+      await service.applyFoilGem('u1', {
+        operationId: 'd59383e4-6f57-42fa-ad8c-c5d65a2746cb',
+        userCardId: 'uc-1',
+        foil: 'HOLO',
+      });
 
       expect(db.userCard.updateMany).toHaveBeenCalledWith(
         expect.objectContaining({

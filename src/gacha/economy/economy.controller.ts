@@ -123,12 +123,12 @@ export class EconomyController {
 
   @Post('gems/craft')
   craftFoilGem(@Req() req: AuthenticatedRequest, @Body() dto: CraftFoilGemDto) {
-    return this.economy.craftFoilGem(req.user.id, dto.foil);
+    return this.economy.craftFoilGem(req.user.id, dto);
   }
 
   @Post('gems/apply')
   applyFoilGem(@Req() req: AuthenticatedRequest, @Body() dto: ApplyFoilGemDto) {
-    return this.economy.applyFoilGem(req.user.id, dto.userCardId, dto.foil);
+    return this.economy.applyFoilGem(req.user.id, dto);
   }
 
   @Post('trade-up/cards')
