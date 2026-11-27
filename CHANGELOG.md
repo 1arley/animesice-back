@@ -1,3 +1,10 @@
+## [1.74.1](https://github.com/1arley/animesice-back/compare/v1.74.0...v1.74.1) (2026-11-27)
+
+
+### Bug Fixes
+
+* **anime:** normalize season titles and reuse records ([c86fb99](https://github.com/1arley/animesice-back/commit/c86fb996ba5e3b06f9d0e47deeccfedb1a8aee96))
+
 # [1.74.0](https://github.com/1arley/animesice-back/compare/v1.73.0...v1.74.0) (2026-11-26)
 
 
