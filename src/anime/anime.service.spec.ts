@@ -141,15 +141,17 @@ describe('AnimeService (busca/filtros/paginação)', () => {
 
   it('findBySlug inclui genres/episodes (asc)/schedules e filtra published', async () => {
     const { svc, prisma } = build();
-    prisma.anime.findFirst.mockResolvedValue({
-      id: 'a1',
-      genres: [],
-      episodes: [],
-      animeSchedules: [],
-    });
+    prisma.anime.findMany.mockResolvedValue([
+      {
+        id: 'a1',
+        genres: [],
+        episodes: [],
+        animeSchedules: [],
+      },
+    ]);
     await svc.findBySlug('x');
-    const arg = prisma.anime.findFirst.mock.calls[0][0];
-    expect(arg.where).toEqual({ slug: 'x', published: true });
+    const arg = prisma.anime.findMany.mock.calls[0][0];
+    expect(arg.where).toEqual({ slug: { in: ['x'] }, published: true });
     expect(arg.include.episodes.orderBy).toEqual({ number: 'asc' });
   });
 
@@ -162,19 +164,19 @@ describe('AnimeService (busca/filtros/paginação)', () => {
 
   it('findBySlug lança 404 quando o anime não está publicado', async () => {
     const { svc, prisma } = build();
-    prisma.anime.findFirst.mockResolvedValue(null);
+    prisma.anime.findMany.mockResolvedValue([]);
     await expect(svc.findBySlug('rascunho')).rejects.toThrow(NotFoundException);
   });
 
   it('findEpisodesBySlug ordena desc, filtra published e lança 404', async () => {
     const { svc, prisma } = build();
-    prisma.anime.findFirst.mockResolvedValue({ id: 'a1', episodes: [] });
+    prisma.anime.findMany.mockResolvedValue([{ id: 'a1', episodes: [] }]);
     await svc.findEpisodesBySlug('x');
-    const arg = prisma.anime.findFirst.mock.calls[0][0];
-    expect(arg.where).toEqual({ slug: 'x', published: true });
+    const arg = prisma.anime.findMany.mock.calls[0][0];
+    expect(arg.where).toEqual({ slug: { in: ['x'] }, published: true });
     expect(arg.include.episodes.orderBy).toEqual({ number: 'desc' });
 
-    prisma.anime.findFirst.mockResolvedValue(null);
+    prisma.anime.findMany.mockResolvedValue([]);
     await expect(svc.findEpisodesBySlug('x')).rejects.toThrow(
       NotFoundException,
     );
