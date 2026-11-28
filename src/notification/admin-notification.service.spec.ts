@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import {
   AdminNotificationAudience,
   AdminNotificationCategory,
@@ -187,5 +187,120 @@ describe('AdminNotificationService', () => {
     expect(result).toEqual(
       expect.objectContaining({ recipientCount: 3, duplicate: false }),
     );
+  });
+
+  it('rejeita envio individual com mais de um destinatário', async () => {
+    const { svc } = build();
+
+    await expect(
+      svc.send(ADMIN_ID, buildDto({ userIds: [USER_ID, OTHER_ID] })),
+    ).rejects.toThrow('Envio individual aceita exatamente um destinatário.');
+  });
+
+  describe('consultas', () => {
+    it('conta o público global', async () => {
+      const { svc, prisma } = build();
+      prisma.user.count.mockResolvedValue(1234);
+
+      await expect(svc.countGlobalAudience()).resolves.toEqual({ count: 1234 });
+    });
+
+    it('busca destinatários com paginação e limite preservado', async () => {
+      const { svc, prisma } = build();
+      prisma.user.findMany.mockResolvedValue([{ id: USER_ID }]);
+      prisma.user.count.mockResolvedValue(1);
+
+      const result = await svc.searchRecipients('  viewer  ', 1, 999);
+
+      expect(prisma.user.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          take: 50,
+          where: {
+            OR: expect.arrayContaining([
+              { userName: { contains: 'viewer', mode: 'insensitive' } },
+            ]),
+          },
+        }),
+      );
+      expect(result.meta).toEqual({
+        total: 1,
+        page: 1,
+        limit: 50,
+        totalPages: 1,
+      });
+    });
+
+    it('só compara id quando a busca é um UUID', async () => {
+      const { svc, prisma } = build();
+
+      await svc.searchRecipients(USER_ID);
+      expect(prisma.user.findMany).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          where: { OR: expect.arrayContaining([{ id: USER_ID }]) },
+        }),
+      );
+
+      await svc.searchRecipients('viewer');
+      const lastCall = prisma.user.findMany.mock.calls.at(-1)?.[0];
+      expect(lastCall.where.OR).not.toContainEqual({ id: 'viewer' });
+    });
+
+    it('lista o histórico com filtros de categoria e texto', async () => {
+      const { svc, prisma } = build();
+      prisma.adminNotification.findMany.mockResolvedValue([{ id: 'c1' }]);
+      prisma.adminNotification.count.mockResolvedValue(1);
+
+      const result = await svc.listHistory(1, 20, {
+        category: AdminNotificationCategory.THANKS,
+        search: ' obrigado ',
+      });
+
+      expect(prisma.adminNotification.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            category: AdminNotificationCategory.THANKS,
+            OR: expect.arrayContaining([
+              { title: { contains: 'obrigado', mode: 'insensitive' } },
+            ]),
+          },
+        }),
+      );
+      expect(result.meta.total).toBe(1);
+    });
+
+    it('lança 404 quando a campanha não existe', async () => {
+      const { svc } = build();
+
+      await expect(svc.getCampaign('missing')).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+    });
+
+    it('devolve campanha com destinatários paginados', async () => {
+      const { svc, prisma } = build();
+      prisma.adminNotification.findUnique.mockResolvedValue({
+        id: 'campaign-1',
+      });
+      prisma.notification.findMany.mockResolvedValue([
+        { id: 'n1', user: { id: USER_ID } },
+      ]);
+      prisma.notification.count.mockResolvedValue(1);
+
+      const result = await svc.getCampaign('campaign-1', 2, 999);
+
+      expect(prisma.notification.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { adminNotificationId: 'campaign-1' },
+          skip: 100,
+          take: 100,
+        }),
+      );
+      expect(result.recipients.meta).toEqual({
+        total: 1,
+        page: 2,
+        limit: 100,
+        totalPages: 1,
+      });
+    });
   });
 });
