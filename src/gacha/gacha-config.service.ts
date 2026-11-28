@@ -7,6 +7,7 @@ import {
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '@/prisma/prisma.service';
 import { assertItemShopSources } from '@/gacha/economy/economy.config';
+import { CATALOG_ITEM_IDS, ESSENCE_KINDS } from '@/gacha/economy/item-catalog';
 import {
   DEFAULT_AMPULHETA_DROP_CHANCE,
   DEFAULT_AMPULHETA_ENABLED,
@@ -162,6 +163,45 @@ function assertRoulettePrizes(value: Prisma.InputJsonValue): void {
     if (seen.has(entry.id)) {
       throw new BadRequestException(
         `ID duplicado em roulette_prizes: ${entry.id}.`,
+      );
+    }
+    if (
+      entry.category === 'ITEM' &&
+      (!entry.itemId ||
+        !(CATALOG_ITEM_IDS as readonly string[]).includes(entry.itemId))
+    ) {
+      throw new BadRequestException(
+        `Prêmio ITEM "${entry.id}" requer itemId válido do catálogo.`,
+      );
+    }
+    if (
+      entry.category === 'FOIL_SHARD' &&
+      entry.itemId &&
+      !['HOLO_SHARD', 'GOLD_SHARD', 'INK_SHARD', 'PRISM_SHARD'].includes(
+        entry.itemId,
+      )
+    ) {
+      throw new BadRequestException(
+        `itemId inválido para FOIL_SHARD em "${entry.id}".`,
+      );
+    }
+    if (
+      entry.category === 'FOIL_GEM' &&
+      entry.itemId &&
+      !['HOLO_GEM', 'GOLD_GEM', 'INK_GEM', 'PRISM_GEM'].includes(entry.itemId)
+    ) {
+      throw new BadRequestException(
+        `itemId inválido para FOIL_GEM em "${entry.id}".`,
+      );
+    }
+    if (
+      entry.category === 'ESSENCE' &&
+      entry.itemId &&
+      entry.itemId !== 'ESSENCIA_CODIGO' &&
+      !(ESSENCE_KINDS as readonly string[]).includes(entry.itemId)
+    ) {
+      throw new BadRequestException(
+        `itemId inválido para ESSENCE em "${entry.id}".`,
       );
     }
     seen.add(entry.id);

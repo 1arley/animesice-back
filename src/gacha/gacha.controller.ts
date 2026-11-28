@@ -1438,9 +1438,12 @@ export class GachaController {
   })
   spinRoulette(
     @Req() req: AuthenticatedRequest,
-    @Body() body: { operationId: string },
+    @Body() body?: { operationId?: string },
   ) {
-    return this.rouletteService.spinRoulette(req.user.id, body.operationId);
+    return this.rouletteService.spinRoulette(
+      req.user.id,
+      body?.operationId ?? '',
+    );
   }
 
   @Get('admin/roulette')
@@ -1474,14 +1477,17 @@ export class GachaController {
   adminUpdateRouletteConfig(
     @Req() req: AuthenticatedRequest,
     @Body()
-    body: {
+    body?: {
       enabled?: boolean;
       spinDropChance?: number;
       prizes?: RoulettePrizeConfig[];
       reason?: string;
     },
   ) {
-    return this.rouletteService.adminUpdateRouletteConfig(req.user.id, body);
+    return this.rouletteService.adminUpdateRouletteConfig(
+      req.user.id,
+      body ?? {},
+    );
   }
 
   @Post('admin/users/:userId/roulette-spins')
@@ -1493,13 +1499,13 @@ export class GachaController {
   adminGrantRouletteSpins(
     @Param('userId') userId: string,
     @Req() req: AuthenticatedRequest,
-    @Body() body: { amount: number; reason: string },
+    @Body() body?: { amount?: number; reason?: string },
   ) {
     return this.rouletteService.adminGrantRouletteSpins(
       userId,
       req.user.id,
-      body.amount,
-      body.reason,
+      body?.amount ?? 0,
+      body?.reason ?? '',
     );
   }
 }
