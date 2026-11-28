@@ -1,3 +1,10 @@
+# [1.75.0](https://github.com/1arley/animesice-back/compare/v1.74.3...v1.75.0) (2026-11-28)
+
+
+### Features
+
+* **gacha:** support wishlists for orphan card sets ([b11ac6d](https://github.com/1arley/animesice-back/commit/b11ac6dde282105c7a023e2a7f27169df31e9e8e))
+
 ## [1.74.3](https://github.com/1arley/animesice-back/compare/v1.74.2...v1.74.3) (2026-11-27)
 
 
