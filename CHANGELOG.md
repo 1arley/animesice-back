@@ -1,3 +1,10 @@
+# [1.78.0](https://github.com/1arley/animesice-back/compare/v1.77.0...v1.78.0) (2026-11-28)
+
+
+### Features
+
+* **notification:** central de notificações administrativas ([#143](https://github.com/1arley/animesice-back/issues/143)) ([935269f](https://github.com/1arley/animesice-back/commit/935269ff6e0066d06e1cf5044a3502555c9c97db))
+
 # [1.77.0](https://github.com/1arley/animesice-back/compare/v1.76.0...v1.77.0) (2026-11-28)
 
 
