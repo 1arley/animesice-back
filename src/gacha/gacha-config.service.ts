@@ -10,9 +10,14 @@ import { assertItemShopSources } from '@/gacha/economy/economy.config';
 import {
   DEFAULT_AMPULHETA_DROP_CHANCE,
   DEFAULT_AMPULHETA_ENABLED,
+  DEFAULT_ROULETTE_ENABLED,
+  DEFAULT_ROULETTE_PRIZES,
+  DEFAULT_ROULETTE_SPIN_DROP_CHANCE,
   DEFAULT_SPIN_SHARD_CHANCE,
   GEM_FRAGMENT_RECIPE,
   isSpecialGachaFoil,
+  ROULETTE_PRIZE_CATEGORIES,
+  type RoulettePrizeConfig,
 } from '@/gacha/gacha.constants';
 
 function hasExplicitTimezoneIsoTimestamp(value: unknown): value is string {
@@ -104,10 +109,78 @@ function assertBooleanConfig(key: string, value: Prisma.InputJsonValue): void {
   }
 }
 
+function isValidRoulettePrize(item: unknown): item is RoulettePrizeConfig {
+  if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
+  const row = item as Record<string, unknown>;
+  if (typeof row.id !== 'string' || !row.id.trim()) return false;
+  if (typeof row.label !== 'string' || !row.label.trim()) return false;
+  if (
+    typeof row.category !== 'string' ||
+    !(ROULETTE_PRIZE_CATEGORIES as readonly string[]).includes(row.category)
+  ) {
+    return false;
+  }
+  if (
+    row.itemId !== undefined &&
+    row.itemId !== null &&
+    typeof row.itemId !== 'string'
+  ) {
+    return false;
+  }
+  if (
+    typeof row.quantity !== 'number' ||
+    !Number.isSafeInteger(row.quantity) ||
+    row.quantity < 1
+  ) {
+    return false;
+  }
+  if (
+    typeof row.weight !== 'number' ||
+    !Number.isFinite(row.weight) ||
+    row.weight < 0
+  ) {
+    return false;
+  }
+  if (typeof row.enabled !== 'boolean') return false;
+  return true;
+}
+
+function assertRoulettePrizes(value: Prisma.InputJsonValue): void {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 48) {
+    throw new BadRequestException(
+      'roulette_prizes deve conter entre 1 e 48 prêmios.',
+    );
+  }
+  const seen = new Set<string>();
+  let activeWeight = 0;
+  for (const entry of value) {
+    if (!isValidRoulettePrize(entry)) {
+      throw new BadRequestException(
+        'Estrutura de prêmio inválida em roulette_prizes.',
+      );
+    }
+    if (seen.has(entry.id)) {
+      throw new BadRequestException(
+        `ID duplicado em roulette_prizes: ${entry.id}.`,
+      );
+    }
+    seen.add(entry.id);
+    if (entry.enabled) activeWeight += entry.weight;
+  }
+  if (activeWeight <= 0) {
+    throw new BadRequestException(
+      'Ao menos um prêmio ativo em roulette_prizes deve possuir peso > 0.',
+    );
+  }
+}
+
 const STANDALONE_ECONOMY_KEYS = new Set([
   'spin_shard_chance',
   'ampulheta_drop_chance',
   'ampulheta_enabled',
+  'roulette_enabled',
+  'roulette_spin_drop_chance',
+  'roulette_prizes',
 ]);
 export type GachaTier =
   'COMUM' | 'INCOMUM' | 'RARA' | 'EPICA' | 'LENDARIA' | 'MITICA' | 'GALACTICA';
@@ -199,6 +272,9 @@ export class GachaConfigService implements OnModuleInit {
       if (key === 'foil_extract_fragments') assertFoilExtractFragments(value);
       if (key === 'ampulheta_drop_chance') assertChancePercent(key, value);
       if (key === 'ampulheta_enabled') assertBooleanConfig(key, value);
+      if (key === 'roulette_enabled') assertBooleanConfig(key, value);
+      if (key === 'roulette_spin_drop_chance') assertChancePercent(key, value);
+      if (key === 'roulette_prizes') assertRoulettePrizes(value);
       assertItemShopSources(candidate);
 
       const row = await tx.gachaConfig.upsert({
@@ -284,6 +360,36 @@ export class GachaConfigService implements OnModuleInit {
   get ampulhetaEnabled(): boolean {
     const value = this.cache.get('ampulheta_enabled');
     return typeof value === 'boolean' ? value : DEFAULT_AMPULHETA_ENABLED;
+  }
+
+  get rouletteEnabled(): boolean {
+    const value = this.cache.get('roulette_enabled');
+    return typeof value === 'boolean' ? value : DEFAULT_ROULETTE_ENABLED;
+  }
+
+  get rouletteSpinDropChance(): number {
+    const value = this.cache.get('roulette_spin_drop_chance');
+    return isChancePercent(value) ? value : DEFAULT_ROULETTE_SPIN_DROP_CHANCE;
+  }
+
+  get roulettePrizes(): RoulettePrizeConfig[] {
+    const value = this.cache.get('roulette_prizes');
+    if (
+      Array.isArray(value) &&
+      value.length > 0 &&
+      value.every(isValidRoulettePrize)
+    ) {
+      return value.map((entry) => ({
+        id: entry.id,
+        label: entry.label,
+        category: entry.category,
+        itemId: entry.itemId ?? null,
+        quantity: entry.quantity,
+        weight: entry.weight,
+        enabled: entry.enabled,
+      }));
+    }
+    return DEFAULT_ROULETTE_PRIZES;
   }
 
   get rerollCostPct(): number {

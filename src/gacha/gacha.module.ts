@@ -5,6 +5,7 @@ import { GachaConfigService } from '@/gacha/gacha-config.service';
 import { WishlistService } from '@/gacha/wishlist.service';
 import { EconomyController } from '@/gacha/economy/economy.controller';
 import { EconomyService } from '@/gacha/economy/economy.service';
+import { RouletteService } from '@/gacha/economy/roulette.service';
 import { CrystalAccountingService } from '@/gacha/crystal-accounting.service';
 import { NotificationModule } from '@/notification/notification.module';
 
@@ -17,12 +18,14 @@ import { NotificationModule } from '@/notification/notification.module';
     GachaConfigService,
     WishlistService,
     EconomyService,
+    RouletteService,
   ],
   exports: [
     GachaService,
     GachaConfigService,
     WishlistService,
     EconomyService,
+    RouletteService,
     CrystalAccountingService,
   ],
 })

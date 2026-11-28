@@ -67,6 +67,7 @@ describe('GachaController', () => {
       m.gachaService as any,
       m.gachaConfig as any,
       m.economy as any,
+      {} as any,
     );
     jest.clearAllMocks();
   });
