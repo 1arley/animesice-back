@@ -2190,6 +2190,7 @@ export class EconomyService {
       'USE_AMPULHETA',
       {},
       async (tx) => {
+        await this.assertEconomyEnabled(tx, userId);
         await this.lockItemInventory(tx, userId);
         if (this.gachaConfig.claimEventState().active) {
           throw new BadRequestException(

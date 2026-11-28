@@ -602,6 +602,21 @@ describe('GachaService', () => {
       expect(result.pityDue).toBe(false);
     });
 
+    it('informa a quantidade de Ampuletas do Éter no inventário', async () => {
+      mockPrisma.userCard.findFirst.mockResolvedValue(null);
+      mockPrisma.gachaInventory.findUnique.mockResolvedValue({
+        ampulhetaEter: 3,
+      });
+
+      const result = await service.status('u1');
+
+      expect(result.ampulhetaCount).toBe(3);
+      expect(mockPrisma.gachaInventory.findUnique).toHaveBeenCalledWith({
+        where: { userId: 'u1' },
+        select: { ampulhetaEter: true },
+      });
+    });
+
     it('esgota spins da hora com nextSpinAt', async () => {
       mockPrisma.gachaSpin.count.mockResolvedValue(5);
       mockPrisma.userCard.findFirst.mockResolvedValue({
@@ -1124,6 +1139,25 @@ describe('GachaService', () => {
         const pullDisabled = await service.claim('u1', 's1');
         expect(pullDisabled).not.toHaveProperty('ampulhetaDropped');
         expect(mockPrisma.gachaInventory.upsert).not.toHaveBeenCalled();
+      } finally {
+        mockConfig.ampulhetaDropChance = 0;
+        mockConfig.ampulhetaEnabled = true;
+      }
+    });
+
+    it('drop de Ampulheta do Éter no teto de inventário não derruba o claim', async () => {
+      mockPrisma.gachaSpin.findFirst.mockResolvedValue(previewComum);
+      mockClaimCreate();
+      mockConfig.ampulhetaEnabled = true;
+      mockConfig.ampulhetaDropChance = 100;
+      mockPrisma.gachaInventory.updateMany.mockResolvedValue({ count: 0 });
+
+      try {
+        const pull = await service.claim('u1', 's1');
+
+        expect(pull).not.toHaveProperty('ampulhetaDropped');
+        expect(pull.card).toBeDefined();
+        expect(mockPrisma.gachaClaimLock.upsert).toHaveBeenCalled();
       } finally {
         mockConfig.ampulhetaDropChance = 0;
         mockConfig.ampulhetaEnabled = true;

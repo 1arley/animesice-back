@@ -11,8 +11,6 @@ import {
   type BoxTier,
 } from './economy.rules';
 import {
-  DEFAULT_AMPULHETA_DROP_CHANCE,
-  DEFAULT_AMPULHETA_ENABLED,
   DEFAULT_FOIL_EXTRACT_FRAGMENTS,
   GACHA_FOILS,
   GEM_FRAGMENT_RECIPE,
@@ -80,8 +78,6 @@ export const ECONOMY_DEFAULTS = {
   official_price_markup: 1.35,
   spins_per_hour: 5,
   reroll_cost_pct: 0.15,
-  ampulheta_drop_chance: DEFAULT_AMPULHETA_DROP_CHANCE,
-  ampulheta_enabled: DEFAULT_AMPULHETA_ENABLED,
   // Q14 (decision record laya-loot-items-20261023): fonte de fragmentos/itens
   // nas caixas. Snapshot legado sem essas chaves herda os defaults de lançamento
   // explicitamente (mergeWeightRows + spread), afetando somente operações novas.
@@ -448,8 +444,7 @@ export function economyConfig(snapshot: unknown): EconomyConfig {
     merged.official_price_markup <= 0 ||
     merged.listing_ttl_ms <= 0 ||
     merged.reroll_cost_pct <= 0 ||
-    merged.reroll_cost_pct > 1 ||
-    merged.ampulheta_drop_chance > 100
+    merged.reroll_cost_pct > 1
   )
     throw new ConflictException('Limites econômicos inválidos.');
   const weights = [

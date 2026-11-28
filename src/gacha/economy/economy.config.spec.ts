@@ -127,21 +127,4 @@ describe('economyConfig', () => {
       economyConfig({ item_convert_value: { EXTRATOR_FOIL: 100 } }),
     ).toThrow();
   });
-
-  it('defaults and validates ampulheta_drop_chance and ampulheta_enabled', () => {
-    const legacy = economyConfig({});
-    expect(legacy.ampulheta_drop_chance).toBe(0.5);
-    expect(legacy.ampulheta_enabled).toBe(true);
-
-    const custom = economyConfig({
-      ampulheta_drop_chance: 2.5,
-      ampulheta_enabled: false,
-    });
-    expect(custom.ampulheta_drop_chance).toBe(2.5);
-    expect(custom.ampulheta_enabled).toBe(false);
-
-    expect(() => economyConfig({ ampulheta_drop_chance: -0.1 })).toThrow();
-    expect(() => economyConfig({ ampulheta_drop_chance: 100.1 })).toThrow();
-    expect(() => economyConfig({ ampulheta_enabled: 'yes' })).toThrow();
-  });
 });

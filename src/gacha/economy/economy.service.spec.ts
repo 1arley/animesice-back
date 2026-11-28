@@ -1327,6 +1327,21 @@ describe('EconomyService safeguards', () => {
       expect(db.gachaClaimLock.deleteMany).not.toHaveBeenCalled();
     });
 
+    it('rejects when the economy is blocked for the user without consuming item', async () => {
+      db.user.findUniqueOrThrow.mockResolvedValueOnce({
+        crystalBalance: -1,
+        crystalReserved: 0,
+        gachaMarketBlockedAt: null,
+        role: 'USER',
+      });
+
+      await expect(
+        service.useAmpulheta('u1', { operationId: opId }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(db.gachaInventory.updateMany).not.toHaveBeenCalled();
+      expect(db.gachaClaimLock.deleteMany).not.toHaveBeenCalled();
+    });
+
     it('blocks usage during an active claim event', async () => {
       const gachaConfig = (
         service as unknown as { gachaConfig: GachaConfigService }
