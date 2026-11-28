@@ -8,6 +8,8 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '@/prisma/prisma.service';
 import { assertItemShopSources } from '@/gacha/economy/economy.config';
 import {
+  DEFAULT_AMPULHETA_DROP_CHANCE,
+  DEFAULT_AMPULHETA_ENABLED,
   DEFAULT_SPIN_SHARD_CHANCE,
   GEM_FRAGMENT_RECIPE,
   isSpecialGachaFoil,
@@ -52,7 +54,7 @@ function assertMarketAgeExemption(value: Prisma.InputJsonValue): void {
   }
 }
 
-function isSpinShardChance(value: unknown): value is number {
+function isChancePercent(value: unknown): value is number {
   return (
     typeof value === 'number' &&
     Number.isFinite(value) &&
@@ -61,11 +63,9 @@ function isSpinShardChance(value: unknown): value is number {
   );
 }
 
-function assertSpinShardChance(value: Prisma.InputJsonValue): void {
-  if (!isSpinShardChance(value)) {
-    throw new BadRequestException(
-      'spin_shard_chance deve ser um número entre 0 e 100.',
-    );
+function assertChancePercent(key: string, value: Prisma.InputJsonValue): void {
+  if (!isChancePercent(value)) {
+    throw new BadRequestException(`${key} deve ser um número entre 0 e 100.`);
   }
 }
 
@@ -98,6 +98,17 @@ function assertFoilExtractFragments(value: Prisma.InputJsonValue): void {
   }
 }
 
+function assertBooleanConfig(key: string, value: Prisma.InputJsonValue): void {
+  if (typeof value !== 'boolean') {
+    throw new BadRequestException(`${key} deve ser boolean.`);
+  }
+}
+
+const STANDALONE_ECONOMY_KEYS = new Set([
+  'spin_shard_chance',
+  'ampulheta_drop_chance',
+  'ampulheta_enabled',
+]);
 export type GachaTier =
   'COMUM' | 'INCOMUM' | 'RARA' | 'EPICA' | 'LENDARIA' | 'MITICA' | 'GALACTICA';
 
@@ -184,8 +195,10 @@ export class GachaConfigService implements OnModuleInit {
       };
       if (key === 'claim_event') assertClaimEvent(value);
       if (key === 'market_age_exemption') assertMarketAgeExemption(value);
-      if (key === 'spin_shard_chance') assertSpinShardChance(value);
+      if (key === 'spin_shard_chance') assertChancePercent(key, value);
       if (key === 'foil_extract_fragments') assertFoilExtractFragments(value);
+      if (key === 'ampulheta_drop_chance') assertChancePercent(key, value);
+      if (key === 'ampulheta_enabled') assertBooleanConfig(key, value);
       assertItemShopSources(candidate);
 
       const row = await tx.gachaConfig.upsert({
@@ -196,7 +209,7 @@ export class GachaConfigService implements OnModuleInit {
       const [config, latest, activeVersion] = await Promise.all([
         tx.gachaConfig.findMany(),
         tx.gachaEconomyVersion.aggregate({ _max: { version: true } }),
-        key === 'spin_shard_chance'
+        STANDALONE_ECONOMY_KEYS.has(key)
           ? tx.gachaEconomyVersion.findFirst({
               where: { activeFrom: { lte: new Date() } },
               orderBy: [{ activeFrom: 'desc' }, { version: 'desc' }],
@@ -209,11 +222,11 @@ export class GachaConfigService implements OnModuleInit {
       );
       const activeSnapshot = activeVersion?.snapshot;
       const snapshot =
-        key === 'spin_shard_chance' &&
+        STANDALONE_ECONOMY_KEYS.has(key) &&
         activeSnapshot !== null &&
         typeof activeSnapshot === 'object' &&
         !Array.isArray(activeSnapshot)
-          ? { ...activeSnapshot, spin_shard_chance: value }
+          ? { ...activeSnapshot, [key]: value }
           : liveSnapshot;
       assertItemShopSources(snapshot);
       await tx.gachaEconomyVersion.create({
@@ -260,7 +273,17 @@ export class GachaConfigService implements OnModuleInit {
 
   get spinShardChance(): number {
     const value = this.cache.get('spin_shard_chance');
-    return isSpinShardChance(value) ? value : DEFAULT_SPIN_SHARD_CHANCE;
+    return isChancePercent(value) ? value : DEFAULT_SPIN_SHARD_CHANCE;
+  }
+
+  get ampulhetaDropChance(): number {
+    const value = this.cache.get('ampulheta_drop_chance');
+    return isChancePercent(value) ? value : DEFAULT_AMPULHETA_DROP_CHANCE;
+  }
+
+  get ampulhetaEnabled(): boolean {
+    const value = this.cache.get('ampulheta_enabled');
+    return typeof value === 'boolean' ? value : DEFAULT_AMPULHETA_ENABLED;
   }
 
   get rerollCostPct(): number {

@@ -30,6 +30,8 @@ export class ItemOperationDto {
   operationId!: string;
 }
 
+export class UseAmpulhetaDto extends ItemOperationDto {}
+
 export class CraftFoilGemDto extends ItemOperationDto {
   @ApiProperty({ enum: ['HOLO', 'GOLD', 'INK', 'PRISM'] })
   @IsEnum(['HOLO', 'GOLD', 'INK', 'PRISM'])

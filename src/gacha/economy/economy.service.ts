@@ -52,6 +52,7 @@ import {
   BuyEssenceDto,
   ConvertItemDto,
   CraftItemDto,
+  UseAmpulhetaDto,
   UseItemDto,
   CreateMarketOfferDto,
   CreateItemListingDto,
@@ -2180,6 +2181,48 @@ export class EconomyService {
       });
       return { reset: true, previews };
     });
+  }
+
+  useAmpulheta(userId: string, dto: UseAmpulhetaDto) {
+    return this.runOperation(
+      userId,
+      dto.operationId,
+      'USE_AMPULHETA',
+      {},
+      async (tx) => {
+        await this.lockItemInventory(tx, userId);
+        if (this.gachaConfig.claimEventState().active) {
+          throw new BadRequestException(
+            'Ampulheta do Éter não pode ser usada durante evento de resgate ativo.',
+          );
+        }
+        const now = new Date();
+        const lock = await tx.gachaClaimLock.findUnique({
+          where: { userId },
+          select: { lockedUntil: true },
+        });
+        if (!lock || lock.lockedUntil <= now) {
+          throw new BadRequestException('Não há tempo de espera ativo.');
+        }
+        const consumed = await tx.gachaInventory.updateMany({
+          where: { userId, ampulhetaEter: { gte: 1 } },
+          data: { ampulhetaEter: { decrement: 1 } },
+        });
+        if (consumed.count !== 1) {
+          throw new BadRequestException('Ampulheta do Éter insuficiente.');
+        }
+        const unlocked = await tx.gachaClaimLock.deleteMany({
+          where: { userId, lockedUntil: { gt: now } },
+        });
+        if (unlocked.count < 1) {
+          throw new BadRequestException('Não há tempo de espera ativo.');
+        }
+        const inventory = await tx.gachaInventory.findUniqueOrThrow({
+          where: { userId },
+        });
+        return { used: true, inventory };
+      },
+    );
   }
 
   async createMarketOffer(userId: string, dto: CreateMarketOfferDto) {

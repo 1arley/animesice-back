@@ -125,6 +125,8 @@ describe('GachaConfigService', () => {
   it('getters devolvem NaN para chave ausente e objeto para JSON valido', async () => {
     await service.onModuleInit();
     expect(service.rollsPerDay).toBeNaN();
+    expect(service.ampulhetaDropChance).toBe(0.5);
+    expect(service.ampulhetaEnabled).toBe(true);
     expect(service.list).toBeDefined();
     expect(await service.list()).toEqual(rows);
   });
@@ -213,6 +215,41 @@ describe('GachaConfigService', () => {
     expect(db.gachaEconomyVersion.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         snapshot: { ...activeSnapshot, spin_shard_chance: 10 },
+      }),
+    });
+  });
+
+  it('validates and updates ampulheta_drop_chance and ampulheta_enabled without mutating unrelated keys', async () => {
+    const activeSnapshot = {
+      foil_weights: { NORMAL: 50, HOLO: 5, GOLD: 20, INK: 10, PRISM: 15 },
+      box_category_weights: ECONOMY_DEFAULTS.box_category_weights,
+    };
+    db.gachaEconomyVersion.findFirst.mockResolvedValue({
+      snapshot: activeSnapshot,
+    });
+
+    await expect(
+      service.update('ampulheta_drop_chance', 100.1, 'admin', 'invalid chance'),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      service.update('ampulheta_drop_chance', -0.1, 'admin', 'invalid chance'),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      service.update('ampulheta_enabled', 'true', 'admin', 'invalid bool'),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(db.gachaConfig.upsert).not.toHaveBeenCalled();
+
+    await service.update('ampulheta_drop_chance', 1.25, 'admin', 'tune drop');
+    expect(db.gachaEconomyVersion.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        snapshot: { ...activeSnapshot, ampulheta_drop_chance: 1.25 },
+      }),
+    });
+
+    await service.update('ampulheta_enabled', false, 'admin', 'pause drop');
+    expect(db.gachaEconomyVersion.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        snapshot: { ...activeSnapshot, ampulheta_enabled: false },
       }),
     });
   });

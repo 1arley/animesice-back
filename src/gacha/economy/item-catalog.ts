@@ -53,6 +53,7 @@ export const ITEM_CATALOG = [
   { id: 'PREMIUM_BOX', name: 'Baú premium', field: 'premiumBoxes' },
   { id: 'KEY', name: 'Chave', field: 'keys' },
   { id: 'SPIN_RESET', name: 'Reset de giros', field: 'spinResets' },
+  { id: 'AMPULHETA_ETER', name: 'Ampulheta do Éter', field: 'ampulhetaEter' },
   { id: 'HOLO_SHARD', name: 'Fragmento Holo', field: 'holoShards' },
   { id: 'GOLD_SHARD', name: 'Fragmento Gold', field: 'goldShards' },
   { id: 'INK_SHARD', name: 'Fragmento Ink', field: 'inkShards' },

@@ -34,6 +34,7 @@ import {
   EconomyAdminReasonDto,
   TradeUpCardsDto,
   TradeUpSkinsDto,
+  UseAmpulhetaDto,
   UseItemDto,
   CraftFoilGemDto,
   ApplyFoilGemDto,
@@ -183,6 +184,11 @@ export class EconomyController {
   @Post('spin-reset')
   useSpinReset(@Req() req: AuthenticatedRequest) {
     return this.economy.useSpinReset(req.user.id);
+  }
+
+  @Post('ampulheta/use')
+  useAmpulheta(@Req() req: AuthenticatedRequest, @Body() dto: UseAmpulhetaDto) {
+    return this.economy.useAmpulheta(req.user.id, dto);
   }
 
   @Get('items/catalog')

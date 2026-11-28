@@ -135,6 +135,8 @@ export function isEpicTier(tier: string): boolean {
  * exibidos como "Magnetita*" no front.
  */
 export const DEFAULT_SPIN_SHARD_CHANCE = 7.5;
+export const DEFAULT_AMPULHETA_DROP_CHANCE = 0.5;
+export const DEFAULT_AMPULHETA_ENABLED = true;
 
 export const SPIN_SHARD_WEIGHTS = {
   TITANITA: 0.5,

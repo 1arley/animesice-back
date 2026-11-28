@@ -50,6 +50,8 @@ describe('GachaService', () => {
     foilMult: TEST_FOIL_MULT,
     foilWeights: { NORMAL: 79, HOLO: 12, GOLD: 3, INK: 3, PRISM: 3 },
     spinShardChance: 7.5,
+    ampulhetaDropChance: 0,
+    ampulhetaEnabled: true,
     tierWeights: {
       COMUM: 55,
       INCOMUM: 25,
@@ -1086,6 +1088,46 @@ describe('GachaService', () => {
       await expect(service.unlockClaim('u1')).resolves.toEqual({
         unlocked: false,
       });
+    });
+
+    it('drop de Ampulheta do Éter no claim: 100% concede, 0% ou desabilitada não concede', async () => {
+      mockPrisma.gachaSpin.findFirst.mockResolvedValue(previewComum);
+      mockClaimCreate();
+      mockConfig.ampulhetaEnabled = true;
+      mockConfig.ampulhetaDropChance = 100;
+
+      try {
+        const pull100 = await service.claim('u1', 's1');
+        expect(pull100).toMatchObject({ ampulhetaDropped: true });
+        expect(mockPrisma.gachaInventory.updateMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            where: { userId: 'u1', ampulhetaEter: { lte: 2_147_483_646 } },
+            data: { ampulhetaEter: { increment: 1 } },
+          }),
+        );
+
+        jest.clearAllMocks();
+        mockPrisma.gachaSpin.findFirst.mockResolvedValue(previewComum);
+        mockClaimCreate();
+        mockConfig.ampulhetaDropChance = 0;
+
+        const pull0 = await service.claim('u1', 's1');
+        expect(pull0).not.toHaveProperty('ampulhetaDropped');
+        expect(mockPrisma.gachaInventory.upsert).not.toHaveBeenCalled();
+
+        jest.clearAllMocks();
+        mockPrisma.gachaSpin.findFirst.mockResolvedValue(previewComum);
+        mockClaimCreate();
+        mockConfig.ampulhetaDropChance = 100;
+        mockConfig.ampulhetaEnabled = false;
+
+        const pullDisabled = await service.claim('u1', 's1');
+        expect(pullDisabled).not.toHaveProperty('ampulhetaDropped');
+        expect(mockPrisma.gachaInventory.upsert).not.toHaveBeenCalled();
+      } finally {
+        mockConfig.ampulhetaDropChance = 0;
+        mockConfig.ampulhetaEnabled = true;
+      }
     });
   });
 

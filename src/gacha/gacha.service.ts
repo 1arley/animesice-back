@@ -1020,6 +1020,7 @@ export class GachaService {
 
   async claim(userId: string, spinId: string) {
     let pull: Pull;
+    let ampulhetaDropped = false;
     try {
       pull = await this.prisma.$transaction(
         async (tx) => {
@@ -1104,6 +1105,16 @@ export class GachaService {
           if (claimed.count !== 1) {
             throw new NotFoundException('Preview expirada ou já resgatada.');
           }
+          if (
+            this.config.ampulhetaEnabled &&
+            this.config.ampulhetaDropChance > 0 &&
+            Math.random() * 100 < this.config.ampulhetaDropChance
+          ) {
+            await creditItems(tx, userId, [
+              { itemId: 'AMPULHETA_ETER', quantity: 1 },
+            ]);
+            ampulhetaDropped = true;
+          }
           const lockMs = claimEvent.active
             ? HOUR_MS
             : this.config.claimLockMs(spin.card.rarity as GachaTier);
@@ -1156,7 +1167,10 @@ export class GachaService {
       }
     }
 
-    return presentPull(pull);
+    const presented = presentPull(pull);
+    return ampulhetaDropped
+      ? { ...presented, ampulhetaDropped: true }
+      : presented;
   }
 
   // Resgate único de compensação: consome a Notification 'COMPENSATION'
