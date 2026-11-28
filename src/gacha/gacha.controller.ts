@@ -62,9 +62,10 @@ import {
 import type { AuthenticatedRequest } from '@/common/interfaces/request.interface';
 import type { Request } from 'express';
 import { CardStatus } from '@prisma/client';
-import { GACHA_TIERS } from '@/gacha/gacha.constants';
+import { GACHA_TIERS, type RoulettePrizeConfig } from '@/gacha/gacha.constants';
 import { GachaConfigService } from '@/gacha/gacha-config.service';
 import { EconomyService } from '@/gacha/economy/economy.service';
+import { RouletteService } from '@/gacha/economy/roulette.service';
 
 type OptionalAuthRequest = Request & { user?: AuthenticatedRequest['user'] };
 
@@ -75,6 +76,7 @@ export class GachaController {
     private readonly gachaService: GachaService,
     private readonly gachaConfig: GachaConfigService,
     private readonly economy: EconomyService,
+    private readonly rouletteService: RouletteService,
   ) {}
 
   @Get('wishlist')
@@ -1413,6 +1415,97 @@ export class GachaController {
       body.value,
       req.user.id,
       body.reason ?? 'Atualização administrativa',
+    );
+  }
+
+  // ── Central de Recompensas & Roleta de Prêmios ───────────
+
+  @Get('roulette')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Dados da Central de Recompensas e Roleta de Prêmios do jogador',
+  })
+  getRewardsHub(@Req() req: AuthenticatedRequest) {
+    return this.rouletteService.getRewardsHub(req.user.id);
+  }
+
+  @Post('roulette/spin')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary: 'Consome 1 giro da roleta e sorteia um prêmio no servidor',
+  })
+  spinRoulette(
+    @Req() req: AuthenticatedRequest,
+    @Body() body?: { operationId?: string },
+  ) {
+    return this.rouletteService.spinRoulette(
+      req.user.id,
+      body?.operationId ?? '',
+    );
+  }
+
+  @Get('admin/roulette')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({
+    summary:
+      'Painel admin da roleta: config, probabilidades, estatísticas e histórico',
+  })
+  adminGetRoulette(
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+    @Query('search') search?: string,
+    @Query('category') category?: string,
+  ) {
+    return this.rouletteService.adminGetRoulette({
+      page: parsePageParam(page, DEFAULT_PAGE, 100_000),
+      limit: parsePageParam(limit, 25, MAX_PAGE_SIZE),
+      search,
+      category,
+    });
+  }
+
+  @Patch('admin/roulette/config')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  @Audit('UPDATE_ROULETTE_CONFIG', 'GachaConfig')
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Atualiza configuração e prêmios da roleta' })
+  adminUpdateRouletteConfig(
+    @Req() req: AuthenticatedRequest,
+    @Body()
+    body?: {
+      enabled?: boolean;
+      spinDropChance?: number;
+      prizes?: RoulettePrizeConfig[];
+      reason?: string;
+    },
+  ) {
+    return this.rouletteService.adminUpdateRouletteConfig(
+      req.user.id,
+      body ?? {},
+    );
+  }
+
+  @Post('admin/users/:userId/roulette-spins')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'SUPERADMIN')
+  @Audit('GRANT_ROULETTE_SPINS', 'GachaInventory')
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Concede ou ajusta giros da roleta a um jogador' })
+  adminGrantRouletteSpins(
+    @Param('userId') userId: string,
+    @Req() req: AuthenticatedRequest,
+    @Body() body?: { amount?: number; reason?: string },
+  ) {
+    return this.rouletteService.adminGrantRouletteSpins(
+      userId,
+      req.user.id,
+      body?.amount ?? 0,
+      body?.reason ?? '',
     );
   }
 }

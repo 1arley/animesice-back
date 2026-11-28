@@ -836,7 +836,7 @@ export class GachaService {
         }),
         this.prisma.gachaInventory.findUnique({
           where: { userId },
-          select: { ampulhetaEter: true },
+          select: { ampulhetaEter: true, rouletteSpins: true },
         }),
       ]);
 
@@ -876,6 +876,8 @@ export class GachaService {
       // Alternativa gratuita ao bypass pago: o front usa a contagem para
       // decidir se oferece o botão de Ampulheta no cooldown do claim.
       ampulhetaCount: inventory?.ampulhetaEter ?? 0,
+      rouletteSpins: inventory?.rouletteSpins ?? 0,
+      rouletteEnabled: this.config.rouletteEnabled !== false,
       claimEvent: claimEvent.active
         ? { name: claimEvent.name, tiers: claimEvent.tiers }
         : null,
@@ -973,43 +975,64 @@ export class GachaService {
 
     const condition = Math.random();
     const foil = pickWeighted(this.config.foilWeights);
-    // Fragmento bônus (fragmentos-20261030): chance configurada no admin;
-    // só é concedido no claim.
-    const bonusShard: SpinShardKind | null =
-      Math.random() * 100 < this.config.spinShardChance
+    // Fragmento bônus (fragmentos-20261030) + Giro da Roleta: chance configurada no admin.
+    const shardChance = this.config.spinShardChance;
+    const rouletteChance =
+      this.config.rouletteEnabled !== false
+        ? (this.config.rouletteSpinDropChance ?? 0)
+        : 0;
+    const bonusRoll = Math.random() * 100;
+    const bonusShard: SpinShardKind | 'ROULETTE_SPIN' | null =
+      bonusRoll < shardChance
         ? pickWeighted(SPIN_SHARD_WEIGHTS)
-        : null;
+        : rouletteChance > 0 && bonusRoll < shardChance + rouletteChance
+          ? 'ROULETTE_SPIN'
+          : null;
     // ponytail: slot único (userId,hour,slot) torna giro concorrente
     // race-safe; P2002 = slot ocupado, tenta o próximo.
     const spinsPerHour = this.config.effectiveSpinsPerHour();
     for (let slot = 0; slot < spinsPerHour; slot++) {
       try {
-        const spin = await this.prisma.gachaSpin.create({
-          data: {
-            userId,
-            hour,
-            slot,
-            cardId: card.id,
+        const spinData = {
+          userId,
+          hour,
+          slot,
+          cardId: card.id,
+          condition,
+          foil,
+          bonusShard,
+          value: cardValue(
+            tier,
             condition,
             foil,
-            bonusShard,
-            value: cardValue(
-              tier,
-              condition,
-              foil,
-              1,
-              this.config.baseValue as Record<GachaTier, number>,
-              this.config.foilMult as Record<GachaFoil, number>,
-            ),
-            expiresAt: new Date(hour.getTime() + HOUR_MS),
-          },
-          select: SPIN_SELECT,
-        });
+            1,
+            this.config.baseValue,
+            this.config.foilMult,
+          ),
+          expiresAt: new Date(hour.getTime() + HOUR_MS),
+        };
+        const spin =
+          bonusShard === 'ROULETTE_SPIN'
+            ? await this.prisma.$transaction(async (tx) => {
+                const created = await tx.gachaSpin.create({
+                  data: spinData,
+                  select: SPIN_SELECT,
+                });
+                await creditItems(tx, userId, [
+                  { itemId: 'ROULETTE_SPIN', quantity: 1 },
+                ]);
+                return created;
+              })
+            : await this.prisma.gachaSpin.create({
+                data: spinData,
+                select: SPIN_SELECT,
+              });
         return {
           ...spin,
           conditionLabel: conditionLabel(spin.condition),
           card: presentCard(spin.card),
           pityDue: pity.pityDue,
+          rouletteSpinGranted: bonusShard === 'ROULETTE_SPIN',
         };
       } catch (error) {
         if (

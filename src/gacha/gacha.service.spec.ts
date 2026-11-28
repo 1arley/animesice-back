@@ -613,7 +613,7 @@ describe('GachaService', () => {
       expect(result.ampulhetaCount).toBe(3);
       expect(mockPrisma.gachaInventory.findUnique).toHaveBeenCalledWith({
         where: { userId: 'u1' },
-        select: { ampulhetaEter: true },
+        select: { ampulhetaEter: true, rouletteSpins: true },
       });
     });
 
@@ -867,6 +867,47 @@ describe('GachaService', () => {
         const preview = await service.spin('u1');
         expect(preview.bonusShard).toBeNull();
       } finally {
+        randomSpy.mockRestore();
+      }
+    });
+
+    it('concede giro da roleta e credita inventário quando cai na faixa da roleta', async () => {
+      freshAccount();
+      stockOnly('COMUM');
+      mockPrisma.card.findFirst.mockResolvedValue(cardComum);
+      mockPrisma.gachaSpin.create.mockImplementation((args: { data: object }) =>
+        Promise.resolve({
+          id: 's-roulette',
+          slot: 0,
+          hour: new Date(),
+          claimedAt: null,
+          expiresAt: new Date(Date.now() + 3_600_000),
+          createdAt: new Date(),
+          card: cardComum,
+          ...args.data,
+        }),
+      );
+      const mutableConfig = mockConfig as typeof mockConfig & {
+        rouletteEnabled?: boolean;
+        rouletteSpinDropChance?: number;
+      };
+      mutableConfig.rouletteEnabled = true;
+      mutableConfig.rouletteSpinDropChance = 5;
+      // 7.5% <= 8.5% < 7.5% + 5% -> cai exatamente na faixa de ROULETTE_SPIN.
+      const randomSpy = jest.spyOn(Math, 'random').mockReturnValue(0.085);
+
+      try {
+        const preview = await service.spin('u1');
+        expect(preview.bonusShard).toBe('ROULETTE_SPIN');
+        expect(preview.rouletteSpinGranted).toBe(true);
+        expect(mockPrisma.gachaInventory.updateMany).toHaveBeenCalledWith(
+          expect.objectContaining({
+            data: { rouletteSpins: { increment: 1 } },
+          }),
+        );
+      } finally {
+        delete mutableConfig.rouletteEnabled;
+        delete mutableConfig.rouletteSpinDropChance;
         randomSpy.mockRestore();
       }
     });
