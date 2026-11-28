@@ -1,3 +1,10 @@
+# [1.76.0](https://github.com/1arley/animesice-back/compare/v1.75.0...v1.76.0) (2026-11-28)
+
+
+### Features
+
+* **gacha:** add foil extractor consumable ([8858ea9](https://github.com/1arley/animesice-back/commit/8858ea9d588eec8c157a68501de1062a7df8d559))
+
 # [1.75.0](https://github.com/1arley/animesice-back/compare/v1.74.3...v1.75.0) (2026-11-28)
 
 
