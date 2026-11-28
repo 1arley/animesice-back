@@ -64,6 +64,7 @@ import { releaseTrade } from '@/gacha/trade-escrow';
 import {
   UpsertCardWishlistDto,
   UpsertSetWishlistDto,
+  OrphanSetWishlistDto,
 } from '@/gacha/dto/gacha.dto';
 
 /** Slots de loadout que não são capa. A capa tem coluna própria (gachaCardBack). */
@@ -503,6 +504,16 @@ export class GachaService {
   deleteSetWishlist(userId: string, animeId: string) {
     if (!this.wishlistService) throw new Error('WishlistService indisponível.');
     return this.wishlistService.deleteSet(userId, animeId);
+  }
+
+  upsertOrphanSetWishlist(userId: string, dto: OrphanSetWishlistDto) {
+    if (!this.wishlistService) throw new Error('WishlistService indisponível.');
+    return this.wishlistService.upsertOrphanSet(userId, dto.animeTitle);
+  }
+
+  deleteOrphanSetWishlist(userId: string, animeTitle: string) {
+    if (!this.wishlistService) throw new Error('WishlistService indisponível.');
+    return this.wishlistService.deleteOrphanSet(userId, animeTitle);
   }
 
   setWishlistPrivacy(userId: string, isPublic: boolean) {
@@ -3848,6 +3859,7 @@ export class GachaService {
                 setCards.map((card) => ({
                   id: card.id,
                   animeId: card.animeId,
+                  animeTitle: card.animeTitle,
                 })),
               )
             : new Map<
@@ -4011,7 +4023,11 @@ export class GachaService {
         userId && this.wishlistService
           ? await this.wishlistService.cardStates(
               userId,
-              cards.map((card) => ({ id: card.id, animeId: card.animeId })),
+              cards.map((card) => ({
+                id: card.id,
+                animeId: card.animeId,
+                animeTitle: card.animeTitle,
+              })),
             )
           : new Map<
               string,
@@ -4082,7 +4098,11 @@ export class GachaService {
       userId && this.wishlistService
         ? await this.wishlistService.cardStates(
             userId,
-            cards.map((card) => ({ id: card.id, animeId: card.animeId })),
+            cards.map((card) => ({
+              id: card.id,
+              animeId: card.animeId,
+              animeTitle: card.animeTitle,
+            })),
           )
         : new Map<
             string,

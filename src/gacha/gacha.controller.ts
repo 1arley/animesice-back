@@ -34,6 +34,7 @@ import {
   SetFavoriteGachaCardsDto,
   UpsertCardWishlistDto,
   UpsertSetWishlistDto,
+  OrphanSetWishlistDto,
   WishlistPrivacyDto,
   WishlistPriorityDto,
   EquipGachaSkinDto,
@@ -144,6 +145,29 @@ export class GachaController {
     @Param('animeId') animeId: string,
   ) {
     return this.gachaService.deleteSetWishlist(req.user.id, animeId);
+  }
+
+  @Put('wishlist/orphan-sets')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  upsertOrphanSetWishlist(
+    @Req() req: AuthenticatedRequest,
+    @Body() dto: OrphanSetWishlistDto,
+  ) {
+    return this.gachaService.upsertOrphanSetWishlist(req.user.id, dto);
+  }
+
+  @Delete('wishlist/orphan-sets')
+  @UseGuards(JwtAuthGuard, VerifiedGuard)
+  @ApiBearerAuth('JWT-auth')
+  deleteOrphanSetWishlist(
+    @Req() req: AuthenticatedRequest,
+    @Body() dto: OrphanSetWishlistDto,
+  ) {
+    return this.gachaService.deleteOrphanSetWishlist(
+      req.user.id,
+      dto.animeTitle,
+    );
   }
 
   @Patch('wishlist/privacy')

@@ -160,7 +160,12 @@ export class WishlistService {
     ]);
 
     const cardIds = cards.map((entry) => entry.cardId);
-    const animeIds = sets.map((entry) => entry.animeId);
+    const animeIds = sets.flatMap((entry) =>
+      entry.animeId ? [entry.animeId] : [],
+    );
+    const orphanTitles = sets.flatMap((entry) =>
+      entry.animeId || !entry.animeTitle ? [] : [entry.animeTitle],
+    );
     const owned = await this.prisma.userCard.findMany({
       where: { userId, status: 'ACTIVE', cardId: { in: cardIds } },
       select: { cardId: true, condition: true, foil: true, edition: true },
@@ -171,24 +176,42 @@ export class WishlistService {
       values.push(copy);
       ownedByCard.set(copy.cardId, values);
     }
-    const setCards = animeIds.length
-      ? await this.prisma.card.findMany({
-          where: { animeId: { in: animeIds }, status: 'ACTIVE' },
-          select: { id: true, animeId: true },
-        })
-      : [];
+    const setCards =
+      animeIds.length || orphanTitles.length
+        ? await this.prisma.card.findMany({
+            where: {
+              status: 'ACTIVE',
+              OR: [
+                ...(animeIds.length ? [{ animeId: { in: animeIds } }] : []),
+                ...(orphanTitles.length
+                  ? [{ animeId: null, animeTitle: { in: orphanTitles } }]
+                  : []),
+              ],
+            },
+            select: { id: true, animeId: true, animeTitle: true },
+          })
+        : [];
     const ownedIds = new Set(
-      (
-        await this.prisma.userCard.findMany({
-          where: {
-            userId,
-            status: 'ACTIVE',
-            card: { animeId: { in: animeIds } },
-          },
-          select: { cardId: true },
-          distinct: ['cardId'],
-        })
-      ).map((row) => row.cardId),
+      animeIds.length || orphanTitles.length
+        ? (
+            await this.prisma.userCard.findMany({
+              where: {
+                userId,
+                status: 'ACTIVE',
+                card: {
+                  OR: [
+                    ...(animeIds.length ? [{ animeId: { in: animeIds } }] : []),
+                    ...(orphanTitles.length
+                      ? [{ animeId: null, animeTitle: { in: orphanTitles } }]
+                      : []),
+                  ],
+                },
+              },
+              select: { cardId: true },
+              distinct: ['cardId'],
+            })
+          ).map((row) => row.cardId)
+        : [],
     );
     const status = (complete: boolean) =>
       options.status === undefined ||
@@ -206,14 +229,17 @@ export class WishlistService {
       .filter((entry) => status(entry.complete));
     const setData = sets
       .map((entry) => {
-        const total = setCards.filter(
-          (card) => card.animeId === entry.animeId,
-        ).length;
+        const belongs = (card: (typeof setCards)[number]) =>
+          entry.animeId
+            ? card.animeId === entry.animeId
+            : card.animeId === null && card.animeTitle === entry.animeTitle;
+        const total = setCards.filter(belongs).length;
         const ownedCount = setCards.filter(
-          (card) => card.animeId === entry.animeId && ownedIds.has(card.id),
+          (card) => belongs(card) && ownedIds.has(card.id),
         ).length;
         return {
           ...entry,
+          animeTitle: entry.anime?.title ?? entry.animeTitle ?? '',
           total,
           owned: ownedCount,
           complete: total > 0 && total === ownedCount,
@@ -313,7 +339,12 @@ export class WishlistService {
     if (!anime) throw new NotFoundException('Anime não encontrado.');
     return this.prisma.gachaSetWishlist.upsert({
       where: { userId_animeId: { userId, animeId } },
-      create: { userId, animeId, priority: this.priority(dto.priority) },
+      create: {
+        userId,
+        animeId,
+        animeTitle: null,
+        priority: this.priority(dto.priority),
+      },
       update: dto.priority ? { priority: this.priority(dto.priority) } : {},
       include: { anime: true },
     });
@@ -322,6 +353,25 @@ export class WishlistService {
   async deleteSet(userId: string, animeId: string) {
     await this.prisma.gachaSetWishlist.deleteMany({
       where: { userId, animeId },
+    });
+    return { deleted: true };
+  }
+
+  async upsertOrphanSet(userId: string, animeTitle: string) {
+    const total = await this.prisma.card.count({
+      where: { animeId: null, animeTitle, status: 'ACTIVE' },
+    });
+    if (!total) throw new NotFoundException('Conjunto sem cartas ativas.');
+    return this.prisma.gachaSetWishlist.upsert({
+      where: { userId_animeTitle: { userId, animeTitle } },
+      create: { userId, animeId: null, animeTitle },
+      update: {},
+    });
+  }
+
+  async deleteOrphanSet(userId: string, animeTitle: string) {
+    await this.prisma.gachaSetWishlist.deleteMany({
+      where: { userId, animeId: null, animeTitle },
     });
     return { deleted: true };
   }
@@ -336,32 +386,60 @@ export class WishlistService {
 
   async cardStates(
     userId: string,
-    cards: Array<{ id: string; animeId: string | null }>,
+    cards: Array<{
+      id: string;
+      animeId: string | null;
+      animeTitle: string | null;
+    }>,
   ) {
     if (!cards.length)
       return new Map<
         string,
         { direct: boolean; set: boolean; priority: WishlistPriority | null }
       >();
+    const animeIds = cards.flatMap((card) =>
+      card.animeId ? [card.animeId] : [],
+    );
+    const orphanTitles = cards.flatMap((card) =>
+      card.animeId || !card.animeTitle ? [] : [card.animeTitle],
+    );
     const [direct, sets] = await Promise.all([
       this.prisma.gachaCardWishlist.findMany({
         where: { userId, cardId: { in: cards.map((card) => card.id) } },
       }),
-      this.prisma.gachaSetWishlist.findMany({
-        where: {
-          userId,
-          animeId: {
-            in: cards.flatMap((card) => (card.animeId ? [card.animeId] : [])),
-          },
-        },
-      }),
+      animeIds.length || orphanTitles.length
+        ? this.prisma.gachaSetWishlist.findMany({
+            where: {
+              userId,
+              OR: [
+                ...(animeIds.length ? [{ animeId: { in: animeIds } }] : []),
+                ...(orphanTitles.length
+                  ? [{ animeId: null, animeTitle: { in: orphanTitles } }]
+                  : []),
+              ],
+            },
+          })
+        : [],
     ]);
     const directByCard = new Map(direct.map((entry) => [entry.cardId, entry]));
-    const setByAnime = new Map(sets.map((entry) => [entry.animeId, entry]));
+    const setByAnime = new Map(
+      sets.flatMap((entry) =>
+        entry.animeId ? [[entry.animeId, entry] as const] : [],
+      ),
+    );
+    const setByOrphanTitle = new Map(
+      sets.flatMap((entry) =>
+        entry.animeTitle ? [[entry.animeTitle, entry] as const] : [],
+      ),
+    );
     return new Map(
       cards.map((card) => {
         const d = directByCard.get(card.id);
-        const s = card.animeId ? setByAnime.get(card.animeId) : undefined;
+        const s = card.animeId
+          ? setByAnime.get(card.animeId)
+          : card.animeTitle
+            ? setByOrphanTitle.get(card.animeTitle)
+            : undefined;
         const priority = d?.priority ?? s?.priority ?? null;
         return [card.id, { direct: Boolean(d), set: Boolean(s), priority }];
       }),

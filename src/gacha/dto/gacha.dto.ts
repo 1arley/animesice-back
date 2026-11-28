@@ -478,6 +478,14 @@ export class UpsertSetWishlistDto {
   priority?: WishlistPriorityDto;
 }
 
+export class OrphanSetWishlistDto {
+  @ApiProperty({ maxLength: 300 })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(300)
+  animeTitle!: string;
+}
+
 export class WishlistPrivacyDto {
   @ApiProperty()
   @IsBoolean()
