@@ -804,7 +804,7 @@ export class GachaService {
   async status(userId: string) {
     await this.settleFeatured(userId);
     const hour = this.hourStartUtc();
-    const [spinsUsed, claim, pity, first, wallet, points] =
+    const [spinsUsed, claim, pity, first, wallet, points, inventory] =
       await this.prisma.$transaction([
         this.prisma.gachaSpin.count({ where: { userId, hour } }),
         this.prisma.gachaClaimLock.findUnique({ where: { userId } }),
@@ -833,6 +833,10 @@ export class GachaService {
         this.prisma.userCard.aggregate({
           where: { userId, status: 'ACTIVE' },
           _sum: { value: true },
+        }),
+        this.prisma.gachaInventory.findUnique({
+          where: { userId },
+          select: { ampulhetaEter: true },
         }),
       ]);
 
@@ -869,6 +873,9 @@ export class GachaService {
         : null,
       bypassPriceCents:
         locked && !claimEvent.active ? this.config.bypassPriceCents : null,
+      // Alternativa gratuita ao bypass pago: o front usa a contagem para
+      // decidir se oferece o botão de Ampulheta no cooldown do claim.
+      ampulhetaCount: inventory?.ampulhetaEter ?? 0,
       claimEvent: claimEvent.active
         ? { name: claimEvent.name, tiers: claimEvent.tiers }
         : null,
@@ -1020,6 +1027,7 @@ export class GachaService {
 
   async claim(userId: string, spinId: string) {
     let pull: Pull;
+    let ampulhetaDropped = false;
     try {
       pull = await this.prisma.$transaction(
         async (tx) => {
@@ -1104,6 +1112,27 @@ export class GachaService {
           if (claimed.count !== 1) {
             throw new NotFoundException('Preview expirada ou já resgatada.');
           }
+          if (
+            this.config.ampulhetaEnabled &&
+            this.config.ampulhetaDropChance > 0 &&
+            Math.random() * 100 < this.config.ampulhetaDropChance
+          ) {
+            // Bônus não pode derrubar o resgate: no teto de inventário o drop
+            // é descartado. `creditItems` rejeita com 409 só depois do
+            // `updateMany` condicional (nenhum statement inválido), então a
+            // transação continua válida para o resto do claim.
+            try {
+              await creditItems(tx, userId, [
+                { itemId: 'AMPULHETA_ETER', quantity: 1 },
+              ]);
+              ampulhetaDropped = true;
+            } catch (error) {
+              if (!(error instanceof ConflictException)) throw error;
+              this.logger.warn(
+                `Drop de Ampulheta do Éter descartado (inventário cheio) p/ user ${userId}.`,
+              );
+            }
+          }
           const lockMs = claimEvent.active
             ? HOUR_MS
             : this.config.claimLockMs(spin.card.rarity as GachaTier);
@@ -1156,7 +1185,10 @@ export class GachaService {
       }
     }
 
-    return presentPull(pull);
+    const presented = presentPull(pull);
+    return ampulhetaDropped
+      ? { ...presented, ampulhetaDropped: true }
+      : presented;
   }
 
   // Resgate único de compensação: consome a Notification 'COMPENSATION'

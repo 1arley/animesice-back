@@ -52,6 +52,7 @@ import {
   BuyEssenceDto,
   ConvertItemDto,
   CraftItemDto,
+  UseAmpulhetaDto,
   UseItemDto,
   CreateMarketOfferDto,
   CreateItemListingDto,
@@ -2180,6 +2181,49 @@ export class EconomyService {
       });
       return { reset: true, previews };
     });
+  }
+
+  useAmpulheta(userId: string, dto: UseAmpulhetaDto) {
+    return this.runOperation(
+      userId,
+      dto.operationId,
+      'USE_AMPULHETA',
+      {},
+      async (tx) => {
+        await this.assertEconomyEnabled(tx, userId);
+        await this.lockItemInventory(tx, userId);
+        if (this.gachaConfig.claimEventState().active) {
+          throw new BadRequestException(
+            'Ampulheta do Éter não pode ser usada durante evento de resgate ativo.',
+          );
+        }
+        const now = new Date();
+        const lock = await tx.gachaClaimLock.findUnique({
+          where: { userId },
+          select: { lockedUntil: true },
+        });
+        if (!lock || lock.lockedUntil <= now) {
+          throw new BadRequestException('Não há tempo de espera ativo.');
+        }
+        const consumed = await tx.gachaInventory.updateMany({
+          where: { userId, ampulhetaEter: { gte: 1 } },
+          data: { ampulhetaEter: { decrement: 1 } },
+        });
+        if (consumed.count !== 1) {
+          throw new BadRequestException('Ampulheta do Éter insuficiente.');
+        }
+        const unlocked = await tx.gachaClaimLock.deleteMany({
+          where: { userId, lockedUntil: { gt: now } },
+        });
+        if (unlocked.count < 1) {
+          throw new BadRequestException('Não há tempo de espera ativo.');
+        }
+        const inventory = await tx.gachaInventory.findUniqueOrThrow({
+          where: { userId },
+        });
+        return { used: true, inventory };
+      },
+    );
   }
 
   async createMarketOffer(userId: string, dto: CreateMarketOfferDto) {
@@ -4562,9 +4606,11 @@ export class EconomyService {
           { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
         );
       } catch (error) {
+        const serialConflict = this.isSerializableConflict(error);
         if (
-          error instanceof Prisma.PrismaClientKnownRequestError &&
-          (error.code === 'P2002' || error.code === 'P2034')
+          serialConflict ||
+          (error instanceof Prisma.PrismaClientKnownRequestError &&
+            error.code === 'P2002')
         ) {
           const result = await this.replayOperation(
             userId,
@@ -4573,7 +4619,8 @@ export class EconomyService {
             payload,
           );
           if (result !== null) return result;
-          if (error.code === 'P2034' && attempt === 0) continue;
+          if (serialConflict && attempt === 0) continue;
+          if (serialConflict) break;
         }
         throw error;
       }
@@ -4613,16 +4660,20 @@ export class EconomyService {
     await tx.$queryRaw`SELECT "userId" FROM "GachaInventory" WHERE "userId" = ${userId} FOR UPDATE`;
   }
 
+  private isSerializableConflict(error: unknown): boolean {
+    return (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      (error.code === 'P2034' ||
+        (error.code === 'P2010' &&
+          error.message.includes('could not serialize access')))
+    );
+  }
+
   private async withSerializableConflict<T>(operation: () => Promise<T>) {
     try {
       return await operation();
     } catch (error) {
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        (error.code === 'P2034' ||
-          (error.code === 'P2010' &&
-            error.message.includes('could not serialize access')))
-      ) {
+      if (this.isSerializableConflict(error)) {
         throw new ConflictException('Conflito concorrente; tente novamente.');
       }
       throw error;

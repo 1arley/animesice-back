@@ -1448,6 +1448,7 @@ model GachaInventory {
   premiumBoxes           Int    @default(0)
   keys                   Int    @default(0)
   spinResets             Int    @default(0)
+  ampulhetaEter          Int    @default(0)
   titanitaShards         Int    @default(0)
   titanitaSombriaShards  Int    @default(0)
   draconicaShards        Int    @default(0)

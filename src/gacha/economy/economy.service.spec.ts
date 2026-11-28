@@ -67,6 +67,7 @@ describe('EconomyService safeguards', () => {
         'gachaMarketOfferCard',
         'gachaAdminChange',
         'gachaTrade',
+        'gachaClaimLock',
         'gachaOfficialOffer',
         'gachaSpin',
         'gachaCardWishlist',
@@ -1279,6 +1280,198 @@ describe('EconomyService safeguards', () => {
           data: { foilExtractors: { increment: 2 } },
         }),
       );
+    });
+  });
+
+  describe('useAmpulheta', () => {
+    const opId = 'd59383e4-6f57-42fa-ad8c-c5d65a2746cb';
+    const opId2 = 'e59383e4-6f57-42fa-ad8c-c5d65a2746cc';
+
+    beforeEach(() => {
+      db.gachaClaimLock.findUnique.mockResolvedValue({
+        userId: 'u1',
+        lockedUntil: new Date(Date.now() + 3_600_000),
+      });
+      db.gachaClaimLock.deleteMany.mockResolvedValue({ count: 1 });
+      db.gachaInventory.findUniqueOrThrow.mockResolvedValue({
+        userId: 'u1',
+        ampulhetaEter: 0,
+      });
+    });
+
+    it('rejects when there is no active cooldown lock without consuming item', async () => {
+      db.gachaClaimLock.findUnique.mockResolvedValueOnce(null);
+
+      await expect(
+        service.useAmpulheta('u1', { operationId: opId }),
+      ).rejects.toThrow('Não há tempo de espera ativo.');
+      expect(db.gachaInventory.updateMany).not.toHaveBeenCalled();
+
+      db.gachaClaimLock.findUnique.mockResolvedValueOnce({
+        userId: 'u1',
+        lockedUntil: new Date(Date.now() - 1000),
+      });
+      await expect(
+        service.useAmpulheta('u1', { operationId: opId }),
+      ).rejects.toThrow('Não há tempo de espera ativo.');
+      expect(db.gachaInventory.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('rejects when user has zero Ampulheta do Éter without removing lock', async () => {
+      db.gachaInventory.updateMany.mockResolvedValueOnce({ count: 0 });
+
+      await expect(
+        service.useAmpulheta('u1', { operationId: opId }),
+      ).rejects.toThrow('Ampulheta do Éter insuficiente.');
+      expect(db.gachaClaimLock.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it('rejects when the economy is blocked for the user without consuming item', async () => {
+      db.user.findUniqueOrThrow.mockResolvedValueOnce({
+        crystalBalance: -1,
+        crystalReserved: 0,
+        gachaMarketBlockedAt: null,
+        role: 'USER',
+      });
+
+      await expect(
+        service.useAmpulheta('u1', { operationId: opId }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(db.gachaInventory.updateMany).not.toHaveBeenCalled();
+      expect(db.gachaClaimLock.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it('blocks usage during an active claim event', async () => {
+      const gachaConfig = (
+        service as unknown as { gachaConfig: GachaConfigService }
+      ).gachaConfig;
+      jest.spyOn(gachaConfig, 'claimEventState').mockReturnValue({
+        active: true,
+        name: 'Festival',
+        tiers: [],
+      });
+
+      await expect(
+        service.useAmpulheta('u1', { operationId: opId }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(db.gachaInventory.updateMany).not.toHaveBeenCalled();
+      expect(db.gachaClaimLock.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it('consumes 1 hourglass, clears active lock and returns updated inventory', async () => {
+      db.gachaInventory.findUniqueOrThrow.mockResolvedValueOnce({
+        userId: 'u1',
+        ampulhetaEter: 2,
+      });
+
+      const result = await service.useAmpulheta('u1', { operationId: opId });
+
+      expect(result).toEqual({
+        used: true,
+        inventory: { userId: 'u1', ampulhetaEter: 2 },
+      });
+      expect(db.gachaInventory.upsert).toHaveBeenCalledWith({
+        where: { userId: 'u1' },
+        create: { userId: 'u1' },
+        update: {},
+      });
+      expect(db.gachaInventory.updateMany).toHaveBeenCalledWith({
+        where: { userId: 'u1', ampulhetaEter: { gte: 1 } },
+        data: { ampulhetaEter: { decrement: 1 } },
+      });
+      expect(db.gachaClaimLock.deleteMany).toHaveBeenCalledWith({
+        where: { userId: 'u1', lockedUntil: { gt: expect.any(Date) } },
+      });
+    });
+
+    it('throws to trigger rollback if lock delete affects zero rows', async () => {
+      db.gachaClaimLock.deleteMany.mockResolvedValueOnce({ count: 0 });
+
+      await expect(
+        service.useAmpulheta('u1', { operationId: opId }),
+      ).rejects.toThrow('Não há tempo de espera ativo.');
+    });
+
+    it('replays same operationId without consuming item twice', async () => {
+      const cached = {
+        used: true,
+        inventory: { userId: 'u1', ampulhetaEter: 1 },
+      };
+      db.gachaItemOperation.findUnique.mockResolvedValueOnce({
+        kind: 'USE_AMPULHETA',
+        payload: {},
+        result: cached,
+      });
+
+      await expect(
+        service.useAmpulheta('u1', { operationId: opId }),
+      ).resolves.toEqual(cached);
+      expect(db.gachaInventory.updateMany).not.toHaveBeenCalled();
+      expect(db.gachaClaimLock.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it('concurrent requests with distinct operationIds do not double-consume when stock is 1', async () => {
+      let locked = true;
+      let count = 1;
+      db.gachaClaimLock.findUnique.mockImplementation(() =>
+        Promise.resolve(
+          locked
+            ? { userId: 'u1', lockedUntil: new Date(Date.now() + 60_000) }
+            : null,
+        ),
+      );
+      db.gachaInventory.updateMany.mockImplementation(() => {
+        if (count < 1) return Promise.resolve({ count: 0 });
+        count -= 1;
+        return Promise.resolve({ count: 1 });
+      });
+      db.gachaClaimLock.deleteMany.mockImplementation(() => {
+        if (!locked) return Promise.resolve({ count: 0 });
+        locked = false;
+        return Promise.resolve({ count: 1 });
+      });
+      db.gachaInventory.findUniqueOrThrow.mockImplementation(() =>
+        Promise.resolve({ userId: 'u1', ampulhetaEter: count }),
+      );
+
+      const results = await Promise.allSettled([
+        service.useAmpulheta('u1', { operationId: opId }),
+        service.useAmpulheta('u1', { operationId: opId2 }),
+      ]);
+
+      expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+      expect(results.filter((r) => r.status === 'rejected')).toHaveLength(1);
+      expect(count).toBe(0);
+    });
+
+    it('retries once on P2010 serialization conflict from $queryRaw', async () => {
+      const p2010 = new Prisma.PrismaClientKnownRequestError(
+        'Raw query failed. Code: `40001`. Message: `could not serialize access due to concurrent update`',
+        { code: 'P2010', clientVersion: '7.10.1' },
+      );
+      db.$queryRaw.mockRejectedValueOnce(p2010);
+      db.gachaClaimLock.findUnique.mockResolvedValueOnce(null);
+
+      await expect(
+        service.useAmpulheta('u1', { operationId: opId }),
+      ).rejects.toThrow('Não há tempo de espera ativo.');
+      expect(db.$queryRaw).toHaveBeenCalledTimes(2);
+      expect(db.gachaInventory.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('maps repeated P2010 serialization conflicts to ConflictException', async () => {
+      const p2010 = new Prisma.PrismaClientKnownRequestError(
+        'Raw query failed. Code: `40001`. Message: `could not serialize access due to concurrent update`',
+        { code: 'P2010', clientVersion: '7.10.1' },
+      );
+      db.$queryRaw.mockRejectedValueOnce(p2010).mockRejectedValueOnce(p2010);
+
+      const attempt = service.useAmpulheta('u1', { operationId: opId });
+      await expect(attempt).rejects.toBeInstanceOf(ConflictException);
+      await expect(attempt).rejects.toThrow(
+        'Conflito ao processar o item; tente novamente.',
+      );
+      expect(db.$queryRaw).toHaveBeenCalledTimes(2);
     });
   });
 });

@@ -15,6 +15,10 @@ Episode       id, number, title, thumbnailUrl, videoUrl, embedUrl,
 Genre         id, slug(unique), name(unique)
 Comment       id, content, userId, animeId?, episodeId?, parentId?
 StreamingToken id, token(unique), ip, expiresAt, episodeId
+GachaInventory userId(PK), commonBoxes, rareBoxes, premiumBoxes, keys,
+               spinResets, ampulhetaEter, protecao, titanita*, draconica*,
+               holo*/gold*/ink*/prism*, essencia*
+GachaClaimLock userId(PK), lockedUntil
 ```
 
 ## Seed
