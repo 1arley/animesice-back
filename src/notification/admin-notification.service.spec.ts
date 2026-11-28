@@ -2,6 +2,7 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import {
   AdminNotificationAudience,
   AdminNotificationCategory,
+  Prisma,
 } from '@prisma/client';
 import { AdminNotificationService } from '@/notification/admin-notification.service';
 import type { SendAdminNotificationDto } from '@/notification/dto/send-admin-notification.dto';
@@ -187,6 +188,59 @@ describe('AdminNotificationService', () => {
     expect(result).toEqual(
       expect.objectContaining({ recipientCount: 3, duplicate: false }),
     );
+  });
+
+  it('rejeita mais de 500 destinatários em um envio de grupo', async () => {
+    const { svc, prisma } = build();
+    const userIds = Array.from({ length: 501 }, (_, index) => `user-${index}`);
+
+    await expect(
+      svc.send(
+        ADMIN_ID,
+        buildDto({
+          audience: AdminNotificationAudience.SELECTED,
+          userIds,
+        }),
+      ),
+    ).rejects.toThrow('Envie para no máximo 500 jogadores por vez.');
+    expect(prisma.adminNotification.create).not.toHaveBeenCalled();
+  });
+
+  it('devolve a campanha vencedora quando duas requisições usam a mesma chave', async () => {
+    const { svc, prisma } = build();
+    prisma.user.findMany.mockResolvedValue([{ id: USER_ID }]);
+    prisma.adminNotification.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'campaign-winner', recipientCount: 1 });
+    prisma.adminNotification.create.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: '7.10.1',
+      }),
+    );
+
+    const result = await svc.send(ADMIN_ID, buildDto());
+
+    expect(result).toEqual(
+      expect.objectContaining({ id: 'campaign-winner', duplicate: true }),
+    );
+    expect(prisma.notification.createMany).not.toHaveBeenCalled();
+  });
+
+  it('preserva a contagem parcial e propaga falha de entrega', async () => {
+    const { svc, prisma } = build();
+    prisma.user.findMany.mockResolvedValue([{ id: USER_ID }]);
+    prisma.adminNotification.create.mockResolvedValue({
+      id: 'campaign-1',
+      admin: { id: ADMIN_ID },
+    });
+    prisma.notification.createMany.mockRejectedValue(new Error('db down'));
+
+    await expect(svc.send(ADMIN_ID, buildDto())).rejects.toThrow('db down');
+    expect(prisma.adminNotification.update).toHaveBeenCalledWith({
+      where: { id: 'campaign-1' },
+      data: { recipientCount: 0 },
+    });
   });
 
   it('rejeita envio individual com mais de um destinatário', async () => {
