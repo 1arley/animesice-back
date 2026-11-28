@@ -1,3 +1,10 @@
+# [1.77.0](https://github.com/1arley/animesice-back/compare/v1.76.0...v1.77.0) (2026-11-28)
+
+
+### Features
+
+* **gacha:** add Ampulheta do Éter consumable and cooldown bypass ([#142](https://github.com/1arley/animesice-back/issues/142)) ([c09b8ca](https://github.com/1arley/animesice-back/commit/c09b8ca0b6295b45e8562748734abf1290160315))
+
 # [1.76.0](https://github.com/1arley/animesice-back/compare/v1.75.0...v1.76.0) (2026-11-28)
 
 
