@@ -4606,9 +4606,11 @@ export class EconomyService {
           { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
         );
       } catch (error) {
+        const serialConflict = this.isSerializableConflict(error);
         if (
-          error instanceof Prisma.PrismaClientKnownRequestError &&
-          (error.code === 'P2002' || error.code === 'P2034')
+          serialConflict ||
+          (error instanceof Prisma.PrismaClientKnownRequestError &&
+            error.code === 'P2002')
         ) {
           const result = await this.replayOperation(
             userId,
@@ -4617,7 +4619,8 @@ export class EconomyService {
             payload,
           );
           if (result !== null) return result;
-          if (error.code === 'P2034' && attempt === 0) continue;
+          if (serialConflict && attempt === 0) continue;
+          if (serialConflict) break;
         }
         throw error;
       }
@@ -4657,16 +4660,20 @@ export class EconomyService {
     await tx.$queryRaw`SELECT "userId" FROM "GachaInventory" WHERE "userId" = ${userId} FOR UPDATE`;
   }
 
+  private isSerializableConflict(error: unknown): boolean {
+    return (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      (error.code === 'P2034' ||
+        (error.code === 'P2010' &&
+          error.message.includes('could not serialize access')))
+    );
+  }
+
   private async withSerializableConflict<T>(operation: () => Promise<T>) {
     try {
       return await operation();
     } catch (error) {
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        (error.code === 'P2034' ||
-          (error.code === 'P2010' &&
-            error.message.includes('could not serialize access')))
-      ) {
+      if (this.isSerializableConflict(error)) {
         throw new ConflictException('Conflito concorrente; tente novamente.');
       }
       throw error;

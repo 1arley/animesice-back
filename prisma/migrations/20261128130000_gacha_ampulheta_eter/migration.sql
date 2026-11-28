@@ -18,14 +18,23 @@ VALUES
   )
 ON CONFLICT ("key") DO UPDATE
 SET
-  "value" = CASE
-    WHEN "GachaConfig"."key" = 'ampulheta_drop_chance'
-      AND jsonb_typeof("GachaConfig"."value") = 'number'
-      AND ("GachaConfig"."value" #>> '{}')::numeric BETWEEN 0 AND 100
-      THEN "GachaConfig"."value"
-    WHEN "GachaConfig"."key" = 'ampulheta_enabled'
-      AND jsonb_typeof("GachaConfig"."value") = 'boolean'
-      THEN "GachaConfig"."value"
+  "value" = CASE "GachaConfig"."key"
+    WHEN 'ampulheta_drop_chance' THEN
+      CASE
+        WHEN jsonb_typeof("GachaConfig"."value") = 'number' THEN
+          CASE
+            WHEN ("GachaConfig"."value" #>> '{}')::numeric BETWEEN 0 AND 100
+              THEN "GachaConfig"."value"
+            ELSE EXCLUDED."value"
+          END
+        ELSE EXCLUDED."value"
+      END
+    WHEN 'ampulheta_enabled' THEN
+      CASE
+        WHEN jsonb_typeof("GachaConfig"."value") = 'boolean'
+          THEN "GachaConfig"."value"
+        ELSE EXCLUDED."value"
+      END
     ELSE EXCLUDED."value"
   END,
   "label" = EXCLUDED."label",

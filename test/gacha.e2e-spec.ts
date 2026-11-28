@@ -334,6 +334,40 @@ describe('GachaController (e2e)', () => {
     ).resolves.not.toBeNull();
   });
 
+  it('consome apenas uma Ampulheta do Éter sob concorrência com saldo suficiente', async () => {
+    const prisma = getPrismaService();
+    await prisma.gachaInventory.upsert({
+      where: { userId },
+      create: { userId, ampulhetaEter: 2 },
+      update: { ampulhetaEter: 2 },
+    });
+    await prisma.gachaClaimLock.create({
+      data: { userId, lockedUntil: new Date(Date.now() + 3_600_000) },
+    });
+
+    const race = await Promise.all([
+      request(getHttpServer())
+        .post('/gacha/economy/ampulheta/use')
+        .set('Cookie', cookie)
+        .send({ operationId: randomUUID() }),
+      request(getHttpServer())
+        .post('/gacha/economy/ampulheta/use')
+        .set('Cookie', cookie)
+        .send({ operationId: randomUUID() }),
+    ]);
+
+    expect(race.filter((r) => r.status === 201)).toHaveLength(1);
+    expect(race.filter((r) => r.status >= 400 && r.status < 500)).toHaveLength(
+      1,
+    );
+    await expect(
+      prisma.gachaInventory.findUniqueOrThrow({ where: { userId } }),
+    ).resolves.toMatchObject({ ampulhetaEter: 1 });
+    await expect(
+      prisma.gachaClaimLock.findUnique({ where: { userId } }),
+    ).resolves.toBeNull();
+  });
+
   it('concede Ampulheta do Éter no claim conforme ampulheta_drop_chance', async () => {
     const prisma = getPrismaService();
     const config = getApp().get(GachaConfigService);
@@ -346,13 +380,14 @@ describe('GachaController (e2e)', () => {
       .set('Cookie', cookie)
       .set('Authorization', `Bearer ${accessToken}`)
       .expect(201);
-    await prisma.gachaConfig.update({
-      where: { key: 'ampulheta_drop_chance' },
-      data: { value: 100 },
-    });
-    await config.refresh();
 
     try {
+      await prisma.gachaConfig.update({
+        where: { key: 'ampulheta_drop_chance' },
+        data: { value: 100 },
+      });
+      await config.refresh();
+
       const claim = await request(getHttpServer())
         .post('/gacha/claim')
         .set('Cookie', cookie)
@@ -363,6 +398,55 @@ describe('GachaController (e2e)', () => {
       await expect(
         prisma.gachaInventory.findUniqueOrThrow({ where: { userId } }),
       ).resolves.toMatchObject({ ampulhetaEter: 1 });
+    } finally {
+      await prisma.gachaConfig.update({
+        where: { key: 'ampulheta_drop_chance' },
+        data: { value: Number(previous.value) },
+      });
+      await config.refresh();
+    }
+  });
+
+  it('mantém o claim válido quando o drop da Ampulheta do Éter atinge o limite de inventário', async () => {
+    const prisma = getPrismaService();
+    const config = getApp().get(GachaConfigService);
+    const previous = await prisma.gachaConfig.findUniqueOrThrow({
+      where: { key: 'ampulheta_drop_chance' },
+      select: { value: true },
+    });
+    await prisma.gachaInventory.upsert({
+      where: { userId },
+      create: { userId, ampulhetaEter: 2_147_483_647 },
+      update: { ampulhetaEter: 2_147_483_647 },
+    });
+    const spin = await request(getHttpServer())
+      .post('/gacha/spin')
+      .set('Cookie', cookie)
+      .set('Authorization', `Bearer ${accessToken}`)
+      .expect(201);
+
+    try {
+      await prisma.gachaConfig.update({
+        where: { key: 'ampulheta_drop_chance' },
+        data: { value: 100 },
+      });
+      await config.refresh();
+
+      const claim = await request(getHttpServer())
+        .post('/gacha/claim')
+        .set('Cookie', cookie)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ spinId: spin.body.id })
+        .expect(201);
+
+      expect(claim.body.card).toBeDefined();
+      expect(claim.body.ampulhetaDropped).toBeUndefined();
+      await expect(
+        prisma.gachaClaimLock.findUnique({ where: { userId } }),
+      ).resolves.not.toBeNull();
+      await expect(
+        prisma.gachaInventory.findUniqueOrThrow({ where: { userId } }),
+      ).resolves.toMatchObject({ ampulhetaEter: 2_147_483_647 });
     } finally {
       await prisma.gachaConfig.update({
         where: { key: 'ampulheta_drop_chance' },

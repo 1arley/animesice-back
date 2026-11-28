@@ -239,10 +239,24 @@ describe('GachaConfigService', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(db.gachaConfig.upsert).not.toHaveBeenCalled();
 
+    await service.update('ampulheta_drop_chance', 0, 'admin', 'min drop');
+    expect(db.gachaEconomyVersion.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        snapshot: { ...activeSnapshot, ampulheta_drop_chance: 0 },
+      }),
+    });
+
     await service.update('ampulheta_drop_chance', 1.25, 'admin', 'tune drop');
     expect(db.gachaEconomyVersion.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         snapshot: { ...activeSnapshot, ampulheta_drop_chance: 1.25 },
+      }),
+    });
+
+    await service.update('ampulheta_drop_chance', 100, 'admin', 'max drop');
+    expect(db.gachaEconomyVersion.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        snapshot: { ...activeSnapshot, ampulheta_drop_chance: 100 },
       }),
     });
 
@@ -252,6 +266,29 @@ describe('GachaConfigService', () => {
         snapshot: { ...activeSnapshot, ampulheta_enabled: false },
       }),
     });
+  });
+
+  it('uses default ampulheta config when cached values are invalid', async () => {
+    db.gachaConfig.findMany.mockResolvedValue([
+      ...rows,
+      {
+        key: 'ampulheta_drop_chance',
+        value: '100',
+        label: 'Chance de drop da Ampulheta do Éter no claim (%)',
+        group: 'rates',
+      },
+      {
+        key: 'ampulheta_enabled',
+        value: 'false',
+        label: 'Habilitar drop da Ampulheta do Éter no claim',
+        group: 'economia',
+      },
+    ]);
+
+    await service.onModuleInit();
+
+    expect(service.ampulhetaDropChance).toBe(0.5);
+    expect(service.ampulhetaEnabled).toBe(true);
   });
 
   it('rejects market age exemption timestamps without an explicit timezone', async () => {

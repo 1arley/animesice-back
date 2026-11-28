@@ -48,7 +48,7 @@ Ordem de execução, dentro de `runOperation(..., 'USE_AMPULHETA', ...)` (transa
 3. Recusa durante `claim_event` ativo (o evento já fixa o cooldown em 1h e mexe na
    economia da coleta), igual ao bypass pago.
 4. Exige `GachaClaimLock` com `lockedUntil > now`.
-5. `updateMany({ where: { userId, ampulhetaEter: { gte: 1 } }, data: { decrement: 1 } })
+5. `updateMany({ where: { userId, ampulhetaEter: { gte: 1 } }, data: { ampulhetaEter: { decrement: 1 } } })`
    — decremento condicional; `count !== 1` → 400.
 6. `deleteMany({ where: { userId, lockedUntil: { gt: now } } })` — se nenhuma linha sair,
    lança erro para o rollback desfazer o decremento.
@@ -66,7 +66,7 @@ Ordem de execução, dentro de `runOperation(..., 'USE_AMPULHETA', ...)` (transa
 
 `GET /gacha/status` devolve `ampulhetaCount` (quantidade no inventário) ao lado de
 `bypassPriceCents`, para a tela de claim escolher entre o bypass pago e a Ampulheta.
-O uso também fica condicionado a `canClaim === false` e `claimEvent.active === false`.
+O uso também fica condicionado a `canClaim === false` e `claimEvent === null`.
 
 ## Migration
 

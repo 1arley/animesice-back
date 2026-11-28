@@ -602,7 +602,7 @@ describe('GachaService', () => {
       expect(result.pityDue).toBe(false);
     });
 
-    it('informa a quantidade de Ampuletas do Éter no inventário', async () => {
+    it('informa a quantidade de Ampulhetas do Éter no inventário', async () => {
       mockPrisma.userCard.findFirst.mockResolvedValue(null);
       mockPrisma.gachaInventory.findUnique.mockResolvedValue({
         ampulhetaEter: 3,

@@ -1288,7 +1288,6 @@ describe('EconomyService safeguards', () => {
     const opId2 = 'e59383e4-6f57-42fa-ad8c-c5d65a2746cc';
 
     beforeEach(() => {
-      db.gachaConfig.findMany.mockResolvedValue([]);
       db.gachaClaimLock.findUnique.mockResolvedValue({
         userId: 'u1',
         lockedUntil: new Date(Date.now() + 3_600_000),
@@ -1411,7 +1410,7 @@ describe('EconomyService safeguards', () => {
       expect(db.gachaClaimLock.deleteMany).not.toHaveBeenCalled();
     });
 
-    it('concurrent requests with distinct operationIds consume at most once', async () => {
+    it('concurrent requests with distinct operationIds do not double-consume when stock is 1', async () => {
       let locked = true;
       let count = 1;
       db.gachaClaimLock.findUnique.mockImplementation(() =>
@@ -1443,6 +1442,36 @@ describe('EconomyService safeguards', () => {
       expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
       expect(results.filter((r) => r.status === 'rejected')).toHaveLength(1);
       expect(count).toBe(0);
+    });
+
+    it('retries once on P2010 serialization conflict from $queryRaw', async () => {
+      const p2010 = new Prisma.PrismaClientKnownRequestError(
+        'Raw query failed. Code: `40001`. Message: `could not serialize access due to concurrent update`',
+        { code: 'P2010', clientVersion: '7.10.1' },
+      );
+      db.$queryRaw.mockRejectedValueOnce(p2010);
+      db.gachaClaimLock.findUnique.mockResolvedValueOnce(null);
+
+      await expect(
+        service.useAmpulheta('u1', { operationId: opId }),
+      ).rejects.toThrow('Não há tempo de espera ativo.');
+      expect(db.$queryRaw).toHaveBeenCalledTimes(2);
+      expect(db.gachaInventory.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('maps repeated P2010 serialization conflicts to ConflictException', async () => {
+      const p2010 = new Prisma.PrismaClientKnownRequestError(
+        'Raw query failed. Code: `40001`. Message: `could not serialize access due to concurrent update`',
+        { code: 'P2010', clientVersion: '7.10.1' },
+      );
+      db.$queryRaw.mockRejectedValueOnce(p2010).mockRejectedValueOnce(p2010);
+
+      const attempt = service.useAmpulheta('u1', { operationId: opId });
+      await expect(attempt).rejects.toBeInstanceOf(ConflictException);
+      await expect(attempt).rejects.toThrow(
+        'Conflito ao processar o item; tente novamente.',
+      );
+      expect(db.$queryRaw).toHaveBeenCalledTimes(2);
     });
   });
 });
