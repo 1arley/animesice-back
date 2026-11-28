@@ -58,8 +58,9 @@ export class SendAdminNotificationDto {
   @IsOptional()
   @IsString()
   @Length(1, 300)
-  @Matches(/^\/(?!\/)/, {
-    message: 'linkUrl deve ser um caminho interno iniciado por "/".',
+  @Matches(/^\/(?!\/)[^\s\\]*$/, {
+    message:
+      'linkUrl deve ser um caminho interno iniciado por "/", sem espaços ou barras invertidas.',
   })
   linkUrl?: string;
 
