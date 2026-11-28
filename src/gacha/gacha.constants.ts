@@ -41,6 +41,21 @@ export const FOIL_INVENTORY_FIELDS = {
   PRISM: { shards: 'prismShards', gems: 'prismGems' },
 } as const;
 
+export type SpecialGachaFoil = keyof typeof FOIL_INVENTORY_FIELDS;
+export const SPECIAL_GACHA_FOILS = Object.keys(
+  FOIL_INVENTORY_FIELDS,
+) as SpecialGachaFoil[];
+
+export function isSpecialGachaFoil(foil: string): foil is SpecialGachaFoil {
+  return Object.hasOwn(FOIL_INVENTORY_FIELDS, foil);
+}
+
+/**
+ * Fragmentos recuperados ao extrair o foil de uma carta (metade do custo
+ * GEM_FRAGMENT_RECIPE = 20 para impedir ciclo lucrativo craft -> apply -> extract).
+ */
+export const DEFAULT_FOIL_EXTRACT_FRAGMENTS = 10;
+
 export function burnFragments(condition: number, rarity: string, foil: string) {
   if (foil === 'NORMAL') return null;
   if (!Object.hasOwn(FOIL_INVENTORY_FIELDS, foil)) {

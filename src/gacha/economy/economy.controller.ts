@@ -37,6 +37,7 @@ import {
   UseItemDto,
   CraftFoilGemDto,
   ApplyFoilGemDto,
+  ExtractFoilDto,
 } from './economy.dto';
 import { EconomyService } from './economy.service';
 
@@ -129,6 +130,19 @@ export class EconomyController {
   @Post('gems/apply')
   applyFoilGem(@Req() req: AuthenticatedRequest, @Body() dto: ApplyFoilGemDto) {
     return this.economy.applyFoilGem(req.user.id, dto);
+  }
+
+  @Get('gems/extract/preview/:userCardId')
+  previewFoilExtraction(
+    @Req() req: AuthenticatedRequest,
+    @Param('userCardId', ParseUUIDPipe) userCardId: string,
+  ) {
+    return this.economy.previewFoilExtraction(req.user.id, userCardId);
+  }
+
+  @Post('gems/extract')
+  extractFoil(@Req() req: AuthenticatedRequest, @Body() dto: ExtractFoilDto) {
+    return this.economy.extractFoil(req.user.id, dto);
   }
 
   @Post('trade-up/cards')

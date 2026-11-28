@@ -1,4 +1,8 @@
-import { ECONOMY_DEFAULTS, economyConfig } from './economy.config';
+import {
+  ECONOMY_DEFAULTS,
+  economyConfig,
+  foilExtractFragmentsFor,
+} from './economy.config';
 
 describe('economyConfig', () => {
   it('adds new foils to legacy snapshots at their configured odds and values', () => {
@@ -57,5 +61,70 @@ describe('economyConfig', () => {
 
   it('rejects a malformed category weights value', () => {
     expect(() => economyConfig({ box_category_weights: [] })).toThrow();
+  });
+
+  it('inherits EXTRATOR_FOIL and foil_extract_fragments defaults in legacy snapshots', () => {
+    const legacy = economyConfig({
+      item_shop_price: {
+        TITANITA: 500,
+        TITANITA_SOMBRIA: 1500,
+        DRACONICA: 6500,
+        SOMBRIA_DRACONICA: 0,
+        PROTECAO: 400,
+      },
+      item_shop_enabled: {
+        TITANITA: true,
+        TITANITA_SOMBRIA: true,
+        DRACONICA: true,
+        SOMBRIA_DRACONICA: true,
+        PROTECAO: true,
+      },
+      item_convert_value: {
+        TITANITA: 250,
+        TITANITA_SOMBRIA: 750,
+        DRACONICA: 3250,
+        SOMBRIA_DRACONICA: 4500,
+        PROTECAO: 0,
+      },
+    });
+
+    expect(legacy.item_shop_price.EXTRATOR_FOIL).toBe(2000);
+    expect(legacy.item_shop_enabled.EXTRATOR_FOIL).toBe(true);
+    expect(legacy.item_convert_value.EXTRATOR_FOIL).toBe(0);
+    expect(legacy.item_kind_weights.COMMON.EXTRATOR_FOIL).toBe(0);
+    expect(foilExtractFragmentsFor(legacy, 'HOLO')).toBe(10);
+  });
+
+  it('applies default foil_extract_fragments and per-foil overrides', () => {
+    const byDefault = economyConfig({
+      foil_extract_fragments: { default: 8 },
+    });
+    expect(foilExtractFragmentsFor(byDefault, 'HOLO')).toBe(8);
+    expect(foilExtractFragmentsFor(byDefault, 'PRISM')).toBe(8);
+
+    const overridden = economyConfig({
+      foil_extract_fragments: { default: 8, GOLD: 14, NEGATIVE: 99 },
+    });
+    expect(foilExtractFragmentsFor(overridden, 'HOLO')).toBe(8);
+    expect(foilExtractFragmentsFor(overridden, 'GOLD')).toBe(14);
+  });
+
+  it('rejects invalid foil_extract_fragments and non-zero extractor convert values', () => {
+    expect(() =>
+      economyConfig({ foil_extract_fragments: { default: 0 } }),
+    ).toThrow();
+    expect(() =>
+      economyConfig({ foil_extract_fragments: { default: 20 } }),
+    ).toThrow();
+    expect(() =>
+      economyConfig({ foil_extract_fragments: { default: 10, INK: 20 } }),
+    ).toThrow();
+    expect(() =>
+      economyConfig({ foil_extract_fragments: { default: 10.5 } }),
+    ).toThrow();
+    expect(() => economyConfig({ foil_extract_fragments: {} })).toThrow();
+    expect(() =>
+      economyConfig({ item_convert_value: { EXTRATOR_FOIL: 100 } }),
+    ).toThrow();
   });
 });

@@ -102,14 +102,28 @@ export function prizeQuality(
   return weightedPick(selectedWeights, random);
 }
 
-export const ITEM_KINDS = [
+export const STONE_ITEM_KINDS = [
   'TITANITA',
   'TITANITA_SOMBRIA',
   'DRACONICA',
   'SOMBRIA_DRACONICA',
-  'PROTECAO',
+] as const;
+export type StoneItemKind = (typeof STONE_ITEM_KINDS)[number];
+
+export const DIRECT_CONSUMABLE_KINDS = ['PROTECAO', 'EXTRATOR_FOIL'] as const;
+export type DirectConsumableKind = (typeof DIRECT_CONSUMABLE_KINDS)[number];
+
+export const ITEM_KINDS = [
+  ...STONE_ITEM_KINDS,
+  ...DIRECT_CONSUMABLE_KINDS,
 ] as const;
 export type ItemKind = (typeof ITEM_KINDS)[number];
+
+export function isDirectConsumableKind(
+  kind: ItemKind,
+): kind is DirectConsumableKind {
+  return (DIRECT_CONSUMABLE_KINDS as readonly string[]).includes(kind);
+}
 
 export const CARD_FLOOR: Record<string, number> = {
   COMUM: 500,

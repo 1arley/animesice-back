@@ -7,7 +7,11 @@ import {
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '@/prisma/prisma.service';
 import { assertItemShopSources } from '@/gacha/economy/economy.config';
-import { DEFAULT_SPIN_SHARD_CHANCE } from '@/gacha/gacha.constants';
+import {
+  DEFAULT_SPIN_SHARD_CHANCE,
+  GEM_FRAGMENT_RECIPE,
+  isSpecialGachaFoil,
+} from '@/gacha/gacha.constants';
 
 function hasExplicitTimezoneIsoTimestamp(value: unknown): value is string {
   return (
@@ -62,6 +66,35 @@ function assertSpinShardChance(value: Prisma.InputJsonValue): void {
     throw new BadRequestException(
       'spin_shard_chance deve ser um número entre 0 e 100.',
     );
+  }
+}
+
+function assertFoilExtractFragments(value: Prisma.InputJsonValue): void {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new BadRequestException('foil_extract_fragments deve ser um objeto.');
+  }
+  const record = value as Record<string, unknown>;
+  if (!('default' in record)) {
+    throw new BadRequestException(
+      'foil_extract_fragments.default é obrigatório.',
+    );
+  }
+  for (const [key, qty] of Object.entries(record)) {
+    if (key !== 'default' && !isSpecialGachaFoil(key)) {
+      throw new BadRequestException(
+        `Foil inválido em foil_extract_fragments: ${key}.`,
+      );
+    }
+    if (
+      typeof qty !== 'number' ||
+      !Number.isSafeInteger(qty) ||
+      qty < 1 ||
+      qty >= GEM_FRAGMENT_RECIPE
+    ) {
+      throw new BadRequestException(
+        `Quantidade em foil_extract_fragments.${key} deve ser inteiro entre 1 e ${GEM_FRAGMENT_RECIPE - 1}.`,
+      );
+    }
   }
 }
 
@@ -149,10 +182,11 @@ export class GachaConfigService implements OnModuleInit {
         ...Object.fromEntries(current.map((item) => [item.key, item.value])),
         [key]: value,
       };
-      assertItemShopSources(candidate);
       if (key === 'claim_event') assertClaimEvent(value);
       if (key === 'market_age_exemption') assertMarketAgeExemption(value);
       if (key === 'spin_shard_chance') assertSpinShardChance(value);
+      if (key === 'foil_extract_fragments') assertFoilExtractFragments(value);
+      assertItemShopSources(candidate);
 
       const row = await tx.gachaConfig.upsert({
         where: { key },

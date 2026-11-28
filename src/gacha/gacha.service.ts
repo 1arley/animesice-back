@@ -2567,6 +2567,9 @@ export class GachaService {
       ...(foil && (GACHA_FOILS as readonly string[]).includes(foil)
         ? { foil }
         : {}),
+      ...(eligibleKind === 'EXTRATOR_FOIL'
+        ? { AND: [{ foil: { not: 'NORMAL' } }] }
+        : {}),
       ...(eligibility
         ? {
             foil: { in: eligibility.foils as GachaFoil[] },

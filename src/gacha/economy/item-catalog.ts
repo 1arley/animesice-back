@@ -47,6 +47,7 @@ export const ITEM_CATALOG = [
     field: 'sombriaDraconicaItems',
   },
   { id: 'PROTECAO', name: 'Proteção de reroll', field: 'protecao' },
+  { id: 'EXTRATOR_FOIL', name: 'Extrator de Foil', field: 'foilExtractors' },
   { id: 'COMMON_BOX', name: 'Baú comum', field: 'commonBoxes' },
   { id: 'RARE_BOX', name: 'Baú raro', field: 'rareBoxes' },
   { id: 'PREMIUM_BOX', name: 'Baú premium', field: 'premiumBoxes' },

@@ -579,4 +579,157 @@ describe('GachaController (e2e)', () => {
         .status,
     ).toBe('ACTIVE');
   });
+
+  it('extrai foil com prévia autoritativa, idempotência, concorrência e restrições', async () => {
+    const prisma = getPrismaService();
+    const card = await prisma.card.findFirstOrThrow({
+      where: { name: 'Gacha Card' },
+    });
+    const owned = await prisma.userCard.create({
+      data: {
+        userId,
+        cardId: card.id,
+        condition: 0.25,
+        foil: 'GOLD',
+        edition: 1,
+        value: 300,
+        rankedValue: 320,
+      },
+    });
+    await prisma.gachaInventory.upsert({
+      where: { userId },
+      create: { userId, foilExtractors: 2 },
+      update: { foilExtractors: 2 },
+    });
+
+    const preview = await request(getHttpServer())
+      .get(`/gacha/economy/gems/extract/preview/${owned.id}`)
+      .set('Cookie', cookie)
+      .expect(200);
+    expect(preview.body).toMatchObject({
+      userCardId: owned.id,
+      currentFoil: 'GOLD',
+      targetFoil: 'NORMAL',
+      extractorsAvailable: 2,
+      fragments: { foil: 'GOLD', itemId: 'GOLD_SHARD', quantity: 10 },
+      canExtract: true,
+      blockedReason: null,
+    });
+
+    // Carta em destaque bloqueia extração.
+    await prisma.user.update({
+      where: { id: userId },
+      data: { featuredUserCardId: owned.id },
+    });
+    const featuredPreview = await request(getHttpServer())
+      .get(`/gacha/economy/gems/extract/preview/${owned.id}`)
+      .set('Cookie', cookie)
+      .expect(200);
+    expect(featuredPreview.body.canExtract).toBe(false);
+    await request(getHttpServer())
+      .post('/gacha/economy/gems/extract')
+      .set('Cookie', cookie)
+      .send({ operationId: randomUUID(), userCardId: owned.id })
+      .expect(409);
+    await prisma.user.update({
+      where: { id: userId },
+      data: { featuredUserCardId: null },
+    });
+
+    // Duas requisições simultâneas com operationIds diferentes: só 1 extrai.
+    const race = await Promise.all([
+      request(getHttpServer())
+        .post('/gacha/economy/gems/extract')
+        .set('Cookie', cookie)
+        .send({ operationId: randomUUID(), userCardId: owned.id }),
+      request(getHttpServer())
+        .post('/gacha/economy/gems/extract')
+        .set('Cookie', cookie)
+        .send({ operationId: randomUUID(), userCardId: owned.id }),
+    ]);
+    expect(race.filter((r) => r.status === 201)).toHaveLength(1);
+    expect(race.filter((r) => r.status >= 400)).toHaveLength(1);
+    const updatedCard = await prisma.userCard.findUniqueOrThrow({
+      where: { id: owned.id },
+    });
+    expect(updatedCard.foil).toBe('NORMAL');
+    expect(updatedCard.condition).toBe(0.25);
+    expect(updatedCard.edition).toBe(1);
+    expect(updatedCard.value).toBe(30);
+    expect(updatedCard.rankedValue).toBe(50);
+    const afterRaceInv = await prisma.gachaInventory.findUniqueOrThrow({
+      where: { userId },
+    });
+    expect(afterRaceInv.foilExtractors).toBe(1);
+    expect(afterRaceInv.goldShards).toBe(10);
+
+    // Replay idempotente com o mesmo operationId não extrai novamente nem falha.
+    const replayCard = await prisma.userCard.create({
+      data: {
+        userId,
+        cardId: card.id,
+        condition: 0.5,
+        foil: 'HOLO',
+        edition: 5,
+        value: 72,
+        rankedValue: 72,
+      },
+    });
+    const opId = randomUUID();
+    const first = await request(getHttpServer())
+      .post('/gacha/economy/gems/extract')
+      .set('Cookie', cookie)
+      .send({ operationId: opId, userCardId: replayCard.id })
+      .expect(201);
+    const replay = await request(getHttpServer())
+      .post('/gacha/economy/gems/extract')
+      .set('Cookie', cookie)
+      .send({ operationId: opId, userCardId: replayCard.id })
+      .expect(201);
+    expect(replay.body).toEqual(first.body);
+    await request(getHttpServer())
+      .post('/gacha/economy/gems/extract')
+      .set('Cookie', cookie)
+      .send({ operationId: opId, userCardId: owned.id })
+      .expect(409);
+
+    const afterReplayInv = await prisma.gachaInventory.findUniqueOrThrow({
+      where: { userId },
+    });
+    expect(afterReplayInv.foilExtractors).toBe(0);
+    expect(afterReplayInv.holoShards).toBe(10);
+
+    // Rollback atômico em estouro de inventário.
+    const overflowCard = await prisma.userCard.create({
+      data: {
+        userId,
+        cardId: card.id,
+        condition: 0.5,
+        foil: 'INK',
+        edition: 5,
+        value: 240,
+        rankedValue: 240,
+      },
+    });
+    await prisma.gachaInventory.update({
+      where: { userId },
+      data: { foilExtractors: 1, inkShards: 2_147_483_647 },
+    });
+    await request(getHttpServer())
+      .post('/gacha/economy/gems/extract')
+      .set('Cookie', cookie)
+      .send({ operationId: randomUUID(), userCardId: overflowCard.id })
+      .expect(409);
+    expect(
+      (
+        await prisma.userCard.findUniqueOrThrow({
+          where: { id: overflowCard.id },
+        })
+      ).foil,
+    ).toBe('INK');
+    expect(
+      (await prisma.gachaInventory.findUniqueOrThrow({ where: { userId } }))
+        .foilExtractors,
+    ).toBe(1);
+  });
 });

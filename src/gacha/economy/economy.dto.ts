@@ -21,8 +21,8 @@ import {
   IsUUID,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { BOX_TIERS, ITEM_KINDS } from './economy.rules';
-import type { BoxTier, ItemKind } from './economy.rules';
+import { BOX_TIERS, ITEM_KINDS, STONE_ITEM_KINDS } from './economy.rules';
+import type { BoxTier, ItemKind, StoneItemKind } from './economy.rules';
 
 export class ItemOperationDto {
   @ApiProperty({ format: 'uuid' })
@@ -37,6 +37,12 @@ export class CraftFoilGemDto extends ItemOperationDto {
 }
 
 export class ApplyFoilGemDto extends CraftFoilGemDto {
+  @ApiProperty({ format: 'uuid' })
+  @IsUUID()
+  userCardId!: string;
+}
+
+export class ExtractFoilDto extends ItemOperationDto {
   @ApiProperty({ format: 'uuid' })
   @IsUUID()
   userCardId!: string;
@@ -84,9 +90,9 @@ export class ConvertItemDto extends BuyItemDto {}
 export class CraftItemDto extends BuyItemDto {}
 
 export class UseItemDto extends ItemOperationDto {
-  @ApiProperty({ enum: ITEM_KINDS.filter((kind) => kind !== 'PROTECAO') })
-  @IsEnum(ITEM_KINDS.filter((kind) => kind !== 'PROTECAO'))
-  kind!: Exclude<ItemKind, 'PROTECAO'>;
+  @ApiProperty({ enum: STONE_ITEM_KINDS })
+  @IsEnum(STONE_ITEM_KINDS)
+  kind!: StoneItemKind;
 
   @ApiProperty({ format: 'uuid' })
   @IsUUID()

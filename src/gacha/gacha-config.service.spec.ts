@@ -240,6 +240,54 @@ describe('GachaConfigService', () => {
       }),
     );
   });
+
+  it('validates foil_extract_fragments bounds and keys on update', async () => {
+    await service.update(
+      'foil_extract_fragments',
+      { default: 8, GOLD: 12 },
+      'admin',
+      'ajuste extração',
+    );
+    expect(db.gachaConfig.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { key: 'foil_extract_fragments' },
+        update: { value: { default: 8, GOLD: 12 } },
+      }),
+    );
+
+    await expect(
+      service.update(
+        'foil_extract_fragments',
+        { default: 0 },
+        'admin',
+        'inválido',
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      service.update(
+        'foil_extract_fragments',
+        { default: 20 },
+        'admin',
+        'lucro infinito',
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      service.update(
+        'foil_extract_fragments',
+        { default: 10, UNKNOWN: 5 },
+        'admin',
+        'foil desconhecido',
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      service.update(
+        'foil_extract_fragments',
+        { HOLO: 10 },
+        'admin',
+        'sem default',
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
 });
 
 describe('GachaConfigService — claim_event', () => {

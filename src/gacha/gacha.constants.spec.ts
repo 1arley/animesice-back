@@ -1,4 +1,11 @@
-import { burnFragments, GACHA_TIERS } from './gacha.constants';
+import {
+  burnFragments,
+  DEFAULT_FOIL_EXTRACT_FRAGMENTS,
+  GACHA_TIERS,
+  GEM_FRAGMENT_RECIPE,
+  isSpecialGachaFoil,
+  SPECIAL_GACHA_FOILS,
+} from './gacha.constants';
 
 describe('burnFragments', () => {
   const conditions = [
@@ -49,5 +56,13 @@ describe('burnFragments', () => {
 
   it('does not grant fragments for NORMAL foil', () => {
     expect(burnFragments(0.05, 'GALACTICA', 'NORMAL')).toBeNull();
+  });
+
+  it('derives extractable foils from FOIL_INVENTORY_FIELDS below gem recipe cost', () => {
+    expect(DEFAULT_FOIL_EXTRACT_FRAGMENTS).toBeLessThan(GEM_FRAGMENT_RECIPE);
+    expect(SPECIAL_GACHA_FOILS).toEqual(['HOLO', 'GOLD', 'INK', 'PRISM']);
+    expect(isSpecialGachaFoil('HOLO')).toBe(true);
+    expect(isSpecialGachaFoil('NORMAL')).toBe(false);
+    expect(isSpecialGachaFoil('UNKNOWN')).toBe(false);
   });
 });

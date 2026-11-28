@@ -1254,6 +1254,34 @@ describe('GachaService', () => {
         expect.objectContaining({ orderBy: { edition: 'asc' } }),
       );
     });
+
+    it('filtra apenas cartas com foil quando eligibleKind é EXTRATOR_FOIL', async () => {
+      mockPrisma.userCard.findMany.mockResolvedValue([]);
+      mockPrisma.userCard.count.mockResolvedValue(0);
+      mockPrisma.userCard.aggregate.mockResolvedValue({ _sum: { value: 0 } });
+
+      await service.collection(
+        'u1',
+        'u1',
+        1,
+        24,
+        'value',
+        undefined,
+        undefined,
+        undefined,
+        'EXTRATOR_FOIL',
+      );
+
+      expect(mockPrisma.userCard.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            userId: 'u1',
+            status: 'ACTIVE',
+            AND: [{ foil: { not: 'NORMAL' } }],
+          }),
+        }),
+      );
+    });
   });
 
   describe('recent', () => {

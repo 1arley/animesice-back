@@ -1,4 +1,10 @@
-import { ConflictException, ForbiddenException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { JwtAuthGuard } from '@/auth/jwt-auth.guard';
 import { IS_PUBLIC_KEY } from '@/auth/decorators/public.decorator';
@@ -914,6 +920,365 @@ describe('EconomyService safeguards', () => {
       const res = await service.tradeUpCards('u1', ['c1', 'c2', 'c3', 'c4']);
 
       expect(res.result.card).toMatchObject({ name: '???', image: null });
+    });
+  });
+
+  describe('foil extractor', () => {
+    const opId = '11111111-1111-4111-8111-111111111111';
+
+    beforeEach(() => {
+      db.gachaTrade.findFirst.mockResolvedValue(null);
+      db.gachaListing.findFirst.mockResolvedValue(null);
+      db.gachaMarketOfferCard.findFirst.mockResolvedValue(null);
+      db.user.findFirst.mockResolvedValue(null);
+      db.gachaInventory.upsert.mockResolvedValue({ foilExtractors: 2 });
+      db.gachaInventory.findUniqueOrThrow.mockResolvedValue({
+        foilExtractors: 1,
+      });
+    });
+
+    it('previews eligible foil extraction with masked hidden card name', async () => {
+      const config = economyConfig(ECONOMY_DEFAULTS);
+      const holoValue = cardValue(
+        'RARA',
+        0.5,
+        'HOLO',
+        2,
+        config.base_value,
+        config.foil_mult,
+      );
+      const normalValue = cardValue(
+        'RARA',
+        0.5,
+        'NORMAL',
+        2,
+        config.base_value,
+        config.foil_mult,
+      );
+      db.userCard.findFirst.mockResolvedValue({
+        id: 'uc-1',
+        condition: 0.5,
+        foil: 'HOLO',
+        edition: 2,
+        value: holoValue,
+        rankedValue: holoValue,
+        valueOverride: null,
+        status: 'ACTIVE',
+        featuredBy: null,
+        card: {
+          name: 'Segredo',
+          rarity: 'RARA',
+          status: 'ACTIVE',
+          imageHidden: true,
+        },
+      });
+
+      const preview = await service.previewFoilExtraction('u1', 'uc-1');
+
+      expect(preview).toEqual({
+        userCardId: 'uc-1',
+        cardName: '???',
+        rarity: 'RARA',
+        edition: 2,
+        condition: 0.5,
+        conditionLabel: 'PLAYED',
+        currentFoil: 'HOLO',
+        targetFoil: 'NORMAL',
+        currentValue: holoValue,
+        projectedValue: normalValue,
+        currentRankedValue: holoValue,
+        projectedRankedValue: normalValue,
+        extractorsAvailable: 2,
+        fragments: {
+          foil: 'HOLO',
+          itemId: 'HOLO_SHARD',
+          itemName: 'Fragmento Holo',
+          quantity: 10,
+        },
+        canExtract: true,
+        blockedReason: null,
+      });
+    });
+
+    it.each([
+      [
+        'NORMAL card',
+        { foil: 'NORMAL' },
+        'Esta carta não possui foil para extrair.',
+      ],
+      [
+        'archived card',
+        {
+          card: {
+            name: 'A',
+            rarity: 'RARA',
+            status: 'ARCHIVED',
+            imageHidden: false,
+          },
+        },
+        'Carta bloqueada ou arquivada.',
+      ],
+      [
+        'featured card',
+        { featuredBy: { id: 'u1' } },
+        'Remova a carta dos destaques antes de extrair o foil.',
+      ],
+      [
+        'burned card',
+        { status: 'BURNED' },
+        'A carta não está disponível na coleção.',
+      ],
+    ] as const)(
+      'reports blockedReason for %s in preview',
+      async (_label, patch, expectedReason) => {
+        db.userCard.findFirst.mockResolvedValue({
+          id: 'uc-1',
+          condition: 0.5,
+          foil: 'GOLD',
+          edition: 1,
+          value: 100,
+          rankedValue: 100,
+          valueOverride: null,
+          status: 'ACTIVE',
+          featuredBy: null,
+          card: {
+            name: 'Carta',
+            rarity: 'RARA',
+            status: 'ACTIVE',
+            imageHidden: false,
+          },
+          ...patch,
+        });
+
+        const preview = await service.previewFoilExtraction('u1', 'uc-1');
+        expect(preview.canExtract).toBe(false);
+        expect(preview.blockedReason).toBe(expectedReason);
+      },
+    );
+
+    it.each([
+      ['HOLO', 'holoShards'],
+      ['GOLD', 'goldShards'],
+      ['INK', 'inkShards'],
+      ['PRISM', 'prismShards'],
+    ] as const)(
+      'extracts %s foil, adjusts value/rankedValue, consumes 1 extractor, and credits fragments',
+      async (foil, shardField) => {
+        const config = economyConfig({
+          ...ECONOMY_DEFAULTS,
+          foil_extract_fragments: { default: 9, GOLD: 13 },
+        });
+        db.gachaEconomyVersion.findFirst.mockResolvedValue({
+          id: 'version-custom',
+          version: 7,
+          snapshot: {
+            ...ECONOMY_DEFAULTS,
+            foil_extract_fragments: { default: 9, GOLD: 13 },
+          },
+        });
+        const foilValue = cardValue(
+          'EPICA',
+          0.2,
+          foil,
+          1,
+          config.base_value,
+          config.foil_mult,
+        );
+        const normalValue = cardValue(
+          'EPICA',
+          0.2,
+          'NORMAL',
+          1,
+          config.base_value,
+          config.foil_mult,
+        );
+        db.userCard.findFirst.mockResolvedValue({
+          id: 'uc-1',
+          condition: 0.2,
+          foil,
+          edition: 1,
+          value: foilValue,
+          rankedValue: foilValue + 50,
+          valueOverride: null,
+          status: 'ACTIVE',
+          card: { rarity: 'EPICA', status: 'ACTIVE' },
+        });
+        db.userCard.updateMany.mockResolvedValue({ count: 1 });
+
+        const result = await service.extractFoil('u1', {
+          operationId: opId,
+          userCardId: 'uc-1',
+        });
+
+        const expectedQty = foil === 'GOLD' ? 13 : 9;
+        expect(result).toMatchObject({
+          userCardId: 'uc-1',
+          extractedFoil: foil,
+          foil: 'NORMAL',
+          value: normalValue,
+          rankedValue: normalValue + 50,
+          extractorsRemaining: 1,
+          fragments: { foil, quantity: expectedQty },
+        });
+        expect(db.gachaInventory.updateMany).toHaveBeenNthCalledWith(1, {
+          where: { userId: 'u1', foilExtractors: { gte: 1 } },
+          data: { foilExtractors: { decrement: 1 } },
+        });
+        expect(db.userCard.updateMany).toHaveBeenCalledWith({
+          where: {
+            id: 'uc-1',
+            userId: 'u1',
+            status: 'ACTIVE',
+            foil,
+          },
+          data: {
+            foil: 'NORMAL',
+            value: normalValue,
+            rankedValue: normalValue + 50,
+          },
+        });
+        expect(db.gachaInventory.updateMany).toHaveBeenNthCalledWith(2, {
+          where: {
+            userId: 'u1',
+            [shardField]: { lte: 2_147_483_647 - expectedQty },
+          },
+          data: { [shardField]: { increment: expectedQty } },
+        });
+        const lockQueries = db.$queryRaw.mock.calls.map((call: unknown[]) =>
+          (call[0] as TemplateStringsArray).join(''),
+        );
+        expect(lockQueries[0]).toContain('GachaInventory');
+        expect(lockQueries[1]).toContain('UserCard');
+      },
+    );
+
+    it('replays extractFoil idempotently without double-consuming or crediting', async () => {
+      const storedResult = {
+        userCardId: 'uc-1',
+        extractedFoil: 'HOLO',
+        foil: 'NORMAL',
+        value: 100,
+        rankedValue: 100,
+        extractorsRemaining: 0,
+        fragments: {
+          foil: 'HOLO',
+          itemId: 'HOLO_SHARD',
+          itemName: 'Fragmento Holo',
+          quantity: 10,
+        },
+      };
+      db.gachaItemOperation.findUnique.mockResolvedValue({
+        kind: 'EXTRACT_FOIL',
+        payload: { userCardId: 'uc-1' },
+        result: storedResult,
+      });
+
+      await expect(
+        service.extractFoil('u1', { operationId: opId, userCardId: 'uc-1' }),
+      ).resolves.toEqual(storedResult);
+      expect(db.userCard.updateMany).not.toHaveBeenCalled();
+      expect(db.gachaInventory.updateMany).not.toHaveBeenCalled();
+
+      await expect(
+        service.extractFoil('u1', {
+          operationId: opId,
+          userCardId: 'uc-other',
+        }),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('rejects extractFoil for missing, NORMAL, blocked, traded, listed, featured, and empty-extractor states', async () => {
+      db.userCard.findFirst.mockResolvedValue(null);
+      await expect(
+        service.extractFoil('u1', { operationId: opId, userCardId: 'uc-404' }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+
+      db.userCard.findFirst.mockResolvedValue({
+        id: 'uc-1',
+        condition: 0.5,
+        foil: 'NORMAL',
+        edition: 1,
+        value: 10,
+        rankedValue: 10,
+        valueOverride: null,
+        status: 'ACTIVE',
+        card: { rarity: 'COMUM', status: 'ACTIVE' },
+      });
+      await expect(
+        service.extractFoil('u1', { operationId: opId, userCardId: 'uc-1' }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      db.userCard.findFirst.mockResolvedValue({
+        id: 'uc-1',
+        condition: 0.5,
+        foil: 'HOLO',
+        edition: 1,
+        value: 30,
+        rankedValue: 30,
+        valueOverride: null,
+        status: 'ACTIVE',
+        card: { rarity: 'COMUM', status: 'ACTIVE' },
+      });
+      db.gachaTrade.findFirst.mockResolvedValueOnce({ id: 'tr-1' });
+      await expect(
+        service.extractFoil('u1', { operationId: opId, userCardId: 'uc-1' }),
+      ).rejects.toBeInstanceOf(ConflictException);
+
+      db.gachaListing.findFirst.mockResolvedValueOnce({ id: 'ls-1' });
+      await expect(
+        service.extractFoil('u1', { operationId: opId, userCardId: 'uc-1' }),
+      ).rejects.toBeInstanceOf(ConflictException);
+
+      db.user.findFirst.mockResolvedValueOnce({ id: 'u1' });
+      await expect(
+        service.extractFoil('u1', { operationId: opId, userCardId: 'uc-1' }),
+      ).rejects.toBeInstanceOf(ConflictException);
+
+      db.gachaInventory.updateMany.mockResolvedValueOnce({ count: 0 });
+      await expect(
+        service.extractFoil('u1', { operationId: opId, userCardId: 'uc-1' }),
+      ).rejects.toThrow('Extrator de Foil insuficiente.');
+    });
+
+    it('maps serialization conflicts on extractFoil to ConflictException', async () => {
+      db.gachaItemOperation.create.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('serialization conflict', {
+          code: 'P2034',
+          clientVersion: '7.10.1',
+        }),
+      );
+
+      await expect(
+        service.extractFoil('u1', { operationId: opId, userCardId: 'uc-1' }),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('allows buying EXTRATOR_FOIL and rejects converting or crafting it', async () => {
+      await expect(
+        service.convertItem('u1', {
+          operationId: opId,
+          kind: 'EXTRATOR_FOIL',
+          quantity: 1,
+        }),
+      ).rejects.toThrow('Extrator de Foil não pode ser convertido.');
+      await expect(
+        service.craftItem('u1', {
+          operationId: opId,
+          kind: 'EXTRATOR_FOIL',
+          quantity: 1,
+        }),
+      ).rejects.toThrow('Extrator de Foil não é fabricado com fragmentos.');
+
+      await service.buyItem('u1', {
+        operationId: opId,
+        kind: 'EXTRATOR_FOIL',
+        quantity: 2,
+      });
+      expect(db.gachaInventory.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { foilExtractors: { increment: 2 } },
+        }),
+      );
     });
   });
 });

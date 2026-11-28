@@ -6,11 +6,26 @@ import {
   QUALITY_WEIGHTS,
   CARD_FLOOR,
   ITEM_KINDS,
+  isDirectConsumableKind,
   type ItemKind,
   type BoxTier,
 } from './economy.rules';
-import { GACHA_FOILS } from '@/gacha/gacha.constants';
-import type { GachaFoil, GachaTier } from '@/gacha/gacha.constants';
+import {
+  DEFAULT_FOIL_EXTRACT_FRAGMENTS,
+  GACHA_FOILS,
+  GEM_FRAGMENT_RECIPE,
+  SPECIAL_GACHA_FOILS,
+  isSpecialGachaFoil,
+} from '@/gacha/gacha.constants';
+import type {
+  GachaFoil,
+  GachaTier,
+  SpecialGachaFoil,
+} from '@/gacha/gacha.constants';
+
+export type FoilExtractFragmentsConfig = { default: number } & Partial<
+  Record<SpecialGachaFoil, number>
+>;
 
 const MAX_DATABASE_INT = 2_147_483_647;
 
@@ -73,6 +88,7 @@ export const ECONOMY_DEFAULTS = {
       DRACONICA: 0,
       SOMBRIA_DRACONICA: 0,
       PROTECAO: 10,
+      EXTRATOR_FOIL: 0,
     },
     RARE: {
       TITANITA: 45,
@@ -80,6 +96,7 @@ export const ECONOMY_DEFAULTS = {
       DRACONICA: 0,
       SOMBRIA_DRACONICA: 0,
       PROTECAO: 20,
+      EXTRATOR_FOIL: 0,
     },
     PREMIUM: {
       TITANITA: 10,
@@ -87,6 +104,7 @@ export const ECONOMY_DEFAULTS = {
       DRACONICA: 30,
       SOMBRIA_DRACONICA: 35,
       PROTECAO: 5,
+      EXTRATOR_FOIL: 0,
     },
   },
   item_qty_per_quality: { BASIC: 1, RARE: 2, EPIC: 3, LEGENDARY: 5 },
@@ -124,6 +142,7 @@ export const ECONOMY_DEFAULTS = {
     DRACONICA: 6500,
     SOMBRIA_DRACONICA: 0,
     PROTECAO: 400,
+    EXTRATOR_FOIL: 2000,
   },
   // Separate availability from price so the purchase experiment is reversible.
   item_shop_enabled: {
@@ -132,6 +151,7 @@ export const ECONOMY_DEFAULTS = {
     DRACONICA: true,
     SOMBRIA_DRACONICA: true,
     PROTECAO: true,
+    EXTRATOR_FOIL: true,
   },
   item_convert_value: {
     TITANITA: 250,
@@ -139,7 +159,14 @@ export const ECONOMY_DEFAULTS = {
     DRACONICA: 3250,
     SOMBRIA_DRACONICA: 4500,
     PROTECAO: 0,
+    EXTRATOR_FOIL: 0,
   },
+  foil_extract_fragments: {
+    default: DEFAULT_FOIL_EXTRACT_FRAGMENTS,
+    ...Object.fromEntries(
+      SPECIAL_GACHA_FOILS.map((foil) => [foil, DEFAULT_FOIL_EXTRACT_FRAGMENTS]),
+    ),
+  } as FoilExtractFragmentsConfig,
   item_condition_anchor: { PLAYED: 0.465, EX: 0.265, NM: 0.11, MINT: 0.035 },
   reroll_mint_clamp: 0.071,
   reroll_protection_mint_block: true,
@@ -164,12 +191,42 @@ export function hasItemLootSource(config: EconomyConfig, kind: ItemKind) {
       Object.entries(config.box_quality_weights[tier]).some(
         ([quality, weight]) =>
           weight > 0 &&
-          (kind === 'PROTECAO' ||
+          (isDirectConsumableKind(kind) ||
             (config.item_qty_per_quality[
               quality as keyof typeof config.item_qty_per_quality
             ] ?? 0) > 0),
       ),
   );
+}
+
+export function foilExtractFragmentsFor(
+  config: EconomyConfig,
+  foil: SpecialGachaFoil,
+): number {
+  return (
+    config.foil_extract_fragments[foil] ?? config.foil_extract_fragments.default
+  );
+}
+
+function mergeFoilExtractFragments(saved: unknown): FoilExtractFragmentsConfig {
+  if (saved === undefined) {
+    return { ...ECONOMY_DEFAULTS.foil_extract_fragments };
+  }
+  if (!saved || typeof saved !== 'object' || Array.isArray(saved)) {
+    return saved as FoilExtractFragmentsConfig;
+  }
+  const record = saved as Record<string, unknown>;
+  const next: Record<string, unknown> = {};
+  if ('default' in record) {
+    next.default = record.default;
+  }
+  for (const [key, value] of Object.entries(record)) {
+    if (key === 'default') continue;
+    if (isSpecialGachaFoil(key)) {
+      next[key] = value;
+    }
+  }
+  return next as FoilExtractFragmentsConfig;
 }
 
 export function assertItemShopSources(snapshot: unknown) {
@@ -292,7 +349,16 @@ export function economyConfig(snapshot: unknown): EconomyConfig {
     input.essence_kind_weights,
   );
   merged.item_eligibility = mergeItemEligibility(input.item_eligibility);
-  for (const key of ['essence_shop_price', 'essence_shop_enabled'] as const) {
+  merged.foil_extract_fragments = mergeFoilExtractFragments(
+    input.foil_extract_fragments,
+  );
+  for (const key of [
+    'essence_shop_price',
+    'essence_shop_enabled',
+    'item_shop_price',
+    'item_shop_enabled',
+    'item_convert_value',
+  ] as const) {
     const saved = input[key];
     if (saved && typeof saved === 'object' && !Array.isArray(saved)) {
       Object.assign(merged, { [key]: { ...ECONOMY_DEFAULTS[key], ...saved } });
@@ -341,6 +407,7 @@ export function economyConfig(snapshot: unknown): EconomyConfig {
     );
   };
   for (const key of Object.keys(ECONOMY_DEFAULTS)) {
+    if (key === 'foil_extract_fragments') continue;
     if (
       !validate(
         merged[key as keyof EconomyConfig],
@@ -349,6 +416,28 @@ export function economyConfig(snapshot: unknown): EconomyConfig {
     ) {
       throw new ConflictException(`Configuração econômica inválida: ${key}.`);
     }
+  }
+  const extractConfig = merged.foil_extract_fragments;
+  if (
+    !extractConfig ||
+    typeof extractConfig !== 'object' ||
+    Array.isArray(extractConfig)
+  ) {
+    throw new ConflictException(
+      'Configuração econômica inválida: foil_extract_fragments.',
+    );
+  }
+  if (
+    !('default' in extractConfig) ||
+    Object.values(extractConfig).some(
+      (qty) =>
+        typeof qty !== 'number' ||
+        !Number.isSafeInteger(qty) ||
+        qty < 1 ||
+        qty >= GEM_FRAGMENT_RECIPE,
+    )
+  ) {
+    throw new ConflictException('Configuração de extração de foil inválida.');
   }
   if (
     merged.market_tax_pct > 1 ||
@@ -445,6 +534,8 @@ export function economyConfig(snapshot: unknown): EconomyConfig {
       throw new ConflictException('Preços de itens precisam ser inteiros.');
     if (kind === 'PROTECAO' && convert !== 0)
       throw new ConflictException('Proteção não pode ser convertida.');
+    if (isDirectConsumableKind(kind) && convert !== 0)
+      throw new ConflictException('Item consumível não pode ser convertido.');
     if (shop > 0 && shop <= convert)
       throw new ConflictException(
         'Preço de loja deve exceder a conversão do fragmento.',

@@ -1457,6 +1457,7 @@ model GachaInventory {
   draconicaItems         Int    @default(0)
   sombriaDraconicaItems  Int    @default(0)
   protecao               Int    @default(0)
+  foilExtractors         Int    @default(0)
   essenciaComum          Int    @default(0)
   essenciaIncomum        Int    @default(0)
   essenciaRara           Int    @default(0)

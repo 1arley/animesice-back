@@ -29,6 +29,7 @@ import {
   GACHA_FOILS,
   FOIL_INVENTORY_FIELDS,
   GEM_FRAGMENT_RECIPE,
+  isSpecialGachaFoil,
 } from '@/gacha/gacha.constants';
 import type { GachaFoil, GachaTier } from '@/gacha/gacha.constants';
 import { GACHA_TIERS } from '@/gacha/gacha-config.service';
@@ -42,6 +43,7 @@ import {
   prizeAmount,
   prizeQuality,
   ITEM_KINDS,
+  isDirectConsumableKind,
   weightedPick,
 } from './economy.rules';
 import {
@@ -58,11 +60,13 @@ import {
   ReviewSaleDto,
   CraftFoilGemDto,
   ApplyFoilGemDto,
+  ExtractFoilDto,
 } from './economy.dto';
 import {
   economyConfig,
   assertItemShopSources,
   hasItemLootSource,
+  foilExtractFragmentsFor,
   EconomyConfig,
   ECONOMY_DEFAULTS,
 } from './economy.config';
@@ -70,13 +74,14 @@ import {
 type Tx = Prisma.TransactionClient;
 
 // Fragmentos e itens de pedra (decisão laya-loot-items-20261023).
-// PROTECAO e item completo consumivel; os demais entram como fragmentos.
+// PROTECAO e EXTRATOR_FOIL são itens completos consumíveis; os demais entram como fragmentos.
 const ITEM_FIELD = {
   TITANITA: 'titanitaShards',
   TITANITA_SOMBRIA: 'titanitaSombriaShards',
   DRACONICA: 'draconicaShards',
   SOMBRIA_DRACONICA: 'sombriaDraconicaShards',
   PROTECAO: 'protecao',
+  EXTRATOR_FOIL: 'foilExtractors',
 } as const;
 
 const ITEM_CRAFTED_FIELD = {
@@ -967,6 +972,8 @@ export class EconomyService {
         item_recipes: config.item_recipes,
         item_eligibility: config.item_eligibility,
         item_condition_anchor: config.item_condition_anchor,
+        foil_extract_fragments: config.foil_extract_fragments,
+        gem_fragment_recipe: GEM_FRAGMENT_RECIPE,
         card_floors: config.card_floors,
         base_value: config.base_value,
         foil_mult: config.foil_mult,
@@ -1115,6 +1122,298 @@ export class EconomyService {
           throw new BadRequestException('Gema insuficiente.');
         return tx.userCard.findUniqueOrThrow({ where: { id: dto.userCardId } });
       },
+    );
+  }
+
+  async previewFoilExtraction(userId: string, userCardId: string) {
+    await this.assertEconomyEnabled(this.prisma, userId);
+    const [{ config }, inventory, card] = await Promise.all([
+      this.currentVersion(this.prisma),
+      this.prisma.gachaInventory.upsert({
+        where: { userId },
+        create: { userId },
+        update: {},
+        select: { foilExtractors: true },
+      }),
+      this.prisma.userCard.findFirst({
+        where: { id: userCardId, userId },
+        select: {
+          id: true,
+          condition: true,
+          foil: true,
+          edition: true,
+          value: true,
+          rankedValue: true,
+          valueOverride: true,
+          status: true,
+          featuredBy: { select: { id: true } },
+          card: {
+            select: {
+              name: true,
+              rarity: true,
+              status: true,
+              imageHidden: true,
+            },
+          },
+        },
+      }),
+    ]);
+    if (!card) throw new NotFoundException('Carta não encontrada.');
+
+    const now = new Date();
+    const [pendingTrade, listing, offer] = await Promise.all([
+      this.prisma.gachaTrade.findFirst({
+        where: {
+          status: 'PENDING',
+          OR: [
+            { offeredUserCardId: userCardId },
+            { requestedUserCardId: userCardId },
+            { cards: { some: { userCardId } } },
+          ],
+        },
+        select: { id: true },
+      }),
+      this.prisma.gachaListing.findFirst({
+        where: { userCardId, status: 'ACTIVE', expiresAt: { gt: now } },
+        select: { id: true },
+      }),
+      this.prisma.gachaMarketOfferCard.findFirst({
+        where: {
+          userCardId,
+          offer: { status: 'PENDING', expiresAt: { gt: now } },
+        },
+        select: { offerId: true },
+      }),
+    ]);
+
+    const specialFoil = isSpecialGachaFoil(card.foil) ? card.foil : null;
+    const fragmentQuantity = specialFoil
+      ? foilExtractFragmentsFor(config, specialFoil)
+      : null;
+    const shardItem = specialFoil
+      ? catalogItemForField(FOIL_INVENTORY_FIELDS[specialFoil].shards)
+      : null;
+    const projectedValue =
+      card.valueOverride ??
+      cardValue(
+        card.card.rarity as GachaTier,
+        card.condition,
+        'NORMAL',
+        card.edition,
+        config.base_value,
+        config.foil_mult,
+      );
+    const projectedRankedValue = Math.max(
+      0,
+      card.rankedValue - Math.max(0, card.value - projectedValue),
+    );
+
+    let blockedReason: string | null = null;
+    if (card.card.status !== 'ACTIVE') {
+      blockedReason = 'Carta bloqueada ou arquivada.';
+    } else if (card.foil === 'NORMAL') {
+      blockedReason = 'Esta carta não possui foil para extrair.';
+    } else if (!specialFoil) {
+      blockedReason = 'Tipo de foil não suportado para extração.';
+    } else if (pendingTrade) {
+      blockedReason = 'Carta envolvida em troca pendente.';
+    } else if (listing || offer) {
+      blockedReason = 'Remova a carta do mercado antes de extrair o foil.';
+    } else if (card.featuredBy) {
+      blockedReason = 'Remova a carta dos destaques antes de extrair o foil.';
+    } else if (card.status !== 'ACTIVE') {
+      blockedReason = 'A carta não está disponível na coleção.';
+    } else if (inventory.foilExtractors < 1) {
+      blockedReason = 'Extrator de Foil insuficiente.';
+    }
+
+    return {
+      userCardId: card.id,
+      cardName: card.card.imageHidden ? '???' : card.card.name,
+      rarity: card.card.rarity,
+      edition: card.edition,
+      condition: card.condition,
+      conditionLabel: conditionLabel(card.condition),
+      currentFoil: card.foil,
+      targetFoil: 'NORMAL' as const,
+      currentValue: card.value,
+      projectedValue,
+      currentRankedValue: card.rankedValue,
+      projectedRankedValue,
+      extractorsAvailable: inventory.foilExtractors,
+      fragments:
+        specialFoil && shardItem && fragmentQuantity !== null
+          ? {
+              foil: specialFoil,
+              itemId: shardItem.id,
+              itemName: shardItem.name,
+              quantity: fragmentQuantity,
+            }
+          : null,
+      canExtract: blockedReason === null,
+      blockedReason,
+    };
+  }
+
+  extractFoil(userId: string, dto: ExtractFoilDto) {
+    return this.withSerializableConflict(() =>
+      this.runOperation(
+        userId,
+        dto.operationId,
+        'EXTRACT_FOIL',
+        { userCardId: dto.userCardId },
+        async (tx, config) => {
+          await this.assertEconomyEnabled(tx, userId);
+          await this.lockItemInventory(tx, userId);
+          await tx.$queryRaw`SELECT "id" FROM "UserCard" WHERE "id" = ${dto.userCardId} AND "userId" = ${userId} FOR UPDATE`;
+          const card = await tx.userCard.findFirst({
+            where: { id: dto.userCardId, userId },
+            select: {
+              id: true,
+              condition: true,
+              foil: true,
+              edition: true,
+              value: true,
+              rankedValue: true,
+              valueOverride: true,
+              status: true,
+              card: { select: { rarity: true, status: true } },
+            },
+          });
+          if (!card) throw new NotFoundException('Carta não encontrada.');
+          if (card.card.status !== 'ACTIVE') {
+            throw new ConflictException('Carta bloqueada ou arquivada.');
+          }
+          if (card.foil === 'NORMAL') {
+            throw new BadRequestException(
+              'Esta carta não possui foil para extrair.',
+            );
+          }
+          if (!isSpecialGachaFoil(card.foil)) {
+            throw new BadRequestException(
+              `Foil inválido na carta: ${card.foil}.`,
+            );
+          }
+          const extractedFoil = card.foil;
+
+          const pendingTrade = await tx.gachaTrade.findFirst({
+            where: {
+              status: 'PENDING',
+              OR: [
+                { offeredUserCardId: dto.userCardId },
+                { requestedUserCardId: dto.userCardId },
+                { cards: { some: { userCardId: dto.userCardId } } },
+              ],
+            },
+            select: { id: true },
+          });
+          if (pendingTrade) {
+            throw new ConflictException('Carta envolvida em troca pendente.');
+          }
+          const now = new Date();
+          const [listing, offer, featured] = await Promise.all([
+            tx.gachaListing.findFirst({
+              where: {
+                userCardId: dto.userCardId,
+                status: 'ACTIVE',
+                expiresAt: { gt: now },
+              },
+              select: { id: true },
+            }),
+            tx.gachaMarketOfferCard.findFirst({
+              where: {
+                userCardId: dto.userCardId,
+                offer: { status: 'PENDING', expiresAt: { gt: now } },
+              },
+              select: { offerId: true },
+            }),
+            tx.user.findFirst({
+              where: { id: userId, featuredUserCardId: dto.userCardId },
+              select: { id: true },
+            }),
+          ]);
+          if (listing || offer) {
+            throw new ConflictException(
+              'Remova a carta do mercado antes de extrair o foil.',
+            );
+          }
+          if (featured) {
+            throw new ConflictException(
+              'Remova a carta dos destaques antes de extrair o foil.',
+            );
+          }
+          if (card.status !== 'ACTIVE') {
+            throw new ConflictException('A carta não está mais disponível.');
+          }
+
+          const consumed = await tx.gachaInventory.updateMany({
+            where: { userId, foilExtractors: { gte: 1 } },
+            data: { foilExtractors: { decrement: 1 } },
+          });
+          if (consumed.count !== 1) {
+            throw new BadRequestException('Extrator de Foil insuficiente.');
+          }
+
+          const newValue =
+            card.valueOverride ??
+            cardValue(
+              card.card.rarity as GachaTier,
+              card.condition,
+              'NORMAL',
+              card.edition,
+              config.base_value,
+              config.foil_mult,
+            );
+          const newRankedValue = Math.max(
+            0,
+            card.rankedValue - Math.max(0, card.value - newValue),
+          );
+          const updated = await tx.userCard.updateMany({
+            where: {
+              id: dto.userCardId,
+              userId,
+              status: 'ACTIVE',
+              foil: extractedFoil,
+            },
+            data: {
+              foil: 'NORMAL',
+              value: newValue,
+              rankedValue: newRankedValue,
+            },
+          });
+          if (updated.count !== 1) {
+            throw new ConflictException('A carta não está mais disponível.');
+          }
+
+          const fragmentQuantity = foilExtractFragmentsFor(
+            config,
+            extractedFoil,
+          );
+          const shardItem = catalogItemForField(
+            FOIL_INVENTORY_FIELDS[extractedFoil].shards,
+          );
+          await creditItems(tx, userId, [
+            { itemId: shardItem.id, quantity: fragmentQuantity },
+          ]);
+          const inventory = await tx.gachaInventory.findUniqueOrThrow({
+            where: { userId },
+          });
+          return {
+            userCardId: card.id,
+            extractedFoil,
+            foil: 'NORMAL' as const,
+            value: newValue,
+            rankedValue: newRankedValue,
+            extractorsRemaining: inventory.foilExtractors,
+            fragments: {
+              foil: extractedFoil,
+              itemId: shardItem.id,
+              itemName: shardItem.name,
+              quantity: fragmentQuantity,
+            },
+          };
+        },
+      ),
     );
   }
 
@@ -1484,6 +1783,10 @@ export class EconomyService {
         await this.assertEconomyEnabled(tx, userId);
         if (dto.kind === 'PROTECAO')
           throw new BadRequestException('Proteção não pode ser convertida.');
+        if (dto.kind === 'EXTRATOR_FOIL')
+          throw new BadRequestException(
+            'Extrator de Foil não pode ser convertido.',
+          );
         const field = ITEM_FIELD[dto.kind];
         const value = config.item_convert_value[dto.kind];
         if (value <= 0)
@@ -1523,6 +1826,10 @@ export class EconomyService {
         if (dto.kind === 'PROTECAO')
           throw new BadRequestException(
             'Proteção não é fabricada com fragmentos.',
+          );
+        if (dto.kind === 'EXTRATOR_FOIL')
+          throw new BadRequestException(
+            'Extrator de Foil não é fabricado com fragmentos.',
           );
         const recipe = config.item_recipes[dto.kind];
         const shards = recipe * dto.quantity;
@@ -3320,9 +3627,10 @@ export class EconomyService {
     }
     if (category === 'ITEM') {
       const kind = weightedPick(config.item_kind_weights[tier]);
-      // PROTECAO concede 1 uso por drop independentemente da qualidade.
-      const quantity =
-        kind === 'PROTECAO' ? 1 : config.item_qty_per_quality[quality];
+      // Itens consumíveis diretos concedem 1 uso por drop independentemente da qualidade.
+      const quantity = isDirectConsumableKind(kind)
+        ? 1
+        : config.item_qty_per_quality[quality];
       await creditItems(tx, userId, [{ itemId: kind, quantity }]);
       return { amount: quantity, data: { category, kind, quantity } };
     }
