@@ -1,3 +1,10 @@
+# [1.79.0](https://github.com/1arley/animesice-back/compare/v1.78.0...v1.79.0) (2026-11-28)
+
+
+### Features
+
+* **gacha:** Central de Recompensas e Roleta de Prêmios ([#144](https://github.com/1arley/animesice-back/issues/144)) ([6dca893](https://github.com/1arley/animesice-back/commit/6dca893fdb9730359f2a20f64b21b0a752200c7c))
+
 # [1.78.0](https://github.com/1arley/animesice-back/compare/v1.77.0...v1.78.0) (2026-11-28)
 
 
