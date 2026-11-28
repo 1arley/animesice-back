@@ -58,6 +58,24 @@ enum NotificationChannel {
   EMAIL
 }
 
+/// Finalidade de um comunicado enviado pela administração.
+enum AdminNotificationCategory {
+  THANKS
+  ANNOUNCEMENT
+  UPDATE
+  EVENT
+  COMPENSATION
+  GENERAL
+  CUSTOM
+}
+
+/// Público-alvo de um comunicado administrativo.
+enum AdminNotificationAudience {
+  SINGLE
+  SELECTED
+  GLOBAL
+}
+
 enum ReportTargetType {
   COMMENT
   ROOM_MESSAGE
@@ -156,6 +174,7 @@ model User {
   watchHistories            WatchHistory[]
   watchRewards              WatchReward[]
   notifications             Notification[]
+  adminNotifications        AdminNotification[]         @relation("AdminNotifications")
   commentLikes              CommentLike[]
   rooms                     Room[]
   roomMessages              RoomMessage[]
@@ -601,23 +620,52 @@ model WatchHistory {
 }
 
 model Notification {
-  id        String   @id @default(uuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  type      String
-  title     String
-  body      String?
-  linkUrl   String?
-  read      Boolean  @default(false)
-  claimed   Boolean  @default(false)
-  createdAt DateTime @default(now())
-  actorId   String?
-  targetId  String?
+  id                  String                       @id @default(uuid())
+  userId              String
+  user                User                         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type                String
+  title               String
+  body                String?
+  linkUrl             String?
+  read                Boolean                      @default(false)
+  claimed             Boolean                      @default(false)
+  createdAt           DateTime                     @default(now())
+  actorId             String?
+  targetId            String?
+  /// Comunicado administrativo que originou esta notificação (quando houver).
+  adminNotificationId String?
+  adminNotification   AdminNotification?           @relation(fields: [adminNotificationId], references: [id], onDelete: SetNull)
+  /// Categoria do comunicado, copiada para exibição sem depender do join.
+  adminCategory       AdminNotificationCategory?
 
   @@index([userId, read])
   @@index([userId, createdAt])
   @@index([userId, read, createdAt(sort: Desc)])
   @@index([userId, type, actorId, targetId, createdAt])
+  @@index([adminNotificationId])
+}
+
+/// Envio administrativo (campanha) de notificações internas.
+/// Guarda o conteúdo, o público e a contagem de destinatários para auditoria
+/// e histórico, sem duplicar as linhas de Notification.
+model AdminNotification {
+  id             String                    @id @default(uuid())
+  adminId        String
+  admin          User                      @relation("AdminNotifications", fields: [adminId], references: [id], onDelete: Cascade)
+  category       AdminNotificationCategory
+  audience       AdminNotificationAudience
+  title          String
+  body           String
+  linkUrl        String?
+  /// Chave de idempotência gerada pelo cliente; impede reenvio em duplo clique/retry.
+  dedupeKey      String?
+  recipientCount Int                       @default(0)
+  createdAt      DateTime                  @default(now())
+  notifications  Notification[]
+
+  @@unique([adminId, dedupeKey])
+  @@index([createdAt])
+  @@index([category, createdAt])
 }
 
 model Room {

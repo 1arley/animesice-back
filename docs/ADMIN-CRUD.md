@@ -16,6 +16,23 @@ Todas as rotas `/admin/*` exigem JWT + role `ADMIN` ou `SUPERADMIN`.
 | `DELETE` | `/admin/episode/:slug/:number` | Remove episódio |
 | `POST` | `/admin/episode/:slug/:number/upload` | Upload .mp4/.m3u8/.ts → Supabase Storage |
 | `POST` | `/admin/genre` | Cria gênero |
+| `GET` | `/admin/notification/recipients?search=&page=&limit=` | Busca jogadores por nome, @usuário, e-mail ou id |
+| `GET` | `/admin/notification/audience` | Contagem estimada do público global |
+| `POST` | `/admin/notification/send` | Envia notificação individual, para grupo ou global |
+| `GET` | `/admin/notification/history?page=&limit=&category=&search=` | Histórico de comunicados |
+| `GET` | `/admin/notification/:id?page=&limit=` | Detalhes do comunicado + destinatários |
+
+### Central de notificações
+
+Reutiliza a tabela `Notification` (tipo `SYSTEM`) e adiciona uma campanha em
+`AdminNotification` para histórico e auditoria. O conteúdo é gravado em lote e
+o sistema de preferências pessoais não bloqueia comunicados oficiais.
+
+- `audience`: `SINGLE` (1 destinatário), `SELECTED` (até 500) ou `GLOBAL`.
+- `category`: `THANKS`, `ANNOUNCEMENT`, `UPDATE`, `EVENT`, `COMPENSATION`, `GENERAL` ou `CUSTOM`.
+- `dedupeKey`: UUID do cliente; repetir a chave devolve a campanha original sem novo disparo.
+- `GLOBAL` exige `confirmGlobal: true` e é gravado em lotes de 500 usuários por cursor.
+- Cada envio gera um registro em `AdminAuditLog` (`SEND_NOTIFICATION`, `AdminNotification`) com a quantidade de destinatários.
 
 ## Frontend
 
@@ -26,6 +43,7 @@ Todas as rotas `/admin/*` exigem JWT + role `ADMIN` ou `SUPERADMIN`.
 | `/admin/import` | ✅ Import do AniList |
 | `/admin/episode/[slug]/[number]` | ✅ Editar ep (videoUrl, embedUrl, scrape, upload, deletar) |
 | `/admin/create-episode/[slug]` | ✅ Criar episódio manual |
+| `/admin/notificacoes` | ✅ Enviar comunicado + histórico + prévia |
 | Criar anime manual | ✅ |
 | Criar episódio manual | ✅ |
 | Deletar anime | ✅ |
